@@ -11,7 +11,7 @@
  * Based on official @tencent-weixin/openclaw-weixin implementation.
  *
  * Not yet implemented (future phases):
- * - Thread send support via context_token — Issue #1556 Phase 3.4
+ * - Native threads; iLink replies use private per-peer context instead.
  *
  * @module channels/wechat/wechat-channel
  * @see Issue #1473 - WeChat Channel MVP
@@ -23,6 +23,10 @@ import * as path from 'node:path';
 import { WeChatApiClient } from './api-client.js';
 import { WeChatAuth } from './auth.js';
 import { WeChatMessageListener } from './message-listener.js';
+import { WeChatStateStore } from './state-store.js';
+import { wechatChannelId, wechatPeer, lockWeChatIdentity } from './identity.js';
+import { downloadWeChatMedia, WECHAT_MEDIA_MAX_BYTES } from './media.js';
+import { tmpdir } from 'node:os';
 const logger = createLogger('WeChatChannel');
 /** Default API base URL for WeChat ilink Bot API. */
 const DEFAULT_BASE_URL = 'https://ilinkai.weixin.qq.com';
@@ -42,8 +46,12 @@ export class WeChatChannel extends BaseChannel {
     client;
     auth;
     messageListener;
+    contexts = new Map();
+    releaseAccount;
+    releaseIdentity;
     constructor(config = {}) {
-        super(config, 'wechat', 'WeChat');
+        const id = config.registrationId ? wechatChannelId(config.registrationId) : 'wechat';
+        super({ ...config, id }, 'wechat', 'WeChat');
         this.baseUrl = config.baseUrl || DEFAULT_BASE_URL;
         this.routeTag = config.routeTag;
     }
@@ -57,36 +65,87 @@ export class WeChatChannel extends BaseChannel {
      * 4. Start message listener (Issue #1556 Phase 3.1)
      */
     async doStart() {
-        // Create API client
-        this.client = new WeChatApiClient({
-            baseUrl: this.baseUrl,
-            token: this.config.token,
-            routeTag: this.routeTag,
-        });
-        // If token is already configured, skip auth
-        if (this.config.token) {
-            logger.info('Using pre-configured bot token');
-        }
-        else {
-            // Run QR code authentication
-            this.auth = new WeChatAuth(this.client);
-            logger.info('Starting WeChat QR code authentication...');
-            const result = await this.auth.authenticate();
-            if (!result.success || !result.token) {
-                throw new Error(`WeChat authentication failed: ${result.error || 'unknown error'}`);
+        let session;
+        let store;
+        let credentials;
+        if (this.config.stateDir) {
+            if (this.config.token) {
+                throw new Error('Use saved WeChat login or a programmatic token, not both');
             }
-            this.client.setToken(result.token);
-            logger.info({ botId: result.botId, userId: result.userId }, 'WeChat channel authenticated successfully');
+            store = new WeChatStateStore(this.config.stateDir);
+            this.releaseAccount = await store.lock();
+            try {
+                credentials = await store.loadCredentials();
+                if (!credentials) {
+                    throw new Error('No saved WeChat login; run disclaude wechat login with the configured --state-dir');
+                }
+                this.releaseIdentity = await lockWeChatIdentity(credentials.botId);
+                session = await store.loadSession(credentials.botId);
+                this.contexts.clear();
+                for (const [peer, token] of Object.entries(session.contexts)) {
+                    this.contexts.set(peer, token);
+                }
+            }
+            catch (error) {
+                await this.releaseIdentity?.();
+                this.releaseIdentity = undefined;
+                await this.releaseAccount();
+                this.releaseAccount = undefined;
+                throw error;
+            }
         }
-        // Start message listener (Issue #1556 Phase 3.1)
-        const processor = async (message) => {
-            // Send typing indicator before processing (Issue #1556 Phase 3.2)
-            await this.client?.sendTyping({ to: message.chatId });
-            await this.emitMessage(message);
-        };
-        this.messageListener = new WeChatMessageListener(this.client, processor);
-        this.messageListener.start();
-        logger.info('WeChat channel started with message listening');
+        try {
+            // Create API client
+            this.client = new WeChatApiClient({
+                baseUrl: credentials?.baseUrl ?? this.baseUrl,
+                token: credentials?.token ?? this.config.token,
+                routeTag: this.routeTag,
+            });
+            // If token is already configured, skip auth
+            if (credentials || this.config.token) {
+                logger.info('Using pre-configured bot token');
+            }
+            else {
+                // Run QR code authentication
+                this.auth = new WeChatAuth(this.client);
+                logger.info('Starting WeChat QR code authentication...');
+                const result = await this.auth.authenticate();
+                if (!result.success || !result.token) {
+                    throw new Error(`WeChat authentication failed: ${result.error || 'unknown error'}`);
+                }
+                this.client.setToken(result.token);
+                if (result.baseUrl) {
+                    this.client = new WeChatApiClient({ baseUrl: result.baseUrl, token: result.token, routeTag: this.routeTag });
+                }
+                logger.info({ botId: result.botId, userId: result.userId }, 'WeChat channel authenticated successfully');
+            }
+            // Start message listener (Issue #1556 Phase 3.1)
+            const processor = async (message) => {
+                // Send typing indicator before processing (Issue #1556 Phase 3.2)
+                void this.client?.sendTyping({ to: message.chatId, contextToken: this.contexts.get(message.chatId) });
+                await this.emitMessage(this.config.registrationId ? {
+                    ...message, chatId: `${this.id}:${message.chatId}`, messageId: `${this.id}:${message.messageId}`,
+                    metadata: { ...message.metadata, channelId: this.id, registrationId: this.config.registrationId },
+                } : message);
+            };
+            this.messageListener = new WeChatMessageListener(this.client, processor, {
+                state: session,
+                onContext: (peer, token) => this.contexts.set(peer, token),
+                resolveAttachment: (item, signal) => downloadWeChatMedia(item, path.join(this.config.stateDir ?? path.join(tmpdir(), 'disclaude-wechat', this.id), 'media'), signal),
+                checkpoint: store && session ? async (state) => {
+                    await store.saveSession({ ...state, botId: session.botId, contexts: Object.fromEntries(this.contexts) });
+                } : undefined,
+            });
+            this.messageListener.start();
+            logger.info('WeChat channel started with message listening');
+        }
+        catch (error) {
+            await this.releaseIdentity?.();
+            this.releaseIdentity = undefined;
+            await this.releaseAccount?.();
+            this.releaseAccount = undefined;
+            throw error;
+        }
     }
     /**
      * Stop the WeChat channel.
@@ -94,54 +153,92 @@ export class WeChatChannel extends BaseChannel {
      * Stops message listener and aborts any in-progress authentication.
      */
     async doStop() {
-        // Stop message listener first
-        if (this.messageListener) {
-            await this.messageListener.stop();
-            this.messageListener = undefined;
+        try {
+            // Stop message listener first
+            if (this.messageListener) {
+                await this.messageListener.stop();
+                this.messageListener = undefined;
+            }
+            if (this.auth?.isAuthenticating()) {
+                this.auth.abort();
+            }
+            this.auth = undefined;
+            this.client = undefined;
+            logger.info('WeChat channel stopped');
         }
-        if (this.auth?.isAuthenticating()) {
-            this.auth.abort();
+        finally {
+            try {
+                await this.releaseIdentity?.();
+                this.releaseIdentity = undefined;
+            }
+            finally {
+                await this.releaseAccount?.();
+                this.releaseAccount = undefined;
+            }
         }
-        this.auth = undefined;
-        this.client = undefined;
-        logger.info('WeChat channel stopped');
     }
     /**
      * Send a message through the WeChat channel.
      *
-     * Supports 'text', 'card' (downgraded to JSON text), and 'file' types.
+     * Supports text, internal card descriptions, and encrypted image/file delivery.
      * File messages are uploaded to CDN first, then sent via sendImage/sendFile.
      */
     async doSendMessage(message) {
         if (!this.client) {
             throw new Error('WeChat client not initialized');
         }
-        if (message.type === 'text' && message.text) {
-            await this.client.sendText({
-                to: message.chatId,
-                content: message.text,
-                contextToken: message.threadId,
-            });
+        if (message.type === 'done') {
             return;
         }
-        // WeChat doesn't support cards — downgrade to JSON-serialized text
-        if (message.type === 'card' && message.card) {
-            const cardText = JSON.stringify(message.card);
-            await this.client.sendText({
-                to: message.chatId,
-                content: cardText,
-                contextToken: message.threadId,
-            });
-            logger.debug({ chatId: message.chatId, cardLength: cardText.length }, 'Card downgraded to text for WeChat MVP');
-            return;
+        message = { ...message, chatId: wechatPeer(message.chatId, this.config.registrationId) };
+        const contextToken = this.contexts.get(message.chatId);
+        if (!contextToken) {
+            throw new Error('No WeChat reply context for this peer; send a message to the bot first');
+        }
+        if (message.mentions?.length) {
+            throw new Error('WeChat mentions are not supported');
+        }
+        const text = message.type === 'text' ? message.text : message.type === 'card' ? message.description : undefined;
+        if (text) {
+            // Local 4000-byte policy. Iterate code points so emoji/Chinese stay intact.
+            const chunks = [];
+            let chunk = '';
+            let size = 0;
+            for (const char of text) {
+                const bytes = Buffer.byteLength(char);
+                if (size + bytes > 4000) {
+                    chunks.push(chunk);
+                    chunk = '';
+                    size = 0;
+                }
+                chunk += char;
+                size += bytes;
+            }
+            if (chunk) {
+                chunks.push(chunk);
+            }
+            let sent = 0;
+            let messageId;
+            try {
+                for (const content of chunks) {
+                    messageId = await this.client.sendText({ to: message.chatId, content, contextToken });
+                    sent++;
+                }
+            }
+            catch (error) {
+                if (sent) {
+                    throw new Error(`WeChat delivery failed after ${sent}/${chunks.length} text parts; delivery is partial, verify before retrying`, { cause: error });
+                }
+                throw error;
+            }
+            return messageId;
         }
         // File sending via CDN upload (Issue #1556 Phase 3.2)
         if (message.type === 'file' && message.filePath) {
-            await this.sendViaCdn(message);
-            return;
+            return await this.sendViaCdn(message);
         }
         // Unsupported message types
-        logger.warn({ type: message.type, chatId: message.chatId }, 'WeChat unsupported message type, ignoring');
+        throw new Error(`Unsupported or empty WeChat message: ${message.type}`);
     }
     /**
      * Check if the WeChat channel is healthy.
@@ -149,12 +246,12 @@ export class WeChatChannel extends BaseChannel {
      * Returns true if the client has a valid token and message listener is active.
      */
     checkHealth() {
-        return (this.client?.hasToken() ?? false) && this.messageListener?.isListening() === true;
+        return (this.client?.hasToken() ?? false) && this.messageListener?.isHealthy() === true;
     }
     /**
      * Get the capabilities of the WeChat channel.
      *
-     * Supports text and file sending. Cards are downgraded to JSON text.
+     * Supports text and file sending. Native cards are unavailable.
      */
     getCapabilities() {
         return {
@@ -166,23 +263,23 @@ export class WeChatChannel extends BaseChannel {
             supportsUpdate: false,
             supportsStreaming: false,
             supportedChannelTools: ['send_text', 'send_file'],
+            nativeVideoFormats: ['mp4'],
         };
     }
     /**
      * Check if this channel owns a given chatId.
-     * WeChat chatIds are user IDs from the WeChat API (e.g., "wxid_xxx", numeric IDs).
-     * Returns true for chatIds that don't match Feishu ("oc_"/"ou_") or REST formats.
+     * Only received/persisted iLink peers are owned. Unknown chat IDs never
+     * borrow another account or channel's reply context.
      *
      * Issue #3824: Channel ownership query for post-restart routing.
      */
     ownsChatId(chatId) {
-        // WeChat user IDs are not Feishu format (oc_/ou_) or REST format (rest-/UUID)
-        // This is a conservative check — if it doesn't match known patterns for other
-        // channels, WeChat claims it as a fallback.
-        return !chatId.startsWith('oc_')
-            && !chatId.startsWith('ou_')
-            && !chatId.startsWith('rest-')
-            && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(chatId);
+        try {
+            return this.contexts.has(wechatPeer(chatId, this.config.registrationId));
+        }
+        catch {
+            return false;
+        }
     }
     /**
      * Send a file via CDN upload + sendImage/sendFile.
@@ -197,28 +294,38 @@ export class WeChatChannel extends BaseChannel {
         const { filePath } = message;
         const fileName = path.basename(filePath);
         // Read file from disk
+        const stat = await fs.promises.stat(filePath);
+        if (!stat.isFile() || stat.size > WECHAT_MEDIA_MAX_BYTES) {
+            throw new Error('WeChat file must be a regular file no larger than 20 MiB');
+        }
         const fileData = await fs.promises.readFile(filePath);
-        // Upload to CDN
-        const { url: cdnUrl } = await this.client.uploadMedia({
-            fileData,
-            fileName,
-        });
-        // Auto-detect image vs file by extension
         const ext = path.extname(fileName).toLowerCase();
         const imageExtensions = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']);
-        if (imageExtensions.has(ext)) {
-            await this.client.sendImage({
+        const kind = imageExtensions.has(ext) ? 'image' : ext === '.mp4' ? 'video' : 'file';
+        // Upload to CDN
+        const uploaded = await this.client.uploadMedia({
+            fileData,
+            fileName,
+            to: message.chatId,
+            kind,
+        });
+        // Auto-detect image vs file by extension
+        if (kind === 'image') {
+            return await this.client.sendImage({
                 to: message.chatId,
-                imageUrl: cdnUrl,
-                contextToken: message.threadId,
+                uploaded,
+                contextToken: this.contexts.get(message.chatId),
             });
         }
+        else if (kind === 'video') {
+            return await this.client.sendVideo({ to: message.chatId, uploaded, contextToken: this.contexts.get(message.chatId) });
+        }
         else {
-            await this.client.sendFile({
+            return await this.client.sendFile({
                 to: message.chatId,
-                fileUrl: cdnUrl,
+                uploaded,
                 fileName,
-                contextToken: message.threadId,
+                contextToken: this.contexts.get(message.chatId),
             });
         }
     }

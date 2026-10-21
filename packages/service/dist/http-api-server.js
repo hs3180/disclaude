@@ -65,6 +65,10 @@ export class HttpApiServer {
     markChatRespondedHandler;
     deliveryHealthProvider;
     browserIpcStatusProvider;
+    channelCapabilitiesProvider;
+    setChannelCapabilitiesProvider(provider) {
+        this.channelCapabilitiesProvider = provider;
+    }
     /** Connected SSE clients for topic notifications (Issue #4031) */
     sseClients = new Set();
     /** Heartbeat interval timer for SSE keepalive */
@@ -306,6 +310,7 @@ export class HttpApiServer {
      * Set up default routes.
      */
     setupRoutes() {
+        this.addRoute('POST', '/api/channel-capabilities', this.handleChannelCapabilities.bind(this));
         this.addRoute('GET', '/api/status', this.handleStatus.bind(this));
         this.addRoute('GET', '/api/health/detailed', this.handleDetailedHealth.bind(this));
         // Issue #4279: REST parity with REST API uploadFile.
@@ -329,6 +334,25 @@ export class HttpApiServer {
         this.addRoute('POST', '/api/push', this.handlePush.bind(this));
         // Issue #4031: SSE endpoint for topic group message notifications
         this.addRoute('GET', '/api/topic-stream', this.handleTopicStream.bind(this));
+    }
+    async handleChannelCapabilities(req, res) {
+        if (!this.channelCapabilitiesProvider) {
+            this.sendJson(res, 503, { ok: false, message: 'Channel capability discovery is unavailable' });
+            return;
+        }
+        let body;
+        try {
+            body = JSON.parse(await readBody(req));
+        }
+        catch {
+            this.sendJson(res, 400, { ok: false, message: 'Expected a JSON object with optional chatId' });
+            return;
+        }
+        if (!body || typeof body !== 'object' || Array.isArray(body) || (body.chatId !== undefined && typeof body.chatId !== 'string')) {
+            this.sendJson(res, 400, { ok: false, message: 'chatId must be a string' });
+            return;
+        }
+        this.sendJson(res, 200, { ok: true, channels: this.channelCapabilitiesProvider(body.chatId) });
     }
     /**
      * Handle an incoming HTTP request.

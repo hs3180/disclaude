@@ -24,6 +24,9 @@ import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
 import { createChannelCallbacksFactory } from './utils/channel-handlers.js';
 import { ServiceTurnRecoveryStore } from './service-turn-recovery.js';
+import { DEFAULT_WECHAT_STATE_DIR } from './channels/wechat/state-store.js';
+import { WeChatRegistry } from './channels/wechat/registry.js';
+import { WeChatRegistrationRuntime } from './channels/wechat/runtime.js';
 import net from 'node:net';
 import path from 'node:path';
 import { homedir } from 'node:os';
@@ -354,7 +357,7 @@ export async function main() {
         if (!channel) {
             throw new Error('No channel available for InputMessageRouter callbacks');
         }
-        const descriptor = descriptorMap.get(channel.id);
+        const descriptor = descriptorMap.get(channel.id.startsWith('wechat:') ? 'wechat' : channel.id);
         if (descriptor) {
             return descriptor.createCallbacks(channel, channelSetupContext)(chatId, threadRootId);
         }
@@ -376,8 +379,16 @@ export async function main() {
     }
     // Create and wire channels from resolved config (Issue #1594 Phase 3)
     // Config-driven: cli.ts no longer hard-codes channel type checks.
+    let wechatRuntime;
     for (const { type, config } of channelEntries) {
-        await lifecycleManager.createAndWireByType(type, config);
+        if (type === 'wechat') {
+            wechatRuntime = new WeChatRegistrationRuntime(new WeChatRegistry(String(config.stateDir)), lifecycleManager, service, {
+                routeTag: config.routeTag,
+            });
+        }
+        else {
+            await lifecycleManager.createAndWireByType(type, config);
+        }
     }
     // Handle graceful shutdown
     let isShuttingDown = false;
@@ -392,6 +403,7 @@ export async function main() {
         try {
             await agentPool.shutdownForServiceRestart({ drainTimeoutMs: 10_000, noticeTimeoutMs: 2_000 });
             await httpApiServer?.stop();
+            await wechatRuntime?.stop();
             await lifecycleManager.stopAll();
             await service.stop();
             // Issue #3417: Release process lock on shutdown so next instance can start immediately.
@@ -428,7 +440,16 @@ export async function main() {
         // Start DisclaudeService
         await service.start({ deferScheduler: true });
         // Start all registered channels via ChannelLifecycleManager (Issue #1594 Phase 2)
-        await lifecycleManager.startAll();
+        await wechatRuntime?.start();
+        try {
+            await lifecycleManager.startAll();
+        }
+        catch (error) {
+            if (!wechatRuntime) {
+                throw error;
+            }
+            logger.warn('No connected channel; WeChat registration remains available');
+        }
         // Channels are ready: report prior-process interruptions even if the
         // user sends no further message. Failed delivery stays pending for that
         // session's next available path; startup never replays model inputs.
@@ -441,19 +462,27 @@ export async function main() {
         }, { timeoutMs: 3_000 });
         // Log startup info
         for (const { type, config } of channelEntries) {
+            if (type === 'wechat') {
+                continue;
+            } // Registration is available even with no accounts.
+            const channel = service.getChannel(String(config.id ?? type));
+            if (channel?.status !== 'running') {
+                logger.warn({ type, channelId: channel?.id, status: channel?.status }, 'Channel unavailable; other channels continue serving');
+                continue;
+            }
             logger.info({ type }, `${type.charAt(0).toUpperCase() + type.slice(1)} Channel started`);
             if (type === 'rest') {
                 const restConf = config;
                 console.log(`REST Channel started on http://${restConf.host}:${restConf.port}`);
             }
         }
-        logger.info({ channels: channelEntries.map((e) => e.type) }, 'disclaude service started successfully');
+        logger.info({ channels: channelManager.getStatusInfo() }, 'disclaude service started successfully');
         if (restEntry) {
             const restConf = restEntry.config;
             console.log(`disclaude service started on http://${restConf.host}:${restConf.port}`);
         }
         else {
-            console.log('disclaude service started (Feishu only mode)');
+            console.log(`disclaude service started (${service.getChannels().map(channel => channel.id).join(', ') || 'no channels'})`);
         }
         // The internal HTTP API is always enabled. Port 0 is the safe default so
         // concurrent instances never contend for a historical fixed port.
@@ -475,6 +504,9 @@ export async function main() {
             });
             httpApiServer.setInstanceId(service.getInstanceId());
             httpApiServer.setBrowserIpcStatusProvider(() => service.getBrowserIpcStatus());
+            httpApiServer.setChannelCapabilitiesProvider(chatId => service.getChannels()
+                .filter(channel => !chatId || channel.ownsChatId(chatId))
+                .map(channel => ({ id: channel.id, name: channel.name, status: channel.status, healthy: channel.isHealthy(), capabilities: channel.getCapabilities() })));
             const feishuChannel = channelManager.get('feishu');
             httpApiServer.setDeliveryHealthProvider(() => feishuChannel?.getDeliveryHealth?.() ?? {
                 status: 'unknown',
@@ -555,6 +587,7 @@ export async function main() {
         }
     }
     catch (error) {
+        await wechatRuntime?.stop().catch(() => { });
         await httpApiServer?.stop().catch(() => { });
         await service.stop().catch(() => { });
         logger.error({ err: error }, 'Failed to start disclaude service');
@@ -632,8 +665,7 @@ function sleep(ms) {
  * channel type requires updating this function. A future config unification
  * (all channels under `channels.<type>`) would eliminate this limitation.
  *
- * Note: WeChat is intentionally NOT included — it only supports dynamic
- * registration at runtime (Issue #1638), not config-driven creation.
+ * WeChat uses credentials saved by `disclaude wechat login`, never a YAML token.
  *
  * Issue #1594 Phase 3: Centralizes config resolution so cli.ts can iterate
  * over results without hard-coded channel type checks.
@@ -685,11 +717,26 @@ export function resolveChannelConfigs(rawConfig, config) {
             },
         });
     }
+    const wechat = rawConfig.channels?.wechat;
+    if (wechat && wechat.enabled !== false) {
+        if (wechat.enabled !== undefined && typeof wechat.enabled !== 'boolean') {
+            throw new Error('channels.wechat.enabled must be boolean');
+        }
+        const unknown = Object.keys(wechat).filter(key => !['enabled', 'stateDir', 'routeTag'].includes(key));
+        if (unknown.length) {
+            throw new Error(`Unsupported channels.wechat fields: ${unknown.join(', ')}; save credentials with disclaude wechat login`);
+        }
+        const stateDir = wechat.stateDir ?? DEFAULT_WECHAT_STATE_DIR;
+        if (typeof stateDir !== 'string' || !path.isAbsolute(stateDir)) {
+            throw new Error('channels.wechat.stateDir must be an absolute path');
+        }
+        if (wechat.routeTag !== undefined && (typeof wechat.routeTag !== 'string' || /[\r\n]/.test(wechat.routeTag))) {
+            throw new Error('channels.wechat.routeTag must be a single-line string');
+        }
+        entries.push({ type: 'wechat', config: { stateDir, ...(wechat.routeTag ? { routeTag: wechat.routeTag } : {}) } });
+    }
     // Warn on unrecognized channel config keys (Issue #1594 review P2)
-    // Note: WeChat is intentionally NOT in knownChannelKeys — it only supports
-    // dynamic registration (Issue #1638), not config-driven creation.
-    // If a user adds channels.wechat, they will get a warning.
-    const knownChannelKeys = new Set(['rest', 'feishu']);
+    const knownChannelKeys = new Set(['rest', 'feishu', 'wechat']);
     const channelKeys = Object.keys(rawConfig.channels || {});
     for (const key of channelKeys) {
         if (!knownChannelKeys.has(key)) {

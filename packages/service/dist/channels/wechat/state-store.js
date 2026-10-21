@@ -1,0 +1,127 @@
+import * as fs from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+export const DEFAULT_WECHAT_STATE_DIR = join(homedir(), '.disclaude', 'wechat');
+export const DEFAULT_WECHAT_BASE_URL = 'https://ilinkai.weixin.qq.com';
+/** Only HTTPS Tencent iLink hosts may receive server-issued credentials. */
+export function validateWechatBaseUrl(value) {
+    let url;
+    try {
+        url = new URL(value);
+    }
+    catch {
+        throw new Error('Invalid WeChat API URL');
+    }
+    if (url.protocol !== 'https:' || !url.hostname.endsWith('.weixin.qq.com') || url.username || url.password || url.port || url.search || url.hash || !['', '/'].includes(url.pathname)) {
+        throw new Error('WeChat API URL must be an HTTPS weixin.qq.com origin');
+    }
+    return url.origin;
+}
+/** Owner-only, atomic storage. This directory must belong to one account. */
+export class WeChatStateStore {
+    dir;
+    constructor(dir = DEFAULT_WECHAT_STATE_DIR) {
+        this.dir = dir;
+    }
+    async read(name) {
+        try {
+            const file = join(this.dir, name);
+            const stat = await fs.lstat(file);
+            if (!stat.isFile() || stat.size > 4 * 1024 * 1024) {
+                throw new Error('invalid file');
+            }
+            await fs.chmod(file, 0o600);
+            return JSON.parse(await fs.readFile(file, 'utf8'));
+        }
+        catch (error) {
+            if (error.code === 'ENOENT') {
+                return undefined;
+            }
+            throw new Error(`Cannot read WeChat ${name}; repair or restore the state file`);
+        }
+    }
+    async prepare() {
+        await fs.mkdir(this.dir, { recursive: true, mode: 0o700 });
+        if (!(await fs.lstat(this.dir)).isDirectory()) {
+            throw new Error('WeChat state directory must be a real directory');
+        }
+        await fs.chmod(this.dir, 0o700);
+    }
+    async write(name, value) {
+        await this.prepare();
+        const temp = join(this.dir, `.${randomUUID()}.tmp`);
+        try {
+            await fs.writeFile(temp, JSON.stringify(value), { mode: 0o600, flag: 'wx' });
+            await fs.rename(temp, join(this.dir, name));
+        }
+        finally {
+            await fs.rm(temp, { force: true });
+        }
+    }
+    async loadCredentials() {
+        const value = await this.read('auth.json');
+        if (!value) {
+            return undefined;
+        }
+        if (typeof value.token !== 'string' || !value.token.trim() || typeof value.botId !== 'string' || !value.botId) {
+            throw new Error('Invalid WeChat credentials; run disclaude wechat login');
+        }
+        value.baseUrl = validateWechatBaseUrl(value.baseUrl);
+        return value;
+    }
+    async saveCredentials(value) {
+        validateWechatBaseUrl(value.baseUrl);
+        await this.write('auth.json', value);
+        // A fresh login invalidates the previous account's cursor and context tokens.
+        await this.saveSession({ botId: value.botId, cursor: '', seenMessageIds: [], contexts: {} });
+    }
+    async loadSession(botId) {
+        const value = await this.read('session.json');
+        if (!value || value.botId !== botId) {
+            return { botId, cursor: '', seenMessageIds: [], contexts: {} };
+        }
+        if (typeof value.cursor !== 'string' || !Array.isArray(value.seenMessageIds) || !value.seenMessageIds.every(x => typeof x === 'string') || !value.contexts || typeof value.contexts !== 'object' || Array.isArray(value.contexts) || Object.values(value.contexts).some(x => typeof x !== 'string')) {
+            throw new Error('Invalid WeChat session state; restore the file before restarting');
+        }
+        return value;
+    }
+    async saveSession(state) { await this.write('session.json', state); }
+    /** Excludes concurrent listeners/login writers, recovering locks from dead PIDs. */
+    async lock() {
+        await this.prepare();
+        const file = join(this.dir, 'listener.lock');
+        const nonce = randomUUID();
+        for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+                await fs.writeFile(file, JSON.stringify({ pid: process.pid, nonce }), { flag: 'wx', mode: 0o600 });
+                return async () => {
+                    const owner = await this.read('listener.lock');
+                    if (owner?.nonce === nonce) {
+                        await fs.rm(file, { force: true });
+                    }
+                };
+            }
+            catch (error) {
+                if (error.code !== 'EEXIST') {
+                    throw error;
+                }
+                const owner = await this.read('listener.lock');
+                if (!owner || !Number.isInteger(owner.pid) || owner.pid <= 0) {
+                    throw new Error('Invalid WeChat listener lock');
+                }
+                try {
+                    process.kill(owner.pid, 0);
+                }
+                catch (probeError) {
+                    if (probeError.code === 'ESRCH') {
+                        await fs.rm(file, { force: true });
+                        continue;
+                    }
+                }
+                throw new Error('WeChat account is already in use; stop its listener before login or restart');
+            }
+        }
+        throw new Error('Cannot acquire WeChat account lock');
+    }
+}

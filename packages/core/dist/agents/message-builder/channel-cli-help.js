@@ -1,5 +1,5 @@
 const COMMON_HELP = `Common options:
-  --chat <id>       Target chat ID (oc_..., ou_..., or cli-...).
+  --chat <id>       Target chat ID (oc_..., ou_..., cli-..., rest-..., UUID, user@im.wechat, or wechat:registration-id:user@im.wechat).
   --parent <id>     Triggering Message ID for reply attribution.
   --base-url <url>  DisclaudeService REST URL (required unless supplied by the managed environment).
   --api-token <t>   Bearer token (managed agents inherit it automatically).
@@ -49,6 +49,7 @@ For a topic card pass both --parent <current-Message-ID> and --thread-root
 same idempotency key for retries; uncertain acknowledgment is not proof that no
 card was sent.`;
 const COMMAND_HELP = {
+    capabilities: 'Read actual active channel capabilities without sending.\n--chat <id> Optional: filter to the channel that owns this peer.\nAn empty result means no active channel owns this chat. WeChat replies use private saved context; omit --parent.',
     send_text: 'Send plain text.\n--text <text> | --text-file <path|-> | stdin\n--mentions <json> Optional array of {openId, name?}.',
     send_file: 'Send an existing file.\n--file <path> Required file path.',
     send_card: 'Send a display-only card.\n--card <json> | --card-file <path|-> | card JSON on stdin\nCard must be a JSON object. Dry-run does not upload or resolve images.',
@@ -68,6 +69,7 @@ Usage:
   disclaude channel <command> [options]
 
 Commands and inputs:
+  capabilities     Discover active channel capabilities; optional --chat <id>. Read-only.
   send_text        Send plain text: --text <text>, --text-file <path>, or stdin.
   send_file        Send a file: --file <path>.
   send_card        Send a display-only card: --card <json>, --card-file <path>, or stdin.

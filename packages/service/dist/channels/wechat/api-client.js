@@ -1,5 +1,5 @@
 /**
- * WeChat API Client (MVP).
+ * Tencent iLink API client.
  *
  * HTTP client for interacting with the WeChat (Tencent ilink) Bot API.
  * Uses native fetch for zero external runtime dependencies.
@@ -11,13 +11,17 @@
  * - GET  ilink/bot/get_qrcode_status   - Long-poll QR login status (35s)
  * - POST ilink/bot/sendmessage         - Send a message
  * - POST ilink/bot/getupdates          - Long-poll for incoming messages
- * - POST ilink/bot/typing              - Send typing indicator
+ * - POST ilink/bot/getconfig           - Read account configuration
+ * - POST ilink/bot/sendtyping          - Send typing indicator
+ * - POST ilink/bot/getuploadurl        - Negotiate encrypted CDN upload
  *
  * @module channels/wechat/api-client
  * @see Issue #1473 - WeChat Channel MVP
  * @see Issue #1556 - WeChat Channel Feature Enhancement
  */
-import { createLogger } from "../../../../core/dist/index.js";
+import { createLogger, registerConsumedSecretValue } from "../../../../core/dist/index.js";
+import { validateWechatBaseUrl } from './state-store.js';
+import { uploadEncryptedMedia } from './media.js';
 const logger = createLogger('WeChatApiClient');
 /** Default timeout for regular API requests (milliseconds). */
 const DEFAULT_API_TIMEOUT_MS = 15_000;
@@ -25,8 +29,36 @@ const DEFAULT_API_TIMEOUT_MS = 15_000;
 const LONG_POLL_TIMEOUT_MS = 35_000;
 /** Default bot type for QR code generation. */
 const DEFAULT_BOT_TYPE = 3;
-/** Maximum file size for CDN upload (20MB). */
-const MAX_UPLOAD_SIZE_BYTES = 20 * 1024 * 1024;
+/** Safe diagnostics: never include raw response bodies, URLs or context tokens. */
+export class WeChatApiError extends Error {
+    code;
+    authExpired;
+    constructor(code) {
+        super(`WeChat API error [${code}]: Error code ${code}${code === -14 || code === 401 ? '; login required' : ''}`);
+        this.code = code;
+        this.name = 'WeChatApiError';
+        this.authExpired = code === -14 || code === 401;
+    }
+}
+/** Tokenize JSON so uint64 identifiers never pass through a JS number. */
+function parseApiJson(text) {
+    try {
+        let idValue = false;
+        const normalized = text.replace(/"(?:\\.|[^"\\])*"\s*:\s*|"(?:\\.|[^"\\])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|[{}\[\],]/g, (token) => {
+            if (/^".*:\s*$/s.test(token)) {
+                idValue = ['message_id', 'msg_id', 'svr_id'].includes(JSON.parse(token.replace(/:\s*$/, '').trim()));
+                return token;
+            }
+            const result = idValue && /^\d+$/.test(token) ? JSON.stringify(token) : token;
+            idValue = false;
+            return result;
+        });
+        return JSON.parse(normalized);
+    }
+    catch {
+        throw new Error('WeChat API returned invalid JSON');
+    }
+}
 /**
  * WeChat API Client for Tencent ilink Bot API (MVP).
  *
@@ -38,6 +70,18 @@ export class WeChatApiClient {
     token;
     routeTag;
     botType;
+    updatesCursor = '';
+    pendingCursor;
+    pollTimeoutMs = LONG_POLL_TIMEOUT_MS;
+    getUpdatesCursor() { return this.updatesCursor; }
+    setUpdatesCursor(cursor) { this.updatesCursor = cursor; this.pendingCursor = undefined; }
+    /** Commit only after the listener has accepted every message in the batch. */
+    acknowledgeUpdates() {
+        if (this.pendingCursor !== undefined) {
+            this.updatesCursor = this.pendingCursor;
+        }
+        this.pendingCursor = undefined;
+    }
     /**
      * Create a new WeChat API client.
      *
@@ -45,7 +89,10 @@ export class WeChatApiClient {
      */
     constructor(options) {
         this.baseUrl = options.baseUrl.replace(/\/+$/, '');
-        this.token = options.token;
+        this.token = options.token?.trim();
+        if (this.token) {
+            registerConsumedSecretValue(this.token);
+        }
         this.routeTag = options.routeTag;
         this.botType = options.botType ?? DEFAULT_BOT_TYPE;
     }
@@ -53,7 +100,8 @@ export class WeChatApiClient {
      * Set the bot token (called after successful authentication).
      */
     setToken(token) {
-        this.token = token;
+        this.token = token.trim();
+        registerConsumedSecretValue(this.token);
         logger.info('Bot token updated');
     }
     /**
@@ -66,7 +114,11 @@ export class WeChatApiClient {
      * Check if the client has a valid token.
      */
     hasToken() {
-        return !!this.token;
+        return !!this.token?.trim();
+    }
+    /** Read-only credential diagnostic; a poll timeout alone cannot prove login. */
+    async checkSession(userId) {
+        await this.postJson('ilink/bot/getconfig', { ilink_user_id: userId });
     }
     // ---------------------------------------------------------------------------
     // Auth endpoints (GET, no auth headers)
@@ -78,14 +130,15 @@ export class WeChatApiClient {
      *
      * @returns QR code data including URL and identifier
      */
-    async getBotQrCode() {
+    async getBotQrCode(options) {
         const url = `${this.baseUrl}/ilink/bot/get_bot_qrcode?bot_type=${this.botType}`;
         logger.info({ url }, 'Fetching QR code');
-        const headers = {};
+        const body = JSON.stringify({ local_token_list: [] });
+        const headers = { 'Content-Type': 'application/json', 'iLink-App-Id': 'bot', 'iLink-App-ClientVersion': '1' };
         if (this.routeTag) {
             headers['SKRouteTag'] = this.routeTag;
         }
-        const response = await this.fetchJson(url, { method: 'GET', headers });
+        const response = await this.fetchJson(url, { method: 'POST', headers, body, signal: options?.signal });
         // eslint-disable-next-line eqeqeq -- intentional nullish check (null || undefined)
         if (response.qrcode == null || response.qrcode_img_content == null) {
             throw new Error('Failed to get QR code: missing fields in response');
@@ -103,19 +156,28 @@ export class WeChatApiClient {
      * @param qrcode - QR code identifier from getBotQrCode
      * @returns Current login status
      */
-    async getQrCodeStatus(qrcode) {
-        const url = `${this.baseUrl}/ilink/bot/get_qrcode_status?qrcode=${encodeURIComponent(qrcode)}`;
+    async getQrCodeStatus(qrcode, options) {
+        const url = `${this.baseUrl}/ilink/bot/get_qrcode_status?qrcode=${encodeURIComponent(qrcode)}${options?.verifyCode ? `&verify_code=${encodeURIComponent(options.verifyCode)}` : ''}`;
         const headers = {
             'iLink-App-ClientVersion': '1',
+            'iLink-App-Id': 'bot',
         };
         if (this.routeTag) {
             headers['SKRouteTag'] = this.routeTag;
         }
         try {
-            const data = await this.fetchJson(url, { method: 'GET', headers, timeoutMs: LONG_POLL_TIMEOUT_MS });
+            const data = await this.fetchJson(url, { method: 'GET', headers, timeoutMs: LONG_POLL_TIMEOUT_MS, signal: options?.signal });
             const status = (data.status || 'wait');
+            if (status === 'scaned_but_redirect' && data.redirect_host) {
+                this.baseUrl = validateWechatBaseUrl(`https://${data.redirect_host}`);
+            }
             if (status === 'confirmed') {
-                this.token = data.bot_token;
+                if (typeof data.bot_token === 'string') {
+                    this.setToken(data.bot_token);
+                }
+                if (data.baseurl) {
+                    this.baseUrl = validateWechatBaseUrl(data.baseurl);
+                }
                 logger.info({ botId: data.ilink_bot_id }, 'QR code login confirmed');
             }
             return {
@@ -160,21 +222,22 @@ export class WeChatApiClient {
             },
             base_info: { channel_version: '0.0.1' },
         };
-        await this.postJson('ilink/bot/sendmessage', body);
+        const result = await this.postMessage(body);
         logger.debug({ to, contentLength: content.length }, 'Text message sent');
+        return result.message_id;
     }
     // ---------------------------------------------------------------------------
     // Image & File sending — Issue #1556 Phase 3.2
     // ---------------------------------------------------------------------------
     /**
-     * Send an image message via CDN URL.
+     * Send an image using an encrypted CDN reference.
      *
      * POST /ilink/bot/sendmessage (with image_item)
      *
      * @param params - Image message parameters
      */
     async sendImage(params) {
-        const { to, imageUrl, contextToken } = params;
+        const { to, uploaded, contextToken } = params;
         const clientId = this.generateClientId();
         const body = {
             msg: {
@@ -183,23 +246,23 @@ export class WeChatApiClient {
                 client_id: clientId,
                 message_type: 2, // BOT
                 message_state: 2, // FINISH
-                item_list: [{ type: 2, image_item: { url: imageUrl } }],
+                item_list: [{ type: 2, image_item: { media: uploaded.media, mid_size: uploaded.encryptedSize } }],
                 context_token: contextToken ?? undefined,
             },
             base_info: { channel_version: '0.0.1' },
         };
-        await this.postJson('ilink/bot/sendmessage', body);
-        logger.debug({ to, imageUrl }, 'Image message sent');
+        const result = await this.postMessage(body);
+        return result.message_id;
     }
     /**
-     * Send a file message via CDN URL.
+     * Send a file using an encrypted CDN reference.
      *
      * POST /ilink/bot/sendmessage (with file_item)
      *
      * @param params - File message parameters
      */
     async sendFile(params) {
-        const { to, fileUrl, fileName, contextToken } = params;
+        const { to, uploaded, fileName, contextToken } = params;
         const clientId = this.generateClientId();
         const body = {
             msg: {
@@ -208,13 +271,26 @@ export class WeChatApiClient {
                 client_id: clientId,
                 message_type: 2, // BOT
                 message_state: 2, // FINISH
-                item_list: [{ type: 3, file_item: { url: fileUrl, file_name: fileName } }],
+                item_list: [{ type: 4, file_item: { media: uploaded.media, file_name: fileName, len: String(uploaded.size) } }],
                 context_token: contextToken ?? undefined,
             },
             base_info: { channel_version: '0.0.1' },
         };
-        await this.postJson('ilink/bot/sendmessage', body);
-        logger.debug({ to, fileUrl, fileName }, 'File message sent');
+        const result = await this.postMessage(body);
+        return result.message_id;
+    }
+    /** Native iLink video: video_size is ciphertext bytes, as in Tencent's sender. */
+    async sendVideo(params) {
+        const { to, uploaded, contextToken } = params;
+        const result = await this.postMessage({
+            msg: {
+                from_user_id: '', to_user_id: to, client_id: this.generateClientId(),
+                message_type: 2, message_state: 2,
+                item_list: [{ type: 5, video_item: { media: uploaded.media, video_size: uploaded.encryptedSize } }],
+                context_token: contextToken,
+            },
+        });
+        return result.message_id;
     }
     // ---------------------------------------------------------------------------
     // Message listening (getUpdates long-poll) — Issue #1556 Phase 3.1
@@ -231,10 +307,16 @@ export class WeChatApiClient {
      * @returns Array of new message updates (empty on timeout)
      */
     async getUpdates(options) {
-        const { signal, timeoutMs = LONG_POLL_TIMEOUT_MS } = options ?? {};
+        const { signal, timeoutMs = this.pollTimeoutMs } = options ?? {};
+        this.pendingCursor = undefined;
         try {
-            const data = await this.postJson('ilink/bot/getupdates', {}, { timeoutMs, signal });
-            return data.update_list ?? [];
+            const data = await this.postJson('ilink/bot/getupdates', { get_updates_buf: this.updatesCursor, base_info: { channel_version: '0.0.1', bot_agent: 'Disclaude/0.6.5' } }, { timeoutMs, signal });
+            this.pendingCursor = typeof data.get_updates_buf === 'string' ? data.get_updates_buf : undefined;
+            const suggestedTimeout = data.longpolling_timeout_ms;
+            if (typeof suggestedTimeout === 'number' && Number.isFinite(suggestedTimeout) && suggestedTimeout > 0) {
+                this.pollTimeoutMs = Math.min(120_000, Math.max(1_000, suggestedTimeout + 5_000));
+            }
+            return data.msgs ?? data.update_list ?? [];
         }
         catch (error) {
             // Timeout during long polling is normal — return empty
@@ -251,7 +333,7 @@ export class WeChatApiClient {
     /**
      * Send a typing indicator to a user.
      *
-     * POST /ilink/bot/typing
+     * POST /ilink/bot/sendtyping (after getconfig)
      *
      * Informs the user that the bot is processing their message.
      * Failures are non-fatal and logged as warnings.
@@ -260,11 +342,14 @@ export class WeChatApiClient {
      */
     async sendTyping(params) {
         const { to } = params;
-        const body = {
-            to_user_id: to,
-        };
         try {
-            await this.postJson('ilink/bot/typing', body, { timeoutMs: 5_000 });
+            const config = await this.postJson('ilink/bot/getconfig', {
+                ilink_user_id: to, context_token: params.contextToken,
+            }, { timeoutMs: 5_000 });
+            if (!config.typing_ticket) {
+                return;
+            }
+            await this.postJson('ilink/bot/sendtyping', { ilink_user_id: to, typing_ticket: config.typing_ticket, status: 1 }, { timeoutMs: 5_000 });
             logger.debug({ to }, 'Typing indicator sent');
         }
         catch (error) {
@@ -279,60 +364,16 @@ export class WeChatApiClient {
     /**
      * Upload a file to WeChat CDN.
      *
-     * POST /ilink/bot/upload
+     * POST /ilink/bot/getuploadurl, then encrypted CDN POST
      *
      * @param params - Upload parameters
      * @returns CDN URL and file key of the uploaded file
      */
     async uploadMedia(params) {
-        const { fileData, fileName, mimeType } = params;
-        if (fileData.length > MAX_UPLOAD_SIZE_BYTES) {
-            throw new Error(`File too large: ${fileData.length} bytes (max ${MAX_UPLOAD_SIZE_BYTES})`);
-        }
-        const url = `${this.baseUrl}/ilink/bot/upload`;
-        const headers = this.buildAuthHeaders('');
-        // Remove Content-Length and Content-Type as FormData will set them
-        delete headers['Content-Length'];
-        delete headers['Content-Type'];
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), DEFAULT_API_TIMEOUT_MS);
-        try {
-            const formData = new FormData();
-            formData.append('file', new Blob([fileData], { type: mimeType || 'application/octet-stream' }), fileName);
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: {
-                    'AuthorizationType': headers['AuthorizationType'] ?? '',
-                    'Authorization': headers['Authorization'] ?? '',
-                    'X-WECHAT-UIN': headers['X-WECHAT-UIN'] ?? '',
-                    ...(this.routeTag ? { 'SKRouteTag': this.routeTag } : {}),
-                },
-                body: formData,
-                signal: controller.signal,
-            });
-            clearTimeout(timer);
-            if (!response.ok) {
-                const text = await response.text().catch(() => '(unreadable)');
-                logger.error({ status: response.status, body: text }, 'Upload failed');
-                throw new Error(`WeChat upload error [${response.status}]: ${text}`);
-            }
-            const rawText = await response.text();
-            const data = JSON.parse(rawText);
-            const { ret } = data;
-            if (ret !== undefined && ret !== 0) {
-                const errMsg = data.err_msg || `Error code ${ret}`;
-                throw new Error(`WeChat upload error [${ret}]: ${errMsg}`);
-            }
-            if (!data.url || !data.file_key) {
-                throw new Error('Upload response missing url or file_key');
-            }
-            logger.info({ fileName, url: data.url, fileKey: data.file_key }, 'File uploaded to CDN');
-            return { url: data.url, fileKey: data.file_key };
-        }
-        catch (error) {
-            clearTimeout(timer);
-            throw error;
-        }
+        return await uploadEncryptedMedia({
+            ...params,
+            requestUpload: (body) => this.postJson('ilink/bot/getuploadurl', body),
+        });
     }
     // ---------------------------------------------------------------------------
     // Internal helpers
@@ -342,7 +383,7 @@ export class WeChatApiClient {
      */
     async postJson(endpoint, body, options) {
         const url = `${this.baseUrl}/${endpoint}`;
-        const bodyStr = JSON.stringify(body);
+        const bodyStr = JSON.stringify({ ...body, base_info: { channel_version: '0.0.1', bot_agent: 'Disclaude' } });
         const headers = this.buildAuthHeaders(bodyStr);
         logger.trace({ endpoint }, 'API POST request');
         const data = await this.fetchJson(url, {
@@ -354,6 +395,17 @@ export class WeChatApiClient {
         });
         return data;
     }
+    async postMessage(body) {
+        try {
+            return await this.postJson('ilink/bot/sendmessage', body);
+        }
+        catch (error) {
+            if (error instanceof WeChatApiError) {
+                throw error;
+            }
+            throw new Error('WeChat delivery outcome unknown after timeout, network or response failure; verify in WeChat before retrying');
+        }
+    }
     /**
      * Build authenticated headers for POST requests.
      * Matches the official @tencent-weixin/openclaw-weixin header format.
@@ -364,6 +416,8 @@ export class WeChatApiClient {
             'AuthorizationType': 'ilink_bot_token',
             'Content-Length': String(Buffer.byteLength(body, 'utf-8')),
             'X-WECHAT-UIN': this.randomWechatUin(),
+            'iLink-App-Id': 'bot',
+            'iLink-App-ClientVersion': '1',
         };
         if (this.token?.trim()) {
             headers['Authorization'] = `Bearer ${this.token.trim()}`;
@@ -395,8 +449,12 @@ export class WeChatApiClient {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
         // Link external signal if provided
-        if (opts.signal) {
-            opts.signal.addEventListener('abort', () => controller.abort(), { once: true });
+        const onAbort = () => controller.abort();
+        if (opts.signal?.aborted) {
+            onAbort();
+        }
+        else {
+            opts.signal?.addEventListener('abort', onAbort, { once: true });
         }
         try {
             const response = await fetch(url, {
@@ -404,31 +462,30 @@ export class WeChatApiClient {
                 headers: opts.headers,
                 body: opts.body,
                 signal: controller.signal,
+                redirect: 'error',
             });
-            clearTimeout(timer);
             if (!response.ok) {
-                const text = await response.text().catch(() => '(unreadable)');
-                logger.error({ url, status: response.status, body: text }, 'API request failed');
-                throw new Error(`WeChat API error [${response.status}]: ${text}`);
+                await response.body?.cancel();
+                throw new WeChatApiError(response.status);
             }
             const rawText = await response.text();
-            const data = JSON.parse(rawText);
+            const data = parseApiJson(rawText);
             // Check for WeChat iLink error format (ret !== 0)
-            const ret = data.ret;
-            if (ret !== undefined && ret !== 0) {
-                const errMsg = data.err_msg || data.errmsg || `Error code ${ret}`;
-                logger.error({ url, ret, errMsg }, 'API returned error');
-                throw new Error(`WeChat API error [${ret}]: ${errMsg}`);
+            const ret = Number(data.errcode || data.ret || 0);
+            if (ret !== 0) {
+                throw new WeChatApiError(ret);
             }
             return data;
         }
         catch (error) {
-            clearTimeout(timer);
             if (error instanceof Error && error.name === 'AbortError') {
-                logger.error({ url }, 'API request timed out');
                 throw error;
             }
             throw error;
+        }
+        finally {
+            clearTimeout(timer);
+            opts.signal?.removeEventListener('abort', onAbort);
         }
     }
 }

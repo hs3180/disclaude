@@ -123,6 +123,7 @@ export class DisclaudeService extends EventEmitter {
      * Unregister a communication channel.
      */
     unregisterChannel(channelId) {
+        this.channelHandlersMap.delete(channelId);
         return this.channelManager.unregister(channelId);
     }
     /**
@@ -154,7 +155,7 @@ export class DisclaudeService extends EventEmitter {
      * owns a given chatId via `channel.ownsChatId(chatId)`.
      */
     registerChannelHandlers(channelType, handlers, channel) {
-        this.channelHandlersMap.set(channelType, { handlers, channel });
+        this.channelHandlersMap.set(channel.id, { handlers, channel });
         logger.info({ channelType }, 'Channel API handlers registered');
     }
     /**
@@ -421,10 +422,8 @@ export class DisclaudeService extends EventEmitter {
         if (!h) {
             throw new Error('No channel handlers available');
         }
-        // The channel handler returns Promise<void> (the REST API layer synthesizes
-        // success/messageId); REST confirms acceptance with { success: true }.
-        await h.sendMessage(chatId, text, threadId, mentions);
-        return { success: true };
+        const messageId = await h.sendMessage(chatId, text, threadId, mentions);
+        return { success: true, ...(typeof messageId === 'string' ? { messageId } : {}) };
     }
     /**
      * Send a Feishu card to a chat — delegates to the channel's sendCard
@@ -564,13 +563,19 @@ export class DisclaudeService extends EventEmitter {
      */
     resolveApiHandlers(chatId) {
         if (chatId) {
-            for (const { handlers, channel } of this.channelHandlersMap.values()) {
-                if (channel.ownsChatId(chatId)) {
-                    return handlers;
-                }
+            const matches = [...this.channelHandlersMap.values()].filter(({ channel }) => channel.ownsChatId(chatId));
+            if (matches.length > 1) {
+                throw new Error('Ambiguous chat ownership; use an unambiguous chat ID');
+            }
+            if (matches[0]) {
+                return matches[0].handlers;
             }
         }
-        return this.feishuHandlersContainer.handlers;
+        // Preserve Feishu's legacy unscoped operations and recognized platform IDs.
+        if (!chatId || /^o[cu]_/.test(chatId)) {
+            return this.feishuHandlersContainer.handlers;
+        }
+        throw new Error('No registered channel owns this chat; use a known conversation ID');
     }
     /**
      * Build the SchedulerCallbacks that bridge the Scheduler to DisclaudeService's
@@ -594,7 +599,7 @@ export class DisclaudeService extends EventEmitter {
                     chatId,
                     text: message,
                 };
-                return await this.channelManager.broadcast(outgoingMessage);
+                return await this.channelManager.sendToChat(outgoingMessage);
             },
             resetAgent: (chatId, skipContext = true) => {
                 this.agentPool?.reset(chatId, skipContext);

@@ -3,10 +3,20 @@
 import { accessSync, constants, existsSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { CHANNEL_CLI_HELP, getChannelCliCommandHelp, normalizeChannelApiBaseUrl, isSyntheticMessageId } from "../../core/dist/index.js";
 import { getChatIdValidationError } from './utils/chat-id-validator.js';
 import { assertReadableInteractiveText } from './utils/interactive-text.js';
 import { getCardValidationError, isValidFeishuCard } from './utils/card-validator.js';
+const autoRunOutput = process.argv[1]?.endsWith('/cli.js') ? process.stdout.write.bind(process.stdout) : undefined;
+if (autoRunOutput) {
+    process.stdout.write = process.stderr.write.bind(process.stderr);
+}
+// Managed agents inherit the service's LOG_DIR/LOG_TO_FILE, but their sandbox
+// cannot write the service log. This short-lived client owns only stderr
+// diagnostics. Set this before loading core: its module-scope loggers open the
+// inherited file destination even for help, validation and dry-run commands.
+// Redirect before the import too, so config/bootstrap logs cannot pollute JSON.
+process.env.LOG_TO_FILE = 'false';
+const { CHANNEL_CLI_HELP, getChannelCliCommandHelp, normalizeChannelApiBaseUrl, isSyntheticMessageId } = await import("../../core/dist/index.js");
 // Issue #4788 (second root cause): parseArgs used to store every `--foo` it saw
 // and silently consume the next argv entry as its value. A misspelled or invented
 // flag therefore ate a real argument and surfaced as a confusing downstream error
@@ -14,6 +24,7 @@ import { getCardValidationError, isValidFeishuCard } from './utils/card-validato
 // content"). These lists let the CLI name the bad flag instead.
 const COMMON_FLAGS = ['chat', 'parent', 'base-url', 'api-token', 'dry-run'];
 const COMMAND_FLAGS = {
+    capabilities: [],
     request_private_input: ['actor', 'source', 'workflow', 'workflow-file'],
     send_text: ['text', 'text-file', 'mentions'],
     send_file: ['file'],
@@ -26,7 +37,6 @@ const COMMAND_FLAGS = {
 // CLI's `help` output and the agent prompt can't drift apart.
 export const HELP = CHANNEL_CLI_HELP;
 let emitted = false;
-let autoRunOutput;
 function writeResult(value) {
     (autoRunOutput ?? process.stdout.write).call(process.stdout, value);
 }
@@ -500,6 +510,36 @@ export async function run(argv) {
         emitFail(command, `Missing value for ${args._missing.map(name => `--${name}`).join(', ')}`, `run disclaude channel ${invokedAs} --help`);
         return 1;
     }
+    if (command === 'capabilities') {
+        const chatId = arg(args, 'chat');
+        if (chatId !== undefined && !validateChat(command, args)) {
+            return 1;
+        }
+        if (arg(args, 'dry-run') === 'true') {
+            emitOk({ command, dryRun: true, payload: { chatId } });
+            return 0;
+        }
+        try {
+            const baseUrl = setupRest(args);
+            const response = await fetch(`${baseUrl}/api/channel-capabilities`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.DISCLAUDE_API_TOKEN ?? ''}` },
+                body: JSON.stringify({ chatId }), signal: AbortSignal.timeout(5000),
+            });
+            if (!response.ok) {
+                throw new Error(`Channel capability request failed [HTTP ${response.status}]`);
+            }
+            const result = await response.json();
+            if (!Array.isArray(result.channels)) {
+                throw new Error('Service returned invalid channel capabilities');
+            }
+            emitOk({ command, channels: result.channels });
+            return 0;
+        }
+        catch (error) {
+            emitFail(command, errorMessage(error));
+            return 1;
+        }
+    }
     const chat = validateChat(command, args);
     if (!chat) {
         return 1;
@@ -529,7 +569,5 @@ export async function run(argv) {
 // substring match would also fire when a *test* imports this module from a repo
 // checkout whose path happens to contain "disclaude".
 if (process.argv[1]?.endsWith('/cli.js')) {
-    autoRunOutput = process.stdout.write.bind(process.stdout);
-    process.stdout.write = ((chunk, encoding, callback) => process.stderr.write(chunk, encoding, callback));
     run(process.argv.slice(2)).then((code) => { process.exitCode = code; }).catch((error) => { process.stderr.write(`channel CLI crashed: ${errorMessage(error)}\n`); emitFail('channel', `CLI crashed: ${errorMessage(error)}`); process.exitCode = 1; });
 }

@@ -31,6 +31,11 @@ export class ChannelManager {
     register(channel) {
         if (this.channels.has(channel.id)) {
             logger.warn({ channelId: channel.id }, 'Channel already registered, replacing');
+            for (const [chatId, owner] of this.chatIdChannelMap) {
+                if (owner.id === channel.id) {
+                    this.chatIdChannelMap.delete(chatId);
+                }
+            }
         }
         this.channels.set(channel.id, channel);
         logger.info({ channelId: channel.id, channelName: channel.name }, 'Channel registered');
@@ -84,6 +89,11 @@ export class ChannelManager {
     unregister(channelId) {
         const removed = this.channels.delete(channelId);
         if (removed) {
+            for (const [chatId, channel] of this.chatIdChannelMap) {
+                if (channel.id === channelId) {
+                    this.chatIdChannelMap.delete(chatId);
+                }
+            }
             logger.info({ channelId }, 'Channel unregistered');
         }
         return removed;
@@ -128,19 +138,22 @@ export class ChannelManager {
     resolveChannelForChatId(chatId) {
         // Fast path: check in-memory map first
         const cached = this.chatIdChannelMap.get(chatId);
-        if (cached) {
-            return cached;
+        const matches = this.getAll().filter(channel => channel === cached || channel.ownsChatId(chatId));
+        if (matches.length > 1) {
+            throw new Error('Ambiguous chat ownership; use an unambiguous chat ID');
         }
-        // Slow path: query all channels for ownership
-        for (const channel of this.channels.values()) {
-            if (channel.ownsChatId(chatId)) {
-                logger.info({ chatId, channelId: channel.id, channelName: channel.name }, 'Resolved channel ownership via ownsChatId query (map miss)');
-                this.registerChatId(chatId, channel);
-                return channel;
-            }
+        if (matches[0]) {
+            this.registerChatId(chatId, matches[0]);
         }
-        logger.warn({ chatId }, 'No channel claims ownership for chatId');
-        return undefined;
+        return matches[0];
+    }
+    /** Default delivery is unicast to the owning instance, including after restart. */
+    async sendToChat(message) {
+        const channel = this.resolveChannelForChatId(message.chatId);
+        if (!channel) {
+            throw new Error('No channel owns this chat; use a known conversation');
+        }
+        return await channel.sendMessage(message);
     }
     /**
      * Broadcast a message to all registered channels.
@@ -176,7 +189,8 @@ export class ChannelManager {
     /**
      * Start all registered channels.
      * Uses Promise.allSettled to ensure one channel's failure doesn't prevent others from starting.
-     * If any channel fails to start, attempts to stop already-started channels before throwing.
+     * A failed channel stays observable while other channels continue serving.
+     * Startup fails only when every configured channel fails.
      */
     async startAll() {
         const results = await Promise.allSettled(Array.from(this.channels.values()).map(async (channel) => {
@@ -193,10 +207,10 @@ export class ChannelManager {
         const failures = results.filter((r) => r.status === 'rejected');
         if (failures.length > 0) {
             const failureCount = failures.length;
-            // Attempt to stop any channels that did start
-            logger.warn({ failureCount, total: this.channels.size }, 'Some channels failed to start, stopping already-started channels');
-            await this.stopAll();
-            throw new Error(`${failureCount} channel(s) failed to start`);
+            logger.warn({ failureCount, total: this.channels.size }, 'Some channels failed to start; healthy channels remain available');
+            if (failureCount === results.length) {
+                throw new Error(`${failureCount} channel(s) failed to start`);
+            }
         }
     }
     /**

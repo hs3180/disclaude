@@ -8,6 +8,7 @@
  * @see Issue #1556 - WeChat Channel Feature Enhancement (Phase 3.1)
  */
 import { createLogger } from "../../../../core/dist/index.js";
+import { WeChatApiError } from './api-client.js';
 const logger = createLogger('WeChatMessageListener');
 /** Maximum number of consecutive errors before extended backoff. */
 const MAX_CONSECUTIVE_ERRORS = 5;
@@ -33,6 +34,7 @@ const DEDUP_EVICTION_COUNT = 5_000;
  * - Graceful shutdown via AbortController
  */
 export class WeChatMessageListener {
+    options;
     client;
     processor;
     abortController;
@@ -45,10 +47,14 @@ export class WeChatMessageListener {
      * @param client - WeChat API client
      * @param processor - Callback to process incoming messages
      */
-    constructor(client, processor) {
+    constructor(client, processor, options = {}) {
+        this.options = options;
         this.client = client;
         this.processor = processor;
-        this.seenMessageIds = new Set();
+        this.seenMessageIds = new Set(options.state?.seenMessageIds.slice(-MAX_DEDUP_CACHE_SIZE));
+        if (options.state) {
+            this.client.setUpdatesCursor(options.state.cursor);
+        }
         this.consecutiveErrors = 0;
     }
     /**
@@ -64,7 +70,7 @@ export class WeChatMessageListener {
         }
         this.abortController = new AbortController();
         this.consecutiveErrors = 0;
-        this.pollPromise = this.pollLoop();
+        this.pollPromise = this.pollLoop(this.abortController.signal);
         logger.info('WeChat message listener started');
     }
     /**
@@ -74,11 +80,11 @@ export class WeChatMessageListener {
      * Safe to call multiple times.
      */
     async stop() {
-        if (!this.abortController) {
+        if (!this.abortController && !this.pollPromise) {
             return;
         }
         logger.info('Stopping WeChat message listener...');
-        this.abortController.abort();
+        this.abortController?.abort();
         this.abortController = undefined;
         if (this.pollPromise) {
             try {
@@ -99,6 +105,7 @@ export class WeChatMessageListener {
     isListening() {
         return !!this.abortController && !this.abortController.signal.aborted;
     }
+    isHealthy() { return this.isListening() && this.consecutiveErrors === 0; }
     /**
      * Main polling loop.
      *
@@ -108,39 +115,61 @@ export class WeChatMessageListener {
      * Yields to the macrotask queue between iterations to prevent
      * microtask starvation and allow stop() to interleave.
      */
-    async pollLoop() {
-        while (this.abortController && !this.abortController.signal.aborted) {
-            try {
-                const updates = await this.client.getUpdates({
-                    signal: this.abortController.signal,
-                });
-                // Reset error counter on successful poll
-                this.consecutiveErrors = 0;
-                // Process each update
-                for (const update of updates) {
-                    await this.processUpdate(update);
+    async pollLoop(signal) {
+        try {
+            while (!signal.aborted) {
+                try {
+                    const updates = await this.client.getUpdates({
+                        signal,
+                    });
+                    // Reset error counter on successful poll
+                    this.consecutiveErrors = 0;
+                    // Process each update
+                    for (const update of updates) {
+                        if (signal.aborted) {
+                            break;
+                        }
+                        await this.processUpdate(update, signal);
+                    }
+                    if (signal.aborted) {
+                        break;
+                    }
+                    this.client.acknowledgeUpdates();
+                    await this.checkpoint();
+                    // Yield to macrotask queue to prevent microtask starvation
+                    // and allow stop()/abort to interleave between poll cycles
+                    await new Promise((resolve) => setImmediate(resolve));
                 }
-                // Yield to macrotask queue to prevent microtask starvation
-                // and allow stop()/abort to interleave between poll cycles
-                await new Promise((resolve) => setImmediate(resolve));
-            }
-            catch (error) {
-                if (error instanceof Error && error.name === 'AbortError') {
-                    // Graceful shutdown
-                    break;
+                catch (error) {
+                    if (signal.aborted || (error instanceof Error && error.name === 'AbortError')) {
+                        // Graceful shutdown
+                        break;
+                    }
+                    if (error instanceof WeChatApiError && error.authExpired) {
+                        logger.error({ code: error.code }, 'WeChat login expired; run disclaude wechat login, then restart this channel');
+                        break;
+                    }
+                    this.consecutiveErrors++;
+                    const errMsg = error instanceof Error ? error.message : String(error);
+                    logger.error({ err: errMsg, consecutiveErrors: this.consecutiveErrors }, 'Error in message poll loop');
+                    if (this.consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+                        logger.error({ consecutiveErrors: this.consecutiveErrors }, 'Too many consecutive errors, applying extended backoff');
+                    }
+                    // Exponential backoff with cap
+                    const backoffMs = Math.min(BACKOFF_BASE_MS * Math.pow(2, Math.min(this.consecutiveErrors - 1, 5)), MAX_BACKOFF_MS);
+                    logger.debug({ backoffMs }, 'Waiting before retry');
+                    await this.delay(backoffMs, signal);
                 }
-                this.consecutiveErrors++;
-                const errMsg = error instanceof Error ? error.message : String(error);
-                logger.error({ err: errMsg, consecutiveErrors: this.consecutiveErrors }, 'Error in message poll loop');
-                if (this.consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-                    logger.error({ consecutiveErrors: this.consecutiveErrors }, 'Too many consecutive errors, applying extended backoff');
-                }
-                // Exponential backoff with cap
-                const backoffMs = Math.min(BACKOFF_BASE_MS * Math.pow(2, Math.min(this.consecutiveErrors - 1, 5)), MAX_BACKOFF_MS);
-                logger.debug({ backoffMs }, 'Waiting before retry');
-                await this.delay(backoffMs, this.abortController.signal);
             }
         }
+        finally {
+            if (this.abortController?.signal === signal) {
+                this.abortController = undefined;
+            }
+        }
+    }
+    async checkpoint() {
+        await this.options.checkpoint?.({ cursor: this.client.getUpdatesCursor(), seenMessageIds: [...this.seenMessageIds] });
     }
     /**
      * Process a single update from getUpdates.
@@ -148,31 +177,39 @@ export class WeChatMessageListener {
      * Deduplicates by msg_id, converts to IncomingMessage, and
      * calls the registered processor.
      */
-    async processUpdate(update) {
-        if (!update.msg_id) {
-            logger.warn({ update }, 'Received update without msg_id, skipping');
+    async processUpdate(update, signal) {
+        if (update.message_type === 2 || update.group_id) {
+            return;
+        }
+        const id = update.message_id ?? update.msg_id ?? update.client_id;
+        if (!id) {
+            logger.warn('Received update without message ID, skipping');
             return;
         }
         // Deduplication
-        if (this.seenMessageIds.has(update.msg_id)) {
-            logger.debug({ msgId: update.msg_id }, 'Duplicate message, skipping');
+        if (this.seenMessageIds.has(id)) {
+            logger.debug({ msgId: id }, 'Duplicate message, skipping');
             return;
         }
-        this.seenMessageIds.add(update.msg_id);
-        // FIFO eviction when cache exceeds limit
-        this.evictDedupCacheIfNeeded();
-        const message = this.convertToIncomingMessage(update);
+        const message = await this.convertToIncomingMessage(update, signal);
         if (!message) {
-            logger.debug({ msgId: update.msg_id }, 'Could not convert update to message, skipping');
+            logger.debug({ msgId: id }, 'Could not convert update to message, skipping');
             return;
         }
         logger.info({ msgId: message.messageId, chatId: message.chatId, type: message.messageType }, 'WeChat message received');
         try {
+            if (update.context_token) {
+                this.options.onContext?.(message.chatId, update.context_token);
+            }
             await this.processor(message);
+            this.seenMessageIds.add(id);
+            this.evictDedupCacheIfNeeded();
+            await this.checkpoint();
         }
         catch (error) {
             const errMsg = error instanceof Error ? error.message : String(error);
             logger.error({ err: errMsg, msgId: message.messageId }, 'Message processor failed');
+            throw error;
         }
     }
     /**
@@ -198,63 +235,63 @@ export class WeChatMessageListener {
     /**
      * Convert a WeChat update to the universal IncomingMessage format.
      */
-    convertToIncomingMessage(update) {
+    async convertToIncomingMessage(update, signal) {
         if (!update.from_user_id || !update.item_list?.length) {
             return null;
         }
-        const [firstItem] = update.item_list;
-        let messageType;
-        let content;
-        let attachments;
-        switch (firstItem.type) {
-            case 1: {
-                // Text message
-                messageType = 'text';
-                content = firstItem.text_item?.text ?? '';
-                break;
+        const textParts = [];
+        const attachments = [];
+        let messageType = 'text';
+        for (const item of update.item_list) {
+            if (item.type === 1) {
+                if (item.text_item?.text) {
+                    textParts.push(item.text_item.text);
+                }
             }
-            case 2: {
-                // Image message
+            else if (item.type === 2) {
                 messageType = 'image';
-                content = '[Image received]';
-                attachments = [{
-                        fileName: 'image',
-                        filePath: firstItem.image_item?.url ?? '',
-                    }];
-                break;
+                textParts.push('[Image received]');
             }
-            case 3: {
-                // File message
-                const fileItem = firstItem;
+            else if (item.type === 4) {
                 messageType = 'file';
-                const fileName = fileItem.file_item?.file_name ?? 'unknown';
-                content = `[File received: ${fileName}]`;
-                attachments = [{
-                        fileName,
-                        filePath: fileItem.file_item?.url ?? '',
-                        size: fileItem.file_item?.file_size,
-                    }];
-                break;
+                const file = item.file_item;
+                textParts.push(`[File received: ${file?.file_name ?? 'unknown'}]`);
             }
-            default: {
-                // Unknown type — try to extract text from all items
-                messageType = 'text';
-                const textParts = update.item_list
-                    .filter((item) => item.type === 1 && !!item.text_item?.text)
-                    .map((item) => item.text_item.text);
-                content = textParts.join('\n') || `[Unsupported message type: ${firstItem.type}]`;
-                break;
+            else {
+                textParts.push(`[Unsupported message type: ${String(item.type)}]`);
+            }
+            if (item.type === 2 || item.type === 4) {
+                try {
+                    if (this.options.resolveAttachment) {
+                        attachments.push(await this.options.resolveAttachment(item, signal));
+                    }
+                    else if (item.type === 2 && item.image_item?.url) {
+                        attachments.push({ fileName: 'image', filePath: item.image_item.url });
+                    }
+                    else if (item.type === 4 && item.file_item?.url) {
+                        attachments.push({ fileName: item.file_item.file_name ?? 'unknown', filePath: item.file_item.url, size: item.file_item.file_size });
+                    }
+                    else {
+                        textParts.push('[Attachment unavailable: no media downloader]');
+                    }
+                }
+                catch {
+                    if (signal?.aborted) {
+                        throw new DOMException('aborted', 'AbortError');
+                    }
+                    textParts.push('[Attachment unavailable: download, size or decryption failure; ask the user to resend]');
+                }
             }
         }
+        const content = textParts.join('\n');
         return {
-            messageId: update.msg_id,
+            messageId: update.message_id ?? update.msg_id ?? update.client_id ?? '',
             chatId: update.from_user_id, // In WeChat, chatId = userId for P2P
             userId: update.from_user_id,
             content,
             messageType,
-            timestamp: update.create_time ? update.create_time * 1000 : Date.now(),
-            threadId: update.context_token,
-            attachments,
+            timestamp: update.create_time_ms ?? (update.create_time ? update.create_time * 1000 : Date.now()),
+            attachments: attachments.length ? attachments : undefined,
         };
     }
     /**
@@ -262,11 +299,13 @@ export class WeChatMessageListener {
      */
     delay(ms, signal) {
         return new Promise((resolve) => {
-            const timer = setTimeout(resolve, ms);
-            signal?.addEventListener('abort', () => {
-                clearTimeout(timer);
+            if (signal?.aborted) {
                 resolve();
-            }, { once: true });
+                return;
+            }
+            const done = () => { clearTimeout(timer); signal?.removeEventListener('abort', done); resolve(); };
+            const timer = setTimeout(done, ms);
+            signal?.addEventListener('abort', done, { once: true });
         });
     }
 }
