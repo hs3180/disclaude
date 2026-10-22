@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { createInterface } from 'node:readline/promises';
 import QRCode from 'qrcode';
 import { setTimeout as delay } from 'node:timers/promises';
-import { WeChatRegistry } from './registry.js';
+import { WeChatRegistry, type WeChatRegistration } from './registry.js';
 import { DEFAULT_WECHAT_BASE_URL, WeChatStateStore, type WeChatCredentials } from './state-store.js';
 
 const help = `Usage: disclaude wechat <login|status|enable ID|disable ID|remove ID> [options]
@@ -26,6 +26,34 @@ async function withDiagnostics<T>(run: () => Promise<T>): Promise<T> {
   const original = process.stdout.write;
   process.stdout.write = process.stderr.write.bind(process.stderr) as typeof process.stdout.write;
   try { return await run(); } finally { process.stdout.write = original; }
+}
+
+/**
+ * #5479: restoring the saved config after a failed re-login is not restoring
+ * the login. Probe the old credentials once with the same read-only check
+ * `status --check` uses, so a rejected account reads as "needs a scan" —
+ * never as "recovered" — and a still-valid one is reported as verified.
+ */
+async function verifyRestoredLogin(registry: WeChatRegistry, account: WeChatRegistration): Promise<Record<string, unknown>> {
+  const rejoin = `disclaude wechat login --id ${account.id} --force`;
+  try {
+    const credentials = await new WeChatStateStore(registry.stateDir(account)).loadCredentials();
+    const userId = credentials?.userId;
+    if (!credentials || !userId) {
+      return { ok: true, restored: account.id, verified: false,
+        reason: 'saved login has no user ID; reauthenticate this registration', next: rejoin };
+    }
+    await withDiagnostics(async () => {
+      const { WeChatApiClient } = await import('./api-client.js');
+      await new WeChatApiClient({ baseUrl: credentials.baseUrl, token: credentials.token }).checkSession(userId);
+    });
+    // A passing account check proves neither login liveness nor delivery (#5478).
+    return { ok: true, restored: account.id, verified: true, note: 'account check passed does not prove message delivery' };
+  } catch (cause) {
+    const expired = (cause as { authExpired?: boolean }).authExpired === true;
+    return { ok: true, restored: account.id, verified: false, ...(expired ? { loginExpired: true } : {}),
+      error: cause instanceof Error ? cause.message : 'Cannot verify this account', next: rejoin };
+  }
 }
 
 async function main(): Promise<void> {
@@ -145,7 +173,10 @@ async function main(): Promise<void> {
   } finally {
     if (target?.enabled && !committed) {
       const current = (await registry.list()).find(account => account.id === target.id);
-      if (current && current.generation === restoreGeneration && !current.enabled) { await registry.setEnabled(target.id, true); }
+      if (current && current.generation === restoreGeneration && !current.enabled) {
+        await registry.setEnabled(target.id, true);
+        console.log(JSON.stringify(await verifyRestoredLogin(registry, current)));
+      }
     }
   }
 }
