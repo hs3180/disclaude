@@ -5,10 +5,19 @@ import { computeBackoffDelay } from '../../../utils/retry.js';
 export interface CodexOverloadFailure {
   message: string;
   retryAfterMs?: number;
+  /**
+   * #5468: true when the failure is the capacity class (native serverOverloaded
+   * family, HTTP 503, or explicit at-capacity wording) rather than a 429-style
+   * throttle. Only capacity failures are eligible for post-progress
+   * same-thread continuation; throttles stay on the pre-work retry path.
+   */
+  readonly capacity?: boolean;
 }
 export const CODEX_OVERLOAD_MAX_RETRIES = 2;
 const MAX_TOTAL_WAIT_MS = 30_000;
 const TIMING = { initialDelayMs: 500, backoffMultiplier: 2, maxDelayMs: 8000, jitter: true };
+/** #5408 throttle wording: seconds-scale limits, covered by the pre-work retry. */
+const THROTTLE_TEXT = /\b429\b|too many requests|rate.?limit/i;
 const OVERLOAD_CODE = /^(?:serverOverloaded|server_overloaded|server_is_overloaded|overloaded_error)$/i;
 /** Transient failure wording eligible for the bounded retry: 503/429 statuses (#5269, #5408) plus quota-free throttle phrasing. */
 const OVERLOAD_TEXT = /server[_ ](?:is[_ ])?overload(?:ed)?|overloaded_error|(?:selected )?model is at capacity|(?:HTTP|status(?: code)?)\s*[:=]?\s*(?:503|429)\b|too many requests|rate.?limit reached/i;
@@ -22,17 +31,24 @@ export function readCodexOverloadFailure(value: unknown, now = Date.now()): Code
   const details = typeof error.additionalDetails === 'string' ? error.additionalDetails : '';
   const info = error.codexErrorInfo ?? error.code;
   let overloaded = false;
+  let capacity = false;
   if (typeof info === 'string' && info !== 'other') {
     // A native non-transient code takes precedence over incidental wording.
     overloaded = OVERLOAD_CODE.test(info);
+    capacity = overloaded;
   } else if (info && typeof info === 'object') {
-    overloaded = Object.entries(info).some(([kind, detail]) =>
-      ['httpConnectionFailed', 'responseStreamConnectionFailed', 'responseStreamDisconnected', 'responseTooManyFailedAttempts'].includes(kind)
-      && !!detail && typeof detail === 'object'
-      && (detail as { httpStatusCode?: unknown }).httpStatusCode !== undefined
-      && [503, 429].includes((detail as { httpStatusCode?: unknown }).httpStatusCode as number));
+    const statuses = Object.entries(info)
+      .filter(([kind, detail]) =>
+        ['httpConnectionFailed', 'responseStreamConnectionFailed', 'responseStreamDisconnected', 'responseTooManyFailedAttempts'].includes(kind)
+        && !!detail && typeof detail === 'object'
+        && (detail as { httpStatusCode?: unknown }).httpStatusCode !== undefined)
+      .map(([, detail]) => (detail as { httpStatusCode: number }).httpStatusCode);
+    overloaded = statuses.some(code => code === 503 || code === 429);
+    capacity = statuses.includes(503);
   } else {
     overloaded = !NON_TRANSIENT.test(message) && OVERLOAD_TEXT.test(message);
+    capacity = overloaded && !THROTTLE_TEXT.test(message)
+      && /\b503\b|model is at capacity|server[_ ](?:is[_ ])?overload/i.test(message);
   }
   if (!overloaded) { return undefined; }
   const hint = /\bretry-after\s*:\s*([^\r\n]+)/i.exec(`${message}\n${details}`)?.[1]?.trim();
@@ -45,7 +61,63 @@ export function readCodexOverloadFailure(value: unknown, now = Date.now()): Code
     }
   }
   return { message: `${typeof info === 'string' ? `${info}: ` : ''}${message}${details ? `\n${details}` : ''}`,
-    ...(retryAfterMs !== undefined ? { retryAfterMs } : {}) };
+    ...(retryAfterMs !== undefined ? { retryAfterMs } : {}), capacity };
+}
+
+/**
+ * #5468: bounded same-thread continuation after an explicit capacity failure
+ * that already produced output or tool calls. Defaults follow the issue: at
+ * most 6 host continuations with nominal 5/10/20/30/30/30s jittered waits and
+ * a 180s wall-clock budget measured from the first capacity failure (waits,
+ * recovery requests, and other consumed time all count; progress never resets
+ * it). The env overrides exist for tests and operational tuning, mirroring
+ * readStallPolicy.
+ */
+export const CODEX_CAPACITY_RECOVERY_MAX_ATTEMPTS = 6;
+export const CODEX_CAPACITY_RECOVERY_BUDGET_MS = 180_000;
+export interface CodexCapacityRecoveryPolicy {
+  maxAttempts: number;
+  budgetMs: number;
+  initialDelayMs: number;
+  backoffMultiplier: number;
+  maxDelayMs: number;
+}
+export function readCodexCapacityRecoveryPolicy(
+  env: Record<string, string | undefined> = process.env,
+): CodexCapacityRecoveryPolicy {
+  const override = (name: string): number | undefined => {
+    const parsed = Number(env[name]);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+  };
+  return {
+    maxAttempts: override('DISCLAUDE_CODEX_CAPACITY_RECOVERY_MAX_ATTEMPTS') ?? CODEX_CAPACITY_RECOVERY_MAX_ATTEMPTS,
+    budgetMs: override('DISCLAUDE_CODEX_CAPACITY_RECOVERY_BUDGET_MS') ?? CODEX_CAPACITY_RECOVERY_BUDGET_MS,
+    initialDelayMs: override('DISCLAUDE_CODEX_CAPACITY_RECOVERY_INITIAL_DELAY_MS') ?? 5000,
+    backoffMultiplier: 2,
+    maxDelayMs: override('DISCLAUDE_CODEX_CAPACITY_RECOVERY_MAX_DELAY_MS') ?? 30_000,
+  };
+}
+export function isCodexCapacityFailure(failure: CodexOverloadFailure): boolean {
+  return failure.capacity === true;
+}
+/**
+ * Wait before the next same-thread continuation, or undefined when the
+ * failure is not capacity-class, the attempt cap is hit, or the wait would
+ * exceed the remaining wall-clock budget — never shorten a valid server hint
+ * to fit; defer (settle) instead.
+ */
+export function codexCapacityRecoveryDelay(
+  failure: CodexOverloadFailure,
+  attempt: number,
+  firstFailureAtMs: number,
+  policy: CodexCapacityRecoveryPolicy = readCodexCapacityRecoveryPolicy(),
+  now: () => number = Date.now,
+): number | undefined {
+  if (attempt >= policy.maxAttempts || !isCodexCapacityFailure(failure)) { return undefined; }
+  const scheduled = Math.max(failure.retryAfterMs ?? 0, computeBackoffDelay(attempt, {
+    initialDelayMs: policy.initialDelayMs, backoffMultiplier: policy.backoffMultiplier, maxDelayMs: policy.maxDelayMs, jitter: true,
+  }));
+  return firstFailureAtMs + policy.budgetMs - now() >= scheduled ? scheduled : undefined;
 }
 
 export function codexOverloadRetryDelay(failure: CodexOverloadFailure, attempt: number, waitedMs: number): number | undefined {
