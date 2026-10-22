@@ -203,9 +203,9 @@ services:
       context: ./docker
       dockerfile: Dockerfile.chromium
       args:
-        CHROMIUM_IMAGE_TAG: ${CHROMIUM_IMAGE_TAG:-v1.62.0-noble}
+        CHROMIUM_IMAGE_TAG: ${CHROMIUM_IMAGE_TAG:-v1.64.1-noble}
     stop_grace_period: 15s
-    image: disclaude-chromium:${CHROMIUM_IMAGE_TAG:-v1.62.0-noble}
+    image: disclaude-chromium:${CHROMIUM_IMAGE_TAG:-v1.64.1-noble}
     container_name: disclaude-chromium
     init: true
     restart: unless-stopped
