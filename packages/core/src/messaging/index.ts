@@ -38,10 +38,7 @@ export {
 } from './universal-message.js';
 
 // Input MessageRouter (Issue #3580: RFC #3329 Phase 1)
-export {
-  MessageRouter,
-  MessageRoutingError,
-} from './message-router.js';
+export { MessageRouter, MessageRoutingError } from './message-router.js';
 
 // Typed turn-outcome error (Issue #4649 review ①: thrown by ChatAgent when
 // a newer message supersedes the awaited turn; consumers branch on instanceof)
@@ -52,3 +49,7 @@ export type {
   MessageRouterConfig,
   UserMessageParams,
 } from './message-router.js';
+
+// GFM table → Feishu column_set conversion (#5473): shared by channel-cli
+// (send_card) and the service's host-built cards (citation / streaming final).
+export * from './gfm-table-converter.js';

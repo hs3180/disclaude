@@ -8,7 +8,9 @@ import {
   buildColumnSet,
   buildTableColumnSets,
   transformCardTables,
-} from './table-converter.js';
+  splitMarkdownByTables,
+  markdownToCardElements,
+} from './gfm-table-converter.js';
 
 describe('parseGfmTable', () => {
   describe('valid tables', () => {
@@ -29,7 +31,8 @@ describe('parseGfmTable', () => {
     });
 
     it('should parse the Issue #2340 example table', () => {
-      const content = '| 客户类型 | W<170% | 170%-210% |\n|:---|:---:|:---:|\n| 正常类 | 50% | 70% |';
+      const content =
+        '| 客户类型 | W<170% | 170%-210% |\n|:---|:---:|:---:|\n| 正常类 | 50% | 70% |';
       const result = parseGfmTable(content);
       expect(result).not.toBeNull();
       expect(result!.headers).toEqual(['客户类型', 'W<170%', '170%-210%']);
@@ -147,18 +150,12 @@ describe('buildTableColumnSets', () => {
     const result4 = buildTableColumnSets(['A', 'B', 'C', 'D'], [['1', '2', '3', '4']]);
     expect((result4[0] as Record<string, unknown>).flex_mode).toBe('trisection');
 
-    const result5 = buildTableColumnSets(
-      ['A', 'B', 'C', 'D', 'E'],
-      [['1', '2', '3', '4', '5']]
-    );
+    const result5 = buildTableColumnSets(['A', 'B', 'C', 'D', 'E'], [['1', '2', '3', '4', '5']]);
     expect((result5[0] as Record<string, unknown>).flex_mode).toBe('trisection');
   });
 
   it('should handle multiple rows', () => {
-    const result = buildTableColumnSets(
-      ['Col1'],
-      [['row1'], ['row2'], ['row3']]
-    );
+    const result = buildTableColumnSets(['Col1'], [['row1'], ['row2'], ['row3']]);
 
     // Header + 3 data rows = 4 column_sets
     expect(result).toHaveLength(4);
@@ -252,9 +249,7 @@ describe('transformCardTables', () => {
   it('should not modify card without markdown tables', () => {
     const card = {
       ...baseCard,
-      elements: [
-        { tag: 'div', text: { tag: 'plain_text', content: 'Hello' } },
-      ],
+      elements: [{ tag: 'div', text: { tag: 'plain_text', content: 'Hello' } }],
     };
     const result = transformCardTables(card);
     expect(result).toBe(card); // Same reference, no changes
@@ -263,9 +258,7 @@ describe('transformCardTables', () => {
   it('should not modify markdown element without tables', () => {
     const card = {
       ...baseCard,
-      elements: [
-        { tag: 'markdown', content: '**Bold** text without tables' },
-      ],
+      elements: [{ tag: 'markdown', content: '**Bold** text without tables' }],
     };
     const result = transformCardTables(card);
     expect(result).toBe(card);
@@ -357,7 +350,9 @@ describe('transformCardTables', () => {
     expect((elements[0] as Record<string, unknown>).tag).toBe('column_set');
     expect((elements[0] as Record<string, unknown>).background_style).toBe('grey');
 
-    const headerColumns = ((elements[0] as Record<string, unknown>).columns as Array<Record<string, unknown>>);
+    const headerColumns = (elements[0] as Record<string, unknown>).columns as Array<
+      Record<string, unknown>
+    >;
     expect(headerColumns).toHaveLength(3);
   });
 
@@ -413,9 +408,7 @@ describe('transformCardTables', () => {
   });
 
   it('should not mutate the original card', () => {
-    const originalElements = [
-      { tag: 'markdown', content: '| H1 | H2 |\n|---|---|\n| a | b |' },
-    ];
+    const originalElements = [{ tag: 'markdown', content: '| H1 | H2 |\n|---|---|\n| a | b |' }];
     const card = {
       ...baseCard,
       elements: originalElements,
@@ -425,8 +418,152 @@ describe('transformCardTables', () => {
     expect(result).not.toBe(card);
     // Original card elements should be unchanged
     expect(card.elements[0].tag).toBe('markdown');
-    expect((card.elements[0] as Record<string, unknown>).content).toBe('| H1 | H2 |\n|---|---|\n| a | b |');
+    expect((card.elements[0] as Record<string, unknown>).content).toBe(
+      '| H1 | H2 |\n|---|---|\n| a | b |'
+    );
     // Result should have column_set elements
     expect((result.elements as Array<Record<string, unknown>>)[0].tag).toBe('column_set');
+  });
+});
+
+describe('splitMarkdownByTables (#5473)', () => {
+  it('returns a single text segment when no table exists', () => {
+    const segments = splitMarkdownByTables('Just text\nwith lines');
+    expect(segments).toEqual([{ type: 'text', text: 'Just text\nwith lines' }]);
+  });
+
+  it('splits multiple tables in one markdown element', () => {
+    const content =
+      'Intro\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\nBetween\n\n| C | D |\n|---|---|\n| 3 | 4 |\n\nOutro';
+    const segments = splitMarkdownByTables(content);
+    expect(segments.map((s) => s.type)).toEqual(['text', 'table', 'text', 'table', 'text']);
+    expect(segments[1]).toEqual({ type: 'table', headers: ['A', 'B'], rows: [['1', '2']] });
+    expect(segments[3]).toEqual({ type: 'table', headers: ['C', 'D'], rows: [['3', '4']] });
+  });
+
+  it('never treats fenced code block content as a table', () => {
+    const content = 'Example:\n\n```\n| a | b |\n|---|---|\n| 1 | 2 |\n```\n\nDone';
+    const segments = splitMarkdownByTables(content);
+    expect(segments).toHaveLength(1);
+    expect(segments[0].type).toBe('text');
+    expect((segments[0] as { text: string }).text).toContain('|---|---|');
+  });
+
+  it('unwraps escaped pipes inside cells', () => {
+    const content = '| cmd | meaning |\n|---|---|\n| a \\| b | either |';
+    const segments = splitMarkdownByTables(content);
+    expect(segments[0]).toEqual({
+      type: 'table',
+      headers: ['cmd', 'meaning'],
+      rows: [['a | b', 'either']],
+    });
+  });
+
+  it('keeps a table whose rows omit the trailing pipe', () => {
+    const content = '| H1 | H2\n|---|---\n| a | b';
+    const segments = splitMarkdownByTables(content);
+    expect(segments[0]).toEqual({
+      type: 'table',
+      headers: ['H1', 'H2'],
+      rows: [['a', 'b']],
+    });
+  });
+
+  it('stops the table at a blank line and keeps following prose', () => {
+    const content = '| H1 | H2 |\n|---|---|\n| a | b |\n\nprose continues';
+    const segments = splitMarkdownByTables(content);
+    expect(segments.map((s) => s.type)).toEqual(['table', 'text']);
+  });
+});
+
+describe('markdownToCardElements (#5473)', () => {
+  it('converts every table and keeps surrounding text elements in order', () => {
+    const elements = markdownToCardElements(
+      'Before\n\n| A | B |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\nAfter'
+    );
+    // Before + header set + 2 data rows + After = 5 elements
+    expect(elements).toHaveLength(5);
+    expect(elements[0]).toEqual({ tag: 'markdown', content: 'Before' });
+    expect(elements[1].tag).toBe('column_set');
+    expect(elements[2].tag).toBe('column_set');
+    expect(elements[3].tag).toBe('column_set');
+    expect(elements[4]).toEqual({ tag: 'markdown', content: 'After' });
+  });
+
+  it('returns a single markdown element for plain text', () => {
+    expect(markdownToCardElements('plain')).toEqual([{ tag: 'markdown', content: 'plain' }]);
+  });
+});
+
+describe('transformCardTables multi-table & JSON 2.0 (#5473)', () => {
+  it('converts both tables in one markdown element', () => {
+    const card = {
+      elements: [
+        {
+          tag: 'markdown',
+          content: '| A | B |\n|---|---|\n| 1 | 2 |\n\nmid\n\n| C | D |\n|---|---|\n| 3 | 4 |',
+        },
+      ],
+    };
+    const result = transformCardTables(card);
+    const elements = result.elements as Array<Record<string, unknown>>;
+    // markdown(mid) + 2 header sets + 2 data rows = 5
+    expect(elements).toHaveLength(5);
+    expect(elements[0].tag).toBe('column_set');
+    expect((elements[1] as Record<string, unknown>).tag).toBe('column_set');
+    expect(elements[2]).toEqual({ tag: 'markdown', content: 'mid' });
+    expect(elements[3].tag).toBe('column_set');
+    expect(elements[4].tag).toBe('column_set');
+  });
+
+  it('transforms JSON-2.0 body.elements', () => {
+    const card = {
+      schema: '2.0',
+      config: { streaming_mode: true },
+      body: {
+        elements: [
+          {
+            tag: 'markdown',
+            element_id: 'streaming_reply',
+            content: 'x\n\n| A | B |\n|---|---|\n| 1 | 2 |',
+          },
+        ],
+      },
+    };
+    const result = transformCardTables(card);
+    expect(result).not.toBe(card);
+    const bodyElements = ((result as Record<string, unknown>).body as Record<string, unknown>)
+      .elements as Array<Record<string, unknown>>;
+    expect(bodyElements[0]).toEqual({ tag: 'markdown', content: 'x' });
+    expect(bodyElements[1].tag).toBe('column_set');
+    expect(bodyElements[2].tag).toBe('column_set');
+    expect((result as Record<string, unknown>).schema).toBe('2.0');
+  });
+
+  it('leaves markdown nested inside containers untouched', () => {
+    const nested = { tag: 'markdown', content: '| A | B |\n|---|---|\n| 1 | 2 |' };
+    const card = {
+      elements: [
+        {
+          tag: 'column_set',
+          flex_mode: 'bisect',
+          columns: [{ tag: 'column', elements: [nested] }],
+        },
+      ],
+    };
+    const result = transformCardTables(card);
+    expect(result).toBe(card); // same reference — nested content is out of scope
+  });
+
+  it('keeps code-fence tables literal inside a card element', () => {
+    const card = {
+      elements: [{ tag: 'markdown', content: '```\n| a | b |\n|---|---|\n| 1 | 2 |\n```' }],
+    };
+    expect(transformCardTables(card)).toBe(card);
+  });
+
+  it('returns the same reference when only a nested body exists without tables', () => {
+    const card = { schema: '2.0', body: { elements: [{ tag: 'markdown', content: 'plain' }] } };
+    expect(transformCardTables(card)).toBe(card);
   });
 });
