@@ -407,6 +407,23 @@ async function verifyPackage() {
         await waitChannels(registered.map(account => account.channelId));
         assert.equal(registerAccount('package-first', registered[0].id).id, registered[0].id);
         await waitChannels(registered.map(account => account.channelId));
+        // A failed re-login rolls the account back and reports what the probe
+        // found (#5479): config restored is not login restored, and the
+        // running service re-attaches the re-enabled account afterwards.
+        {
+          const result = spawnSync(cli, ['wechat', 'login', '--state-dir', join(temp, 'wechat-account'),
+            '--id', registered[0].id, '--force', '--qr-file', join(temp, 'failed-relogin.png')], {
+            cwd: temp, encoding: 'utf8', timeout: 60_000,
+            env: { ...env, NODE_OPTIONS: `--import ${loginFixture}`, WECHAT_FIXTURE_BOT: 'package-first', WECHAT_FIXTURE_FAILURE: '1' },
+          });
+          assert.notEqual(result.status, 0, 'A failed re-login must exit non-zero');
+          assert(!`${result.stdout}\n${result.stderr}`.includes('fixture-private-token'));
+          const report = JSON.parse(result.stdout.trim().split('\n').at(-1));
+          assert.equal(report.restored, registered[0].id);
+          assert.equal(report.verified, true);
+          assert(!('loginExpired' in report));
+          await waitChannels(registered.map(account => account.channelId));
+        }
       } else if (attempt === 1) {
         run(cli, ['wechat', 'remove', registered[1].id, '--state-dir', join(temp, 'wechat-account')]);
         registered.pop();
