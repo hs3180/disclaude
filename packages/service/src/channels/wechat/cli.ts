@@ -69,10 +69,14 @@ async function main(): Promise<void> {
         authenticated = false;
         error = cause instanceof Error ? cause.message : 'Cannot read or verify this account';
       }
-      rows.push({ id: account.id, channelId: registry.channelId(account), enabled: account.enabled, configured, authenticated, ...(error ? { error } : {}) });
+      rows.push({ id: account.id, channelId: registry.channelId(account), enabled: account.enabled, configured, authenticated,
+        ...(error ? { error, next: `disclaude wechat login --id ${account.id} --force` } : {}) });
     }
+    const allAuthenticated = rows.length > 0 && rows.every(row => row.authenticated === true);
     console.log(JSON.stringify({ configured: rows.some(row => row.configured),
-      authenticated: values.check ? rows.length > 0 && rows.every(row => row.authenticated === true) : 'not-checked',
+      authenticated: values.check ? allAuthenticated : 'not-checked',
+      // A passing account check reads its own config; it proves neither login liveness nor delivery (#5478).
+      ...(values.check && allAuthenticated ? { note: 'account check passed does not prove message delivery' } : {}),
       accounts: rows, ...(!rows.length ? { next: 'disclaude wechat login' } : {}) }));
     if (values.check && (!rows.length || rows.some(row => row.authenticated !== true))) { process.exitCode = 1; }
     return;
