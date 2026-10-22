@@ -41,6 +41,7 @@ services:
         GH_INSTALL_MODE: ${GH_INSTALL_MODE:-apt-repo}
         GH_DEB_URL: ${GH_DEB_URL:-}
         CODEX_VERSION: ${CODEX_VERSION:-0.151.0}
+        NODE_MIN_VERSION: ${NODE_MIN_VERSION:-22.23.4}
     image: disclaude:service
     container_name: disclaude
     restart: unless-stopped
