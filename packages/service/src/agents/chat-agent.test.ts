@@ -5936,6 +5936,79 @@ describe('ChatAgent (service)', () => {
       expect((agent as any).restartManager.recordSuccess).not.toHaveBeenCalled();
     });
 
+    it('gives output-limit turn failures a progress-aware receipt instead of service advice (#5452)', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_output_limit', agentBackend: 'codex',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        apiProtocol: 'anthropic',
+      });
+
+      async function* outputLimitIterator() {
+        // Real in-turn progress: one tool round already narrated and executed.
+        yield { parsed: { type: 'text', content: '已修改下载策略，接下来运行离线验证。' }, raw: {} };
+        yield { parsed: { type: 'tool_use', content: 'private-tool-command' }, raw: {} };
+        yield {
+          parsed: {
+            type: 'result', content: '', sessionId: 'output-limit-session',
+            terminatedReason: 'turn_failed',
+            terminationDetail: 'codex app-server turn failed (output limit): Incomplete response returned, reason: max_output_tokens; {"threadId":"ol-thread","turnId":"ol-turn"}',
+            metadata: {
+              outputLimit: { lastTool: { kind: 'commandExecution', status: 'incomplete', inputLength: 353433 } },
+            },
+          },
+          raw: {},
+        };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: outputLimitIterator(),
+      });
+
+      void agent.processMessage({
+        chatId: 'oc_output_limit',
+        payload: 'refine the scheduled task',
+        messageId: 'msg_output_limit',
+      });
+
+      await vi.waitFor(() => {
+        expect(
+          localCallbacks.sendMessage.mock.calls.some(
+            (call: any[]) => typeof call[1] === 'string' && call[1].includes('输出生成上限')
+          )
+        ).toBe(true);
+      }, { timeout: 1000, interval: 20 });
+
+      const receipt = localCallbacks.sendMessage.mock.calls
+        .map((call: any[]) => call[1])
+        .find((text: string) => text.includes('输出生成上限'));
+      // Names the actual failure class, not a service/credential/timeout guess.
+      expect(receipt).toContain('max_output_tokens');
+      expect(receipt).not.toContain('凭据');
+      expect(receipt).not.toContain('超时配置');
+      // Separates what already happened from the missing final answer.
+      expect(receipt).toContain('1 次工具调用');
+      expect(receipt).toContain('commandExecution');
+      expect(receipt).toContain('incomplete');
+      expect(receipt).toContain('353433');
+      expect(receipt).toContain('不会自动重放');
+      expect(receipt).toContain('尚未经过最终验证');
+      // Same-session continuation, no whole-task replay.
+      expect(receipt).toContain('沿用原会话上下文');
+      // Bounded telemetry only: the swollen tool TEXT never reaches the user.
+      expect(receipt).not.toContain('private-tool-command');
+      expect((agent as any).restartManager.recordFailure).toHaveBeenCalledWith(
+        'oc_output_limit',
+        'output-limit'
+      );
+      expect((agent as any).restartManager.recordSuccess).not.toHaveBeenCalled();
+      const sentText = localCallbacks.sendMessage.mock.calls.map((call: any[]) => call[1]);
+      expect(sentText).not.toContain('✅ Complete');
+    });
+
     it.each(['om_schedule_start', null])('freezes an explicit scheduler reply anchor instead of reusing the previous thread (%s)', async replyRootId => {
       const callbacks = createMockCallbacks();
       const agent = new ChatAgent({ chatId: 'scheduled-chat', callbacks, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });

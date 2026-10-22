@@ -181,6 +181,25 @@ export interface AgentMessageMetadata {
    */
   upstreamApiErrorStderr?: string;
   /**
+   * Issue #5452: turn_failed 的输出上限子类型。codex 上游返回
+   * "Incomplete response returned, reason: max_output_tokens"(单次生成撞上
+   * 输出上限,常伴随异常膨胀的工具输入)时由 provider 设置,其余失败不设。
+   * 携带**有界脱敏**遥测 —— 只含计数/状态/长度,绝不携带工具原文、凭据或
+   * 内部推理:usage 仅当底层事件暴露(app-server 未暴露时为 undefined,
+   * 即"明确不可用");lastTool 是失败前最后一个工具项的 kind/status/输入
+   * 字符数。ChatAgent 据此把通用失败回执替换为输出上限专项回执(区分
+   * 已发生操作 / 最终答案缺失 / 待核验),recordFailure 用独立标签。
+   */
+  outputLimit?: {
+    usage?: {
+      inputTokens?: number;
+      cachedInputTokens?: number;
+      outputTokens?: number;
+      reasoningOutputTokens?: number;
+    };
+    lastTool?: { kind: string; status?: string; inputLength?: number };
+  };
+  /**
    * 瞬态进度占位标记 —— 该 status 消息只是「某步正在进行中」的工具型提示，
    * 不是给用户的内容。当前来源:Claude SDK 的 `status:'requesting'`(→
    * "🤔 Thinking...")与 `status:'compacting'`(→ "🔄 Compacting conversation
