@@ -27,13 +27,34 @@ export function discoverConfigFile(): { path: string; exists: boolean } {
   return { path: '', exists: false };
 }
 
+/**
+ * Parse the discovered (or given) config file as raw YAML without
+ * initializing Config or its logger. Shared by {@link loadConfigEnvironment}
+ * and container-entrypoint credential extraction (#5432) so every consumer
+ * reads exactly what the loader would read — no parallel YAML scraping that
+ * drifts when the schema moves.
+ *
+ * A missing file or non-mapping document yields `config: null`.
+ */
+export function readDiscoveredConfigYaml(filePath?: string): {
+  path: string;
+  exists: boolean;
+  config: Record<string, unknown> | null;
+} {
+  const file = filePath ? resolve(filePath) : discoverConfigFile().path;
+  if (!file || !existsSync(file)) {return { path: file ?? '', exists: false, config: null };}
+  const parsed = yaml.load(readFileSync(file, 'utf8'));
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { path: file, exists: true, config: null };
+  }
+  return { path: file, exists: true, config: parsed as Record<string, unknown> };
+}
+
 /** Read only configured environment entries without initializing Config or its logger. */
 export function loadConfigEnvironment(filePath?: string): Record<string, string> {
-  const file = filePath ? resolve(filePath) : discoverConfigFile().path;
-  if (!file || !existsSync(file)) {return {};}
-  const parsed = yaml.load(readFileSync(file, 'utf8'));
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {return {};}
-  const environment = (parsed as { env?: unknown }).env;
+  const { config } = readDiscoveredConfigYaml(filePath);
+  if (!config) {return {};}
+  const environment = config.env;
   if (!environment || typeof environment !== 'object' || Array.isArray(environment)) {return {};}
   return Object.fromEntries(Object.entries(environment)
     .filter(([, value]) => value !== undefined && value !== null)
