@@ -10,6 +10,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { WeChatChannel } from './wechat-channel.js';
+import { WeChatApiError } from './api-client.js';
 
 // Mock the API client
 const mockSendText = vi.fn().mockResolvedValue(undefined);
@@ -19,6 +20,16 @@ const mockHasToken = vi.fn().mockReturnValue(true);
 const mockGetUpdates = vi.fn().mockResolvedValue([]);
 
 vi.mock('./api-client.js', () => ({
+  WeChatApiError: class WeChatApiError extends Error {
+    readonly authExpired: boolean;
+    readonly detail: { errmsg?: string; diagnosticId?: string } | undefined;
+    constructor(readonly code: number, detail?: { errmsg?: string; diagnosticId?: string }) {
+      super(`WeChat API error [${code}]`);
+      this.name = 'WeChatApiError';
+      this.authExpired = code === -14 || code === 401;
+      this.detail = detail;
+    }
+  },
   WeChatApiClient: vi.fn(class {
     sendText = mockSendText;
     sendTyping = mockSendTyping;
@@ -189,6 +200,44 @@ describe('WeChatChannel', () => {
       mockSendText.mockClear().mockResolvedValueOnce('first-id').mockRejectedValueOnce(new Error('network failure'));
       await expect((channel as any).doSendMessage({ chatId: 'chat-1', type: 'text', text })).rejects.toThrow('partial');
       expect(mockSendText).toHaveBeenCalledTimes(2);
+    });
+
+    it('frames an explicit -2 rejection as not-sent with next steps, without retrying (#5478)', async () => {
+      const registrationId = '1b0c2c93-e587-46c8-8ef9-0da14210c8ed';
+      const channel = new WeChatChannel({ token: 'test-token', registrationId });
+      (channel as any).contexts.set('chat-1@im.wechat', 'ctx-chat');
+      (channel as any).client = { sendText: mockSendText, hasToken: mockHasToken };
+      const rejection = new WeChatApiError(-2, { endpoint: '/ilink/bot/sendmessage', errmsg: 'prepare failed', diagnosticId: 'ab12cd34' });
+      mockSendText.mockRejectedValueOnce(rejection);
+      const failure = await (channel as any).doSendMessage({ chatId: `wechat:${registrationId}:chat-1@im.wechat`, type: 'text', text: 'hello' }).catch((error: any) => error);
+      expect(failure.message).toContain('NOT sent');
+      expect(failure.message).toContain('code -2');
+      expect(failure.message).toContain('server said: prepare failed');
+      expect(failure.message).toContain('delivery rejection, not a confirmed login');
+      expect(failure.message).toContain(`disclaude wechat login --id ${registrationId} --force`);
+      expect(failure.message).toContain('[diag ab12cd34]');
+      expect(failure.cause).toBe(rejection);
+      expect(mockSendText).toHaveBeenCalledTimes(1); // bounded: no automatic retry or type switch
+    });
+
+    it('frames an expired login as a login problem, never as a delivery rejection (#5478)', async () => {
+      const channel = readyChannel();
+      (channel as any).client = { sendText: mockSendText, hasToken: mockHasToken };
+      const rejection = new WeChatApiError(-14, { endpoint: '/ilink/bot/sendmessage' });
+      mockSendText.mockRejectedValueOnce(rejection);
+      const failure = await (channel as any).doSendMessage({ chatId: 'chat-1', type: 'text', text: 'hello' }).catch((error: any) => error);
+      expect(failure.message).toContain('login expired');
+      expect(failure.message).toContain('disclaude wechat login');
+      expect(failure.message).not.toContain('delivery rejection');
+      expect(failure.cause).toBe(rejection);
+    });
+
+    it('keeps unknown-outcome failures verbatim instead of claiming a rejection (#5478)', async () => {
+      const channel = readyChannel();
+      (channel as any).client = { sendText: mockSendText, hasToken: mockHasToken };
+      const unknown = new Error('WeChat delivery outcome unknown after timeout, network or response failure; verify in WeChat before retrying');
+      mockSendText.mockRejectedValueOnce(unknown);
+      await expect((channel as any).doSendMessage({ chatId: 'chat-1', type: 'text', text: 'hello' })).rejects.toBe(unknown);
     });
 
     it('should not send empty text messages', async () => {
