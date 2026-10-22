@@ -412,6 +412,8 @@ describe('WeChatMessageListener', () => {
       await vi.advanceTimersByTimeAsync(100);
       expect(listener.isListening()).toBe(false);
       expect(mockClient.getUpdates).toHaveBeenCalledTimes(1);
+      expect(listener.authState()).toBe('login-expired');
+      expect(listener.isHealthy()).toBe(false);
       await listener.stop();
     });
     it('should continue polling after transient error', async () => {
@@ -538,6 +540,59 @@ describe('WeChatMessageListener', () => {
       const message = getFirstMessage();
       expect(message.timestamp).toBeGreaterThanOrEqual(before);
       expect(message.timestamp).toBeLessThanOrEqual(after);
+    });
+  });
+
+  describe('remote auth confirmation (#5479)', () => {
+    it('stays pending and not fully healthy until the remote accepts a poll', async () => {
+      // Startup with restored credentials: listening locally, but no remote
+      // confirmation yet — isHealthy must not claim proven login (#5479 C1).
+      mockClient.getUpdates = vi
+        .fn()
+        .mockImplementation(getUpdatesPendingUntilAborted);
+
+      listener.start();
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(listener.isListening()).toBe(true);
+      expect(listener.authState()).toBe('pending');
+      expect(listener.isHealthy()).toBe(false);
+
+      await stopAndFlush(listener);
+    });
+
+    it('confirms login on the first successful poll and reports healthy', async () => {
+      mockClient.getUpdates = vi
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockImplementation(getUpdatesPendingUntilAborted);
+
+      listener.start();
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(listener.authState()).toBe('confirmed');
+      expect(listener.isHealthy()).toBe(true);
+
+      await stopAndFlush(listener);
+    });
+
+    it('returns to pending when listening restarts after expiry', async () => {
+      mockClient.getUpdates = vi.fn().mockRejectedValue(new WeChatApiError(-14));
+      listener.start();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(listener.authState()).toBe('login-expired');
+
+      // Re-login + restart: the new credentials are again unproven until
+      // the remote accepts a poll.
+      mockClient.getUpdates = vi
+        .fn()
+        .mockImplementation(getUpdatesPendingUntilAborted);
+      listener.start();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(listener.authState()).toBe('pending');
+      expect(listener.isHealthy()).toBe(false);
+
+      await stopAndFlush(listener);
     });
   });
 
