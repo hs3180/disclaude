@@ -8,11 +8,12 @@ import { WeChatRegistry } from '../../packages/service/src/channels/wechat/regis
 import { WeChatStateStore } from '../../packages/service/src/channels/wechat/state-store.js';
 
 const exec = promisify(execFile);
-function cli(dir: string, args: string[], fixture?: { bot?: string; fail?: boolean }) {
+function cli(dir: string, args: string[], fixture?: { bot?: string; fail?: boolean; expired?: boolean }) {
   return exec(process.execPath, ['bin/disclaude.js', 'wechat', ...args, '--state-dir', dir], {
     env: { ...process.env, LOG_LEVEL: 'silent', LOG_TO_FILE: 'false', WECHAT_FIXTURE_BOT: fixture?.bot,
       NODE_OPTIONS: fixture ? `--import ${JSON.stringify(resolve('tests/fixtures/wechat-login-gateway.mjs'))}` : '',
-      WECHAT_FIXTURE_FAILURE: fixture?.fail ? '1' : undefined }, timeout: 10000,
+      WECHAT_FIXTURE_FAILURE: fixture?.fail ? '1' : undefined,
+      WECHAT_FIXTURE_SESSION_EXPIRED: fixture?.expired ? '1' : undefined }, timeout: 10000,
   });
 }
 function lastJson(stdout: string) { return JSON.parse(stdout.trim().split('\n').at(-1)!); }
@@ -53,6 +54,36 @@ describe('dynamic registration CLI', () => {
       expect(record.enabled).toBe(true);
       expect((await new WeChatStateStore(registry.stateDir(record)).loadCredentials())?.botId).toBe('original');
       await expect(cli(dir, ['status', '--id', 'unknown'])).rejects.toThrow('Unknown WeChat registration');
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it('reports an expired login, not a recovery, when the rollback probe is rejected (#5479)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'wechat-registration-cli-rollback-'));
+    try {
+      const first = lastJson((await cli(dir, ['login', '--qr-file', join(dir, 'first.png')], { bot: 'original' })).stdout);
+      // The forced re-login fails and the saved credentials are expired
+      // server-side: the rollback must restore the account, probe it, and say
+      // the login needs a scan instead of implying the account recovered.
+      const failure = await cli(dir, ['login', '--id', first.id, '--force', '--qr-file', join(dir, 'renew.png')],
+        { bot: 'original', fail: true, expired: true }).catch(error => error);
+      const report = lastJson(failure.stdout);
+      expect(report).toMatchObject({ restored: first.id, verified: false, loginExpired: true });
+      expect(report.next).toBe(`disclaude wechat login --id ${first.id} --force`);
+      const [record] = await new WeChatRegistry(dir).list();
+      expect(record.enabled).toBe(true);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it('verifies a still-valid login after a rolled-back re-login (#5479)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'wechat-registration-cli-rollback-ok-'));
+    try {
+      const first = lastJson((await cli(dir, ['login', '--qr-file', join(dir, 'first.png')], { bot: 'original' })).stdout);
+      const failure = await cli(dir, ['login', '--id', first.id, '--force', '--qr-file', join(dir, 'renew.png')],
+        { bot: 'original', fail: true }).catch(error => error);
+      const report = lastJson(failure.stdout);
+      expect(report).toMatchObject({ restored: first.id, verified: true });
+      expect(report).not.toHaveProperty('loginExpired');
+      expect(report.note).toBe('account check passed does not prove message delivery');
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 });
