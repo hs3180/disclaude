@@ -417,7 +417,9 @@ async function verifyPackage() {
             env: { ...env, NODE_OPTIONS: `--import ${loginFixture}`, WECHAT_FIXTURE_BOT: 'package-first', WECHAT_FIXTURE_FAILURE: '1' },
           });
           assert.notEqual(result.status, 0, 'A failed re-login must exit non-zero');
-          assert(!`${result.stdout}\n${result.stderr}`.includes('fixture-private-token'));
+          // Stdout only, like registerAccount above: stderr carries the fixture
+          // gateway's nock debug traces, which mirror intercepted bodies.
+          assert(!result.stdout.includes('fixture-private-token'));
           const report = JSON.parse(result.stdout.trim().split('\n').at(-1));
           assert.equal(report.restored, registered[0].id);
           assert.equal(report.verified, true);
