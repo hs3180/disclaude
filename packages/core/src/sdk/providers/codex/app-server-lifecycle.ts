@@ -117,6 +117,11 @@ export class CodexAppServerLifecycle {
           onError: error => options.onNotification?.('input/deliveryFailed', {
             ...(params as Record<string, unknown>), deliveryError: error,
           }),
+          // #5467: capability-mismatch questions degrade to plain text; the
+          // host renders it as an ordinary assistant message, not an error.
+          onDegraded: text => options.onNotification?.('input/deliveryDegraded', {
+            ...(params as Record<string, unknown>), degradedQuestion: text,
+          }),
         });
         options.onNotification?.(method, handled ? { ...(params as Record<string, unknown>), agentInputHandled: true } : params);
       },

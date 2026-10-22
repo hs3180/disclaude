@@ -7,6 +7,10 @@ import { CodexAgentProvider } from './provider.js';
 import type { AgentInputRequest, AgentInputContext } from '../../user-input.js';
 import { LiveInputRejectedError } from '../../live-input.js';
 
+// #5467: sessions without interactive-answer wiring get this appended to each
+// turn prompt so the model asks in plain text instead of an async question.
+const asyncNote = '\n\n[Session note] This conversation cannot receive asynchronous question forms. When you need clarification, ask the user directly in your reply text instead of using an async question tool.';
+
 const dirs: string[] = [];
 function providerFixture(
   body: string,
@@ -132,8 +136,14 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       if (mode === 'unsupported') {
         await collecting;
         expect(onUserInput).not.toHaveBeenCalled();
-        expect(messages.some(m => m.metadata?.terminatedReason === 'turn_failed')).toBe(true);
-        expect(messages.some(m => m.type === 'error' && m.content.includes('Async question'))).toBe(true);
+        // #5467: a capability mismatch degrades to a plain-text question and
+        // the turn completes normally; only delivery accidents fail the turn.
+        const degraded = messages.find(m => m.type === 'text' && m.content.includes('任务需要你的输入'));
+        expect(degraded).toBeDefined();
+        expect(degraded?.content).toContain('Which scope?');
+        expect(messages.some(m => m.type === 'error')).toBe(false);
+        expect(messages.some(m => m.metadata?.terminatedReason === 'turn_failed')).toBe(false);
+        expect(readFileSync(join(dir, 'home/writes'), 'utf8')).toBe('start\n');
       } else {
         await vi.waitFor(() => expect(onUserInput).toHaveBeenCalledOnce());
         const [[request]] = onUserInput.mock.calls;
@@ -346,8 +356,8 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       const threadRequests = readFileSync(join(dir, 'home/methods'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
       expect(threadRequests.map(request => request.method)).toEqual(['thread/start', 'thread/resume']);
       const turnInputs = readFileSync(join(dir, 'home/turn-inputs'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
-      expect(turnInputs[0]).toEqual([{ type: 'text', text: 'Stable channel guidance\nRecord the first marker' }]);
-      expect(turnInputs[1]).toEqual([{ type: 'text', text: 'Record the second marker' }]);
+      expect(turnInputs[0]).toEqual([{ type: 'text', text: `Stable channel guidance\nRecord the first marker${asyncNote}` }]);
+      expect(turnInputs[1]).toEqual([{ type: 'text', text: `Record the second marker${asyncNote}` }]);
       expect(threadRequests[0].params.dynamicTools).toMatchObject([
         { type: 'namespace', name: 'disclaude', tools: [{ type: 'function', name: 'emit_marker' }] },
       ]);
@@ -616,7 +626,10 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     expect(prompt).toContain('Shared local skill');
     expect(prompt).not.toContain('claude-local');
     expect(prompt).not.toContain('Claude local skill');
-    expect(prompt).toContain('User request:\nhello');
+    // #5467: unwired sessions get the bare request plus the session note
+    // (no "User request:" delimiter) after the skills manifest.
+    expect(prompt).toContain('\n\nhello');
+    expect(prompt).toContain(asyncNote);
     expect(prompt).not.toContain(workspace);
     provider.dispose();
   });

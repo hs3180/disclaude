@@ -18,6 +18,28 @@ interface AsyncInputDelivery {
   deliver?: (request: AgentInputRequest) => Promise<void>;
   submit?: (request: AgentInputRequest, text: string) => Promise<void>;
   onError?: (error: CodexAsyncInputDeliveryError) => void;
+  /**
+   * Issue #5467: invoked instead of onError when the failure is a KNOWN
+   * capability mismatch ("unsupported"), carrying the question preformatted
+   * as plain text. The host renders it as an ordinary assistant message so
+   * the user can still answer in-band; the turn completes normally instead
+   * of dumping the host error string into the chat.
+   */
+  onDegraded?: (text: string) => void;
+}
+
+/** Plain-text rendering of an async question for sessions without interactive forms (#5467). */
+export function formatAgentInputQuestionsAsText(params: AgentInputParams): string {
+  const lines = ['💬 任务需要你的输入（当前会话不支持交互式回答，请直接在聊天中回复）：'];
+  params.questions.forEach((question, index) => {
+    lines.push(`${index + 1}. ${question.header ? `${question.header}：` : ''}${question.question}`);
+    if (question.options?.length) {
+      lines.push(`   选项：${question.options
+        .map(option => option.label + (option.description ? `（${option.description}）` : ''))
+        .join(' / ')}`);
+    }
+  });
+  return lines.join('\n');
 }
 
 /** Notification-based questions have no pending server RPC to answer. */
@@ -102,11 +124,22 @@ export class CodexAsyncUserInput {
       }),
     ]).catch(error => {
       abort.abort('unavailable');
-      if (error instanceof CodexAsyncInputDeliveryError) { throw error; }
-      if (error instanceof Error && 'code' in error && error.code === 'AGENT_ASYNC_INPUT_UNSUPPORTED') {
-        throw new CodexAsyncInputDeliveryError('unsupported');
+      let mapped: CodexAsyncInputDeliveryError;
+      if (error instanceof CodexAsyncInputDeliveryError) { mapped = error; }
+      else if (error instanceof Error && 'code' in error && error.code === 'AGENT_ASYNC_INPUT_UNSUPPORTED') {
+        mapped = new CodexAsyncInputDeliveryError('unsupported');
+      } else { mapped = new CodexAsyncInputDeliveryError(); }
+      // #5467: "unsupported" is a session capability mismatch, not a delivery
+      // accident — every origin (no interactive channel wired, no input
+      // context / answer host, once-mode or stale-session rejection
+      // downstream) degrades the same way: hand the host the question as
+      // plain text and resolve, so the turn completes normally instead of
+      // surfacing the host error string in the chat.
+      if (mapped.code === 'CODEX_ASYNC_INPUT_UNSUPPORTED' && delivery.onDegraded) {
+        delivery.onDegraded(formatAgentInputQuestionsAsText(params));
+        return;
       }
-      throw new CodexAsyncInputDeliveryError();
+      throw mapped;
     }).finally(() => abort.signal.removeEventListener('abort', rejectCancelled));
     this.deliveries.set(key, { params, flight });
     void flight.catch(error => delivery.onError?.(error as CodexAsyncInputDeliveryError));
