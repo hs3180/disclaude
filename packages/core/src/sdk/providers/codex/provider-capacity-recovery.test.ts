@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentMessage, UserInput } from '../../types.js';
 import { CodexAgentProvider } from './provider.js';
-import { codexCapacityRecoveryDelay, readCodexCapacityRecoveryPolicy, readCodexOverloadFailure } from './overload-policy.js';
+import { codexCapacityRecoveryDelay, codexOverloadRetryDelay, readCodexCapacityRecoveryPolicy, readCodexOverloadFailure } from './overload-policy.js';
 
 /**
  * Issue #5468: a capacity (serverOverloaded / 503) failure that struck AFTER
@@ -197,5 +197,25 @@ describe('codexCapacityRecoveryDelay policy (#5468)', () => {
     const now = () => 1_000_000;
     expect(codexCapacityRecoveryDelay(hint, 0, now(), { ...policy, budgetMs: 30_000 }, now)).toBeUndefined();
     expect(codexCapacityRecoveryDelay(hint, 0, now(), { ...policy, budgetMs: 180_000 }, now)).toBeGreaterThanOrEqual(60_000);
+  });
+
+  it('spreads a shared server hint so concurrent sessions do not fire in lockstep (#5494 review)', () => {
+    const now = () => 1_000_000;
+    // 10s hint → spread within [10s, 12s]; every draw respects the floor.
+    const scheduled = Array.from({ length: 50 }, () =>
+      codexCapacityRecoveryDelay({ ...capacity!, retryAfterMs: 10_000 }, 0, now(), policy, now));
+    expect(new Set(scheduled).size).toBeGreaterThan(40);
+    for (const ms of scheduled) { expect(ms).toBeGreaterThanOrEqual(10_000); expect(ms).toBeLessThanOrEqual(12_000); }
+    // 60s hint → spread capped at +5s.
+    const capped = Array.from({ length: 50 }, () =>
+      codexCapacityRecoveryDelay({ ...capacity!, retryAfterMs: 60_000 }, 0, now(), policy, now));
+    for (const ms of capped) { expect(ms).toBeGreaterThanOrEqual(60_000); expect(ms).toBeLessThanOrEqual(65_000); }
+  });
+
+  it('spreads the pre-work retry hint too and never shortens it (#5494 review)', () => {
+    const failure = { ...capacity!, retryAfterMs: 2_000 };
+    const delays = Array.from({ length: 50 }, () => codexOverloadRetryDelay(failure, 0, 0));
+    expect(new Set(delays).size).toBeGreaterThan(40);
+    for (const ms of delays) { expect(ms).toBeGreaterThanOrEqual(2_000); expect(ms).toBeLessThanOrEqual(2_400); }
   });
 });

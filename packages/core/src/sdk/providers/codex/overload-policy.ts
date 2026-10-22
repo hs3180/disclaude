@@ -112,17 +112,37 @@ export function codexCapacityRecoveryDelay(
   firstFailureAtMs: number,
   policy: CodexCapacityRecoveryPolicy = readCodexCapacityRecoveryPolicy(),
   now: () => number = Date.now,
+  random: () => number = Math.random,
 ): number | undefined {
   if (attempt >= policy.maxAttempts || !isCodexCapacityFailure(failure)) { return undefined; }
-  const scheduled = Math.max(failure.retryAfterMs ?? 0, computeBackoffDelay(attempt, {
+  const scheduled = Math.max(serverHintDelay(failure, random), computeBackoffDelay(attempt, {
     initialDelayMs: policy.initialDelayMs, backoffMultiplier: policy.backoffMultiplier, maxDelayMs: policy.maxDelayMs, jitter: true,
-  }));
+  }, random));
   return firstFailureAtMs + policy.budgetMs - now() >= scheduled ? scheduled : undefined;
 }
 
-export function codexOverloadRetryDelay(failure: CodexOverloadFailure, attempt: number, waitedMs: number): number | undefined {
+/**
+ * #5494 review: sessions sharing one Retry-After would otherwise fire at the
+ * same instant (the plain hint wins the max against the jittered backoff).
+ * Honor the hint as a floor, then spread it by bounded positive jitter — the
+ * spread only ever delays past the hint, never shortens it, and is capped so
+ * large hints stay meaningful. The backoff half is independently jittered by
+ * computeBackoffDelay.
+ */
+function serverHintDelay(failure: CodexOverloadFailure, random: () => number): number {
+  if (failure.retryAfterMs === undefined) { return 0; }
+  const spread = Math.min(failure.retryAfterMs * 0.2, 5_000);
+  return failure.retryAfterMs + random() * spread;
+}
+
+export function codexOverloadRetryDelay(
+  failure: CodexOverloadFailure,
+  attempt: number,
+  waitedMs: number,
+  random: () => number = Math.random,
+): number | undefined {
   if (attempt >= CODEX_OVERLOAD_MAX_RETRIES) { return undefined; }
-  const delayMs = Math.max(failure.retryAfterMs ?? 0, computeBackoffDelay(attempt, TIMING));
+  const delayMs = Math.max(serverHintDelay(failure, random), computeBackoffDelay(attempt, TIMING, random));
   // Never shorten a valid server hint to fit the budget: defer instead.
   return Number.isFinite(delayMs) && waitedMs + delayMs <= MAX_TOTAL_WAIT_MS ? delayMs : undefined;
 }

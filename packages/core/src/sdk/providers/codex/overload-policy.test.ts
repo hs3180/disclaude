@@ -18,7 +18,9 @@ describe('Codex native overload classification', () => {
   it('honors an HTTP-date wait hint and refuses a wait beyond the remaining budget', () => {
     const now = Date.parse('2026-10-10T00:00:00Z');
     const failure = readCodexOverloadFailure({ codexErrorInfo: 'serverOverloaded', message: 'At capacity', additionalDetails: 'Retry-After: Sat, 10 Oct 2026 00:00:20 GMT' }, now)!;
-    expect(codexOverloadRetryDelay(failure, 0, 0)).toBe(20_000);
+    // The server hint is a floor with bounded positive jitter (#5494 review).
+    expect(codexOverloadRetryDelay(failure, 0, 0)).toBeGreaterThanOrEqual(20_000);
+    expect(codexOverloadRetryDelay(failure, 0, 0)).toBeLessThanOrEqual(24_000);
     expect(codexOverloadRetryDelay(failure, 1, 20_000)).toBeUndefined();
   });
 
@@ -38,6 +40,7 @@ describe('Codex native overload classification', () => {
 
   it('honors a Retry-After seconds hint on a transient 429', () => {
     const failure = readCodexOverloadFailure({ message: 'HTTP 429 Too Many Requests', additionalDetails: 'Retry-After: 5' })!;
-    expect(codexOverloadRetryDelay(failure, 0, 0)).toBe(5000);
+    expect(codexOverloadRetryDelay(failure, 0, 0)).toBeGreaterThanOrEqual(5000);
+    expect(codexOverloadRetryDelay(failure, 0, 0)).toBeLessThanOrEqual(6000);
   });
 });
