@@ -64,6 +64,7 @@ vi.mock('./message-listener.js', () => ({
     stop = mockStop;
     isListening = mockIsListening;
     isHealthy = mockIsListening;
+    applyAuthProbe = vi.fn();
   }),
   MessageProcessor: undefined,
 }));

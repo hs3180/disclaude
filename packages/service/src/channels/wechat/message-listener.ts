@@ -35,10 +35,10 @@ const DEDUP_EVICTION_COUNT = 5_000;
 export type MessageProcessor = (message: IncomingMessage) => Promise<void>;
 
 /**
- * Remote login confirmation derived from actual getUpdates traffic (#5479).
+ * Remote login confirmation derived from actual traffic (#5479).
  *
- * - 'pending': listening started, but the remote has not accepted a poll yet
- * - 'confirmed': the remote accepted at least one poll with current credentials
+ * - 'pending': listening started, but the remote has not answered yet
+ * - 'confirmed': the remote accepted a poll or a startup session probe
  * - 'login-expired': the remote rejected the credentials (-14/401); re-login required
  */
 export type WeChatAuthConfirmation = 'pending' | 'confirmed' | 'login-expired';
@@ -156,6 +156,18 @@ export class WeChatMessageListener {
    * credentials are never reported as proven-healthy without traffic.
    */
   authState(): WeChatAuthConfirmation { return this.remoteAuth; }
+
+  /**
+   * Fold a read-only session probe verdict into the auth confirmation state
+   * (#5479). An expired verdict always wins; a passing probe only confirms
+   * still-pending credentials and never overrides poll traffic. Inconclusive
+   * probes (network errors) are not reported here — the listener stays
+   * pending until real traffic decides.
+   */
+  applyAuthProbe(authExpired: boolean): void {
+    if (authExpired) { this.remoteAuth = 'login-expired'; return; }
+    if (this.remoteAuth === 'pending') { this.remoteAuth = 'confirmed'; }
+  }
 
   /**
    * Main polling loop.

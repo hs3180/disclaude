@@ -594,6 +594,42 @@ describe('WeChatMessageListener', () => {
 
       await stopAndFlush(listener);
     });
+
+    it('confirms pending credentials from a passing startup probe', async () => {
+      mockClient.getUpdates = vi
+        .fn()
+        .mockImplementation(getUpdatesPendingUntilAborted);
+
+      listener.start();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(listener.authState()).toBe('pending');
+
+      listener.applyAuthProbe(false);
+      expect(listener.authState()).toBe('confirmed');
+      expect(listener.isHealthy()).toBe(true);
+
+      await stopAndFlush(listener);
+    });
+
+    it('lets an expired probe verdict win over earlier confirmation', async () => {
+      mockClient.getUpdates = vi
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockImplementation(getUpdatesPendingUntilAborted);
+      listener.start();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(listener.authState()).toBe('confirmed');
+
+      listener.applyAuthProbe(true);
+      expect(listener.authState()).toBe('login-expired');
+      expect(listener.isHealthy()).toBe(false);
+
+      // A passing probe must not resurrect expired credentials.
+      listener.applyAuthProbe(false);
+      expect(listener.authState()).toBe('login-expired');
+
+      await stopAndFlush(listener);
+    });
   });
 
   describe('isListening', () => {

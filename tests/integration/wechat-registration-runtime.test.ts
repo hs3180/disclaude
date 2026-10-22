@@ -12,6 +12,12 @@ import { WECHAT_WIRED_DESCRIPTOR, REST_WIRED_DESCRIPTOR } from '../../packages/s
 
 const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 afterEach(() => { nock.cleanAll(); vi.restoreAllMocks(); });
+// Long polls stay pending until abort; the startup session probe (#5479) is
+// what confirms health, so getconfig must answer like a healthy account.
+function answerSessionProbes() {
+  nock('https://ilinkai.weixin.qq.com').persist().post('/ilink/bot/getupdates').reply((_uri, _body, _callback) => {});
+  nock('https://ilinkai.weixin.qq.com').persist().post('/ilink/bot/getconfig').reply(200, { ret: 0 });
+}
 function setup(dir: string) {
   const service = new DisclaudeService();
   const manager = service.getChannelManager();
@@ -29,7 +35,7 @@ describe('WeChat registration runtime', () => {
   it('hot-adds accounts from zero, isolates failed accounts, and applies enable/remove without stopping REST', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'wechat-hot-registration-'));
     const { manager, lifecycle, registry, runtime } = setup(dir);
-    nock('https://ilinkai.weixin.qq.com').persist().post('/ilink/bot/getupdates').reply((_uri, _body, _callback) => {});
+    answerSessionProbes();
     let stopped = false;
     try {
       await lifecycle.createAndWire(REST_WIRED_DESCRIPTOR, { port: 0, host: '127.0.0.1', fileStorageDir: join(dir, 'rest') });
@@ -37,7 +43,7 @@ describe('WeChat registration runtime', () => {
       await runtime.start();
       expect(manager.getAll().map(channel => channel.id)).toEqual(['rest']);
       const register = (suffix: string) => registry.register({ botId: `${dir}-${suffix}`, token: 'test-token',
-        baseUrl: 'https://ilinkai.weixin.qq.com', savedAt: new Date().toISOString() });
+        baseUrl: 'https://ilinkai.weixin.qq.com', userId: `fixture-user-${suffix}`, savedAt: new Date().toISOString() });
       const first = await register('first');
       await vi.waitFor(() => expect(manager.get(registry.channelId(first))?.isHealthy()).toBe(true));
       const firstInstance = manager.get(registry.channelId(first));
@@ -64,7 +70,7 @@ describe('WeChat registration runtime', () => {
       const restored = setup(dir);
       try {
         await restored.runtime.start();
-        expect(restored.manager.get(registry.channelId(first))?.isHealthy()).toBe(true);
+        await vi.waitFor(() => expect(restored.manager.get(registry.channelId(first))?.isHealthy()).toBe(true));
         expect(restored.manager.get(registry.channelId(second))).toBeUndefined();
         expect(restored.manager.get(registry.channelId(failed))?.status).toBe('error');
       } finally { await restored.runtime.stop(); }
@@ -74,9 +80,9 @@ describe('WeChat registration runtime', () => {
   it('retains working accounts on a corrupt update and rejects a corrupt registry on startup', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'wechat-registry-corruption-'));
     const { manager, registry, runtime } = setup(dir);
-    nock('https://ilinkai.weixin.qq.com').persist().post('/ilink/bot/getupdates').reply((_uri, _body, _callback) => {});
+    answerSessionProbes();
     try {
-      const account = await registry.register({ botId: dir, token: 'test-token', baseUrl: 'https://ilinkai.weixin.qq.com', savedAt: new Date().toISOString() });
+      const account = await registry.register({ botId: dir, token: 'test-token', userId: 'fixture-user-corrupt', baseUrl: 'https://ilinkai.weixin.qq.com', savedAt: new Date().toISOString() });
       await runtime.start();
       await writeFile(join(dir, 'accounts.json'), 'corrupted-private-registry');
       await new Promise(resolve => setTimeout(resolve, 40));
