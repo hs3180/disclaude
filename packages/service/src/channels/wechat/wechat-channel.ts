@@ -21,7 +21,7 @@
 import { createLogger, BaseChannel, type OutgoingMessage, type ChannelCapabilities, type IncomingMessage } from '@disclaude/core';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { WeChatApiClient } from './api-client.js';
+import { WeChatApiClient, WeChatApiError } from './api-client.js';
 import { WeChatAuth } from './auth.js';
 import { WeChatMessageListener, type MessageProcessor } from './message-listener.js';
 import type { WeChatChannelConfig } from './types.js';
@@ -199,18 +199,41 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
         for (const content of chunks) { messageId = await this.client.sendText({ to: message.chatId, content, contextToken }); sent++; }
       } catch (error) {
         if (sent) { throw new Error(`WeChat delivery failed after ${sent}/${chunks.length} text parts; delivery is partial, verify before retrying`, { cause: error }); }
-        throw error;
+        throw this.describeDeliveryFailure(error);
       }
       return messageId;
     }
 
     // File sending via CDN upload (Issue #1556 Phase 3.2)
     if (message.type === 'file' && message.filePath) {
-      return await this.sendViaCdn(message);
+      try {
+        return await this.sendViaCdn(message);
+      } catch (error) {
+        throw this.describeDeliveryFailure(error);
+      }
     }
 
     // Unsupported message types
     throw new Error(`Unsupported or empty WeChat message: ${message.type}`);
+  }
+
+  /**
+   * Frame a failed send in operator terms (#5478): what is known, what it is
+   * not, and the next step — without ever claiming delivery. A rejection is
+   * never auto-retried, re-typed or re-sent without a new peer message; a
+   * generic -2 is never upgraded to "login expired".
+   */
+  private describeDeliveryFailure(error: unknown): unknown {
+    if (!(error instanceof WeChatApiError)) { return error; }
+    const rejoin = this.config.registrationId
+      ? `disclaude wechat login --id ${this.config.registrationId} --force`
+      : 'disclaude wechat login';
+    if (error.authExpired) {
+      return new Error(`WeChat message NOT sent: this account's login expired. Next: run '${rejoin}' (pauses this account's listener while re-authenticating), then retry after the account is enabled again.`, { cause: error });
+    }
+    const reason = ` (code ${error.code}${error.detail?.errmsg ? `, server said: ${error.detail.errmsg}` : ''})`;
+    const diag = error.detail?.diagnosticId ? ` [diag ${error.detail.diagnosticId}]` : '';
+    return new Error(`WeChat message NOT sent: the server rejected delivery${reason}. The account check may still pass — this is a delivery rejection, not a confirmed login or configuration failure. Next: have the peer send the bot a new message, then retry once; if they cannot find the bot chat, re-join with '${rejoin}' (pauses this account's listener while re-authenticating)${diag}`, { cause: error });
   }
 
   /**
