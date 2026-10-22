@@ -104,9 +104,18 @@ export class WeChatStateStore {
         };
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'EEXIST') { throw error; }
-        const owner = await this.read<{ pid: number }>('listener.lock');
-        if (!owner || !Number.isInteger(owner.pid) || owner.pid <= 0) { throw new Error('Invalid WeChat listener lock'); }
-        try { process.kill(owner.pid, 0); }
+        // The previous owner can release (unlink) its lock between our EEXIST
+        // and this read; a vanished record means retry, not corruption.
+        let record: string;
+        try { record = await fs.readFile(file, 'utf8'); }
+        catch (readError) {
+          if ((readError as NodeJS.ErrnoException).code === 'ENOENT') { continue; }
+          throw new Error('Invalid WeChat listener lock');
+        }
+        let owner: { pid?: unknown };
+        try { owner = JSON.parse(record); } catch { throw new Error('Invalid WeChat listener lock'); }
+        if (!owner || !Number.isInteger(owner.pid) || (owner.pid as number) <= 0) { throw new Error('Invalid WeChat listener lock'); }
+        try { process.kill(owner.pid as number, 0); }
         catch (probeError) {
           if ((probeError as NodeJS.ErrnoException).code === 'ESRCH') { await fs.rm(file, { force: true }); continue; }
         }

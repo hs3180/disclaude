@@ -1,8 +1,13 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WeChatStateStore, validateWechatBaseUrl } from './state-store.js';
+
+// The ESM namespace is frozen, so a plain-object copy of the same real
+// functions lets one call be interleaved deterministically while every other
+// fs operation stays the real implementation.
+vi.mock('node:fs/promises', async (importOriginal) => ({ ...(await importOriginal<typeof import('node:fs/promises')>()) }));
 
 describe('WeChat account storage', () => {
   it('persists private credentials, replay state and reply context; excludes competing processes', async () => {
@@ -25,6 +30,26 @@ describe('WeChat account storage', () => {
       await releaseAgain();
       await fs.writeFile(join(dir, 'session.json'), 'broken-secret-json');
       await expect(store.loadSession('bot')).rejects.toThrow('Cannot read WeChat session.json');
+    } finally { await fs.rm(dir, { recursive: true, force: true }); }
+  });
+
+  it('retries when the previous owner releases its lock mid-acquisition; a corrupt record stays invalid', async () => {
+    const dir = await fs.mkdtemp(join(tmpdir(), 'wechat-state-'));
+    try {
+      const holder = new WeChatStateStore(dir);
+      const release = await holder.lock();
+      const contender = new WeChatStateStore(dir);
+      // Simulate the owner releasing between the contender's EEXIST and its
+      // owner read: the real exclusive write fails, the holder unlocks, and the
+      // subsequent read finds the lock gone.
+      const realWriteFile = fs.writeFile.bind(fs);
+      vi.spyOn(fs, 'writeFile').mockImplementationOnce(async (...args: Parameters<typeof fs.writeFile>) => {
+        try { await realWriteFile(...args); } finally { await release(); }
+      });
+      const acquired = await contender.lock();
+      await acquired();
+      await fs.writeFile(join(dir, 'listener.lock'), 'not-json');
+      await expect(new WeChatStateStore(dir).lock()).rejects.toThrow('Invalid WeChat listener lock');
     } finally { await fs.rm(dir, { recursive: true, force: true }); }
   });
 
