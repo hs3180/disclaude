@@ -2577,6 +2577,91 @@ describe('MessageHandler', () => {
       expect(msg.metadata.threadRootId).toBe('msg_root');
     });
 
+    it('emits threadRootId = root_id for p2p message topics and undefined for main conversation (Issue #5464)', async () => {
+      const { handler } = createHandler();
+
+      // A message inside a p2p message topic — root_id present, no parent.
+      await handler.handleMessageReceive(textEvent('topic task A', {
+        event: {
+          message: {
+            message_id: 'msg_in_topic', chat_id: 'chat_001', chat_type: 'p2p',
+            content: JSON.stringify({ text: 'topic task A' }), message_type: 'text',
+            create_time: Date.now(), mentions: undefined, parent_id: undefined,
+            root_id: 'msg_topic_root',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      }));
+      // The topic root itself reports root_id == its own id → same identity.
+      await handler.handleMessageReceive(textEvent('root task', {
+        event: {
+          message: {
+            message_id: 'msg_topic_root', chat_id: 'chat_001', chat_type: 'p2p',
+            content: JSON.stringify({ text: 'root task' }), message_type: 'text',
+            create_time: Date.now(), mentions: undefined, parent_id: undefined,
+            root_id: 'msg_topic_root',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      }));
+      // A fresh main-conversation task has NO root_id — its identity must stay
+      // undefined so it never inherits the old topic's anchor or steering.
+      await handler.handleMessageReceive(textEvent('fresh main task B'));
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(3);
+      const identities = mockState.emitMessage.mock.calls.map(
+        ([message]: any[]) => message.metadata.threadRootId,
+      );
+      expect(identities).toEqual(['msg_topic_root', 'msg_topic_root', undefined]);
+    });
+
+    it('emits threadRootId = root_id for a topic reply in p2p and for group message topics (Issue #5464)', async () => {
+      mockState.isBotMentioned = true;
+      // Reply inside a p2p topic: quoted-context fetch must not disturb the
+      // identity taken from the canonical event root_id.
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn().mockResolvedValue({
+              data: { items: [{ msg_type: 'text', body: { content: JSON.stringify({ text: 'quoted' }) }, message_id: 'msg_parent', sender: { sender_type: 'user' } }] },
+            }),
+          },
+        },
+      };
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive(textEvent('topic supplement', {
+        event: {
+          message: {
+            message_id: 'msg_reply', chat_id: 'chat_001', chat_type: 'p2p',
+            content: JSON.stringify({ text: 'topic supplement' }), message_type: 'text',
+            create_time: Date.now(), mentions: undefined, parent_id: 'msg_parent',
+            root_id: 'msg_topic_root',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      }));
+      // Regular group chat message topic: same identity rule.
+      await handler.handleMessageReceive(textEvent('@bot group topic task', {
+        event: {
+          message: {
+            message_id: 'msg_group', chat_id: 'chat_group', chat_type: 'group',
+            content: JSON.stringify({ text: '@bot group topic task' }), message_type: 'text',
+            create_time: Date.now(), mentions: undefined, parent_id: undefined,
+            root_id: 'msg_group_root',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      }));
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(2);
+      const identities = mockState.emitMessage.mock.calls.map(
+        ([message]: any[]) => message.metadata.threadRootId,
+      );
+      expect(identities).toEqual(['msg_topic_root', 'msg_group_root']);
+    });
+
     it('keeps nested text, reset and attachment replies on the event root when history is unavailable', async () => {
       mockState.hasControlHandler = true;
       mockState.isBotMentioned = true;
