@@ -97,8 +97,9 @@ import {
 } from './exec-adapter.js';
 import type { SkillsRegistry } from '../../../skills/index.js';
 import { codexSkillsRegistry } from './skill-sources.js';
-import { CODEX_OVERLOAD_MAX_RETRIES, codexOverloadRetryDelay, readCodexOverloadFailure,
+import { CODEX_OVERLOAD_MAX_RETRIES, CODEX_OVERLOAD_MAX_WAIT_MS, codexOverloadRetryDelay, readCodexOverloadFailure,
   waitForCodexOverloadRetry, codexCapacityRecoveryDelay, readCodexCapacityRecoveryPolicy,
+  isCodexCapacityFailure, alignCodexCapacityWait, recordCodexCapacityCooldown,
   type CodexOverloadFailure } from './overload-policy.js';
 
 const logger = createLogger('CodexAgentProvider');
@@ -1059,7 +1060,14 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               (isCodexResumeTargetMissing(runFailureText) ||
                 isCodexResumeTargetMissing(result.stderrTail));
             if (sawTurnFailed && failedOverload && runCanRetry && !result.timedOut && !result.spawnError) {
-              const delayMs = codexOverloadRetryDelay(failedOverload, retryAttempt, retryWaitedMs);
+              let delayMs = codexOverloadRetryDelay(failedOverload, retryAttempt, retryWaitedMs);
+              // #5494 review: capacity-class waits join the process-wide cooldown
+              // (throttles keep their own server-hinted pacing).
+              if (delayMs !== undefined && isCodexCapacityFailure(failedOverload)) {
+                delayMs = alignCodexCapacityWait(codexModel ?? '', delayMs);
+                if (retryWaitedMs + delayMs > CODEX_OVERLOAD_MAX_WAIT_MS) { delayMs = undefined; }
+                else { recordCodexCapacityCooldown(codexModel ?? '', delayMs); }
+              }
               if (delayMs !== undefined) {
                 clearStallTimers();
                 logger.warn({ sessionKey, retryAttempt: retryAttempt + 1, delayMs, cause: failedOverload.message }, 'Retrying Codex overload before output or tools');
@@ -1860,6 +1868,17 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               // settling; the next turn carries the recovery instruction.
               capacityFirstFailureAt ??= Date.now();
               delayMs = codexCapacityRecoveryDelay(failure, capacityRecoveryAttempt, capacityFirstFailureAt, capacityRecoveryPolicy);
+            }
+            // #5494 review: capacity-class waits join the process-wide cooldown
+            // — align past the shared deadline, re-fit the budget (an aligned
+            // wait that no longer fits gives up rather than hanging), then
+            // publish the final wait for other sessions to align behind.
+            if (delayMs !== undefined && isCodexCapacityFailure(failure)) {
+              delayMs = alignCodexCapacityWait(codexModel ?? '', delayMs);
+              const fitsBudget = turnCanRetry
+                ? retryWaitedMs + delayMs <= CODEX_OVERLOAD_MAX_WAIT_MS
+                : Date.now() + delayMs - (capacityFirstFailureAt as number) <= capacityRecoveryPolicy.budgetMs;
+              if (!fitsBudget) { delayMs = undefined; } else { recordCodexCapacityCooldown(codexModel ?? '', delayMs); }
             }
             if (delayMs === undefined) {
               push({ type: 'result', role: 'assistant', content: `❌ Codex turn failed: ${failure.message}${capacityRecoveryAttempt ? `（已自动续接 ${capacityRecoveryAttempt} 次后仍容量不足）` : ''}`,

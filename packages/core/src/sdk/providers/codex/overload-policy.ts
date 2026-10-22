@@ -14,7 +14,7 @@ export interface CodexOverloadFailure {
   readonly capacity?: boolean;
 }
 export const CODEX_OVERLOAD_MAX_RETRIES = 2;
-const MAX_TOTAL_WAIT_MS = 30_000;
+export const CODEX_OVERLOAD_MAX_WAIT_MS = 30_000;
 const TIMING = { initialDelayMs: 500, backoffMultiplier: 2, maxDelayMs: 8000, jitter: true };
 /** #5408 throttle wording: seconds-scale limits, covered by the pre-work retry. */
 const THROTTLE_TEXT = /\b429\b|too many requests|rate.?limit/i;
@@ -135,6 +135,45 @@ function serverHintDelay(failure: CodexOverloadFailure, random: () => number): n
   return failure.retryAfterMs + random() * spread;
 }
 
+/**
+ * #5494 review: capacity backoff is process-wide, not per-session. Every
+ * concurrent session hitting an at-capacity model retries against the same
+ * server; independent retry timelines multiply the request rate exactly when
+ * the server said to stop, which is what risks an account-level ban. Each
+ * model carries one shared cooldown deadline: a later failure may extend it,
+ * a shorter one never shortens an active one, and it simply lapses once
+ * passed. Waits are aligned past the deadline with bounded positive jitter so
+ * aligned sessions do not fire as one volley.
+ */
+const capacityCooldowns = new Map<string, number>();
+const CAPACITY_SPREAD_CAP_MS = 5_000;
+
+/** Publish a capacity wait so other sessions align behind it. */
+export function recordCodexCapacityCooldown(model: string, waitMs: number, now: number = Date.now()): void {
+  const until = now + waitMs;
+  if (until > (capacityCooldowns.get(model) ?? 0)) { capacityCooldowns.set(model, until); }
+}
+
+/** Remaining shared cooldown for a model; 0 once lapsed. */
+export function readCodexCapacityCooldown(model: string, now: number = Date.now()): number {
+  return Math.max(0, (capacityCooldowns.get(model) ?? 0) - now);
+}
+
+/** Forget every shared cooldown (test isolation, operational reset). */
+export function clearCodexCapacityCooldowns(): void { capacityCooldowns.clear(); }
+
+/** A session's own capacity wait extended past the shared deadline; never shortened. */
+export function alignCodexCapacityWait(
+  model: string,
+  ownWaitMs: number,
+  random: () => number = Math.random,
+  now: number = Date.now(),
+): number {
+  const remaining = readCodexCapacityCooldown(model, now);
+  if (remaining <= 0) { return ownWaitMs; }
+  return Math.max(ownWaitMs, remaining + random() * Math.min(remaining * 0.2, CAPACITY_SPREAD_CAP_MS));
+}
+
 export function codexOverloadRetryDelay(
   failure: CodexOverloadFailure,
   attempt: number,
@@ -144,7 +183,7 @@ export function codexOverloadRetryDelay(
   if (attempt >= CODEX_OVERLOAD_MAX_RETRIES) { return undefined; }
   const delayMs = Math.max(serverHintDelay(failure, random), computeBackoffDelay(attempt, TIMING, random));
   // Never shorten a valid server hint to fit the budget: defer instead.
-  return Number.isFinite(delayMs) && waitedMs + delayMs <= MAX_TOTAL_WAIT_MS ? delayMs : undefined;
+  return Number.isFinite(delayMs) && waitedMs + delayMs <= CODEX_OVERLOAD_MAX_WAIT_MS ? delayMs : undefined;
 }
 
 export async function waitForCodexOverloadRetry(delayMs: number, signal: AbortSignal): Promise<boolean> {

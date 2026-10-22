@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentMessage, UserInput } from '../../types.js';
 import { CodexAgentProvider } from './provider.js';
-import { codexCapacityRecoveryDelay, codexOverloadRetryDelay, readCodexCapacityRecoveryPolicy, readCodexOverloadFailure } from './overload-policy.js';
+import { codexCapacityRecoveryDelay, codexOverloadRetryDelay, readCodexCapacityRecoveryPolicy, readCodexOverloadFailure,
+  recordCodexCapacityCooldown, clearCodexCapacityCooldowns } from './overload-policy.js';
 
 /**
  * Issue #5468: a capacity (serverOverloaded / 503) failure that struck AFTER
@@ -92,6 +93,8 @@ async function collect(result: ReturnType<CodexAgentProvider['queryStream']>) {
 }
 afterEach(() => {
   for (const resource of owned.splice(0)) { resource.provider.dispose(); rmSync(resource.dir, { recursive: true, force: true }); }
+  // Capacity waits publish a process-wide cooldown; keep scenarios isolated.
+  clearCodexCapacityCooldowns();
 });
 
 describe('Codex capacity continuation (#5468)', () => {
@@ -172,6 +175,18 @@ describe('Codex capacity continuation (#5468)', () => {
     expect(sawRecovery).toBe(true);
     await vi.waitFor(() => expect(fx.provider.getGovernanceStats().runningRuns).toBe(0));
     expect(fx.attempts()).toBe(1);
+  });
+
+  it('aligns this session behind another session\'s shared capacity cooldown (#5494)', async () => {
+    // Another stream on the same model already hit capacity and pushed the
+    // process-wide deadline out; this session's own policy wait is 40ms (FAST),
+    // so a gap far beyond it proves the retry aligned behind the shared gate.
+    recordCodexCapacityCooldown('gpt-6-luna', 1_500);
+    const fx = fixture({ failures: 1 });
+    const messages = await collect(fx.query());
+    expect(fx.attempts()).toBe(2);
+    expect(fx.times()[1]! - fx.times()[0]!).toBeGreaterThanOrEqual(500);
+    expect(fx.recoveryStatuses(messages)).toBe(1);
   });
 });
 
