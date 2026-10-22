@@ -246,3 +246,93 @@ describe('buildCitationCard', () => {
     });
   });
 });
+
+describe('#5473 GFM table adaptation', () => {
+  const sources: CitationSource[] = [
+    { number: 1, title: 'Disclaude', url: 'https://github.com/hs3180/disclaude' },
+  ];
+
+  // Minimal reproduction from the issue: a plain final answer whose body
+  // carries a two-column GFM table.
+  const tableBody = [
+    '下面是维护流程建议。[1]',
+    '',
+    '| 环节 | 推荐方案 |',
+    '|---|---|',
+    '| 接收任务 | Disclaude 接收任务 |',
+    '| 修改代码 | Codex 修改现有仓库 |',
+  ].join('\n');
+
+  it('buildCitationCard converts body tables to column_set elements', () => {
+    const card = buildCitationCard(tableBody, sources) as {
+      elements: Array<Record<string, unknown>>;
+    };
+    // intro markdown + header set + 2 data rows + hr + Sources = 6
+    expect(card.elements).toHaveLength(6);
+    expect(card.elements[0]).toEqual({ tag: 'markdown', content: '下面是维护流程建议。[1]' });
+    expect(card.elements[1].tag).toBe('column_set');
+    expect(card.elements[1].background_style).toBe('grey');
+    expect(card.elements[2].tag).toBe('column_set');
+    expect(card.elements[3].tag).toBe('column_set');
+    expect(card.elements[4].tag).toBe('hr');
+    expect(card.elements[5].content).toContain(
+      '[1] [Disclaude](https://github.com/hs3180/disclaude)'
+    );
+    // Raw separator syntax must not survive anywhere in the delivered card.
+    expect(JSON.stringify(card)).not.toContain('|---|');
+  });
+
+  it('buildCitationCard keeps table-free bodies in the exact historical shape', () => {
+    const card = buildCitationCard('Answer body [1].', sources) as {
+      elements: Array<Record<string, unknown>>;
+    };
+    expect(card.elements).toHaveLength(3);
+    expect(card.elements[0]).toEqual({ tag: 'markdown', content: 'Answer body [1].' });
+    expect(card.elements[1].tag).toBe('hr');
+  });
+
+  it('buildCitationCard leaves fenced code-block tables literal', () => {
+    const body = ['示例：', '', '```', '| a | b |', '|---|---|', '| 1 | 2 |', '```'].join('\n');
+    const card = buildCitationCard(body, sources) as {
+      elements: Array<Record<string, unknown>>;
+    };
+    expect(card.elements).toHaveLength(3);
+    expect(card.elements[0].tag).toBe('markdown');
+    expect(String(card.elements[0].content)).toContain('|---|---|');
+  });
+
+  it('buildCitationStreamingCard splits the answer region when tables exist', () => {
+    const card = buildCitationStreamingCard(tableBody, sources);
+    expect(card.schema).toBe('2.0');
+    expect(card.config.streaming_mode).toBe(true);
+    const elements = card.body.elements as Array<Record<string, unknown>>;
+    // thinking + intro markdown + header set + 2 data rows + reply(sources) = 6
+    expect(elements).toHaveLength(6);
+    expect(elements[0]).toEqual({
+      tag: 'markdown',
+      element_id: 'streaming_thinking',
+      content: '本次回复已结束',
+    });
+    expect(elements[1]).toEqual({ tag: 'markdown', content: '下面是维护流程建议。[1]' });
+    expect(elements[2].tag).toBe('column_set');
+    expect(elements[5]).toEqual({
+      tag: 'markdown',
+      element_id: 'streaming_reply',
+      content: '---\n\n**Sources**\n[1] [Disclaude](https://github.com/hs3180/disclaude)',
+    });
+    expect(JSON.stringify(card)).not.toContain('|---|');
+  });
+
+  it('buildCitationStreamingCard keeps the two-element shape without tables', () => {
+    const card = buildCitationStreamingCard('Answer [1].', sources);
+    const elements = card.body.elements as Array<{
+      tag: string;
+      element_id?: string;
+      content?: string;
+    }>;
+    expect(elements).toHaveLength(2);
+    expect(elements[0].element_id).toBe('streaming_thinking');
+    expect(elements[1].element_id).toBe('streaming_reply');
+    expect(elements[1].content).toContain('Answer [1].');
+  });
+});

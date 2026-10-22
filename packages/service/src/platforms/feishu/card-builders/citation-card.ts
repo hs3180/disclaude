@@ -15,7 +15,12 @@
  */
 
 import { normalizeMarkdownLineBreaks } from './content-builder.js';
-import { buildStreamingPlaceholderCard } from './streaming-card-builder.js';
+import { markdownToCardElements, splitMarkdownByTables } from './gfm-table-converter.js';
+import {
+  buildStreamingPlaceholderCard,
+  STREAMING_REPLY_ELEMENT_ID,
+  STREAMING_THINKING_ELEMENT_ID,
+} from './streaming-card-builder.js';
 
 /** One parsed source entry from a `## Sources` section. */
 export interface CitationSource {
@@ -186,6 +191,10 @@ export function extractCitations(text: string): ExtractedCitations | null {
  * all string escaping happens in `JSON.stringify` at the send boundary, never
  * in model-authored JSON.
  *
+ * #5473: GFM tables in the body convert to column_set elements — Feishu card
+ * markdown does not render `| col |` syntax. Table-free bodies keep the exact
+ * historical shape (one markdown element).
+ *
  * @param body - Answer body (without the `## Sources` section).
  * @param sources - Parsed entries; rendered in written order.
  * @returns Feishu interactive card payload.
@@ -200,10 +209,7 @@ export function buildCitationCard(
       wide_screen_mode: true,
     },
     elements: [
-      {
-        tag: 'markdown',
-        content: normalizeMarkdownLineBreaks(body),
-      },
+      ...markdownToCardElements(normalizeMarkdownLineBreaks(body)),
       { tag: 'hr' },
       {
         tag: 'markdown',
@@ -214,17 +220,62 @@ export function buildCitationCard(
 }
 
 /**
+ * JSON-2.0 final card whose answer region is split into markdown pieces plus
+ * column_set rows when the body contains GFM tables (#5473). The streaming
+ * element_ids are kept — `streaming_reply` carries the sources block so the
+ * Card Kit contract (top-level markdown targets) still holds after the final
+ * whole-card update.
+ */
+export interface StructuredCitationStreamingCard {
+  schema: '2.0';
+  config: { streaming_mode: true };
+  body: { elements: unknown[] };
+}
+
+/** Final streaming card: plain two-element shape, or structured when tables exist. */
+export type CitationStreamingCard =
+  | ReturnType<typeof buildStreamingPlaceholderCard>
+  | StructuredCitationStreamingCard;
+
+/**
  * Build the final JSON-2.0 version of a streaming answer card with citations.
  * The stream already shows this answer; replacing the card at finalization
  * keeps its message identity while separating the answer from its sources.
+ *
+ * #5473: when the body contains a GFM table, the answer region is split into
+ * markdown/column_set elements (tables cannot render inside one markdown
+ * element). Table-free bodies keep the exact historical two-element shape.
  */
 export function buildCitationStreamingCard(
   body: string,
   sources: CitationSource[]
-): ReturnType<typeof buildStreamingPlaceholderCard> {
+): CitationStreamingCard {
+  const normalized = normalizeMarkdownLineBreaks(body);
   const sourceBlock = `**Sources**\n${renderSourceEntries(sources).join('\n')}`;
-  return buildStreamingPlaceholderCard({
-    thinkingPlaceholder: '本次回复已结束',
-    replyText: `${normalizeMarkdownLineBreaks(body)}\n\n---\n\n${sourceBlock}`,
-  });
+  const hasTables = splitMarkdownByTables(normalized).some((segment) => segment.type === 'table');
+  if (!hasTables) {
+    return buildStreamingPlaceholderCard({
+      thinkingPlaceholder: '本次回复已结束',
+      replyText: `${normalized}\n\n---\n\n${sourceBlock}`,
+    });
+  }
+  return {
+    schema: '2.0',
+    config: { streaming_mode: true },
+    body: {
+      elements: [
+        {
+          tag: 'markdown',
+          element_id: STREAMING_THINKING_ELEMENT_ID,
+          content: '本次回复已结束',
+        },
+        ...markdownToCardElements(normalized),
+        {
+          tag: 'markdown',
+          element_id: STREAMING_REPLY_ELEMENT_ID,
+          content: `---\n\n${sourceBlock}`,
+        },
+      ],
+    },
+  };
 }
