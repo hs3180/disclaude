@@ -1484,6 +1484,17 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       }
       if (eventTurnId !== activeTurnId) {return;}
       if (unsafeItem) { turnCanRetry = false; }
+      // #5467: an async question this session cannot deliver interactively
+      // degrades to a plain-text question. It is NOT a failure — the turn
+      // completes normally and the user answers in-band as a new message
+      // (whereas input/deliveryFailed below keeps marking the turn failed).
+      if (method === 'input/deliveryDegraded') {
+        const { degradedQuestion } = event as { degradedQuestion?: unknown };
+        if (typeof degradedQuestion === 'string' && degradedQuestion) {
+          push({ type: 'text', role: 'assistant', content: degradedQuestion });
+        }
+        return;
+      }
       if (method === 'input/deliveryFailed') {
         asyncDeliveryFailure ??= event.deliveryError ?? new CodexAsyncInputDeliveryError();
         push({ type: 'error', role: 'system', content: asyncDeliveryFailure.message });
@@ -1754,7 +1765,17 @@ export class CodexAgentProvider implements IAgentSDKProvider {
                 ? `${next.value.continuationContext}\n${currentInput}` : currentInput;
               activeTurnId = await lifecycle.startTurn(
                 sessionKey,
-                skillsManifest ? `${skillsManifest}\n\nUser request:\n${userInput}` : userInput,
+                // #5467: when wiring already proves this session cannot receive
+                // async question forms (no interactive channel, no input
+                // context, or no answer host), say so up-front instead of
+                // letting the model discover it through a runtime rejection —
+                // codex >=0.162 registers the async question tool from the
+                // model catalog regardless of our enablement flags, so the
+                // prompt is the layer we control. Blocking questions are
+                // unaffected (they ride onUserInput only).
+                !options.onUserInput || !options.onAsyncUserInputAnswer || !next.value.inputContext
+                  ? `${skillsManifest ? `${skillsManifest}\n\n` : ''}${userInput}\n\n[Session note] This conversation cannot receive asynchronous question forms. When you need clarification, ask the user directly in your reply text instead of using an async question tool.`
+                  : skillsManifest ? `${skillsManifest}\n\nUser request:\n${userInput}` : userInput,
                 {
                 sandbox,
                 networkAccess: options.codexRuntime ? options.codexRuntime.networkAccess ?? true : this.networkAccess,

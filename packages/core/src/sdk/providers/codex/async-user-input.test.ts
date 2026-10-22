@@ -89,4 +89,55 @@ describe('Codex asynchronous question notifications', () => {
     expect(handler.receive(event)).toBe(false);
     expect(deliver).not.toHaveBeenCalled();
   });
+
+  it('degrades a capability-mismatch ("unsupported") question to plain text instead of failing (#5467)', async () => {
+    const onError = vi.fn();
+    const onDegraded = vi.fn();
+    // No interactive channel wired at all — the flight throws "unsupported".
+    const handler = new CodexAsyncUserInput(undefined, vi.fn());
+    try {
+      expect(handler.receive(event, { onError, onDegraded })).toBe(true);
+      await vi.waitFor(() => expect(onDegraded).toHaveBeenCalledOnce());
+      expect(onError).not.toHaveBeenCalled();
+      expect(onDegraded.mock.calls[0][0]).toContain('任务需要你的输入');
+      expect(onDegraded.mock.calls[0][0]).toContain('1. Choose an option');
+      expect(onDegraded.mock.calls[0][0]).toContain('选项：Alpha — first option / Beta — second option');
+      expect(onDegraded.mock.calls[0][0]).toContain('2. Any constraint?');
+      // Degraded delivery resolves: the turn must NOT wait on or fail from it.
+      await handler.waitForDelivery(event.threadId, event.turnId);
+    } finally { handler.close(); }
+  });
+
+  it('degrades the downstream once-mode / stale-session rejection the same way (#5467)', async () => {
+    const deliver = vi.fn(() => Promise.reject(Object.assign(
+      new Error('This channel cannot answer SDK input requests'),
+      { code: 'AGENT_ASYNC_INPUT_UNSUPPORTED' },
+    )));
+    const onError = vi.fn();
+    const onDegraded = vi.fn();
+    const handler = new CodexAsyncUserInput(deliver, vi.fn());
+    try {
+      expect(handler.receive(event, { onError, onDegraded })).toBe(true);
+      await vi.waitFor(() => expect(onDegraded).toHaveBeenCalledOnce());
+      expect(onError).not.toHaveBeenCalled();
+      await handler.waitForDelivery(event.threadId, event.turnId);
+    } finally { handler.close(); }
+  });
+
+  it('still reports genuine delivery accidents through onError (#5467 control)', async () => {
+    let rejectSend!: (error: Error) => void;
+    const deliver = vi.fn(() => new Promise<void>((_, reject) => { rejectSend = reject; }));
+    const onError = vi.fn();
+    const onDegraded = vi.fn();
+    const handler = new CodexAsyncUserInput(deliver, vi.fn());
+    try {
+      expect(handler.receive(event, { onError, onDegraded })).toBe(true);
+      await Promise.resolve();
+      const rejected = expect(handler.waitForDelivery(event.threadId, event.turnId)).rejects.toThrow(/could not confirm card delivery/);
+      rejectSend(new Error('card send exploded'));
+      await rejected;
+      expect(onError).toHaveBeenCalledOnce();
+      expect(onDegraded).not.toHaveBeenCalled();
+    } finally { handler.close(); }
+  });
 });
