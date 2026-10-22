@@ -30,6 +30,13 @@ const MAX_DEDUP_CACHE_SIZE = 10_000;
 const DEDUP_EVICTION_COUNT = 5_000;
 
 /**
+ * Grace before stop() stops waiting for a poll loop whose transport wait
+ * ignored its abort signal (#5479). Shutdown must not be held hostage by a
+ * wedged request; the loop still exits on its own once it observes the abort.
+ */
+const STOP_GRACE_MS = 5_000;
+
+/**
  * Callback for processing received messages.
  */
 export type MessageProcessor = (message: IncomingMessage) => Promise<void>;
@@ -116,8 +123,9 @@ export class WeChatMessageListener {
     this.abortController = undefined;
 
     if (this.pollPromise) {
+      const grace = new Promise<void>((resolve) => { setTimeout(resolve, STOP_GRACE_MS).unref(); });
       try {
-        await this.pollPromise;
+        await Promise.race([this.pollPromise, grace]);
       } catch {
         // Expected: poll loop throws on abort
       }
