@@ -20,29 +20,45 @@ set -e
 CONFIG_FILE="${DISCLAUDE_CONFIG_PATH:-/app/disclaude.config.yaml}"
 
 if [ -f "$CONFIG_FILE" ]; then
-  # Extract feishu.appId and feishu.appSecret from YAML
-  # Uses awk to isolate the feishu: section and pull out the values.
-  # Handles: key: "value", key: 'value', key: value  (with optional inline comments)
-  # Also handles: key:"value", key: value (mixed whitespace)
-  parse_feishu_field() {
-    awk '
-      /^[a-zA-Z]/ { in_feishu = 0 }
-      /^feishu:/ { in_feishu = 1; next }
-      in_feishu && $0 ~ /^[[:space:]]+'"${1}"'[[:space:]]*:/ {
-        val = $0
-        sub(/^[^:]*:[[:space:]]*/, "", val)
-        # Remove surrounding quotes (both single and double)
-        gsub(/^["'"'"']|["'"'"']$/, "", val)
-        # Remove inline comments
-        sub(/[[:space:]]*#.*$/, "", val)
-        print val
-        exit
-      }
-    ' "$CONFIG_FILE"
-  }
+  # Extract channels.feishu.appId / appSecret for lark-cli auth.
+  # 0.6.4+ schema (#5233): credentials live under channels.feishu and secrets
+  # are whole-value $VAR references resolved from the environment (#5432).
+  # Parsing uses the packaged loader primitives (discovery + env-reference) so
+  # the entrypoint and the service can never disagree on schema or deref
+  # semantics — the awk scraper only knew the pre-0.6.4 top-level section and
+  # passed the literal "$FEISHU_APP_SECRET" string to lark-cli.
+  # Output protocol: "none" | "missing-env VAR" | two lines (appId, secret).
+  FEISHU_AUTH=$(node -e '
+    const base = "/app/node_modules/@disclaude/core/dist/config";
+    const { readDiscoveredConfigYaml } = require(base + "/discovery.js");
+    const { credentialEnvName } = require(base + "/env-reference.js");
+    const { config } = readDiscoveredConfigYaml(process.env.DISCLAUDE_CONFIG_PATH);
+    const feishu = config && config.channels ? config.channels.feishu : undefined;
+    const appId = typeof feishu?.appId === "string" ? feishu.appId : "";
+    const appSecret = typeof feishu?.appSecret === "string" ? feishu.appSecret : "";
+    if (!appId || !appSecret) { console.log("none"); return; }
+    const envName = credentialEnvName(appSecret);
+    if (!envName) { process.stdout.write(appId + "\n" + appSecret + "\n"); return; }
+    const secret = process.env[envName];
+    if (!secret || !secret.trim()) { console.log("missing-env " + envName); return; }
+    process.stdout.write(appId + "\n" + secret + "\n");
+  ' 2>/dev/null) || FEISHU_AUTH="none"
+  [ -n "$FEISHU_AUTH" ] || FEISHU_AUTH="none"
 
-  APP_ID=$(parse_feishu_field "appId")
-  APP_SECRET=$(parse_feishu_field "appSecret")
+  APP_ID=""
+  APP_SECRET=""
+  case "$FEISHU_AUTH" in
+    none)
+      echo "[entrypoint] channels.feishu appId/appSecret not configured — skipping auth init"
+      ;;
+    missing-env*)
+      echo "[entrypoint] WARNING: appSecret references ${FEISHU_AUTH#missing-env } but the variable is missing/empty — lark-cli auth skipped"
+      ;;
+    *)
+      APP_ID=$(printf '%s\n' "$FEISHU_AUTH" | sed -n 1p)
+      APP_SECRET=$(printf '%s\n' "$FEISHU_AUTH" | sed -n 2p)
+      ;;
+  esac
 
   if [ -n "$APP_ID" ] && [ -n "$APP_SECRET" ] && command -v lark-cli >/dev/null 2>&1; then
     # Idempotent: skip if already configured with matching appId
@@ -81,7 +97,7 @@ if [ -f "$CONFIG_FILE" ]; then
       rm -f "$LARK_ERR_FILE" 2>/dev/null || true
     fi
   else
-    echo "[entrypoint] Feishu appId/appSecret not configured or lark-cli not found — skipping auth init"
+    echo "[entrypoint] lark-cli not found — skipping auth init"
   fi
 else
   echo "[entrypoint] No disclaude.config.yaml found — skipping lark-cli auth init"
