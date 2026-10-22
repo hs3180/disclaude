@@ -1,6 +1,6 @@
 /** Prepare a transparent CLI launcher. No coordinator server or Python runtime. */
 import { createHash, randomUUID } from 'node:crypto';
-import { accessSync, constants, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync, closeSync, statSync } from 'node:fs';
+import { accessSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync, closeSync, statSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { delimiter, dirname, isAbsolute, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -45,11 +45,23 @@ function legacyOwnerIsLive(runtime, path) {
 
 function ownerLockPath(path) { return join(dirname(path), 'service.lock'); }
 
+// #5474: a tmp cleaner (or a crash mid-replace) can move or recreate
+// service.lock while the owner still holds its kernel lock on the ORIGINAL
+// object. Probing the path then opens a fresh, unlocked object and no longer
+// proves the owner is gone. When the path's inode differs from the recorded
+// one — or an older manifest recorded none — fall back to the legacy
+// PID/lstart/mtime check, which a live owner still satisfies and a dead or
+// PID-reused owner fails.
 function runtimeOwnerIsLive(runtime, path) {
   if (!processExists(runtime.pid)) return false;
   if (runtime.ownerLock !== 1) return legacyOwnerIsLive(runtime, path);
   const fd = openCommandLock(ownerLockPath(path));
-  try { return !tryCommandLock(fd); } finally { closeSync(fd); }
+  try {
+    if (!tryCommandLock(fd)) return true;
+    const inode = fstatSync(fd).ino;
+    if (typeof runtime.ownerLockInode === 'number' && runtime.ownerLockInode === inode) return false;
+    return legacyOwnerIsLive(runtime, path);
+  } finally { closeSync(fd); }
 }
 
 export function resolveCdpEndpoint(env) {
@@ -151,7 +163,7 @@ export async function prepareBrowserCommands({ env = process.env, fetchImpl = gl
     }
     const fd = openCommandLock(join(directory, 'command.lock'));
     try { tryCommandLock(fd); } finally { closeSync(fd); }
-    const runtime = { version: 1, ownerLock: 1, pid: process.pid, instance: randomUUID(), executable, directory, endpointSource,
+    const runtime = { version: 1, ownerLock: 1, ownerLockInode: fstatSync(ownerFd).ino, pid: process.pid, instance: randomUUID(), executable, directory, endpointSource,
       path: env.PATH, browserEnv: { BU_CDP_WS: websocket.href, BU_CDP_URL: endpoint,
         BU_NAME: `disclaude-${identity}`, BU_AUTOSPAWN: '0', BH_RUNTIME_DIR: directory, BH_TMP_DIR: directory,
         BH_HOME: directory,

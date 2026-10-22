@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { spawn } from 'node:child_process';
-import { accessSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { accessSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -11,6 +11,7 @@ import { browserStatus, prepareBrowserCommands, resolveBrowserUse, resolveCdpEnd
 const roots = new Set<string>();
 const children = new Set<ReturnType<typeof spawn>>();
 const services = new Set<{ stop(): Promise<void> }>();
+const ambientRuntimeRestores: Array<() => void> = [];
 afterEach(async () => {
   await Promise.all([...children].map(child => new Promise<void>(done => {
     child.once('close', () => done());
@@ -21,9 +22,19 @@ afterEach(async () => {
   services.clear();
   for (const root of roots) { rmSync(root, { recursive: true, force: true }); }
   roots.clear();
+  for (const restore of ambientRuntimeRestores.splice(0)) { restore(); }
 });
 
 async function fixture() {
+  // An agent session exports DISCLAUDE_BROWSER_RUNTIME into this process and
+  // browserAgentEnv lets the ambient manifest win over the fixture's XDG root,
+  // sending these launchers at the session's real identity directory. Strip it
+  // so the suite stays hermetic when run inside the service.
+  if (process.env.DISCLAUDE_BROWSER_RUNTIME) {
+    const ambient = process.env.DISCLAUDE_BROWSER_RUNTIME;
+    delete process.env.DISCLAUDE_BROWSER_RUNTIME;
+    ambientRuntimeRestores.push(() => { process.env.DISCLAUDE_BROWSER_RUNTIME = ambient; });
+  }
   const root = mkdtempSync(join(tmpdir(), 'dc-cli-lock-')); roots.add(root);
   const bin = join(root, 'upstream'); mkdirSync(bin);
   const executable = join(bin, 'browser-use');
@@ -111,6 +122,38 @@ describe('transparent browser-use command coordination', () => {
     const recovered = await f.start();
     expect(recovered.data.instance).not.toBe(abandoned.instance);
     expect(browserStatus(f.path).state).toBe('idle');
+  });
+
+  it('keeps validating a live owner after its service.lock object is replaced (#5474)', async () => {
+    const f = await fixture();
+    const lock = join(dirname(f.path), 'service.lock');
+    expect(f.data.ownerLockInode).toBe(statSync(lock).ino);
+    // A tmp cleaner moved the locked object away and left a fresh unlocked file
+    // at the path; the owner still holds its kernel lock on the moved object.
+    renameSync(lock, `${lock}.moved`);
+    writeFileSync(lock, '', { mode: 0o600 });
+    expect(browserStatus(f.path).state).toBe('idle');
+    // Pre-inode manifests (deployed before #5474) heal through the same fallback.
+    const healed = JSON.parse(readFileSync(f.path, 'utf8'));
+    delete healed.ownerLockInode;
+    writeFileSync(f.path, JSON.stringify(healed));
+    expect(browserStatus(f.path).state).toBe('idle');
+    await f.service.stop();
+    expect(() => browserStatus(f.path)).toThrow(/unavailable/);
+  });
+
+  it('still retires a PID-reused owner whose service.lock object was replaced (#5474)', async () => {
+    const f = await fixture();
+    const lock = join(dirname(f.path), 'service.lock');
+    renameSync(lock, `${lock}.moved`);
+    writeFileSync(lock, '', { mode: 0o600 });
+    // The manifest predates this PID's incarnation: reuse, not ownership.
+    const previousIncarnation = new Date(Date.now() - (process.uptime() + 60) * 1000);
+    utimesSync(f.path, previousIncarnation, previousIncarnation);
+    expect(() => browserStatus(f.path)).toThrow(/unavailable/);
+    const recovered = await f.start();
+    expect(recovered.data.instance).not.toBe(f.data.instance);
+    expect(browserStatus(recovered.path).state).toBe('idle');
   });
 
   it('releases service ownership when a startup write fails', async () => {
