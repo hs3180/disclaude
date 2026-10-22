@@ -97,8 +97,10 @@ import {
 } from './exec-adapter.js';
 import type { SkillsRegistry } from '../../../skills/index.js';
 import { codexSkillsRegistry } from './skill-sources.js';
-import { CODEX_OVERLOAD_MAX_RETRIES, codexOverloadRetryDelay, readCodexOverloadFailure,
-  waitForCodexOverloadRetry, type CodexOverloadFailure } from './overload-policy.js';
+import { CODEX_OVERLOAD_MAX_RETRIES, CODEX_OVERLOAD_MAX_WAIT_MS, codexOverloadRetryDelay, readCodexOverloadFailure,
+  waitForCodexOverloadRetry, codexCapacityRecoveryDelay, readCodexCapacityRecoveryPolicy,
+  isCodexCapacityFailure, alignCodexCapacityWait, recordCodexCapacityCooldown,
+  type CodexOverloadFailure } from './overload-policy.js';
 
 const logger = createLogger('CodexAgentProvider');
 
@@ -159,6 +161,16 @@ function describeToolItemForOutputLimit(item: unknown): NonNullable<AgentMessage
   const inputLength = command !== undefined ? command.length : argumentsLength;
   return { kind, ...(status !== undefined ? { status } : {}), ...(inputLength !== undefined ? { inputLength } : {}) };
 }
+
+/**
+ * #5468 recovery input: sent as the next turn on the SAME thread after an
+ * explicit capacity failure that already produced output or tool calls. It is
+ * a continuation instruction, never a replay of the original request — the
+ * thread keeps the latest user requirements and results, and the model must
+ * verify uncertain external operations instead of blindly repeating them.
+ */
+const CODEX_CAPACITY_RECOVERY_INSTRUCTION =
+  '上一回合因模型容量暂时不足而中止。沿用本线程的最新用户要求和已有结果，继续尚未完成的工作。先核对未完成的工具或进程；已经成功的外部操作不要重复，结果不明的先查询确认。保留原有权限范围。';
 
 /** Start a fresh thread before the next turn after a resume reaches this size. */
 export const DEFAULT_MAX_RESUME_INPUT_TOKENS = 100_000;
@@ -1048,7 +1060,14 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               (isCodexResumeTargetMissing(runFailureText) ||
                 isCodexResumeTargetMissing(result.stderrTail));
             if (sawTurnFailed && failedOverload && runCanRetry && !result.timedOut && !result.spawnError) {
-              const delayMs = codexOverloadRetryDelay(failedOverload, retryAttempt, retryWaitedMs);
+              let delayMs = codexOverloadRetryDelay(failedOverload, retryAttempt, retryWaitedMs);
+              // #5494 review: capacity-class waits join the process-wide cooldown
+              // (throttles keep their own server-hinted pacing).
+              if (delayMs !== undefined && isCodexCapacityFailure(failedOverload)) {
+                delayMs = alignCodexCapacityWait(codexModel ?? '', delayMs);
+                if (retryWaitedMs + delayMs > CODEX_OVERLOAD_MAX_WAIT_MS) { delayMs = undefined; }
+                else { recordCodexCapacityCooldown(codexModel ?? '', delayMs); }
+              }
               if (delayMs !== undefined) {
                 clearStallTimers();
                 logger.warn({ sessionKey, retryAttempt: retryAttempt + 1, delayMs, cause: failedOverload.message }, 'Retrying Codex overload before output or tools');
@@ -1361,6 +1380,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     let activeCorrelation: UserInput['correlation'];
     let probingLifecycle: CodexAppServerLifecycle | undefined;
     const { timeoutMs: stallTimeoutMs } = readStallPolicy({ ...process.env, ...this.env, ...options.env });
+    const capacityRecoveryPolicy = readCodexCapacityRecoveryPolicy({ ...process.env, ...this.env, ...options.env });
     let turnCanRetry = true;
     // #5452: bounded probe of the latest tool item this turn (kind/status/input
     // length only) so an output-cap failure receipt can say what the last tool
@@ -1560,7 +1580,9 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           const failed = status === 'failed' || !!asyncDeliveryFailure;
           const interrupted = status === 'interrupted' || status === 'cancelled';
           const detail = asyncDeliveryFailure?.message ?? event.turn?.error?.message ?? 'unknown error';
-          const overload = failed && !asyncDeliveryFailure && turnCanRetry
+          // #5468: classify capacity even after progress — the post-progress
+          // consumer is same-thread continuation, not the pre-work replay.
+          const overload = failed && !asyncDeliveryFailure
             ? readCodexOverloadFailure(event.turn?.error) : undefined;
           // #5452: classify the output-cap failure regardless of turnCanRetry —
           // earlier tool calls having succeeded is precisely when the receipt
@@ -1655,6 +1677,11 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           ]);
           if (next.done || stopped) {break;}
           let retryWaitedMs = 0;
+          // #5468: post-progress capacity-continuation state, per logical
+          // input — the wall-clock budget never resets on progress.
+          let capacityRecoveryAttempt = 0;
+          let capacityFirstFailureAt: number | undefined;
+          let capacityRecoveryNext = false;
           for (let retryAttempt = 0; ; retryAttempt++) {
             turnCanRetry = true;
             deferredTurnOverload = undefined;
@@ -1761,8 +1788,14 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               openToolItems = 0;
               sessionGovernor.touchSession(sessionKey);
               const currentInput = userInputText(next.value);
-              const userInput = next.value.continuationContext && (!requestedThreadId || requestedThreadId !== threadId)
-                ? `${next.value.continuationContext}\n${currentInput}` : currentInput;
+              // #5468: a capacity-recovery turn continues the thread's latest
+              // state with the recovery instruction instead of replaying the
+              // original request (its requirements already live in the thread).
+              const userInput = capacityRecoveryNext
+                ? CODEX_CAPACITY_RECOVERY_INSTRUCTION
+                : next.value.continuationContext && (!requestedThreadId || requestedThreadId !== threadId)
+                  ? `${next.value.continuationContext}\n${currentInput}` : currentInput;
+              capacityRecoveryNext = false;
               activeTurnId = await lifecycle.startTurn(
                 sessionKey,
                 // #5467: when wiring already proves this session cannot receive
@@ -1826,14 +1859,42 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             }
             if (stopped || !deferredTurnOverload) { break; }
             const failure = deferredTurnOverload as CodexOverloadFailure;
-            const delayMs = turnCanRetry ? codexOverloadRetryDelay(failure, retryAttempt, retryWaitedMs) : undefined;
+            let delayMs: number | undefined;
+            if (turnCanRetry) {
+              delayMs = codexOverloadRetryDelay(failure, retryAttempt, retryWaitedMs);
+            } else {
+              // #5468: an explicit capacity failure after progress continues
+              // on the same thread (ensureThread re-resumes it) instead of
+              // settling; the next turn carries the recovery instruction.
+              capacityFirstFailureAt ??= Date.now();
+              delayMs = codexCapacityRecoveryDelay(failure, capacityRecoveryAttempt, capacityFirstFailureAt, capacityRecoveryPolicy);
+            }
+            // #5494 review: capacity-class waits join the process-wide cooldown
+            // — align past the shared deadline, re-fit the budget (an aligned
+            // wait that no longer fits gives up rather than hanging), then
+            // publish the final wait for other sessions to align behind.
+            if (delayMs !== undefined && isCodexCapacityFailure(failure)) {
+              delayMs = alignCodexCapacityWait(codexModel ?? '', delayMs);
+              const fitsBudget = turnCanRetry
+                ? retryWaitedMs + delayMs <= CODEX_OVERLOAD_MAX_WAIT_MS
+                : Date.now() + delayMs - (capacityFirstFailureAt as number) <= capacityRecoveryPolicy.budgetMs;
+              if (!fitsBudget) { delayMs = undefined; } else { recordCodexCapacityCooldown(codexModel ?? '', delayMs); }
+            }
             if (delayMs === undefined) {
-              push({ type: 'result', role: 'assistant', content: `❌ Codex turn failed: ${failure.message}`,
-                metadata: { terminatedReason: 'turn_failed', terminationDetail: failure.message } });
+              push({ type: 'result', role: 'assistant', content: `❌ Codex turn failed: ${failure.message}${capacityRecoveryAttempt ? `（已自动续接 ${capacityRecoveryAttempt} 次后仍容量不足）` : ''}`,
+                metadata: { terminatedReason: 'turn_failed', terminationDetail: `${failure.message}${capacityRecoveryAttempt ? `; capacityRecoveryAttempts=${capacityRecoveryAttempt}` : ''}` } });
               break;
             }
-            logger.warn({ sessionKey, retryAttempt: retryAttempt + 1, delayMs, cause: failure.message }, 'Retrying Codex overload before output or tools');
-            push({ type: 'status', role: 'system', content: `⏳ Codex 服务暂时过载，将在 ${(delayMs / 1000).toFixed(1)} 秒后重试（${retryAttempt + 1}/${CODEX_OVERLOAD_MAX_RETRIES}）。` });
+            if (turnCanRetry) {
+              logger.warn({ sessionKey, retryAttempt: retryAttempt + 1, delayMs, cause: failure.message }, 'Retrying Codex overload before output or tools');
+              push({ type: 'status', role: 'system', content: `⏳ Codex 服务暂时过载，将在 ${(delayMs / 1000).toFixed(1)} 秒后重试（${retryAttempt + 1}/${CODEX_OVERLOAD_MAX_RETRIES}）。` });
+            } else {
+              capacityRecoveryAttempt += 1;
+              capacityRecoveryNext = true;
+              const budgetRemainingMs = Math.max(0, (capacityFirstFailureAt as number) + capacityRecoveryPolicy.budgetMs - Date.now() - delayMs);
+              logger.warn({ sessionKey, threadId, turnId: deferredFailedTurnId, capacityRecoveryAttempt, delayMs, budgetRemainingMs, cause: failure.message }, 'Continuing Codex thread after capacity failure (#5468)');
+              push({ type: 'status', role: 'system', content: `⏳ 模型容量暂时不足，本会话已有进展已保留，将在 ${(delayMs / 1000).toFixed(1)} 秒后于同一会话内自动续接（第 ${capacityRecoveryAttempt}/${capacityRecoveryPolicy.maxAttempts} 次，剩余预算约 ${Math.round(budgetRemainingMs / 1000)} 秒）。` });
+            }
             if (!await waitForCodexOverloadRetry(delayMs, admissionAbort.signal)) { break; }
             retryWaitedMs += delayMs;
           }

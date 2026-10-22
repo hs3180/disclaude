@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { codexOverloadRetryDelay, readCodexOverloadFailure } from './overload-policy.js';
+import { codexOverloadRetryDelay, readCodexOverloadFailure,
+  alignCodexCapacityWait, clearCodexCapacityCooldowns, recordCodexCapacityCooldown, readCodexCapacityCooldown } from './overload-policy.js';
 
 describe('Codex native overload classification', () => {
   it.each(['httpConnectionFailed', 'responseStreamConnectionFailed', 'responseStreamDisconnected', 'responseTooManyFailedAttempts'])('recognizes forwarded 503 in %s, excluding 401 and quota', kind => {
@@ -18,7 +19,9 @@ describe('Codex native overload classification', () => {
   it('honors an HTTP-date wait hint and refuses a wait beyond the remaining budget', () => {
     const now = Date.parse('2026-10-10T00:00:00Z');
     const failure = readCodexOverloadFailure({ codexErrorInfo: 'serverOverloaded', message: 'At capacity', additionalDetails: 'Retry-After: Sat, 10 Oct 2026 00:00:20 GMT' }, now)!;
-    expect(codexOverloadRetryDelay(failure, 0, 0)).toBe(20_000);
+    // The server hint is a floor with bounded positive jitter (#5494 review).
+    expect(codexOverloadRetryDelay(failure, 0, 0)).toBeGreaterThanOrEqual(20_000);
+    expect(codexOverloadRetryDelay(failure, 0, 0)).toBeLessThanOrEqual(24_000);
     expect(codexOverloadRetryDelay(failure, 1, 20_000)).toBeUndefined();
   });
 
@@ -38,6 +41,39 @@ describe('Codex native overload classification', () => {
 
   it('honors a Retry-After seconds hint on a transient 429', () => {
     const failure = readCodexOverloadFailure({ message: 'HTTP 429 Too Many Requests', additionalDetails: 'Retry-After: 5' })!;
-    expect(codexOverloadRetryDelay(failure, 0, 0)).toBe(5000);
+    expect(codexOverloadRetryDelay(failure, 0, 0)).toBeGreaterThanOrEqual(5000);
+    expect(codexOverloadRetryDelay(failure, 0, 0)).toBeLessThanOrEqual(6000);
+  });
+});
+
+describe('process-wide capacity cooldown (#5494 review)', () => {
+  it('extends a shared deadline across sessions, never shortens it, and lets it lapse', () => {
+    clearCodexCapacityCooldowns();
+    const t0 = 1_000_000;
+    recordCodexCapacityCooldown('gpt-6-luna', 20_000, t0);
+    expect(readCodexCapacityCooldown('gpt-6-luna', t0 + 5_000)).toBe(15_000);
+    expect(readCodexCapacityCooldown('gpt-6-luna', t0 + 20_000)).toBe(0);
+    // A shorter later failure must not shorten an active deadline…
+    recordCodexCapacityCooldown('gpt-6-luna', 5_000, t0 + 6_000);
+    expect(readCodexCapacityCooldown('gpt-6-luna', t0 + 6_000)).toBe(14_000);
+    // …but a longer one extends it. Other models stay independent.
+    recordCodexCapacityCooldown('gpt-6-luna', 40_000, t0 + 6_000);
+    expect(readCodexCapacityCooldown('gpt-6-luna', t0 + 6_000)).toBe(40_000);
+    expect(readCodexCapacityCooldown('gpt-6-minima', t0 + 6_000)).toBe(0);
+    clearCodexCapacityCooldowns();
+    expect(readCodexCapacityCooldown('gpt-6-luna', t0 + 6_000)).toBe(0);
+  });
+
+  it('aligns a session wait past the deadline with bounded spread and never shortens its own wait', () => {
+    clearCodexCapacityCooldowns();
+    const t0 = 2_000_000;
+    recordCodexCapacityCooldown('gpt-6-luna', 30_000, t0);
+    // Own wait 5s, 30s remaining: lands in [30s, 35s] — 20% spread capped at 5s.
+    expect(alignCodexCapacityWait('gpt-6-luna', 5_000, () => 0, t0)).toBe(30_000);
+    expect(alignCodexCapacityWait('gpt-6-luna', 5_000, () => 1, t0)).toBe(35_000);
+    // An own wait already past the deadline, and no deadline at all, stay as-is.
+    expect(alignCodexCapacityWait('gpt-6-luna', 45_000, () => 1, t0)).toBe(45_000);
+    expect(alignCodexCapacityWait('gpt-6-minima', 5_000, () => 1, t0)).toBe(5_000);
+    clearCodexCapacityCooldowns();
   });
 });
