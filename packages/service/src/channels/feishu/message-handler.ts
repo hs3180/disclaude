@@ -1385,6 +1385,15 @@ export class MessageHandler {
         // A topic message without parent_id starts a new thread — it IS the root
         threadRootId = root_id || message_id;
       }
+    } else if (root_id) {
+      // Issue #5464: p2p and regular-group MESSAGE TOPICS carry their thread
+      // identity in root_id — Feishu only sets it for messages inside a topic,
+      // so a main-conversation message keeps the undefined identity. Without
+      // this branch every p2p input collapses onto the chat-level last-known
+      // root, and a fresh main-session task inherits the old topic's anchor
+      // and busy-input steering. The topic root itself also reports root_id
+      // (== its own id), so roots and replies resolve to the same identity.
+      threadRootId = root_id;
     } else if (isTriggerModeMention && chat_type !== 'topic') {
       // Regular groups: use flat chat history.
       // Issue #4304 (part 2): topic groups never use flat chat history — it
