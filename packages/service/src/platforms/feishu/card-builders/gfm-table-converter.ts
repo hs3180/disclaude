@@ -3,12 +3,13 @@
  *
  * Feishu card markdown elements do NOT support GFM table syntax (`| col |`).
  * This module converts tables found in card markdown elements into
- * column_set structures so both hand-written cards (`send_card`) and host
- * auto-built cards (citation cards, streaming finals) render tables natively
- * instead of leaking raw pipe text (#2340, #5473).
+ * column_set structures so host auto-built cards (citation cards, streaming
+ * finals) render tables natively instead of leaking raw pipe text (#5473).
  *
- * Host copy moved here from channel-cli so the service package can share it
- * without depending on the CLI; channel-cli re-exports for compatibility.
+ * column_set is a Feishu card structure, so this converter is deliberately a
+ * LOCAL implementation of the Feishu channel (review on #5486) — not a shared
+ * core/messaging export. channel-cli's `send_card` keeps its own independent
+ * copy (`channel-cli/src/utils/table-converter.ts`); the two evolve separately.
  *
  * Parsing rules (#5473):
  * - Converts EVERY table in a markdown element (not just the first).
@@ -23,7 +24,7 @@
  * @see https://github.com/hs3180/disclaude/issues/5473
  * @see https://open.feishu.cn/document/common-capabilities/message-card/message-cards-content/using-column-set
  *
- * @module core/messaging/gfm-table-converter
+ * @module platforms/feishu/card-builders/gfm-table-converter
  */
 
 /**

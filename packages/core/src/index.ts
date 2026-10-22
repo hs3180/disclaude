@@ -135,13 +135,7 @@ export type {
   ProviderConstructor,
 } from './sdk/index.js';
 
-export type {
-  AgentInputRequest,
-  AgentInputParams,
-  AgentInputQuestion,
-  AgentInputAnswers,
-  AgentInputContext,
-} from './sdk/user-input.js';
+export type { AgentInputRequest, AgentInputParams, AgentInputQuestion, AgentInputAnswers, AgentInputContext } from './sdk/user-input.js';
 export { validateAgentInputAnswers } from './sdk/user-input.js';
 export { LiveInputRejectedError } from './sdk/index.js';
 
@@ -201,7 +195,11 @@ export {
 } from './agents/mcp-health-tracker.js';
 
 // Agent pool
-export { type ChatAgentFactory, type AgentPoolConfig, AgentPool } from './agents/agent-pool.js';
+export {
+  type ChatAgentFactory,
+  type AgentPoolConfig,
+  AgentPool,
+} from './agents/agent-pool.js';
 
 // Base Agent
 export {
@@ -328,7 +326,10 @@ export {
 } from './messaging/index.js';
 
 // Input MessageRouter (Issue #3580: RFC #3329 Phase 1)
-export { MessageRouter, MessageRoutingError } from './messaging/index.js';
+export {
+  MessageRouter,
+  MessageRoutingError,
+} from './messaging/index.js';
 
 // Typed turn-outcome error (Issue #4649 review ①)
 export { TurnSupersededError } from './messaging/index.js';
@@ -339,28 +340,14 @@ export type {
   UserMessageParams,
 } from './messaging/index.js';
 
-// GFM table → Feishu column_set converter (#5473): shared by channel-cli
-// (send_card) and the service's host-built cards (citation / streaming final).
-export {
-  parseGfmTable,
-  buildTableColumnSets,
-  buildColumnSet,
-  markdownToCardElements,
-  splitMarkdownByTables,
-  transformCardTables,
-} from './messaging/index.js';
-export type {
-  ParsedGfmTable,
-  MarkdownSegment,
-  MarkdownTextSegment,
-  MarkdownTableSegment,
-} from './messaging/index.js';
-
 // Channels module (Issue #1041 - migrated from service)
 export { BaseChannel } from './channels/index.js';
 
 // Channel Registry (Issue #1553)
-export { ChannelRegistry, ChannelRegistryError } from './channels/index.js';
+export {
+  ChannelRegistry,
+  ChannelRegistryError,
+} from './channels/index.js';
 
 // Dynamic channel registration (Issue #1422)
 export {
@@ -434,17 +421,9 @@ export {
   STATE_VERSION,
 } from './project/index.js';
 
-export {
-  createPrivateProcessAction,
-  type PrivateProcessActionOptions,
-} from './security/private-process-action.js';
+export { createPrivateProcessAction, type PrivateProcessActionOptions } from './security/private-process-action.js';
 export { ActionBoundInput } from './security/action-bound-input.js';
-export type {
-  PrivateAction,
-  PrivateActionAudit,
-  PrivateActionOutcome,
-  PrivateSubmission,
-} from './security/action-bound-input.js';
+export type { PrivateAction, PrivateActionAudit, PrivateActionOutcome, PrivateSubmission } from './security/action-bound-input.js';
 
 // Issue #5400: per-chat failure records + GitHub App issue reporting client.
 export * from './feedback/index.js';
