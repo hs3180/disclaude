@@ -62,6 +62,7 @@ import type { ChatAgentHooks, IAgentSDKProvider } from '../../interface.js';
 import { withCodexSourceCitations } from './source-citations.js';
 import type {
   AgentMessage,
+  AgentMessageMetadata,
   AgentQueryOptions,
   ProviderInfo,
   StreamQueryResult,
@@ -100,6 +101,64 @@ import { CODEX_OVERLOAD_MAX_RETRIES, codexOverloadRetryDelay, readCodexOverloadF
   waitForCodexOverloadRetry, type CodexOverloadFailure } from './overload-policy.js';
 
 const logger = createLogger('CodexAgentProvider');
+
+/**
+ * Issue #5452: codex reports exactly this message when a single generation
+ * hits the output cap ("Incomplete response returned, reason:
+ * max_output_tokens") — in the production case with an abnormally swollen
+ * tool input (353k chars, one placeholder repeated 8k times) after several
+ * tool calls had already succeeded. Unlike an overload this is NEVER
+ * retried: the turn already made progress and a replay would repeat
+ * external side effects. Classification only swaps the failure receipt and
+ * attaches bounded telemetry; the terminatedReason stays 'turn_failed' so
+ * ChatAgent's existing failure accounting is untouched.
+ */
+const CODEX_OUTPUT_LIMIT_TEXT = /Incomplete response returned, reason:\s*max_output_tokens/i;
+
+function readCodexOutputLimitFailure(error: unknown): { message: string } | undefined {
+  const message = error && typeof error === 'object'
+    ? (error as { message?: unknown }).message : undefined;
+  return typeof message === 'string' && CODEX_OUTPUT_LIMIT_TEXT.test(message)
+    ? { message }
+    : undefined;
+}
+
+/**
+ * Bounded, sanitized usage read for the output-limit telemetry (#5452):
+ * finite numbers only; fields the backend does not expose stay absent —
+ * the receipt must be able to say "unavailable", never invent values.
+ */
+function readCodexOutputLimitUsage(usage: unknown): NonNullable<AgentMessageMetadata['outputLimit']>['usage'] {
+  if (!usage || typeof usage !== 'object') { return undefined; }
+  const source = usage as Record<string, unknown>;
+  const finite = (value: unknown): number | undefined =>
+    typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+  const mapped = {
+    inputTokens: finite(source.input_tokens),
+    cachedInputTokens: finite(source.cached_input_tokens),
+    outputTokens: finite(source.output_tokens),
+    reasoningOutputTokens: finite(source.reasoning_output_tokens),
+  };
+  return Object.values(mapped).some(value => value !== undefined) ? mapped : undefined;
+}
+
+/**
+ * Bounded, sanitized last-tool probe (#5452): kind/status/input LENGTH only —
+ * never the tool text itself (the swollen input is diagnostic by its size,
+ * and full payloads/credentials must not reach logs or receipts).
+ */
+function describeToolItemForOutputLimit(item: unknown): NonNullable<AgentMessageMetadata['outputLimit']>['lastTool'] {
+  if (!item || typeof item !== 'object') { return undefined; }
+  const source = item as Record<string, unknown>;
+  const kind = typeof source.type === 'string' ? source.type : undefined;
+  if (!kind) { return undefined; }
+  const status = typeof source.status === 'string' ? source.status : undefined;
+  const command = typeof source.command === 'string' ? source.command : undefined;
+  const argumentsLength = source.arguments && typeof source.arguments === 'object'
+    ? JSON.stringify(source.arguments).length : undefined;
+  const inputLength = command !== undefined ? command.length : argumentsLength;
+  return { kind, ...(status !== undefined ? { status } : {}), ...(inputLength !== undefined ? { inputLength } : {}) };
+}
 
 /** Start a fresh thread before the next turn after a resume reaches this size. */
 export const DEFAULT_MAX_RESUME_INPUT_TOKENS = 100_000;
@@ -648,6 +707,10 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       let runDiagnostic = '';
       let runCanRetry = true;
       let overloadFailure: CodexOverloadFailure | undefined;
+      // #5452: output-cap classification mirrors the app-server path — the
+      // same upstream message arrives as a JSONL turn.failed error here.
+      let outputLimitFailure: { message: string } | undefined;
+      let outputLimitLastTool: NonNullable<AgentMessageMetadata['outputLimit']>['lastTool'];
       let deferredOverloadMessage: AgentMessage | undefined;
       const armTimer = (fn: () => void, ms: number): ReturnType<typeof setTimeout> => {
         const t = setTimeout(fn, ms);
@@ -818,12 +881,17 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         }
         if (event.type === 'turn.failed') {
           overloadFailure = eventFailure;
+          outputLimitFailure = readCodexOutputLimitFailure(event.error);
           const turnFailure = event.error?.message ?? '';
           runFailureText += `\n${turnFailure}`;
           logger.warn(
             { threadId: latestSessionId, content: turnFailure },
             'codex turn.failed event'
           );
+        }
+        if ((event.type === 'item.started' || event.type === 'item.completed')
+          && ['command_execution', 'mcp_tool_call'].includes(event.item?.type ?? '')) {
+          outputLimitLastTool = describeToolItemForOutputLimit(event.item);
         }
         touchStallWatchdog();
         const presentation = classifyCodexEvent(event);
@@ -914,6 +982,8 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           eventRevision++;
           runCanRetry = true;
           overloadFailure = undefined;
+          outputLimitFailure = undefined;
+          outputLimitLastTool = undefined;
           deferredOverloadMessage = undefined;
           touchStallWatchdog();
           const contextualPrompt = resumeTarget === undefined && continuationContext
@@ -1090,14 +1160,22 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             // and would otherwise leave the turn unresolved forever (#4378
             // error_max_* pitfall, flagged in the S2 review).
             if (!sawTurnTerminator || sawTurnFailed) {
+              // Local const with an explicit cast, mirroring failedOverload
+              // above: closure-assigned lets defeat control-flow narrowing here.
+              const outputLimitDetail = outputLimitFailure as { message: string } | undefined;
               pushSynthetic({
                 type: 'result',
                 content: '',
                 role: 'assistant',
                 ...(runFailed || sawTurnFailed
                   ? { metadata: { terminatedReason: 'turn_failed',
-                    terminationDetail: `codex exec: ${failedOverload?.message || runDiagnostic || 'run ended without a successful terminal event'}; ${
-                      JSON.stringify({ sessionKey, threadId: latestSessionId, ...activeCorrelation, lastEventAt, lastEventType })}` } }
+                    terminationDetail: `codex exec${outputLimitDetail ? ' (output limit)' : ''}: ${outputLimitDetail?.message || failedOverload?.message || runDiagnostic || 'run ended without a successful terminal event'}; ${
+                      JSON.stringify({ sessionKey, threadId: latestSessionId, ...activeCorrelation, lastEventAt, lastEventType, ...(outputLimitDetail && outputLimitLastTool ? { lastTool: outputLimitLastTool } : {}) })}`,
+                    // exec turn.failed carries no usage payload; the flag alone
+                    // still swaps the ChatAgent receipt (#5452).
+                    ...(outputLimitDetail
+                      ? { outputLimit: { ...(outputLimitLastTool ? { lastTool: outputLimitLastTool } : {}) } }
+                      : {}) } }
                   : {}),
               });
             }
@@ -1284,6 +1362,10 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     let probingLifecycle: CodexAppServerLifecycle | undefined;
     const { timeoutMs: stallTimeoutMs } = readStallPolicy({ ...process.env, ...this.env, ...options.env });
     let turnCanRetry = true;
+    // #5452: bounded probe of the latest tool item this turn (kind/status/input
+    // length only) so an output-cap failure receipt can say what the last tool
+    // step looked like without carrying its text anywhere.
+    let outputLimitLastTool: NonNullable<AgentMessageMetadata['outputLimit']>['lastTool'];
     let deferredTurnOverload: CodexOverloadFailure | undefined;
     let deferredFailedTurnId: string | undefined;
     let interruptFlight: Promise<void> | undefined;
@@ -1386,8 +1468,8 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         agentInputHandled?: boolean;
         deliveryError?: Error;
         turnId?: string;
-        item?: { id?: string; type?: string; text?: string; phase?: string | null; command?: string; aggregatedOutput?: string };
-        turn?: { id?: string; status?: string; error?: { message?: string } };
+        item?: { id?: string; type?: string; text?: string; phase?: string | null; command?: string; aggregatedOutput?: string; status?: string; arguments?: unknown };
+        turn?: { id?: string; status?: string; error?: { message?: string }; usage?: unknown };
       };
       const eventTurnId = event.turnId ?? event.turn?.id;
       const unsafeItem = ((method === 'item/started' || method === 'item/completed') &&
@@ -1421,6 +1503,9 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         openToolItems++;
       } else if (method === 'item/completed' && isToolItem(event.item?.type)) {
         openToolItems = Math.max(0, openToolItems - 1);
+      }
+      if ((method === 'item/started' || method === 'item/completed') && isToolItem(event.item?.type)) {
+        outputLimitLastTool = describeToolItemForOutputLimit(event.item);
       }
       armStall();
       if (method === 'item/started' && event.item?.type === 'commandExecution') {
@@ -1466,7 +1551,37 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           const detail = asyncDeliveryFailure?.message ?? event.turn?.error?.message ?? 'unknown error';
           const overload = failed && !asyncDeliveryFailure && turnCanRetry
             ? readCodexOverloadFailure(event.turn?.error) : undefined;
+          // #5452: classify the output-cap failure regardless of turnCanRetry —
+          // earlier tool calls having succeeded is precisely when the receipt
+          // must separate "already done" from "never ran". Never retried.
+          const outputLimit = failed && !asyncDeliveryFailure
+            ? readCodexOutputLimitFailure(event.turn?.error) : undefined;
           if (overload) { deferredTurnOverload = overload; deferredFailedTurnId = finishingTurn; }
+          else if (outputLimit) {
+            const telemetry = {
+              threadId, turnId: finishingTurn, ...activeCorrelation,
+              // Explicitly absent when the app-server event carries no usage —
+              // the log line then records the failure class without invented
+              // token numbers (#5452: "明确不可用" over fabricated fields).
+              usage: readCodexOutputLimitUsage(event.turn?.usage),
+              lastTool: outputLimitLastTool,
+            };
+            logger.info(telemetry, 'codex turn failed: output generation limit (max_output_tokens)');
+            push({
+              type: 'result',
+              content: `❌ Codex turn failed: ${detail}`,
+              role: 'assistant',
+              metadata: {
+                terminatedReason: 'turn_failed' as const,
+                terminationDetail: `codex app-server turn failed (output limit): ${detail}; ${JSON.stringify(telemetry)}`,
+                messageId: finishingTurn,
+                outputLimit: {
+                  ...(telemetry.usage ? { usage: telemetry.usage } : {}),
+                  ...(outputLimitLastTool ? { lastTool: outputLimitLastTool } : {}),
+                },
+              },
+            });
+          }
           else {
             push({
               type: 'result',
@@ -1533,6 +1648,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             turnCanRetry = true;
             deferredTurnOverload = undefined;
             deferredFailedTurnId = undefined;
+            outputLimitLastTool = undefined;
             earlyEvents.length = 0;
             llmReservation ??= reserveLlmSession(options.llmSessionLimit);
             if (llmReservation && !await Promise.race([
