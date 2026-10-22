@@ -14,8 +14,8 @@
  * sending a duplicate.
  */
 
-import { markdownToCardElements, splitMarkdownByTables } from '@disclaude/core';
 import { normalizeMarkdownLineBreaks } from './content-builder.js';
+import { markdownToCardElements, splitMarkdownByTables } from './gfm-table-converter.js';
 import {
   buildStreamingPlaceholderCard,
   STREAMING_REPLY_ELEMENT_ID,
