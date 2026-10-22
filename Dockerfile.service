@@ -235,6 +235,17 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 # Must run as root (writes /usr/local/bin) before USER disclaude below.
 RUN ln -s /app/bin/disclaude.js /usr/local/bin/disclaude
 
+# Issue #5431: the official mounts (compose + the docker run example above) put
+# the config at /app/disclaude.config.yaml — the cwd discovery slot, which the
+# loader flags as legacy on every start. A symlink at the canonical
+# ~/.disclaude location lets discovery's first slot hit and silences the
+# warning with zero migration. Dangling when no config is mounted: discovery
+# falls through exactly as before (existsSync follows symlinks).
+RUN mkdir -p /app/.disclaude && \
+    ln -s /app/disclaude.config.yaml /app/.disclaude/disclaude.config.yaml && \
+    ln -s /app/disclaude.config.yml /app/.disclaude/disclaude.config.yml && \
+    chown -R disclaude:disclaude /app/.disclaude
+
 # Entrypoint auto-configures lark-cli auth into the disclaude user's $HOME (/app),
 # then execs tini + the app. It runs AS the disclaude user (see USER below) — there
 # are no privileged steps left, since OOM protection is now applied host-side via
