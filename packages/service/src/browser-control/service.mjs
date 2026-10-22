@@ -135,6 +135,57 @@ export function browserStatus(path) {
   } finally { closeSync(fd); }
 }
 
+// #5427: --reload stops the upstream daemon, but Chromium can come back as a
+// DIFFERENT browser (new id → new identity directory), leaving the manifest
+// pinned to a dead websocket. Re-run discovery after a successful reload and,
+// when the websocket changed, migrate the manifest to the new identity under
+// the owner lock. The calling invocation holds the OLD identity's command
+// lock for its whole run, so old-directory work is serialized by construction;
+// only the NEW directory must be idle.
+export async function refreshBrowserRuntimeConnection({ env = process.env, fetchImpl = globalThis.fetch,
+  onEvent = () => {}, tolerateDiscoveryFailure = false,
+} = {}) {
+  const path = env.DISCLAUDE_BROWSER_RUNTIME || resolveBrowserRuntimePath(env);
+  const runtime = readBrowserRuntime(path);
+  // A wrapper invocation inherits only the manifest's browser env (no source
+  // BU_CDP_URL/config), so re-check the endpoint the manifest recorded.
+  const { endpoint, endpointSource } = hasChromiumCdpConfiguration(env)
+    ? resolveCdpConfiguration(env)
+    : { endpoint: runtime.browserEnv.BU_CDP_URL, endpointSource: runtime.endpointSource || 'runtime-manifest' };
+  let discovered;
+  try { discovered = await discoverCdp({ endpoint, endpointSource, fetchImpl, env }); }
+  catch (error) {
+    if (error.diagnostic) onEvent(error.diagnostic);
+    // Chromium may legitimately be down right after --reload stopped the
+    // daemon; the reload contract (daemon stopped, guard cleared) still holds.
+    if (tolerateDiscoveryFailure) return runtime;
+    throw error;
+  }
+  const { websocket, browserId } = discovered;
+  if (websocket.href === runtime.browserEnv.BU_CDP_WS) return runtime; // Connection is still current.
+  const identity = createHash('sha256').update(browserId).digest('hex').slice(0, 24);
+  const directory = join(`/tmp/disclaude-browser-${process.getuid?.()}`, identity);
+  privateDirectory(directory);
+  const ownerFd = openCommandLock(ownerLockPath(path));
+  try {
+    if (tryCommandLock(ownerFd)) throw new Error('Browser runtime owner is not live; start or restart Disclaude');
+    const fd = openCommandLock(join(directory, 'command.lock'));
+    try { if (!tryCommandLock(fd)) throw new Error(`Browser commands are busy in ${directory}; retry --reload when idle`); }
+    finally { closeSync(fd); }
+    if (JSON.parse(readFileSync(path, 'utf8')).instance !== runtime.instance) {
+      throw new Error('Browser service restarted during the refresh; retry the invocation');
+    }
+    const migrated = { ...runtime, directory, browserEnv: { ...runtime.browserEnv,
+      BU_CDP_WS: websocket.href, BU_NAME: `disclaude-${identity}`,
+      BH_RUNTIME_DIR: directory, BH_TMP_DIR: directory, BH_HOME: directory } };
+    const temporary = `${path}.${runtime.instance}.refresh.tmp`;
+    try { writeFileSync(temporary, JSON.stringify(migrated), { flag: 'wx', mode: 0o600 }); renameSync(temporary, path); }
+    finally { rmSync(temporary, { force: true }); }
+    onEvent({ type: 'browser-connection-refreshed', from: runtime.browserEnv.BU_CDP_WS, to: websocket.href });
+    return migrated;
+  } finally { closeSync(ownerFd); }
+}
+
 export async function prepareBrowserCommands({ env = process.env, fetchImpl = globalThis.fetch,
   onEvent = /** @type {(record: Record<string, unknown>) => void} */ (() => {}),
 } = {}) {

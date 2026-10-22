@@ -1,16 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { spawn } from 'node:child_process';
-import { accessSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import { accessSync, closeSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { browserAgentEnv, resolveBrowserRuntimePath } from '@disclaude/core/browser-runtime';
-import { browserStatus, prepareBrowserCommands, resolveBrowserUse, resolveCdpEndpoint } from './service.mjs';
+import { browserStatus, prepareBrowserCommands, refreshBrowserRuntimeConnection, resolveBrowserUse, resolveCdpEndpoint } from './service.mjs';
+import { openCommandLock, tryCommandLock } from './command-lock.mjs';
 
 const roots = new Set<string>();
 const children = new Set<ReturnType<typeof spawn>>();
 const services = new Set<{ stop(): Promise<void> }>();
+const closers = new Set<() => Promise<void>>();
 const ambientRuntimeRestores: Array<() => void> = [];
 afterEach(async () => {
   await Promise.all([...children].map(child => new Promise<void>(done => {
@@ -20,6 +23,8 @@ afterEach(async () => {
   children.clear();
   await Promise.all([...services].map(service => service.stop()));
   services.clear();
+  await Promise.all([...closers].map(close => close()));
+  closers.clear();
   for (const root of roots) { rmSync(root, { recursive: true, force: true }); }
   roots.clear();
   for (const restore of ambientRuntimeRestores.splice(0)) { restore(); }
@@ -52,10 +57,23 @@ setTimeout(() => {
   process.exit(op.code || 0);
 }, op.ms || 0);
 `, { mode: 0o700 });
+  let browserId: string = randomUUID();
+  const setBrowserId = (id: string) => { browserId = id; };
+  // The spawned wrapper re-runs discovery with its own fetch against the
+  // recorded HTTP endpoint, so discovery is served by a real local listener
+  // (an in-process mock would be unreachable from the child). The websocket it
+  // advertises points at a dead port: discovery only parses the URL.
+  const server = createServer((_request, response) => {
+    response.setHeader('connection', 'close');
+    response.end(JSON.stringify({ webSocketDebuggerUrl: `ws://127.0.0.1:9999/devtools/browser/${browserId}` }));
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (typeof address !== 'object' || !address) { throw new Error('Fixture discovery endpoint is unavailable'); }
+  closers.add(() => new Promise<void>(resolve => { server.closeAllConnections?.(); server.close(() => resolve()); }));
   const env = { ...process.env, PATH: `${bin}:/usr/bin:/bin`, XDG_RUNTIME_DIR: root,
-    BU_CDP_URL: 'http://127.0.0.1:9999',
+    BU_CDP_URL: `http://127.0.0.1:${address.port}`,
     DISCLAUDE_CONFIG_PATH: join(root, 'config.json'), DISCLAUDE_CHROMIUM_CONFIG: join(root, 'missing.json') };
-  const browserId = randomUUID();
   const fetchImpl = vi.fn(() => Promise.resolve(new Response(JSON.stringify({ webSocketDebuggerUrl: `ws://127.0.0.1:9999/devtools/browser/${browserId}` }))));
   const start = async (values = env) => {
     const service = await prepareBrowserCommands({ env: values, fetchImpl });
@@ -80,7 +98,7 @@ setTimeout(() => {
     child.stdin.end(JSON.stringify(op));
     return { child, result };
   };
-  return { root, env, start, run, executable, ...initial };
+  return { root, env, start, run, executable, setBrowserId, fetchImpl, ...initial };
 }
 
 describe('transparent browser-use command coordination', () => {
@@ -268,5 +286,48 @@ describe('transparent browser-use command coordination', () => {
     const f = await fixture();
     const result = await f.run({ stdout: 'must-not-run' }, [], { ...f.taskEnv, DISCLAUDE_BROWSER_RUNTIME: join(f.root, 'missing', 'runtime.json') }).result.catch(error => ({ code: 1, stdout: '', stderr: error.message }));
     expect(result.code).not.toBe(0); expect(result.stdout).toBe('');
+  });
+
+  it('migrates the runtime manifest after --reload when the browser changed (#5427)', async () => {
+    const f = await fixture();
+    const second = randomUUID();
+    f.setBrowserId(second);
+    expect((await f.run({}, ['--reload']).result).code).toBe(0);
+    const migrated = JSON.parse(readFileSync(f.path, 'utf8'));
+    expect(migrated.browserEnv.BU_CDP_WS).toContain(second);
+    expect(migrated.directory).not.toBe(f.data.directory);
+    expect(migrated.instance).toBe(f.data.instance);
+    roots.add(migrated.directory);
+    const inspected = await f.run({ inspect: true }).result;
+    expect(JSON.parse(inspected.stdout).endpoint).toContain(second);
+    expect(JSON.parse(inspected.stdout).runtime).toBe(migrated.directory);
+    expect(browserStatus(f.path).state).toBe('idle');
+  });
+
+  it('refreshes in place without migration while the browser id is unchanged (#5427)', async () => {
+    const f = await fixture();
+    const onEvent = vi.fn();
+    const refreshed = await refreshBrowserRuntimeConnection({ env: f.taskEnv, fetchImpl: f.fetchImpl, onEvent });
+    expect(refreshed.directory).toBe(f.data.directory);
+    expect(refreshed.instance).toBe(f.data.instance);
+    expect(onEvent).not.toHaveBeenCalled();
+    expect(browserStatus(f.path).state).toBe('idle');
+  });
+
+  it('refuses a migration into a busy identity or without a live owner (#5427)', async () => {
+    const f = await fixture();
+    const second = randomUUID();
+    f.setBrowserId(second);
+    const identity = createHash('sha256').update(second).digest('hex').slice(0, 24);
+    const directory = join(dirname(f.data.directory), identity);
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    roots.add(directory);
+    const busy = openCommandLock(join(directory, 'command.lock'));
+    try {
+      expect(tryCommandLock(busy)).toBe(true);
+      await expect(refreshBrowserRuntimeConnection({ env: f.taskEnv, fetchImpl: f.fetchImpl })).rejects.toThrow(/busy/);
+    } finally { closeSync(busy); }
+    await f.service.stop();
+    await expect(refreshBrowserRuntimeConnection({ env: f.taskEnv, fetchImpl: f.fetchImpl })).rejects.toThrow(/unavailable/);
   });
 });
