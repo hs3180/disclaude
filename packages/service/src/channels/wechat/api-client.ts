@@ -36,13 +36,51 @@ const LONG_POLL_TIMEOUT_MS = 35_000;
 /** Default bot type for QR code generation. */
 const DEFAULT_BOT_TYPE = 3;
 
+/**
+ * Safe API failure detail kept for diagnostics (#5478): endpoint path, numeric
+ * verdicts and a sanitized `errmsg` only — never tokens, signed URLs, raw
+ * bodies or headers.
+ */
+export interface WeChatApiErrorDetail {
+  endpoint?: string;
+  httpStatus?: number;
+  ret?: number;
+  errcode?: number;
+  errmsg?: string;
+  diagnosticId?: string;
+}
+
+const ERRMSG_MAX_CHARS = 120;
+/** Credential vocabulary and transport markers that must never pass through, even inside a server message. */
+const ERRMSG_UNSAFE = /token|ticket|secret|signature|credential|password|authorization|https?:|\/\\|\/\//i;
+/** Visible letters, numbers, punctuation and spaces only; long opaque runs (base64/hex) are dropped whole. */
+const ERRMSG_SAFE = /^[\p{L}\p{N}\p{P}\p{Zs}]{1,120}$/u;
+
+/**
+ * Whitelist + truncate a server-provided message. A value that could carry a
+ * credential, a signed URL or an opaque blob is dropped entirely rather than
+ * partially redacted, so an unverified server string never reaches logs or the
+ * operator as-is.
+ */
+function safeErrmsg(value: unknown): string | undefined {
+  if (typeof value !== 'string') { return undefined; }
+  const text = value.replace(/[\t\n\r ]+/gu, ' ').trim().slice(0, ERRMSG_MAX_CHARS);
+  if (!text || !ERRMSG_SAFE.test(text) || ERRMSG_UNSAFE.test(text) || /[\w+/=-]{33,}/u.test(text)) { return undefined; }
+  return text;
+}
+
 /** Safe diagnostics: never include raw response bodies, URLs or context tokens. */
 export class WeChatApiError extends Error {
   readonly authExpired: boolean;
-  constructor(readonly code: number) {
-    super(`WeChat API error [${code}]: Error code ${code}${code === -14 || code === 401 ? '; login required' : ''}`);
+  readonly detail: WeChatApiErrorDetail | undefined;
+  constructor(readonly code: number, detail?: WeChatApiErrorDetail) {
+    const where = detail?.endpoint ? ` on ${detail.endpoint}` : '';
+    const status = Number.isFinite(detail?.httpStatus) ? ` (HTTP ${detail?.httpStatus})` : '';
+    const what = detail?.errmsg ? `: ${detail.errmsg}` : `: Error code ${code}`;
+    super(`WeChat API error [${code}]${where}${status}${what}${code === -14 || code === 401 ? '; login required' : ''}`);
     this.name = 'WeChatApiError';
     this.authExpired = code === -14 || code === 401;
+    this.detail = detail;
   }
 }
 
@@ -132,7 +170,13 @@ export class WeChatApiClient {
     return !!this.token?.trim();
   }
 
-  /** Read-only credential diagnostic; a poll timeout alone cannot prove login. */
+  /**
+   * Read-only credential diagnostic: can this account still read its own
+   * configuration. Success proves neither login liveness nor delivery health —
+   * #5478 observed `getconfig ret=0` seconds before `sendmessage ret=-2`, so
+   * callers must present it as "account check passed", never as "messages can
+   * be delivered".
+   */
   async checkSession(userId: string): Promise<void> {
     await this.postJson('ilink/bot/getconfig', { ilink_user_id: userId });
   }
@@ -158,7 +202,7 @@ export class WeChatApiClient {
       headers['SKRouteTag'] = this.routeTag;
     }
 
-    const response = await this.fetchJson<{ qrcode?: string; qrcode_img_content?: string }>(url, { method: 'POST', headers, body, signal: options?.signal });
+    const response = await this.fetchJson<{ qrcode?: string; qrcode_img_content?: string }>(url, { method: 'POST', headers, body, signal: options?.signal, endpoint: '/ilink/bot/get_bot_qrcode' });
 
     // eslint-disable-next-line eqeqeq -- intentional nullish check (null || undefined)
     if (response.qrcode == null || response.qrcode_img_content == null) {
@@ -204,7 +248,7 @@ export class WeChatApiClient {
         ilink_user_id?: string;
         baseurl?: string;
         redirect_host?: string;
-      }>(url, { method: 'GET', headers, timeoutMs: LONG_POLL_TIMEOUT_MS, signal: options?.signal });
+      }>(url, { method: 'GET', headers, timeoutMs: LONG_POLL_TIMEOUT_MS, signal: options?.signal, endpoint: '/ilink/bot/get_qrcode_status' });
 
       const status = (data.status || 'wait') as Awaited<ReturnType<WeChatApiClient['getQrCodeStatus']>>['status'];
 
@@ -493,6 +537,7 @@ export class WeChatApiClient {
       body: bodyStr,
       timeoutMs: options?.timeoutMs ?? DEFAULT_API_TIMEOUT_MS,
       signal: options?.signal,
+      endpoint: `/${endpoint.replace(/^\/+/, '')}`,
     });
 
     return data;
@@ -556,6 +601,8 @@ export class WeChatApiClient {
     body?: string;
     timeoutMs?: number;
     signal?: AbortSignal;
+    /** Endpoint path label for safe diagnostics; a fixed literal, never a secret-bearing URL. */
+    endpoint?: string;
   }): Promise<T> {
     const timeoutMs = opts.timeoutMs ?? DEFAULT_API_TIMEOUT_MS;
     const controller = new AbortController();
@@ -577,16 +624,26 @@ export class WeChatApiClient {
 
       if (!response.ok) {
         await response.body?.cancel();
-        throw new WeChatApiError(response.status);
+        throw this.apiError(response.status, { ...(opts.endpoint ? { endpoint: opts.endpoint } : {}), httpStatus: response.status });
       }
 
       const rawText = await response.text();
       const data = parseApiJson(rawText);
 
       // Check for WeChat iLink error format (ret !== 0)
-      const ret = Number(data.errcode || data.ret || 0);
-      if (ret !== 0) {
-        throw new WeChatApiError(ret);
+      const code = Number(data.errcode || data.ret || 0);
+      if (code !== 0) {
+        const ret = Number(data.ret);
+        const errcode = Number(data.errcode);
+        const errmsg = safeErrmsg(data.errmsg ?? data.err_msg);
+        const detail: WeChatApiErrorDetail = {
+          endpoint: opts.endpoint ?? 'unknown',
+          ...(Number.isFinite(response.status) ? { httpStatus: response.status } : {}),
+          ...(Number.isFinite(ret) && ret !== 0 ? { ret } : {}),
+          ...(Number.isFinite(errcode) && errcode !== 0 ? { errcode } : {}),
+          ...(errmsg ? { errmsg } : {}),
+        };
+        throw this.apiError(code, detail);
       }
 
       return data as T;
@@ -600,5 +657,12 @@ export class WeChatApiClient {
       clearTimeout(timer);
       opts.signal?.removeEventListener('abort', onAbort);
     }
+  }
+
+  /** Build the rejection, recording only safe fields plus a short correlation ID (#5478). */
+  private apiError(code: number, detail: WeChatApiErrorDetail): WeChatApiError {
+    const enriched = { ...detail, diagnosticId: crypto.randomUUID().slice(0, 8) };
+    logger.warn({ code, ...enriched }, 'WeChat API request rejected');
+    return new WeChatApiError(code, enriched);
   }
 }

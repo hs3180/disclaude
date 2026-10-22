@@ -70,6 +70,42 @@ describe('WeChatApiClient', () => {
         expect(remove).toHaveBeenCalledWith('abort', expect.any(Function));
       } finally { vi.useRealTimers(); }
     });
+
+    it('keeps the safe server reason and endpoint on an explicit -2 rejection (#5478)', async () => {
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ ret: -2, errmsg: 'prepare failed' }), { status: 200 }));
+      const failure = await client.sendText({ to: 'peer', content: 'hello' }).catch(error => error);
+      expect(failure).toMatchObject({ code: -2, detail: { endpoint: '/ilink/bot/sendmessage', httpStatus: 200, ret: -2, errmsg: 'prepare failed' } });
+      expect(failure.message).toContain('WeChat API error [-2] on /ilink/bot/sendmessage (HTTP 200): prepare failed');
+      expect(failure.message).not.toContain('delivery outcome unknown');
+    });
+
+    it('drops errmsg values that could carry credentials or signed URLs (#5478)', async () => {
+      for (const errmsg of ['see https://cdn.example.com/a/b?sig=abc', `blob-${'A'.repeat(40)}`, 'ctx secret-context-token', 'ok then https://x/y']) {
+        mockFetch.mockResolvedValue(new Response(JSON.stringify({ ret: -2, errmsg }), { status: 200 }));
+        const failure = await client.sendText({ to: 'peer', content: 'hello' }).catch(error => error);
+        expect(failure.detail?.errmsg).toBeUndefined();
+        expect(failure.message).not.toContain('https');
+      }
+    });
+
+    it('records endpoint and HTTP status for non-2xx transport rejections (#5478)', async () => {
+      mockFetch.mockResolvedValue(new Response('busy', { status: 503 }));
+      const failure = await client.sendText({ to: 'peer', content: 'hello' }).catch(error => error);
+      expect(failure).toMatchObject({ code: 503, detail: { endpoint: '/ilink/bot/sendmessage', httpStatus: 503 } });
+      expect(failure.message).toContain('WeChat API error [503] on /ilink/bot/sendmessage (HTTP 503)');
+    });
+
+    it('a passing getconfig check never proves delivery: checkSession resolves while sendmessage rejects (#5478)', async () => {
+      mockFetch.mockImplementation((_url, opts) => Promise.resolve(
+        JSON.parse(opts.body).ilink_user_id && !JSON.parse(opts.body).msg
+          ? new Response(JSON.stringify({ ret: 0 }), { status: 200 })
+          : new Response(JSON.stringify({ ret: -2, errmsg: 'prepare failed' }), { status: 200 }),
+      ));
+      await expect(client.checkSession('user-1')).resolves.toBeUndefined();
+      const failure = await client.sendText({ to: 'user-1', content: 'hello' }).catch(error => error);
+      expect(failure).toMatchObject({ code: -2 });
+      expect(failure.detail?.errmsg).toBe('prepare failed');
+    });
   });
 
   describe('constructor', () => {
@@ -324,7 +360,7 @@ describe('WeChatApiClient', () => {
 
       client.setToken('bot-token');
       await expect(client.sendText({ to: 'user-1', content: 'Hello!' }))
-        .rejects.toThrow('WeChat API error [2001]: Error code 2001');
+        .rejects.toThrow('WeChat API error [2001]');
     });
 
     it('should throw when HTTP request fails', async () => {
