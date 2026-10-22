@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveBrowserRuntimePath } from '@disclaude/core/browser-runtime';
 import { openCommandLock, tryCommandLock, waitCommandLock } from './command-lock.mjs';
-import { processExists, readBrowserRuntime } from './service.mjs';
+import { processExists, readBrowserRuntime, refreshBrowserRuntimeConnection } from './service.mjs';
 import { observeBrowser } from './observer.mjs';
 import { browserDiagnostic } from './diagnostics.mjs';
 import { randomUUID } from 'node:crypto';
@@ -97,6 +97,13 @@ export async function main(args = process.argv.slice(2), env = process.env) {
       if (reload && daemonPid) {
         for (let attempt = 0; attempt < 20 && processExists(daemonPid); attempt++) await delay(100);
         if (processExists(daemonPid)) throw new Error('Upstream daemon termination is unconfirmed; browser commands remain blocked');
+      }
+      if (reload) {
+        // #5427: the daemon restart can bring up a different browser. Migrate
+        // the manifest before clearing the outcome guard; a guard failure
+        // (busy identity, owner gone) keeps --reload as the next step, while
+        // an unreachable browser is reported but does not fail the reload.
+        await refreshBrowserRuntimeConnection({ env, onEvent: reportDiagnostic, tolerateDiscoveryFailure: true });
       }
       rmSync(marker, { force: true });
     }
