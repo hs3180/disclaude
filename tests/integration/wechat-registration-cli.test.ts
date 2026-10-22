@@ -86,4 +86,33 @@ describe('dynamic registration CLI', () => {
       expect(report.note).toBe('account check passed does not prove message delivery');
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
+
+  it('reports login stages and verifies fresh credentials before declaring registration (#5479)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'wechat-registration-cli-stages-'));
+    try {
+      const output = await cli(dir, ['login', '--qr-file', join(dir, 'fresh.png')], { bot: 'stage-bot' });
+      const stages = output.stdout.trim().split('\n')
+        .filter(line => line.startsWith('{') && line.endsWith('}'))
+        .map(line => JSON.parse(line))
+        .filter(entry => entry.stage)
+        .map(entry => entry.stage);
+      expect(stages).toEqual(['waiting-for-scan', 'confirmed', 'submitting-credentials', 'verifying-connection']);
+      const report = lastJson(output.stdout);
+      expect(report).toMatchObject({ ok: true, registered: true, verified: true });
+      expect(report.note).toBe('account check passed does not prove message delivery');
+      expect(report).not.toHaveProperty('next');
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it('reports a rejected fresh login as registered but unverified, not activated (#5479)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'wechat-registration-cli-fresh-expired-'));
+    try {
+      // The scan confirms offline but the server rejects the new credentials
+      // immediately: committing the registration must not read as activation.
+      const output = await cli(dir, ['login', '--qr-file', join(dir, 'fresh.png')], { bot: 'stage-bot', expired: true });
+      const report = lastJson(output.stdout);
+      expect(report).toMatchObject({ ok: true, registered: true, verified: false, loginExpired: true });
+      expect(report.next).toContain('disclaude wechat login --id ');
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
 });
