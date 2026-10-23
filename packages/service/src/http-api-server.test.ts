@@ -813,6 +813,51 @@ describe('HttpApiServer', () => {
     });
   });
 
+  describe('POST /api/self-sent/:messageId (Issue #5504)', () => {
+    it('registers the path-parameter message id via the registrar', async () => {
+      const registrar = vi.fn();
+      server.setSelfSentRegistrar(registrar);
+
+      const { statusCode, body } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/self-sent/om_abc123',
+      });
+
+      expect(statusCode).toBe(200);
+      expect(JSON.parse(body)).toEqual({ ok: true, messageId: 'om_abc123' });
+      expect(registrar).toHaveBeenCalledExactlyOnceWith('om_abc123');
+    });
+
+    it('should return 503 when the registrar is not configured', async () => {
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/self-sent/om_abc123',
+      });
+      expect(statusCode).toBe(503);
+    });
+
+    it('requires the Bearer token when apiToken is configured', async () => {
+      const registrar = vi.fn();
+      server = new HttpApiServer({ port: 0, apiToken: 'agent-token' });
+      server.setSelfSentRegistrar(registrar);
+
+      const unauthorized = await dispatch(server, {
+        method: 'POST',
+        url: '/api/self-sent/om_secret1',
+      });
+      expect(unauthorized.statusCode).toBe(401);
+      expect(registrar).not.toHaveBeenCalled();
+
+      const authorized = await dispatch(server, {
+        method: 'POST',
+        url: '/api/self-sent/om_secret1',
+        headers: { authorization: 'Bearer agent-token' },
+      });
+      expect(authorized.statusCode).toBe(200);
+      expect(registrar).toHaveBeenCalledExactlyOnceWith('om_secret1');
+    });
+  });
+
   describe('unknown routes', () => {
     it('should return 404 for unknown paths', async () => {
       const { statusCode, body } = await dispatch(server, { method: 'GET', url: '/unknown' });

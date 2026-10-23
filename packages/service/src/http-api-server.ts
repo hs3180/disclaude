@@ -19,6 +19,7 @@ import { isPrivateWorkflowRequest, type PrivateWorkflowRequest } from './channel
  * - `POST /api/send-interactive` — Send an interactive card (buttons) to a chat (REST parity with REST API sendInteractive; #4279)
  * - `POST /api/upload-image` — Upload a local image by filePath, returns image_key for card embedding (REST parity with REST API uploadImage; #4279)
  * - `POST /api/mark-chat-responded` — Mark a temp chat as responded (REST parity with REST API markChatResponded; #4281)
+ * - `POST /api/self-sent/:messageId` — Register a just-sent user-identity message id so its echo is filtered (#5504)
  *
  * Authentication:
  * - When `apiToken` is configured, non-GET routes require `Authorization: Bearer <token>`
@@ -228,6 +229,14 @@ export type MarkChatRespondedHandler = (
 ) => Promise<{ success: boolean }>;
 
 /**
+ * Registrar for the self-sent echo registry (#5504). Called with the
+ * message_id a caller just sent with user identity via its own Feishu
+ * credentials; the id is filtered from inbound processing so the echo
+ * event is not fed back to the agent as a new user turn.
+ */
+export type SelfSentRegistrar = (messageId: string) => void;
+
+/**
  * Route handler type.
  */
 type RouteHandler = (
@@ -278,6 +287,7 @@ export class HttpApiServer {
   private listTempChatsHandler?: ListTempChatsHandler;
   private uploadImageHandler?: UploadImageHandler;
   private markChatRespondedHandler?: MarkChatRespondedHandler;
+  private selfSentRegistrar?: SelfSentRegistrar;
   private deliveryHealthProvider?: () => DeliveryHealth;
   private browserIpcStatusProvider?: () => NonNullable<StatusResponse['browserIpc']>;
   private channelCapabilitiesProvider?: (chatId?: string) => ChannelCapabilitySnapshot[];
@@ -384,6 +394,13 @@ export class HttpApiServer {
    */
   setMarkChatRespondedHandler(handler: MarkChatRespondedHandler): void {
     this.markChatRespondedHandler = handler;
+  }
+
+  /**
+   * Set the registrar for POST /api/self-sent/:messageId (#5504).
+   */
+  setSelfSentRegistrar(registrar: SelfSentRegistrar): void {
+    this.selfSentRegistrar = registrar;
   }
 
   /**
@@ -580,6 +597,9 @@ export class HttpApiServer {
     this.addRoute('POST', '/api/upload-image', this.handleUploadImage.bind(this));
     // Issue #4281: REST parity with REST API markChatResponded (temp-chat lifecycle).
     this.addRoute('POST', '/api/mark-chat-responded', this.handleMarkChatResponded.bind(this));
+    // Issue #5504: register a just-sent user-identity message id so its echo
+    // event is filtered instead of looping back into the agent.
+    this.addRoute('POST', '/api/self-sent/:messageId', this.handleSelfSent.bind(this));
     this.addRoute('POST', '/api/push', this.handlePush.bind(this));
     // Issue #4031: SSE endpoint for topic group message notifications
     this.addRoute('GET', '/api/topic-stream', this.handleTopicStream.bind(this));
@@ -1289,6 +1309,43 @@ export class HttpApiServer {
       const msg = err instanceof Error ? err.message : 'markChatResponded failed';
       this.sendJson(res, 500, { ok: false, message: msg });
     }
+  }
+
+  /**
+   * POST /api/self-sent/:messageId handler (#5504).
+   *
+   * Session-side tools that send with user identity (their own Feishu
+   * credentials, not our bot app) register the message_id returned by their
+   * send call right after it resolves. The Feishu echo of such a send arrives
+   * as a sender_type='user' im.message.receive event, which the inbound
+   * filters would otherwise feed back to the agent as a new user turn.
+   * Registration should win that race: the echo is generated only after
+   * Feishu processes the send, so a registration issued immediately after
+   * the send response lands first in practice.
+   */
+  private handleSelfSent(
+    _req: IncomingMessage,
+    res: ServerResponse,
+    params: Record<string, string>
+  ): Promise<void> {
+    if (!this.selfSentRegistrar) {
+      this.sendJson(res, 503, { ok: false, message: 'Self-sent registrar not configured' });
+      return Promise.resolve();
+    }
+    const messageId = params.messageId?.trim();
+    if (!messageId) {
+      this.sendJson(res, 400, { ok: false, message: 'Required: messageId path parameter' });
+      return Promise.resolve();
+    }
+    try {
+      this.selfSentRegistrar(messageId);
+      logger.debug({ messageId }, 'Registered self-sent message id');
+      this.sendJson(res, 200, { ok: true, messageId });
+    } catch (err) {
+      logger.error({ err, messageId }, 'Self-sent registration error');
+      this.sendJson(res, 500, { ok: false, message: 'Self-sent registration failed' });
+    }
+    return Promise.resolve();
   }
 
   /**

@@ -297,6 +297,7 @@ export type FilterReason =
   | 'duplicate'
   | 'bot'
   | 'old'
+  | 'self_sent'
   | 'unsupported'
   | 'empty'
   | 'trigger_mode';
