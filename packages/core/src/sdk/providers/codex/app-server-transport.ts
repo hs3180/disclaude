@@ -77,7 +77,7 @@ export interface CodexAppServerExit {
 }
 
 export class CodexAppServerRequestTimeoutError extends Error {
-  constructor(readonly method: string) {
+  constructor(readonly method: string, readonly timeoutMs = 30_000) {
     super(`codex app-server request timed out: ${method}`);
     this.name = 'CodexAppServerRequestTimeoutError';
   }
@@ -174,10 +174,13 @@ export class CodexAppServerTransport {
     }
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
+      // #5505: carry the effective deadline on the typed error so upstream
+      // failure reports state the timeout that actually elapsed.
+      const effectiveTimeoutMs = timeoutMs ?? this.options.requestTimeoutMs ?? 30_000;
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new CodexAppServerRequestTimeoutError(method));
-      }, timeoutMs ?? this.options.requestTimeoutMs ?? 30_000);
+        reject(new CodexAppServerRequestTimeoutError(method, effectiveTimeoutMs));
+      }, effectiveTimeoutMs);
       timer.unref();
       this.pending.set(id, { resolve, reject, timer });
       this.write({ jsonrpc: '2.0', id, method, params });

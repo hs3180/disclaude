@@ -160,6 +160,24 @@ function midstreamRetryDelayMs(): number {
   return Number.isFinite(v) && v >= 0 ? v : 200_000;
 }
 
+// #5505: rebuild a provider-declared stream failure as a real Error whose
+// constructor name keeps the original class identity (e.g.
+// CodexAppServerRequestTimeoutError), because classification reads
+// constructor.name — a plain `new Error()` with a renamed `.name` would
+// classify as UNKNOWN and lose the timeout category. Classes are cached per
+// kind so the set stays bounded.
+const declaredFailureClasses = new Map<string, new (message: string) => Error>();
+function declaredFailureError(kind: string | undefined, message: string): Error {
+  const name = kind && kind.trim() ? kind : 'ProviderStreamError';
+  let declaredClass = declaredFailureClasses.get(name);
+  if (!declaredClass) {
+    declaredClass = class extends Error {};
+    Object.defineProperty(declaredClass, 'name', { value: name });
+    declaredFailureClasses.set(name, declaredClass);
+  }
+  return new declaredClass(message);
+}
+
 /**
  * ChatAgent - Platform-agnostic direct chat abstraction with Streaming Input.
  *
@@ -2061,6 +2079,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     let finalDeliveryId: string | undefined;
     let turnDeliveryFailed = false;
     let turnHadError = false;
+    // #5505: a provider-declared terminal failure (`error` message with
+    // `metadata.error`) kept as the stream's real error for settlement.
+    let streamTerminalError: Error | undefined;
     const consumeTurnAnchor = (): string | undefined => {
       if (!turnAnchorConsumed && this.pendingTurnMessageIds.length > 0) {
         turnAnchorConsumed = true;
@@ -2238,7 +2259,19 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         }
         consumeTurnAnchor();
 
-        if (parsed.type === 'error') { turnHadError = true; }
+        if (parsed.type === 'error') {
+          turnHadError = true;
+          // #5505: a provider-declared stream failure carries the structured
+          // cause (class/method/uncertain submission). Keep the first one as
+          // the authoritative error so the stream-end settlement reports the
+          // real timeout instead of a generic iterator-ended fallback.
+          const declared = parsed.metadata?.error;
+          if (declared !== undefined && declared !== null && !streamTerminalError) {
+            const kind = typeof declared === 'object' && typeof (declared as { kind?: unknown }).kind === 'string'
+              ? (declared as { kind: string }).kind : undefined;
+            streamTerminalError = declaredFailureError(kind, parsed.content || kind || 'Provider stream failed');
+          }
+        }
         messageCount++;
 
         // Issue #3003: Track Time-To-First-Token (TTFT)
@@ -2352,7 +2385,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         // Issue #3641: In topic group threads, filter intermediate messages
         // (tool_use, tool_result, tool_progress) to reduce noise.
         // Issue #3809: Forward intermediate messages to debug group.
-        if (parsed.content && parsed.terminatedReason !== 'turn_failed' && parsed.terminatedReason !== 'stall') {
+        // #5505: a provider-declared terminal failure settles once through the
+        // unexpected-turn notice carrying its diagnostic; its bare text is not
+        // also delivered as chat progress (that was the duplicate first notice).
+        const declaredStreamFailure = parsed.type === 'error' && parsed.metadata?.error !== undefined;
+        if (parsed.content && !declaredStreamFailure && parsed.terminatedReason !== 'turn_failed' && parsed.terminatedReason !== 'stall') {
           // 瞬态进度占位("🤔 Thinking..." / "🔄 Compacting…")同样
           // 属于内部进度,不能当用户消息发。SDK 每个请求都发一次 requesting,
           // 群聊没有流式卡片(见下方 streamDriver 仅在 p2p 构建),每步都会单蹦
@@ -3360,6 +3397,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       return;
     }
 
+    // #5505: an error-only stream that ends normally settles with its real
+    // provider failure — the timing summary, terminal settlement and restart
+    // decision below must all see it. The generic iterator-ended fallback
+    // stays reserved for endings with neither an error nor a result.
+    if (!iteratorError && streamTerminalError) { iteratorError = streamTerminalError; }
+
     // Issue #3003: Log timing summary for the entire agent loop
     if (!wasExplicitClose) {
       const loopElapsedMs = Date.now() - startTime;
@@ -3381,8 +3424,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       return;
     }
 
-    if (!iteratorError && this.hasPendingWork) {
-      await finishUnexpectedTurns(new Error('Agent iterator ended without a terminal result'));
+    // #5505: `!iteratorError` used to double as "not settled yet", but the
+    // promotion above can now set it for a normally-ended stream; settle when
+    // no settlement has run yet (unexpectedTerminated guards the thrown path,
+    // which settles inside its own catch).
+    if (!unexpectedTerminated && this.hasPendingWork) {
+      await finishUnexpectedTurns(iteratorError ?? new Error('Agent iterator ended without a terminal result'));
     }
     if (this.sessionGeneration !== myGeneration) { return; }
 

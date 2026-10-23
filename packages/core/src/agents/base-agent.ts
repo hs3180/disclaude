@@ -403,6 +403,9 @@ export abstract class BaseAgent implements Disposable {
             systemSubtype: message.metadata.systemSubtype,
             backgroundTaskIds: message.metadata.backgroundTaskIds,
             backgroundTask: message.metadata.backgroundTask,
+            // #5505: provider-declared terminal stream failure must survive
+            // this legacy rebuild as structure, not degrade to `content`.
+            error: message.metadata.error,
           }
         : undefined,
       sessionId: message.metadata?.sessionId,

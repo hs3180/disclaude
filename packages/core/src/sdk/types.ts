@@ -214,6 +214,26 @@ export interface AgentMessageMetadata {
    * 提示)不设此标记,仍按可见消息投递。
    */
   transientStatus?: boolean;
+  /**
+   * #5505: provider-declared terminal stream failure. Providers attach this
+   * only when the stream is about to end without a result, so the fields
+   * must survive to agent settlement unchanged instead of degrading to the
+   * bare `content` string.
+   */
+  error?: {
+    /** Error class name, e.g. `CodexAppServerRequestTimeoutError`. */
+    kind: string;
+    /** RPC method for transport failures, e.g. `turn/start`. */
+    method?: string;
+    /** Stream stage where the failure surfaced, e.g. `turn-start`. */
+    stage?: string;
+    /** Effective request timeout in ms (elapsed at rejection) when known. */
+    timeoutMs?: number;
+    /** Submission state unknown — the request may still have reached the model. */
+    uncertain?: boolean;
+    /** Sanitized original cause message, when present. */
+    cause?: string;
+  };
 }
 
 /** Agent 消息类型 */

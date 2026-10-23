@@ -328,7 +328,11 @@ printf '%s' "$response" > "$(dirname "$0")/response"
       binary: fixture('read line\nwhile :; do sleep 1; done'),
       requestTimeoutMs: 25,
     });
-    await expect(transport.request('thread/start', {})).rejects.toThrow(/timed out: thread\/start/);
+    // #5505: the typed timeout carries the RPC method and the effective
+    // deadline so failure reports can state what actually elapsed.
+    await expect(transport.request('thread/start', {})).rejects.toMatchObject({
+      name: 'CodexAppServerRequestTimeoutError', method: 'thread/start', timeoutMs: 25,
+    });
     await transport.close();
   });
 

@@ -3483,6 +3483,51 @@ describe('ChatAgent (service)', () => {
       } finally { finish(); agent.dispose(); }
     });
 
+    it.each([false, true])('settles a provider-declared error-only stream once with its real failure (progress=%s)', async progress => {
+      const callbacks = createMockCallbacks();
+      const agent = new ChatAgent({ chatId: 'codex-ack-loss', callbacks, apiKey: 'key', model: 'model' });
+      (agent as any).isAgentTeamsEnabled = () => false;
+      async function* events() {
+        if (progress) { yield { parsed: { type: 'text', content: 'First turn delivered' }, raw: {} }; }
+        // #5505: the provider's terminal turn/start ACK timeout — typed error
+        // metadata, then the stream ends normally without a result.
+        yield {
+          parsed: {
+            type: 'error', role: 'system', content: 'codex app-server request timed out: turn/start',
+            metadata: { error: { kind: 'CodexAppServerRequestTimeoutError', method: 'turn/start', stage: 'turn-start', timeoutMs: 30000, uncertain: true } },
+          }, raw: {},
+        };
+      }
+      const create = vi.fn(() => ({ handle: { close: vi.fn(), cancel: vi.fn(), sessionId: 'native-ack-loss' }, iterator: events() }));
+      (agent as any).createQueryStream = create;
+      try {
+        await agent.processMessage({ chatId: 'codex-ack-loss', payload: 'read-only query', messageId: 'ack-loss-source', threadRootId: 'ack-loss-thread' });
+        await expect(agent.turnCompleteFor('ack-loss-source')).rejects.toThrow('timed out: turn/start');
+        await vi.waitFor(() => expect(callbacks.onDone).toHaveBeenCalled());
+        // Exactly one failure notice, carrying the real timeout — not the bare
+        // timeout as progress plus a second generic interruption notice.
+        const notices = callbacks.sendMessage.mock.calls.filter(([, content]) => String(content).includes('本次请求中断'));
+        expect(notices).toHaveLength(1);
+        expect(String(notices[0][1])).toContain('codex app-server request timed out: turn/start');
+        expect(String(notices[0][1])).toContain('iterator-error');
+        expect(String(notices[0][1])).not.toContain('iterator-ended');
+        expect(callbacks.sendMessage.mock.calls.some(([, content]) => content === 'codex app-server request timed out: turn/start')).toBe(false);
+        if (progress) {
+          expect(callbacks.sendMessage.mock.calls.some(([, content]) => content === 'First turn delivered')).toBe(true);
+        }
+        // The restart classification sees the real cause as a transient
+        // failure (the timeout class name classifies NETWORK/transient), and
+        // the request is not replayed.
+        await vi.waitFor(() => {
+          const classified = (agent as any).logger.warn.mock.calls
+            .filter(([fields]: any[]) => fields.errorCategory !== undefined && fields.errorMessage !== undefined);
+          expect(classified.some(([fields]: any[]) =>
+            String(fields.errorMessage).includes('timed out: turn/start') && fields.transient === true)).toBe(true);
+        });
+        expect(create).toHaveBeenCalledTimes(1);
+      } finally { agent.dispose(); }
+    });
+
     it('does not overwrite a replacement session while the old terminal notice is pending', async () => {
       const callbacks = createMockCallbacks();
       const agent = new ChatAgent({ chatId: 'iterator-replace', callbacks, apiKey: 'key', model: 'model' });
