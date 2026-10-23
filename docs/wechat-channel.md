@@ -2,7 +2,7 @@
 
 This adapter connects a personal WeChat account through Tencent's iLink bot service (`https://ilinkai.weixin.qq.com`). It uses QR login and authenticated outbound HTTPS long polling. It is not a WeCom, Official Account, or group-chat integration. There is no public callback endpoint or callback signature to configure. The account/client must be eligible to connect an iLink bot; actual account eligibility requires a successful login.
 
-Available in Disclaude 0.6.6. Install the prebuilt `v0.6.6` GitHub distribution using the [installation guide](releases/git-install.md). The original 0.6.5 release does not include this setup flow. The dated 2026-10-20 candidate record below is historical; current release verification is recorded in the 0.6.6 release assets.
+Available since Disclaude 0.6.6; the 0.6.7 release hardens the re-login path. Install the prebuilt `v0.6.7` GitHub distribution using the [installation guide](releases/git-install.md). The original 0.6.5 release does not include this setup flow. The dated 2026-10-20 candidate record below is historical; current release verification is recorded in the release assets.
 
 ## Install and log in
 
