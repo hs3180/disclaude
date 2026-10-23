@@ -8,9 +8,10 @@ import { WeChatRegistry } from '../../packages/service/src/channels/wechat/regis
 import { WeChatStateStore } from '../../packages/service/src/channels/wechat/state-store.js';
 
 const exec = promisify(execFile);
-function cli(dir: string, args: string[], fixture?: { bot?: string; fail?: boolean; expired?: boolean }) {
+function cli(dir: string, args: string[], fixture?: { bot?: string; user?: string; fail?: boolean; expired?: boolean }) {
   return exec(process.execPath, ['bin/disclaude.js', 'wechat', ...args, '--state-dir', dir], {
     env: { ...process.env, LOG_LEVEL: 'silent', LOG_TO_FILE: 'false', WECHAT_FIXTURE_BOT: fixture?.bot,
+      WECHAT_FIXTURE_USER: fixture?.user,
       NODE_OPTIONS: fixture ? `--import ${JSON.stringify(resolve('tests/fixtures/wechat-login-gateway.mjs'))}` : '',
       WECHAT_FIXTURE_FAILURE: fixture?.fail ? '1' : undefined,
       WECHAT_FIXTURE_SESSION_EXPIRED: fixture?.expired ? '1' : undefined }, timeout: 10000,
@@ -49,10 +50,24 @@ describe('dynamic registration CLI', () => {
       const registry = new WeChatRegistry(dir);
       expect(await registry.list()).toEqual([]);
       const first = lastJson((await cli(dir, ['login', '--qr-file', join(dir, 'first.png')], { bot: 'original' })).stdout);
-      await expect(cli(dir, ['login', '--id', first.id, '--force', '--qr-file', join(dir, 'wrong.png')], { bot: 'different' })).rejects.toThrow();
+      // Same user scanning a new bot identity (#5480): refuse the overwrite,
+      // explain the change, and point at a plain login as the continuation.
+      const mismatch = await cli(dir, ['login', '--id', first.id, '--force', '--qr-file', join(dir, 'wrong.png')], { bot: 'different' }).catch(error => error);
+      expect(mismatch.code).toBe(1);
+      const entries = mismatch.stdout.trim().split('\n')
+        .filter(line => line.startsWith('{') && line.endsWith('}')).map(line => JSON.parse(line));
+      expect(entries).toEqual(expect.arrayContaining([expect.objectContaining({ ok: false, stage: 'identity-changed',
+        saved: false, targetId: first.id, registeredBotId: 'original', scannedBotId: 'different', sameUser: true,
+        next: `disclaude wechat login --state-dir ${dir}` })]));
       const [record] = await registry.list();
       expect(record.enabled).toBe(true);
       expect((await new WeChatStateStore(registry.stateDir(record)).loadCredentials())?.botId).toBe('original');
+      // A scan from a different WeChat user reports the unexpected identity
+      // instead of offering the same-user continuation.
+      const stranger = await cli(dir, ['login', '--id', first.id, '--force', '--qr-file', join(dir, 'stranger.png')],
+        { bot: 'different', user: 'someone-else@im.wechat' }).catch(error => error);
+      expect(stranger.code).toBe(1);
+      expect(stranger.stdout).toContain('"sameUser":false');
       await expect(cli(dir, ['status', '--id', 'unknown'])).rejects.toThrow('Unknown WeChat registration');
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
