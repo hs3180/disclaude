@@ -4,6 +4,13 @@ type Send = (message: { chatId: string; type: string; text?: string; card?: Reco
 export type UpdatePrivateCard = (cardId: string, card: Record<string, unknown>) => Promise<void>;
 export const PRIVATE_INPUT_EXPIRED = '表单无效、已过期或已使用（服务重启后亦失效），请重新发起。';
 
+/** Terminal card status per consumed outcome; used ≠ expired (#5489). */
+export function privateInputStatusText(outcome: 'succeeded' | 'denied' | 'failed'): string {
+  return outcome === 'succeeded' ? '本次鉴权操作已完成。'
+    : outcome === 'denied' ? '本次鉴权操作未获授权，请检查所需权限。'
+      : '本次鉴权操作未完成，请稍后重新发起。';
+}
+
 function statusCard(text: string): Record<string, unknown> {
   return { schema: '2.0', config: { enable_forward: false, update_multi: true },
     header: { title: { tag: 'plain_text', content: '私密输入已结束' } },
@@ -67,14 +74,15 @@ export class FeishuPrivateInput {
     const operator = data.operator as { open_id?: string } | undefined;
     const action = data.action as { value?: Record<string, unknown>; form_value?: Record<string, unknown> } | undefined;
     if (typeof context?.open_message_id !== 'string' || typeof context.open_chat_id !== 'string' || typeof operator?.open_id !== 'string') {return;}
+    // #5489: an input callback (typing) is not a submission; it must never
+    // consume the one-shot, repaint the live card, or reach the consumer.
+    if (!action || !('form_value' in action)) {return;}
     const outcome = await this.handoff.submit({
       actor: operator.open_id, chat: context.open_chat_id, card: context.open_message_id,
       action: action?.value?.private_action, nonce: action?.value?.nonce, source: action?.value?.source,
       value: action?.form_value?.credential,
     });
-    const text = outcome === 'succeeded' ? '本次鉴权操作已完成。'
-      : outcome === 'denied' ? '本次鉴权操作未获授权，请检查所需权限。'
-        : outcome === 'invalid' ? PRIVATE_INPUT_EXPIRED : '本次鉴权操作未完成，请稍后重新发起。';
+    const text = outcome === 'invalid' ? PRIVATE_INPUT_EXPIRED : privateInputStatusText(outcome);
     // A mismatched actor/card must not disable the legitimate owner's pending form.
     const owner = this.cards.get(context.open_message_id);
     if (!owner || (owner.actor === operator.open_id && owner.chat === context.open_chat_id)) {
@@ -83,6 +91,17 @@ export class FeishuPrivateInput {
     }
     await this.send({ chatId: context.open_chat_id, type: 'text', text });
     return outcome;
+  }
+
+  /**
+   * #5489: a replayed callback for an already-consumed one-shot re-asserts its
+   * real terminal status instead of reading as an expired form. Card patch
+   * only; no duplicate chat text.
+   */
+  static async reaffirm(data: Record<string, unknown>, status: string, update?: UpdatePrivateCard): Promise<void> {
+    const context = data.context as { open_message_id?: unknown; open_chat_id?: unknown } | undefined;
+    if (typeof context?.open_message_id !== 'string' || typeof context.open_chat_id !== 'string') {return;}
+    await update?.(context.open_message_id, statusCard(status)).catch(() => {});
   }
 
   revoke(): void {

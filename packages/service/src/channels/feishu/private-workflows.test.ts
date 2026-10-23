@@ -16,7 +16,8 @@ function setup() {
   dirs.push(dir);
   const output = join(dir, 'consumed.json');
   const send = vi.fn((_message: Record<string, unknown>) => Promise.resolve('card'));
-  const workflows = new FeishuPrivateWorkflows(send);
+  const update = vi.fn(() => Promise.resolve());
+  const workflows = new FeishuPrivateWorkflows(send, update);
   const request = {
     actorId: 'actor',
     chatId: 'chat',
@@ -44,7 +45,7 @@ function setup() {
       },
     };
   };
-  return { workflows, request, callback, send, output };
+  return { workflows, request, callback, send, update, output };
 }
 
 describe('agent-defined private workflows', () => {
@@ -61,9 +62,31 @@ describe('agent-defined private workflows', () => {
         v: 'synthetic-private-value',
         context: { actor: 'actor', chat: 'chat', source: 'source' },
       });
-      expect(await s.workflows.submit(callback)).toBe(false);
+      // #5489: a replayed submission of a consumed one-shot is handled — the
+      // card re-asserts its real terminal status instead of reading expired.
+      expect(await s.workflows.submit(callback)).toBe(true);
+      expect(s.update).toHaveBeenLastCalledWith('card', expect.objectContaining({
+        body: { elements: [{ tag: 'markdown', content: '本次鉴权操作已完成。' }] },
+      }));
       expect(JSON.stringify(s.send.mock.calls)).not.toContain('synthetic-private-value');
       expect(JSON.stringify(s.send.mock.calls)).not.toContain(s.output);
+    } finally {
+      s.workflows.revoke();
+    }
+  });
+
+  it('ignores typing callbacks without consuming the live form (#5489)', async () => {
+    const s = setup();
+    try {
+      await s.workflows.request(s.request);
+      const callback = s.callback();
+      const typing = { ...callback, action: { tag: 'input' } };
+      expect(await s.workflows.submit(typing)).toBe(false);
+      expect(s.update).not.toHaveBeenCalled();
+      expect(s.send).toHaveBeenCalledTimes(1);
+      expect(existsSync(s.output)).toBe(false);
+      expect(await s.workflows.submit(callback)).toBe(true);
+      expect(JSON.parse(readFileSync(s.output, 'utf8'))).toMatchObject({ v: 'synthetic-private-value' });
     } finally {
       s.workflows.revoke();
     }

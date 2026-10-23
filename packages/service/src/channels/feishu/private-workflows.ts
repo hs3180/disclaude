@@ -5,7 +5,7 @@ import {
   createLogger,
   type PrivateProcessActionOptions,
 } from '@disclaude/core';
-import { FeishuPrivateInput, type UpdatePrivateCard } from './private-input.js';
+import { FeishuPrivateInput, privateInputStatusText, type UpdatePrivateCard } from './private-input.js';
 
 export interface PrivateWorkflowRequest {
   chatId: string;
@@ -50,6 +50,8 @@ export class FeishuPrivateWorkflows {
     string,
     { input: FeishuPrivateInput; actor: string; chat: string; timer: ReturnType<typeof setTimeout> }
   >();
+  /** #5489: recently consumed one-shots whose replays re-assert the real terminal status. */
+  private readonly completed = new Map<string, { status: string; timer: ReturnType<typeof setTimeout> }>();
   constructor(private readonly send: ConstructorParameters<typeof FeishuPrivateInput>[1], private readonly update?: UpdatePrivateCard) {}
 
   async request(request: PrivateWorkflowRequest): Promise<{ actionId: string }> {
@@ -94,13 +96,35 @@ export class FeishuPrivateWorkflows {
     }
     const entry = this.pending.get(id);
     if (!entry) {
+      const done = this.completed.get(id);
+      if (done) {
+        // #5489: a replayed submission of an already-consumed one-shot must
+        // not repaint the card as expired; re-assert its terminal status.
+        await FeishuPrivateInput.reaffirm(data, done.status, this.update);
+        return true;
+      }
       return false;
     }
     const outcome = await entry.input.submit(data);
     if (outcome && outcome !== 'invalid') {
       this.remove(id);
+      this.remember(id, outcome);
     }
     return true;
+  }
+
+  private remember(id: string, outcome: 'succeeded' | 'denied' | 'failed'): void {
+    if (this.completed.size >= 500) {
+      const oldest = this.completed.keys().next().value;
+      const evicted = oldest === undefined ? undefined : this.completed.get(oldest);
+      if (oldest !== undefined && evicted) {
+        clearTimeout(evicted.timer);
+        this.completed.delete(oldest);
+      }
+    }
+    const timer = setTimeout(() => this.completed.delete(id), 600_000);
+    timer.unref();
+    this.completed.set(id, { status: privateInputStatusText(outcome), timer });
   }
 
   private remove(id: string): void {
