@@ -21,6 +21,12 @@ const MAX_DEDUP_CACHE_SIZE = 10_000;
 /** Number of entries to evict when dedup cache is full. */
 const DEDUP_EVICTION_COUNT = 5_000;
 /**
+ * Grace before stop() stops waiting for a poll loop whose transport wait
+ * ignored its abort signal (#5479). Shutdown must not be held hostage by a
+ * wedged request; the loop still exits on its own once it observes the abort.
+ */
+const STOP_GRACE_MS = 5_000;
+/**
  * WeChat Message Listener.
  *
  * Long-polls the getUpdates API for incoming messages, converts them
@@ -41,6 +47,7 @@ export class WeChatMessageListener {
     pollPromise;
     seenMessageIds;
     consecutiveErrors;
+    remoteAuth;
     /**
      * Create a new message listener.
      *
@@ -56,6 +63,7 @@ export class WeChatMessageListener {
             this.client.setUpdatesCursor(options.state.cursor);
         }
         this.consecutiveErrors = 0;
+        this.remoteAuth = 'pending';
     }
     /**
      * Start the message listening loop.
@@ -70,6 +78,7 @@ export class WeChatMessageListener {
         }
         this.abortController = new AbortController();
         this.consecutiveErrors = 0;
+        this.remoteAuth = 'pending';
         this.pollPromise = this.pollLoop(this.abortController.signal);
         logger.info('WeChat message listener started');
     }
@@ -87,8 +96,9 @@ export class WeChatMessageListener {
         this.abortController?.abort();
         this.abortController = undefined;
         if (this.pollPromise) {
+            const grace = new Promise((resolve) => { setTimeout(resolve, STOP_GRACE_MS).unref(); });
             try {
-                await this.pollPromise;
+                await Promise.race([this.pollPromise, grace]);
             }
             catch {
                 // Expected: poll loop throws on abort
@@ -105,7 +115,29 @@ export class WeChatMessageListener {
     isListening() {
         return !!this.abortController && !this.abortController.signal.aborted;
     }
-    isHealthy() { return this.isListening() && this.consecutiveErrors === 0; }
+    isHealthy() { return this.isListening() && this.consecutiveErrors === 0 && this.remoteAuth === 'confirmed'; }
+    /**
+     * Remote login confirmation state (#5479): a started listener stays
+     * 'pending' until the remote accepts a poll, so freshly restored
+     * credentials are never reported as proven-healthy without traffic.
+     */
+    authState() { return this.remoteAuth; }
+    /**
+     * Fold a read-only session probe verdict into the auth confirmation state
+     * (#5479). An expired verdict always wins; a passing probe only confirms
+     * still-pending credentials and never overrides poll traffic. Inconclusive
+     * probes (network errors) are not reported here — the listener stays
+     * pending until real traffic decides.
+     */
+    applyAuthProbe(authExpired) {
+        if (authExpired) {
+            this.remoteAuth = 'login-expired';
+            return;
+        }
+        if (this.remoteAuth === 'pending') {
+            this.remoteAuth = 'confirmed';
+        }
+    }
     /**
      * Main polling loop.
      *
@@ -122,8 +154,10 @@ export class WeChatMessageListener {
                     const updates = await this.client.getUpdates({
                         signal,
                     });
-                    // Reset error counter on successful poll
+                    // Reset error counter on successful poll; the remote just
+                    // accepted these credentials, so login is confirmed (#5479).
                     this.consecutiveErrors = 0;
+                    this.remoteAuth = 'confirmed';
                     // Process each update
                     for (const update of updates) {
                         if (signal.aborted) {
@@ -146,6 +180,7 @@ export class WeChatMessageListener {
                         break;
                     }
                     if (error instanceof WeChatApiError && error.authExpired) {
+                        this.remoteAuth = 'login-expired';
                         logger.error({ code: error.code }, 'WeChat login expired; run disclaude wechat login, then restart this channel');
                         break;
                     }

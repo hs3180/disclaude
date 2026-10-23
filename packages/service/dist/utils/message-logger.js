@@ -50,6 +50,11 @@ export class MessageLogger {
     // (issue #4544): an unbounded Set grows for the process lifetime; the
     // redelivery window it guards against is far shorter than 10k entries.
     processedMessageIds = new Set();
+    // Outbound ids this process sent (or that session-side tools registered via
+    // the /api/self-sent route, #5504). Feishu echoes user-identity sends back as
+    // sender_type='user' im.message.receive events; this registry lets the
+    // inbound filters drop those echoes. Bounded with the same FIFO policy.
+    selfSentMessageIds = new Set();
     initialized = false;
     constructor() {
         const workspaceDir = Config.getWorkspaceDir();
@@ -209,12 +214,32 @@ export class MessageLogger {
             direction: 'outgoing',
         };
         await this.appendToLog(entry);
+        // Our own outbound echo must never be re-ingested as a user turn (#5504).
+        // Bot-identity sends are already caught by the sender_type='app' filter;
+        // user-identity sends (e.g. from session-side tools) echo as 'user'.
+        this.rememberSelfSentId(messageId);
     }
     /**
      * Check if a message has already been processed.
      */
     isMessageProcessed(messageId) {
         return this.processedMessageIds.has(messageId);
+    }
+    /**
+     * Register an outbound message id as self-sent (#5504).
+     *
+     * Called for disclaude's own sends (`logOutgoingMessage`) and exposed for
+     * external user-identity senders: session-side tools (e.g. lark-cli
+     * wrappers) register the message_id returned by their Feishu send call via
+     * `POST /api/self-sent/:messageId` so the resulting echo event is filtered
+     * instead of being fed back to the agent as a new user turn.
+     */
+    registerSelfSent(messageId) {
+        this.rememberSelfSentId(messageId);
+    }
+    /** Returns true if this message id was sent by us (echo candidate, #5504). */
+    isSelfSentMessage(messageId) {
+        return this.selfSentMessageIds.has(messageId);
     }
     /** Atomically claim an inbound message id before asynchronous processing. */
     claimMessage(messageId) {
@@ -387,6 +412,7 @@ export class MessageLogger {
      */
     clearCache() {
         this.processedMessageIds.clear();
+        this.selfSentMessageIds.clear();
     }
     /**
      * Register an id in the processed cache, evicting oldest entries once the
@@ -398,18 +424,27 @@ export class MessageLogger {
      */
     rememberProcessedId(id) {
         this.processedMessageIds.add(id);
-        if (this.processedMessageIds.size <= MAX_PROCESSED_IDS_SIZE) {
+        this.evictOldest(this.processedMessageIds, 'processed-message dedup');
+    }
+    /** Self-sent registry insert with the same bounded-FIFO policy (#5504). */
+    rememberSelfSentId(id) {
+        this.selfSentMessageIds.add(id);
+        this.evictOldest(this.selfSentMessageIds, 'self-sent echo registry');
+    }
+    /** Evict the oldest entries once a bounded id cache exceeds its cap. */
+    evictOldest(cache, cacheName) {
+        if (cache.size <= MAX_PROCESSED_IDS_SIZE) {
             return;
         }
         let count = 0;
-        for (const oldest of this.processedMessageIds) {
-            this.processedMessageIds.delete(oldest);
+        for (const oldest of cache) {
+            cache.delete(oldest);
             count++;
             if (count >= PROCESSED_IDS_EVICTION_COUNT) {
                 break;
             }
         }
-        logger.debug({ evicted: count, remaining: this.processedMessageIds.size }, 'Trimmed processed-message dedup cache');
+        logger.debug({ evicted: count, remaining: cache.size, cache: cacheName }, 'Trimmed bounded id cache');
     }
     async appendToLog(entry) {
         if (!this.initialized) {

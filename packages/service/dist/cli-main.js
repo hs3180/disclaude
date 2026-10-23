@@ -24,6 +24,7 @@ import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
 import { createChannelCallbacksFactory } from './utils/channel-handlers.js';
 import { ServiceTurnRecoveryStore } from './service-turn-recovery.js';
+import { messageLogger } from './utils/message-logger.js';
 import { DEFAULT_WECHAT_STATE_DIR } from './channels/wechat/state-store.js';
 import { WeChatRegistry } from './channels/wechat/registry.js';
 import { WeChatRegistrationRuntime } from './channels/wechat/runtime.js';
@@ -559,6 +560,10 @@ export async function main() {
             // markChatResponded capability (temp-chat lifecycle; REST parity with
             // the REST API method).
             httpApiServer.setMarkChatRespondedHandler((chatId, response) => service.markChatResponded(chatId, response));
+            // Issue #5504: wire REST /api/self-sent/:messageId to the shared
+            // message-logger self-sent registry so session-side tools can suppress
+            // echoes of their own user-identity sends.
+            httpApiServer.setSelfSentRegistrar((messageId) => messageLogger.registerSelfSent(messageId));
             await httpApiServer.start();
             const address = httpApiServer.getAddress();
             const actualPort = address?.port ?? options.apiPort;

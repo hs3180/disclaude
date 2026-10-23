@@ -63,8 +63,75 @@ import { createCodexDynamicToolRegistry } from './dynamic-tools.js';
 import { CodexAsyncUserInput, CodexAsyncInputDeliveryError } from './async-user-input.js';
 import { adaptCodexEvent, classifyCodexEvent, isCodexAuthFailure, isCodexResumeTargetMissing, isCodexUsageLimit, userInputText, } from './exec-adapter.js';
 import { codexSkillsRegistry } from './skill-sources.js';
-import { CODEX_OVERLOAD_MAX_RETRIES, codexOverloadRetryDelay, readCodexOverloadFailure, waitForCodexOverloadRetry } from './overload-policy.js';
+import { CODEX_OVERLOAD_MAX_RETRIES, CODEX_OVERLOAD_MAX_WAIT_MS, codexOverloadRetryDelay, readCodexOverloadFailure, waitForCodexOverloadRetry, codexCapacityRecoveryDelay, readCodexCapacityRecoveryPolicy, isCodexCapacityFailure, alignCodexCapacityWait, recordCodexCapacityCooldown } from './overload-policy.js';
 const logger = createLogger('CodexAgentProvider');
+/**
+ * Issue #5452: codex reports exactly this message when a single generation
+ * hits the output cap ("Incomplete response returned, reason:
+ * max_output_tokens") — in the production case with an abnormally swollen
+ * tool input (353k chars, one placeholder repeated 8k times) after several
+ * tool calls had already succeeded. Unlike an overload this is NEVER
+ * retried: the turn already made progress and a replay would repeat
+ * external side effects. Classification only swaps the failure receipt and
+ * attaches bounded telemetry; the terminatedReason stays 'turn_failed' so
+ * ChatAgent's existing failure accounting is untouched.
+ */
+const CODEX_OUTPUT_LIMIT_TEXT = /Incomplete response returned, reason:\s*max_output_tokens/i;
+function readCodexOutputLimitFailure(error) {
+    const message = error && typeof error === 'object'
+        ? error.message : undefined;
+    return typeof message === 'string' && CODEX_OUTPUT_LIMIT_TEXT.test(message)
+        ? { message }
+        : undefined;
+}
+/**
+ * Bounded, sanitized usage read for the output-limit telemetry (#5452):
+ * finite numbers only; fields the backend does not expose stay absent —
+ * the receipt must be able to say "unavailable", never invent values.
+ */
+function readCodexOutputLimitUsage(usage) {
+    if (!usage || typeof usage !== 'object') {
+        return undefined;
+    }
+    const source = usage;
+    const finite = (value) => typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+    const mapped = {
+        inputTokens: finite(source.input_tokens),
+        cachedInputTokens: finite(source.cached_input_tokens),
+        outputTokens: finite(source.output_tokens),
+        reasoningOutputTokens: finite(source.reasoning_output_tokens),
+    };
+    return Object.values(mapped).some(value => value !== undefined) ? mapped : undefined;
+}
+/**
+ * Bounded, sanitized last-tool probe (#5452): kind/status/input LENGTH only —
+ * never the tool text itself (the swollen input is diagnostic by its size,
+ * and full payloads/credentials must not reach logs or receipts).
+ */
+function describeToolItemForOutputLimit(item) {
+    if (!item || typeof item !== 'object') {
+        return undefined;
+    }
+    const source = item;
+    const kind = typeof source.type === 'string' ? source.type : undefined;
+    if (!kind) {
+        return undefined;
+    }
+    const status = typeof source.status === 'string' ? source.status : undefined;
+    const command = typeof source.command === 'string' ? source.command : undefined;
+    const argumentsLength = source.arguments && typeof source.arguments === 'object'
+        ? JSON.stringify(source.arguments).length : undefined;
+    const inputLength = command !== undefined ? command.length : argumentsLength;
+    return { kind, ...(status !== undefined ? { status } : {}), ...(inputLength !== undefined ? { inputLength } : {}) };
+}
+/**
+ * #5468 recovery input: sent as the next turn on the SAME thread after an
+ * explicit capacity failure that already produced output or tool calls. It is
+ * a continuation instruction, never a replay of the original request — the
+ * thread keeps the latest user requirements and results, and the model must
+ * verify uncertain external operations instead of blindly repeating them.
+ */
+const CODEX_CAPACITY_RECOVERY_INSTRUCTION = '上一回合因模型容量暂时不足而中止。沿用本线程的最新用户要求和已有结果，继续尚未完成的工作。先核对未完成的工具或进程；已经成功的外部操作不要重复，结果不明的先查询确认。保留原有权限范围。';
 /** Start a fresh thread before the next turn after a resume reaches this size. */
 export const DEFAULT_MAX_RESUME_INPUT_TOKENS = 100_000;
 /**
@@ -497,6 +564,10 @@ export class CodexAgentProvider {
             let runDiagnostic = '';
             let runCanRetry = true;
             let overloadFailure;
+            // #5452: output-cap classification mirrors the app-server path — the
+            // same upstream message arrives as a JSONL turn.failed error here.
+            let outputLimitFailure;
+            let outputLimitLastTool;
             let deferredOverloadMessage;
             const armTimer = (fn, ms) => {
                 const t = setTimeout(fn, ms);
@@ -673,9 +744,14 @@ export class CodexAgentProvider {
                 }
                 if (event.type === 'turn.failed') {
                     overloadFailure = eventFailure;
+                    outputLimitFailure = readCodexOutputLimitFailure(event.error);
                     const turnFailure = event.error?.message ?? '';
                     runFailureText += `\n${turnFailure}`;
                     logger.warn({ threadId: latestSessionId, content: turnFailure }, 'codex turn.failed event');
+                }
+                if ((event.type === 'item.started' || event.type === 'item.completed')
+                    && ['command_execution', 'mcp_tool_call'].includes(event.item?.type ?? '')) {
+                    outputLimitLastTool = describeToolItemForOutputLimit(event.item);
                 }
                 touchStallWatchdog();
                 const presentation = classifyCodexEvent(event);
@@ -767,6 +843,8 @@ export class CodexAgentProvider {
                     eventRevision++;
                     runCanRetry = true;
                     overloadFailure = undefined;
+                    outputLimitFailure = undefined;
+                    outputLimitLastTool = undefined;
                     deferredOverloadMessage = undefined;
                     touchStallWatchdog();
                     const contextualPrompt = resumeTarget === undefined && continuationContext
@@ -821,7 +899,18 @@ export class CodexAgentProvider {
                             (isCodexResumeTargetMissing(runFailureText) ||
                                 isCodexResumeTargetMissing(result.stderrTail));
                         if (sawTurnFailed && failedOverload && runCanRetry && !result.timedOut && !result.spawnError) {
-                            const delayMs = codexOverloadRetryDelay(failedOverload, retryAttempt, retryWaitedMs);
+                            let delayMs = codexOverloadRetryDelay(failedOverload, retryAttempt, retryWaitedMs);
+                            // #5494 review: capacity-class waits join the process-wide cooldown
+                            // (throttles keep their own server-hinted pacing).
+                            if (delayMs !== undefined && isCodexCapacityFailure(failedOverload)) {
+                                delayMs = alignCodexCapacityWait(codexModel ?? '', delayMs);
+                                if (retryWaitedMs + delayMs > CODEX_OVERLOAD_MAX_WAIT_MS) {
+                                    delayMs = undefined;
+                                }
+                                else {
+                                    recordCodexCapacityCooldown(codexModel ?? '', delayMs);
+                                }
+                            }
                             if (delayMs !== undefined) {
                                 clearStallTimers();
                                 logger.warn({ sessionKey, retryAttempt: retryAttempt + 1, delayMs, cause: failedOverload.message }, 'Retrying Codex overload before output or tools');
@@ -932,13 +1021,21 @@ export class CodexAgentProvider {
                         // and would otherwise leave the turn unresolved forever (#4378
                         // error_max_* pitfall, flagged in the S2 review).
                         if (!sawTurnTerminator || sawTurnFailed) {
+                            // Local const with an explicit cast, mirroring failedOverload
+                            // above: closure-assigned lets defeat control-flow narrowing here.
+                            const outputLimitDetail = outputLimitFailure;
                             pushSynthetic({
                                 type: 'result',
                                 content: '',
                                 role: 'assistant',
                                 ...(runFailed || sawTurnFailed
                                     ? { metadata: { terminatedReason: 'turn_failed',
-                                            terminationDetail: `codex exec: ${failedOverload?.message || runDiagnostic || 'run ended without a successful terminal event'}; ${JSON.stringify({ sessionKey, threadId: latestSessionId, ...activeCorrelation, lastEventAt, lastEventType })}` } }
+                                            terminationDetail: `codex exec${outputLimitDetail ? ' (output limit)' : ''}: ${outputLimitDetail?.message || failedOverload?.message || runDiagnostic || 'run ended without a successful terminal event'}; ${JSON.stringify({ sessionKey, threadId: latestSessionId, ...activeCorrelation, lastEventAt, lastEventType, ...(outputLimitDetail && outputLimitLastTool ? { lastTool: outputLimitLastTool } : {}) })}`,
+                                            // exec turn.failed carries no usage payload; the flag alone
+                                            // still swaps the ChatAgent receipt (#5452).
+                                            ...(outputLimitDetail
+                                                ? { outputLimit: { ...(outputLimitLastTool ? { lastTool: outputLimitLastTool } : {}) } }
+                                                : {}) } }
                                     : {}),
                             });
                         }
@@ -1116,7 +1213,12 @@ export class CodexAgentProvider {
         let activeCorrelation;
         let probingLifecycle;
         const { timeoutMs: stallTimeoutMs } = readStallPolicy({ ...process.env, ...this.env, ...options.env });
+        const capacityRecoveryPolicy = readCodexCapacityRecoveryPolicy({ ...process.env, ...this.env, ...options.env });
         let turnCanRetry = true;
+        // #5452: bounded probe of the latest tool item this turn (kind/status/input
+        // length only) so an output-cap failure receipt can say what the last tool
+        // step looked like without carrying its text anywhere.
+        let outputLimitLastTool;
         let deferredTurnOverload;
         let deferredFailedTurnId;
         let interruptFlight;
@@ -1249,6 +1351,17 @@ export class CodexAgentProvider {
             if (unsafeItem) {
                 turnCanRetry = false;
             }
+            // #5467: an async question this session cannot deliver interactively
+            // degrades to a plain-text question. It is NOT a failure — the turn
+            // completes normally and the user answers in-band as a new message
+            // (whereas input/deliveryFailed below keeps marking the turn failed).
+            if (method === 'input/deliveryDegraded') {
+                const { degradedQuestion } = event;
+                if (typeof degradedQuestion === 'string' && degradedQuestion) {
+                    push({ type: 'text', role: 'assistant', content: degradedQuestion });
+                }
+                return;
+            }
             if (method === 'input/deliveryFailed') {
                 asyncDeliveryFailure ??= event.deliveryError ?? new CodexAsyncInputDeliveryError();
                 push({ type: 'error', role: 'system', content: asyncDeliveryFailure.message });
@@ -1275,6 +1388,9 @@ export class CodexAgentProvider {
             }
             else if (method === 'item/completed' && isToolItem(event.item?.type)) {
                 openToolItems = Math.max(0, openToolItems - 1);
+            }
+            if ((method === 'item/started' || method === 'item/completed') && isToolItem(event.item?.type)) {
+                outputLimitLastTool = describeToolItemForOutputLimit(event.item);
             }
             armStall();
             if (method === 'item/started' && event.item?.type === 'commandExecution') {
@@ -1331,11 +1447,43 @@ export class CodexAgentProvider {
                     const failed = status === 'failed' || !!asyncDeliveryFailure;
                     const interrupted = status === 'interrupted' || status === 'cancelled';
                     const detail = asyncDeliveryFailure?.message ?? event.turn?.error?.message ?? 'unknown error';
-                    const overload = failed && !asyncDeliveryFailure && turnCanRetry
+                    // #5468: classify capacity even after progress — the post-progress
+                    // consumer is same-thread continuation, not the pre-work replay.
+                    const overload = failed && !asyncDeliveryFailure
                         ? readCodexOverloadFailure(event.turn?.error) : undefined;
+                    // #5452: classify the output-cap failure regardless of turnCanRetry —
+                    // earlier tool calls having succeeded is precisely when the receipt
+                    // must separate "already done" from "never ran". Never retried.
+                    const outputLimit = failed && !asyncDeliveryFailure
+                        ? readCodexOutputLimitFailure(event.turn?.error) : undefined;
                     if (overload) {
                         deferredTurnOverload = overload;
                         deferredFailedTurnId = finishingTurn;
+                    }
+                    else if (outputLimit) {
+                        const telemetry = {
+                            threadId, turnId: finishingTurn, ...activeCorrelation,
+                            // Explicitly absent when the app-server event carries no usage —
+                            // the log line then records the failure class without invented
+                            // token numbers (#5452: "明确不可用" over fabricated fields).
+                            usage: readCodexOutputLimitUsage(event.turn?.usage),
+                            lastTool: outputLimitLastTool,
+                        };
+                        logger.info(telemetry, 'codex turn failed: output generation limit (max_output_tokens)');
+                        push({
+                            type: 'result',
+                            content: `❌ Codex turn failed: ${detail}`,
+                            role: 'assistant',
+                            metadata: {
+                                terminatedReason: 'turn_failed',
+                                terminationDetail: `codex app-server turn failed (output limit): ${detail}; ${JSON.stringify(telemetry)}`,
+                                messageId: finishingTurn,
+                                outputLimit: {
+                                    ...(telemetry.usage ? { usage: telemetry.usage } : {}),
+                                    ...(outputLimitLastTool ? { lastTool: outputLimitLastTool } : {}),
+                                },
+                            },
+                        });
                     }
                     else {
                         push({
@@ -1403,10 +1551,16 @@ export class CodexAgentProvider {
                         break;
                     }
                     let retryWaitedMs = 0;
+                    // #5468: post-progress capacity-continuation state, per logical
+                    // input — the wall-clock budget never resets on progress.
+                    let capacityRecoveryAttempt = 0;
+                    let capacityFirstFailureAt;
+                    let capacityRecoveryNext = false;
                     for (let retryAttempt = 0;; retryAttempt++) {
                         turnCanRetry = true;
                         deferredTurnOverload = undefined;
                         deferredFailedTurnId = undefined;
+                        outputLimitLastTool = undefined;
                         earlyEvents.length = 0;
                         llmReservation ??= reserveLlmSession(options.llmSessionLimit);
                         if (llmReservation && !await Promise.race([
@@ -1527,9 +1681,26 @@ export class CodexAgentProvider {
                             openToolItems = 0;
                             sessionGovernor.touchSession(sessionKey);
                             const currentInput = userInputText(next.value);
-                            const userInput = next.value.continuationContext && (!requestedThreadId || requestedThreadId !== threadId)
-                                ? `${next.value.continuationContext}\n${currentInput}` : currentInput;
-                            activeTurnId = await lifecycle.startTurn(sessionKey, skillsManifest ? `${skillsManifest}\n\nUser request:\n${userInput}` : userInput, {
+                            // #5468: a capacity-recovery turn continues the thread's latest
+                            // state with the recovery instruction instead of replaying the
+                            // original request (its requirements already live in the thread).
+                            const userInput = capacityRecoveryNext
+                                ? CODEX_CAPACITY_RECOVERY_INSTRUCTION
+                                : next.value.continuationContext && (!requestedThreadId || requestedThreadId !== threadId)
+                                    ? `${next.value.continuationContext}\n${currentInput}` : currentInput;
+                            capacityRecoveryNext = false;
+                            activeTurnId = await lifecycle.startTurn(sessionKey, 
+                            // #5467: when wiring already proves this session cannot receive
+                            // async question forms (no interactive channel, no input
+                            // context, or no answer host), say so up-front instead of
+                            // letting the model discover it through a runtime rejection —
+                            // codex >=0.162 registers the async question tool from the
+                            // model catalog regardless of our enablement flags, so the
+                            // prompt is the layer we control. Blocking questions are
+                            // unaffected (they ride onUserInput only).
+                            !options.onUserInput || !options.onAsyncUserInputAnswer || !next.value.inputContext
+                                ? `${skillsManifest ? `${skillsManifest}\n\n` : ''}${userInput}\n\n[Session note] This conversation cannot receive asynchronous question forms. When you need clarification, ask the user directly in your reply text instead of using an async question tool.`
+                                : skillsManifest ? `${skillsManifest}\n\nUser request:\n${userInput}` : userInput, {
                                 sandbox,
                                 networkAccess: options.codexRuntime ? options.codexRuntime.networkAccess ?? true : this.networkAccess,
                                 cwd: options.cwd,
@@ -1590,14 +1761,49 @@ export class CodexAgentProvider {
                             break;
                         }
                         const failure = deferredTurnOverload;
-                        const delayMs = turnCanRetry ? codexOverloadRetryDelay(failure, retryAttempt, retryWaitedMs) : undefined;
+                        let delayMs;
+                        if (turnCanRetry) {
+                            delayMs = codexOverloadRetryDelay(failure, retryAttempt, retryWaitedMs);
+                        }
+                        else {
+                            // #5468: an explicit capacity failure after progress continues
+                            // on the same thread (ensureThread re-resumes it) instead of
+                            // settling; the next turn carries the recovery instruction.
+                            capacityFirstFailureAt ??= Date.now();
+                            delayMs = codexCapacityRecoveryDelay(failure, capacityRecoveryAttempt, capacityFirstFailureAt, capacityRecoveryPolicy);
+                        }
+                        // #5494 review: capacity-class waits join the process-wide cooldown
+                        // — align past the shared deadline, re-fit the budget (an aligned
+                        // wait that no longer fits gives up rather than hanging), then
+                        // publish the final wait for other sessions to align behind.
+                        if (delayMs !== undefined && isCodexCapacityFailure(failure)) {
+                            delayMs = alignCodexCapacityWait(codexModel ?? '', delayMs);
+                            const fitsBudget = turnCanRetry
+                                ? retryWaitedMs + delayMs <= CODEX_OVERLOAD_MAX_WAIT_MS
+                                : Date.now() + delayMs - capacityFirstFailureAt <= capacityRecoveryPolicy.budgetMs;
+                            if (!fitsBudget) {
+                                delayMs = undefined;
+                            }
+                            else {
+                                recordCodexCapacityCooldown(codexModel ?? '', delayMs);
+                            }
+                        }
                         if (delayMs === undefined) {
-                            push({ type: 'result', role: 'assistant', content: `❌ Codex turn failed: ${failure.message}`,
-                                metadata: { terminatedReason: 'turn_failed', terminationDetail: failure.message } });
+                            push({ type: 'result', role: 'assistant', content: `❌ Codex turn failed: ${failure.message}${capacityRecoveryAttempt ? `（已自动续接 ${capacityRecoveryAttempt} 次后仍容量不足）` : ''}`,
+                                metadata: { terminatedReason: 'turn_failed', terminationDetail: `${failure.message}${capacityRecoveryAttempt ? `; capacityRecoveryAttempts=${capacityRecoveryAttempt}` : ''}` } });
                             break;
                         }
-                        logger.warn({ sessionKey, retryAttempt: retryAttempt + 1, delayMs, cause: failure.message }, 'Retrying Codex overload before output or tools');
-                        push({ type: 'status', role: 'system', content: `⏳ Codex 服务暂时过载，将在 ${(delayMs / 1000).toFixed(1)} 秒后重试（${retryAttempt + 1}/${CODEX_OVERLOAD_MAX_RETRIES}）。` });
+                        if (turnCanRetry) {
+                            logger.warn({ sessionKey, retryAttempt: retryAttempt + 1, delayMs, cause: failure.message }, 'Retrying Codex overload before output or tools');
+                            push({ type: 'status', role: 'system', content: `⏳ Codex 服务暂时过载，将在 ${(delayMs / 1000).toFixed(1)} 秒后重试（${retryAttempt + 1}/${CODEX_OVERLOAD_MAX_RETRIES}）。` });
+                        }
+                        else {
+                            capacityRecoveryAttempt += 1;
+                            capacityRecoveryNext = true;
+                            const budgetRemainingMs = Math.max(0, capacityFirstFailureAt + capacityRecoveryPolicy.budgetMs - Date.now() - delayMs);
+                            logger.warn({ sessionKey, threadId, turnId: deferredFailedTurnId, capacityRecoveryAttempt, delayMs, budgetRemainingMs, cause: failure.message }, 'Continuing Codex thread after capacity failure (#5468)');
+                            push({ type: 'status', role: 'system', content: `⏳ 模型容量暂时不足，本会话已有进展已保留，将在 ${(delayMs / 1000).toFixed(1)} 秒后于同一会话内自动续接（第 ${capacityRecoveryAttempt}/${capacityRecoveryPolicy.maxAttempts} 次，剩余预算约 ${Math.round(budgetRemainingMs / 1000)} 秒）。` });
+                        }
                         if (!await waitForCodexOverloadRetry(delayMs, admissionAbort.signal)) {
                             break;
                         }

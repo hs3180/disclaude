@@ -2,7 +2,7 @@
 
 This adapter connects a personal WeChat account through Tencent's iLink bot service (`https://ilinkai.weixin.qq.com`). It uses QR login and authenticated outbound HTTPS long polling. It is not a WeCom, Official Account, or group-chat integration. There is no public callback endpoint or callback signature to configure. The account/client must be eligible to connect an iLink bot; actual account eligibility requires a successful login.
 
-Available in Disclaude 0.6.6. Install the prebuilt `v0.6.6` GitHub distribution using the [installation guide](releases/git-install.md). The original 0.6.5 release does not include this setup flow. The dated 2026-10-20 candidate record below is historical; current release verification is recorded in the 0.6.6 release assets.
+Available since Disclaude 0.6.6; the 0.6.7 release hardens the re-login path. Install the prebuilt `v0.6.7` GitHub distribution using the [installation guide](releases/git-install.md). The original 0.6.5 release does not include this setup flow. The dated 2026-10-20 candidate record below is historical; current release verification is recorded in the release assets.
 
 ## Install and log in
 
@@ -107,7 +107,7 @@ disclaude wechat login --id SYSTEM-ID --force
 disclaude wechat remove SYSTEM-ID
 ```
 
-Reauthentication briefly suspends only the selected account and verifies the same bot identity. Failure preserves its credentials and restores its former enabled state unless another management command changed it during the QR flow. `remove` forgets a registration and stops restoring it; private files remain for explicit recovery. `disable` retains the registration for a later `enable`. CLI success confirms the registry update; use `channel capabilities` to observe the resulting live connection state.
+Reauthentication briefly suspends only the selected account and verifies the same bot identity. A scan that confirms a different bot identity is refused with a structured identity-changed result instead of an overwrite: the same user scanning a new bot identity is told to continue with a plain `disclaude wechat login`, which registers the new identity beside the old one; the old registration, its credentials and its history are never migrated or merged. Failure preserves its credentials and restores its former enabled state unless another management command changed it during the QR flow. `remove` forgets a registration and stops restoring it; private files remain for explicit recovery. `disable` retains the registration for a later `enable`. CLI success confirms the registry update; use `channel capabilities` to observe the resulting live connection state.
 
 Existing singleton `auth.json` and session files are imported once from the configured root without moving or resetting them. That imported account keeps channel ID `wechat` and its old bare peer/Agent conversations. New accounts always use scoped IDs. Removing the imported registration does not auto-import it again. Same-bot registration updates its existing stable identity or reports a competing listener; it never creates a second listener or silently assigns history to a different bot.
 

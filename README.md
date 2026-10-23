@@ -9,9 +9,9 @@ conversations to agent harnesses for
 software development and research. It supports ongoing conversations,
 scheduled work, project-scoped skills, and coordinated browser automation.
 
-**Release target: [v0.6.6](https://github.com/hs3180/disclaude/releases/tag/v0.6.6).**
+**Release target: [v0.6.7](https://github.com/hs3180/disclaude/releases/tag/v0.6.7).**
 Check the [latest published release](https://github.com/hs3180/disclaude/releases/latest).
-See the [release notes](docs/releases/0.6.6.md)
+See the [release notes](docs/releases/0.6.7.md)
 and [changelog](CHANGELOG.md). Published release tags are immutable; follow-up
 changes ship under a new version.
 
@@ -56,7 +56,7 @@ connection as described in the [Feishu channel guide](docs/feishu-channel.md).
 Install the release tag below after it is published, then create a configuration file:
 
 ```sh
-npm install -g "github:hs3180/disclaude#v0.6.6"
+npm install -g "github:hs3180/disclaude#v0.6.7"
 mkdir -p ~/.disclaude
 cp "$(npm root -g)/disclaude/disclaude.config.example.yaml" \
   ~/.disclaude/disclaude.config.yaml

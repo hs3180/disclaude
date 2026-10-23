@@ -13,6 +13,12 @@ export function browserStatus(path: any): {
     pid: any;
     executable: any;
 };
+export function refreshBrowserRuntimeConnection({ env, fetchImpl, onEvent, tolerateDiscoveryFailure, }?: {
+    env?: NodeJS.ProcessEnv | undefined;
+    fetchImpl?: typeof fetch | undefined;
+    onEvent?: (() => void) | undefined;
+    tolerateDiscoveryFailure?: boolean | undefined;
+}): Promise<any>;
 export function prepareBrowserCommands({ env, fetchImpl, onEvent, }?: {
     env?: NodeJS.ProcessEnv | undefined;
     fetchImpl?: typeof fetch | undefined;

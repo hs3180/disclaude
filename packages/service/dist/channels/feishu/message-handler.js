@@ -842,6 +842,7 @@ export class MessageHandler {
         const filterVerdict = evaluateMessageFilters({ messageId: message_id, createTime: create_time, senderType: sender?.sender_type, botMentionsUs }, {
             isProcessed: (id) => messageLogger.isMessageProcessed(id),
             claim: (id) => messageLogger.claimMessage(id),
+            isSelfSent: (id) => messageLogger.isSelfSentMessage(id),
             maxMessageAge: this.MAX_MESSAGE_AGE,
         });
         if (!filterVerdict.passed) {
@@ -849,6 +850,10 @@ export class MessageHandler {
             if (reason === 'duplicate') {
                 logger.debug({ messageId: message_id }, 'Skipped duplicate message');
                 this.forwardFilteredMessage('duplicate', message_id, chat_id, content, extractOpenId(sender));
+            }
+            else if (reason === 'self_sent') {
+                logger.debug({ messageId: message_id }, 'Skipped self-sent message echo (#5504)');
+                this.forwardFilteredMessage('self_sent', message_id, chat_id, content, extractOpenId(sender));
             }
             else if (reason === 'bot') {
                 logger.debug('Skipped bot message (not mentioning our bot)');
@@ -1174,6 +1179,16 @@ export class MessageHandler {
                     threadRootId = root_id || message_id;
                 }
             }
+            else if (root_id) {
+                // Issue #5464: p2p and regular-group MESSAGE TOPICS carry their thread
+                // identity in root_id — Feishu only sets it for messages inside a topic,
+                // so a main-conversation message keeps the undefined identity. Without
+                // this branch every p2p input collapses onto the chat-level last-known
+                // root, and a fresh main-session task inherits the old topic's anchor
+                // and busy-input steering. The topic root itself also reports root_id
+                // (== its own id), so roots and replies resolve to the same identity.
+                threadRootId = root_id;
+            }
             else if (isTriggerModeMention && chat_type !== 'topic') {
                 // Regular groups: use flat chat history.
                 // Issue #4304 (part 2): topic groups never use flat chat history — it
@@ -1290,6 +1305,12 @@ export class MessageHandler {
             return;
         }
         if (FeishuPrivateInput.isPrivateCallback(rawData)) {
+            const action = rawData.action;
+            if (action?.tag === 'input') {
+                // #5489: an input callback is typing feedback, not a submission; it
+                // must never consume, repaint the live card, or read as expired.
+                return { toast: { type: 'info', content: '输入已同步。' } };
+            }
             // Acknowledge promptly; the one-shot handoff consumes before awaiting.
             // Consumer failures never enter ordinary logs or the agent channel.
             void this.privateWorkflows.submit(rawData).then(async (handled) => {

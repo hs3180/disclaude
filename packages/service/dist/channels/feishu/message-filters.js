@@ -10,13 +10,20 @@
  * @module service/channels/feishu/message-filters
  */
 /**
- * Evaluate dedup → bot → age filters in order.
+ * Evaluate self-sent → dedup → bot → age filters in order.
  *
  * Returns the first rejection, or `{ passed: true }` if all filters pass.
  * Performs no I/O; the only external operations are the injected dedup claim
  * and wall-clock reader (which defaults to `Date.now`).
  */
 export function evaluateMessageFilters(input, deps) {
+    // 0. Self-sent echo (#5504): a user-identity send made by us (or by a
+    // session-side tool that registered the id) echoes back as a normal
+    // user message. Drop it before claiming so no dedup state is consumed —
+    // Feishu redelivers the echo and each delivery must stay filterable.
+    if (deps.isSelfSent(input.messageId)) {
+        return { passed: false, reason: 'self_sent' };
+    }
     // 1. Deduplication
     const claimed = deps.claim ? deps.claim(input.messageId) : !deps.isProcessed(input.messageId);
     if (!claimed) {

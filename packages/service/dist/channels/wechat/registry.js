@@ -4,6 +4,24 @@ import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { DEFAULT_WECHAT_STATE_DIR, WeChatStateStore, validateWechatBaseUrl } from './state-store.js';
 export const isWeChatRegistrationId = (id) => /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id);
+/**
+ * A forced re-login scanned a different bot identity than the target
+ * registration (#5480). Nothing is saved and the strict identity check stays;
+ * the typed cause lets the CLI explain the change and the safe continuation
+ * instead of reporting a bare mismatch.
+ */
+export class WeChatIdentityMismatchError extends Error {
+    targetId;
+    registeredBotId;
+    scannedBotId;
+    constructor(targetId, registeredBotId, scannedBotId) {
+        super('Reauthentication must match the registered WeChat identity');
+        this.targetId = targetId;
+        this.registeredBotId = registeredBotId;
+        this.scannedBotId = scannedBotId;
+        this.name = 'WeChatIdentityMismatchError';
+    }
+}
 /** Private account registry. Configuration enables the capability, never lists accounts. */
 export class WeChatRegistry {
     dir;
@@ -121,8 +139,13 @@ export class WeChatRegistry {
         }
         return await this.transaction(async (value) => {
             const target = targetId ? value.accounts.find(account => account.id === targetId) : undefined;
-            if (targetId && (!target || target.botId !== credentials.botId)) {
-                throw new Error('Reauthentication must match the registered WeChat identity');
+            if (targetId) {
+                if (!target) {
+                    throw new Error('Reauthentication must match the registered WeChat identity');
+                }
+                if (target.botId !== credentials.botId) {
+                    throw new WeChatIdentityMismatchError(targetId, target.botId, credentials.botId);
+                }
             }
             if (expectedGeneration && target?.generation !== expectedGeneration) {
                 throw new Error('Registration changed during login; retry');

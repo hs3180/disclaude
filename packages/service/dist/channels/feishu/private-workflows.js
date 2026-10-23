@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { ActionBoundInput, createPrivateProcessAction, createLogger, } from "../../../../core/dist/index.js";
-import { FeishuPrivateInput } from './private-input.js';
+import { FeishuPrivateInput, privateInputStatusText } from './private-input.js';
 /** Validate transport shape only. Workflow policy belongs to the authenticated agent. */
 export function isPrivateWorkflowRequest(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -29,6 +29,8 @@ export class FeishuPrivateWorkflows {
     send;
     update;
     pending = new Map();
+    /** #5489: recently consumed one-shots whose replays re-assert the real terminal status. */
+    completed = new Map();
     constructor(send, update) {
         this.send = send;
         this.update = update;
@@ -68,13 +70,34 @@ export class FeishuPrivateWorkflows {
         }
         const entry = this.pending.get(id);
         if (!entry) {
+            const done = this.completed.get(id);
+            if (done) {
+                // #5489: a replayed submission of an already-consumed one-shot must
+                // not repaint the card as expired; re-assert its terminal status.
+                await FeishuPrivateInput.reaffirm(data, done.status, this.update);
+                return true;
+            }
             return false;
         }
         const outcome = await entry.input.submit(data);
         if (outcome && outcome !== 'invalid') {
             this.remove(id);
+            this.remember(id, outcome);
         }
         return true;
+    }
+    remember(id, outcome) {
+        if (this.completed.size >= 500) {
+            const oldest = this.completed.keys().next().value;
+            const evicted = oldest === undefined ? undefined : this.completed.get(oldest);
+            if (oldest !== undefined && evicted) {
+                clearTimeout(evicted.timer);
+                this.completed.delete(oldest);
+            }
+        }
+        const timer = setTimeout(() => this.completed.delete(id), 600_000);
+        timer.unref();
+        this.completed.set(id, { status: privateInputStatusText(outcome), timer });
     }
     remove(id) {
         const entry = this.pending.get(id);

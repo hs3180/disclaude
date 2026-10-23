@@ -106,7 +106,25 @@ export class WeChatStateStore {
                 if (error.code !== 'EEXIST') {
                     throw error;
                 }
-                const owner = await this.read('listener.lock');
+                // The previous owner can release (unlink) its lock between our EEXIST
+                // and this read; a vanished record means retry, not corruption.
+                let record;
+                try {
+                    record = await fs.readFile(file, 'utf8');
+                }
+                catch (readError) {
+                    if (readError.code === 'ENOENT') {
+                        continue;
+                    }
+                    throw new Error('Invalid WeChat listener lock');
+                }
+                let owner;
+                try {
+                    owner = JSON.parse(record);
+                }
+                catch {
+                    throw new Error('Invalid WeChat listener lock');
+                }
                 if (!owner || !Number.isInteger(owner.pid) || owner.pid <= 0) {
                     throw new Error('Invalid WeChat listener lock');
                 }

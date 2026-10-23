@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { createInterface } from 'node:readline/promises';
 import QRCode from 'qrcode';
 import { setTimeout as delay } from 'node:timers/promises';
-import { WeChatRegistry } from './registry.js';
+import { WeChatIdentityMismatchError, WeChatRegistry } from './registry.js';
 import { DEFAULT_WECHAT_BASE_URL, WeChatStateStore } from './state-store.js';
 const help = `Usage: disclaude wechat <login|status|enable ID|disable ID|remove ID> [options]
 Personal WeChat via Tencent iLink (QR login; no public callback server).
@@ -29,6 +29,41 @@ async function withDiagnostics(run) {
     finally {
         process.stdout.write = original;
     }
+}
+/**
+ * Probe a registration's saved credentials once with the same read-only check
+ * `status --check` uses (#5479). Never throws: an expired login reports
+ * loginExpired, anything else reports the error, a missing user ID reports
+ * why the probe cannot run.
+ */
+async function probeSavedLogin(registry, account) {
+    try {
+        const credentials = await new WeChatStateStore(registry.stateDir(account)).loadCredentials();
+        const userId = credentials?.userId;
+        if (!credentials || !userId) {
+            return { verified: false, reason: 'saved login has no user ID; reauthenticate this registration' };
+        }
+        await withDiagnostics(async () => {
+            const { WeChatApiClient } = await import('./api-client.js');
+            await new WeChatApiClient({ baseUrl: credentials.baseUrl, token: credentials.token }).checkSession(userId);
+        });
+        // A passing account check proves neither login liveness nor delivery (#5478).
+        return { verified: true, note: 'account check passed does not prove message delivery' };
+    }
+    catch (cause) {
+        const expired = cause.authExpired === true;
+        return { verified: false, ...(expired ? { loginExpired: true } : {}),
+            error: cause instanceof Error ? cause.message : 'Cannot verify this account' };
+    }
+}
+/**
+ * #5479: restoring the saved config after a failed re-login is not restoring
+ * the login. Probe the old credentials so a rejected account reads as
+ * "needs a scan" — never as "recovered" — and a still-valid one is verified.
+ */
+async function verifyRestoredLogin(registry, account) {
+    const probe = await probeSavedLogin(registry, account);
+    return { ok: true, restored: account.id, ...probe, next: `disclaude wechat login --id ${account.id} --force` };
 }
 async function main() {
     const { values, positionals } = parseArgs({ allowPositionals: true, options: {
@@ -87,10 +122,14 @@ async function main() {
                 authenticated = false;
                 error = cause instanceof Error ? cause.message : 'Cannot read or verify this account';
             }
-            rows.push({ id: account.id, channelId: registry.channelId(account), enabled: account.enabled, configured, authenticated, ...(error ? { error } : {}) });
+            rows.push({ id: account.id, channelId: registry.channelId(account), enabled: account.enabled, configured, authenticated,
+                ...(error ? { error, next: `disclaude wechat login --id ${account.id} --force` } : {}) });
         }
+        const allAuthenticated = rows.length > 0 && rows.every(row => row.authenticated === true);
         console.log(JSON.stringify({ configured: rows.some(row => row.configured),
-            authenticated: values.check ? rows.length > 0 && rows.every(row => row.authenticated === true) : 'not-checked',
+            authenticated: values.check ? allAuthenticated : 'not-checked',
+            // A passing account check reads its own config; it proves neither login liveness nor delivery (#5478).
+            ...(values.check && allAuthenticated ? { note: 'account check passed does not prove message delivery' } : {}),
             accounts: rows, ...(!rows.length ? { next: 'disclaude wechat login' } : {}) }));
         if (values.check && (!rows.length || rows.some(row => row.authenticated !== true))) {
             process.exitCode = 1;
@@ -134,9 +173,37 @@ async function main() {
             }
         }
         const save = async (credentials) => {
-            const account = await registry.register(credentials, targetId, restoreGeneration);
+            console.log(JSON.stringify({ stage: 'submitting-credentials' }));
+            let account;
+            try {
+                account = await registry.register(credentials, targetId, restoreGeneration);
+            }
+            catch (cause) {
+                if (!(cause instanceof WeChatIdentityMismatchError)) {
+                    throw cause;
+                }
+                // #5480: the scan confirmed a different bot identity, so nothing was
+                // saved. Keep refusing to overwrite; explain the identity change and
+                // the safe continuation instead of leaving the operator with a scan
+                // that just "didn't work". The rollback below restores the target.
+                const saved = target ? await new WeChatStateStore(registry.stateDir(target)).loadCredentials() : undefined;
+                const sameUser = !!saved?.userId && !!credentials.userId && saved.userId === credentials.userId;
+                console.log(JSON.stringify({ ok: false, stage: 'identity-changed', saved: false,
+                    targetId: cause.targetId, registeredBotId: cause.registeredBotId, scannedBotId: cause.scannedBotId,
+                    sameUser,
+                    reason: sameUser ? 'scan confirmed a new bot identity for the same WeChat user'
+                        : 'scan confirmed an unexpected WeChat identity',
+                    next: `disclaude wechat login --state-dir ${registry.dir}` }));
+                process.exitCode = 1;
+                return;
+            }
             committed = true;
-            console.log(JSON.stringify({ ok: true, registered: true, id: account.id, channelId: registry.channelId(account) }));
+            // #5479: a committed registration is not a verified login. Probe the
+            // just-saved credentials so the report distinguishes the two.
+            console.log(JSON.stringify({ stage: 'verifying-connection' }));
+            const probe = await probeSavedLogin(registry, account);
+            console.log(JSON.stringify({ ok: true, registered: true, id: account.id, channelId: registry.channelId(account), ...probe,
+                ...(probe.verified ? {} : { next: `disclaude wechat login --id ${account.id} --force` }) }));
         };
         if (values['import-legacy']) {
             const legacy = join(homedir(), '.disclaude', 'wechat-auth.json');
@@ -161,6 +228,9 @@ async function main() {
         process.once('SIGTERM', abort);
         try {
             const result = await auth.authenticate({ timeoutMs,
+                // #5479: machine-readable progress for remote operators following a
+                // --qr-file login; the human QR/terminal output above stays as-is.
+                onStage: (stage, detail) => { console.log(JSON.stringify({ stage, ...detail })); },
                 onQrCode: async (url) => {
                     if (values['qr-file']) {
                         const file = resolve(values['qr-file']);
@@ -201,6 +271,7 @@ async function main() {
             const current = (await registry.list()).find(account => account.id === target.id);
             if (current && current.generation === restoreGeneration && !current.enabled) {
                 await registry.setEnabled(target.id, true);
+                console.log(JSON.stringify(await verifyRestoredLogin(registry, current)));
             }
         }
     }

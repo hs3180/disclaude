@@ -14,7 +14,8 @@
  * sending a duplicate.
  */
 import { normalizeMarkdownLineBreaks } from './content-builder.js';
-import { buildStreamingPlaceholderCard } from './streaming-card-builder.js';
+import { markdownToCardElements, splitMarkdownByTables } from './gfm-table-converter.js';
+import { buildStreamingPlaceholderCard, STREAMING_REPLY_ELEMENT_ID, STREAMING_THINKING_ELEMENT_ID, } from './streaming-card-builder.js';
 /** Exact section header the prompt contract asks for. */
 const SOURCES_HEADER = '## Sources';
 /** Entry line: `7. [Title](https://…)`, single line, direct http(s) URL. */
@@ -148,6 +149,10 @@ export function extractCitations(text) {
  * all string escaping happens in `JSON.stringify` at the send boundary, never
  * in model-authored JSON.
  *
+ * #5473: GFM tables in the body convert to column_set elements — Feishu card
+ * markdown does not render `| col |` syntax. Table-free bodies keep the exact
+ * historical shape (one markdown element).
+ *
  * @param body - Answer body (without the `## Sources` section).
  * @param sources - Parsed entries; rendered in written order.
  * @returns Feishu interactive card payload.
@@ -159,10 +164,7 @@ export function buildCitationCard(body, sources) {
             wide_screen_mode: true,
         },
         elements: [
-            {
-                tag: 'markdown',
-                content: normalizeMarkdownLineBreaks(body),
-            },
+            ...markdownToCardElements(normalizeMarkdownLineBreaks(body)),
             { tag: 'hr' },
             {
                 tag: 'markdown',
@@ -175,11 +177,38 @@ export function buildCitationCard(body, sources) {
  * Build the final JSON-2.0 version of a streaming answer card with citations.
  * The stream already shows this answer; replacing the card at finalization
  * keeps its message identity while separating the answer from its sources.
+ *
+ * #5473: when the body contains a GFM table, the answer region is split into
+ * markdown/column_set elements (tables cannot render inside one markdown
+ * element). Table-free bodies keep the exact historical two-element shape.
  */
 export function buildCitationStreamingCard(body, sources) {
+    const normalized = normalizeMarkdownLineBreaks(body);
     const sourceBlock = `**Sources**\n${renderSourceEntries(sources).join('\n')}`;
-    return buildStreamingPlaceholderCard({
-        thinkingPlaceholder: '本次回复已结束',
-        replyText: `${normalizeMarkdownLineBreaks(body)}\n\n---\n\n${sourceBlock}`,
-    });
+    const hasTables = splitMarkdownByTables(normalized).some((segment) => segment.type === 'table');
+    if (!hasTables) {
+        return buildStreamingPlaceholderCard({
+            thinkingPlaceholder: '本次回复已结束',
+            replyText: `${normalized}\n\n---\n\n${sourceBlock}`,
+        });
+    }
+    return {
+        schema: '2.0',
+        config: { streaming_mode: true },
+        body: {
+            elements: [
+                {
+                    tag: 'markdown',
+                    element_id: STREAMING_THINKING_ELEMENT_ID,
+                    content: '本次回复已结束',
+                },
+                ...markdownToCardElements(normalized),
+                {
+                    tag: 'markdown',
+                    element_id: STREAMING_REPLY_ELEMENT_ID,
+                    content: `---\n\n${sourceBlock}`,
+                },
+            ],
+        },
+    };
 }

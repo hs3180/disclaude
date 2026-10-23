@@ -2243,18 +2243,35 @@ export class ChatAgent extends BaseAgent {
                     // Handle this before the normal success/empty-turn accounting so it
                     // always has a user-visible terminal outcome.
                     if (parsed.terminatedReason === 'turn_failed') {
-                        this.restartManager.recordFailure(chatId, 'turn_failed');
+                        // Issue #5452: an output-cap failure (max_output_tokens) after
+                        // in-turn progress is NOT a service/credential problem — the
+                        // generic "check model service, credentials, timeout" advice is
+                        // wrong for it. Swap in a receipt that separates what already
+                        // happened (tool calls, possibly a swollen unfinished last step)
+                        // from the missing final answer, and points at same-session
+                        // continuation without auto-replay. Bounded telemetry only: the
+                        // provider guarantees kind/status/length, never tool text.
+                        const outputLimit = parsed.metadata?.outputLimit;
+                        this.restartManager.recordFailure(chatId, outputLimit ? 'output-limit' : 'turn_failed');
                         const failureDetail = parsed.terminationDetail || parsed.content || 'Provider turn failed';
                         // Issue #5409: a connectivity-class failure (routing discovery,
                         // socket errors, dead egress) is environmental — hint at the
                         // network path instead of model service/credentials, and mark it
                         // so the empty-turn replay below does not burn itself against
                         // the same dead window seconds later.
-                        turnFailedWithConnectivityIssue = isEgressConnectivityFailure(failureDetail);
-                        const failure = failureContext(this.activeLifecycleContext, resolveReplyThreadRoot(), 'provider-turn-failed', failureDetail, parsed.sessionId ?? this.queryHandle?.sessionId);
-                        const delivered = await this.deliverUserVisible(chatId, `❌ 本轮 ${failure.provider} 执行失败，未生成可交付结果。${turnFailedWithConnectivityIssue
-                            ? '请先核对已执行的操作；该失败特征指向出口网络（代理、DNS 或海外连通性），可先检查本机/路由器的代理与外网连通性，恢复后重试。'
-                            : '请先核对已执行的操作，再检查模型服务、凭据和超时配置。'}\n${this.formatFailureDiagnostic(failure)}`, resolveReplyThreadRoot());
+                        turnFailedWithConnectivityIssue = !outputLimit && isEgressConnectivityFailure(failureDetail);
+                        const failure = failureContext(this.activeLifecycleContext, resolveReplyThreadRoot(), outputLimit ? 'provider-output-limit' : 'provider-turn-failed', failureDetail, parsed.sessionId ?? this.queryHandle?.sessionId);
+                        const lastTool = outputLimit?.lastTool;
+                        const outputLimitReceipt = outputLimit
+                            ? `❌ 本轮 ${failure.provider} 因模型输出生成上限（max_output_tokens）中断，最终回复没有生成。\n` +
+                                `本轮已执行 ${toolCallCount} 次工具调用${lastTool
+                                    ? `，失败前最后的工具项为 ${lastTool.kind}${lastTool.status ? `（状态 ${lastTool.status}）` : ''}${lastTool.inputLength ? `，输入约 ${lastTool.inputLength} 字符` : ''}`
+                                    : ''}。这些操作已经发生，系统不会自动重放；此前的产物尚未经过最终验证，最后一步也可能未执行成功——请先核对本轮已执行的修改与产物。\n` +
+                                '确认后直接在本会话发消息继续即可（沿用原会话上下文，无需重发整个任务）。'
+                            : `❌ 本轮 ${failure.provider} 执行失败，未生成可交付结果。${turnFailedWithConnectivityIssue
+                                ? '请先核对已执行的操作；该失败特征指向出口网络（代理、DNS 或海外连通性），可先检查本机/路由器的代理与外网连通性，恢复后重试。'
+                                : '请先核对已执行的操作，再检查模型服务、凭据和超时配置。'}`;
+                        const delivered = await this.deliverUserVisible(chatId, `${outputLimitReceipt}\n${this.formatFailureDiagnostic(failure)}`, resolveReplyThreadRoot());
                         this.logger.error({ ...failure, event: 'agent_turn_failure', user_visible: delivered }, 'Provider turn failed');
                     }
                     // Provider watchdog/process loss is a terminal failure, including

@@ -64,10 +64,12 @@ export class WeChatAuth {
         let scannedPrinted = false;
         let verifyCode;
         const display = options?.onQrCode ?? ((url) => this.logQrCode(url));
+        const report = async (stage, detail) => { await options?.onStage?.(stage, detail); };
         try {
             // Step 1: Get initial QR code
             let qrData = await this.client.getBotQrCode({ signal });
             await display(qrData.qrUrl);
+            await report('waiting-for-scan');
             // Step 2: Poll login status
             while (!signal.aborted && Date.now() < deadline) {
                 try {
@@ -81,6 +83,7 @@ export class WeChatAuth {
                             if (!scannedPrinted) {
                                 process.stdout.write('\nQR code scanned, waiting for confirmation...\n');
                                 scannedPrinted = true;
+                                await report('scanned');
                             }
                             break;
                         case 'expired': {
@@ -94,6 +97,7 @@ export class WeChatAuth {
                             qrData = await this.client.getBotQrCode({ signal });
                             await display(qrData.qrUrl);
                             scannedPrinted = false;
+                            await report('waiting-for-scan', { qrRefresh: qrRefreshCount });
                             break;
                         }
                         case 'confirmed':
@@ -106,6 +110,7 @@ export class WeChatAuth {
                             }
                             logger.info({ botId: status.botId, userId: status.userId }, 'Login confirmed!');
                             process.stdout.write('\nLogin confirmed!\n');
+                            await report('confirmed');
                             return {
                                 success: true,
                                 token: status.botToken,
@@ -119,6 +124,7 @@ export class WeChatAuth {
                             if (!options?.requestVerifyCode) {
                                 return { success: false, error: 'Private pairing input required; run disclaude wechat login in a terminal' };
                             }
+                            await report('scanned', { needVerifyCode: true });
                             try {
                                 verifyCode = await options.requestVerifyCode(signal);
                             }
