@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { createInterface } from 'node:readline/promises';
 import QRCode from 'qrcode';
 import { setTimeout as delay } from 'node:timers/promises';
-import { WeChatRegistry, type WeChatRegistration } from './registry.js';
+import { WeChatIdentityMismatchError, WeChatRegistry, type WeChatRegistration } from './registry.js';
 import { DEFAULT_WECHAT_BASE_URL, WeChatStateStore, type WeChatCredentials } from './state-store.js';
 
 const help = `Usage: disclaude wechat <login|status|enable ID|disable ID|remove ID> [options]
@@ -153,7 +153,26 @@ async function main(): Promise<void> {
     }
     const save = async (credentials: WeChatCredentials) => {
       console.log(JSON.stringify({ stage: 'submitting-credentials' }));
-      const account = await registry.register(credentials, targetId, restoreGeneration);
+      let account: WeChatRegistration;
+      try {
+        account = await registry.register(credentials, targetId, restoreGeneration);
+      } catch (cause) {
+        if (!(cause instanceof WeChatIdentityMismatchError)) { throw cause; }
+        // #5480: the scan confirmed a different bot identity, so nothing was
+        // saved. Keep refusing to overwrite; explain the identity change and
+        // the safe continuation instead of leaving the operator with a scan
+        // that just "didn't work". The rollback below restores the target.
+        const saved = target ? await new WeChatStateStore(registry.stateDir(target)).loadCredentials() : undefined;
+        const sameUser = !!saved?.userId && !!credentials.userId && saved.userId === credentials.userId;
+        console.log(JSON.stringify({ ok: false, stage: 'identity-changed', saved: false,
+          targetId: cause.targetId, registeredBotId: cause.registeredBotId, scannedBotId: cause.scannedBotId,
+          sameUser,
+          reason: sameUser ? 'scan confirmed a new bot identity for the same WeChat user'
+            : 'scan confirmed an unexpected WeChat identity',
+          next: `disclaude wechat login --state-dir ${registry.dir}` }));
+        process.exitCode = 1;
+        return;
+      }
       committed = true;
       // #5479: a committed registration is not a verified login. Probe the
       // just-saved credentials so the report distinguishes the two.

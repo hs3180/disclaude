@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { WeChatRegistry } from './registry.js';
+import { WeChatIdentityMismatchError, WeChatRegistry } from './registry.js';
 import { WeChatStateStore } from './state-store.js';
 
 const credentials = (botId = 'bot-a') => ({ botId, token: `private-${botId}`, baseUrl: 'https://ilinkai.weixin.qq.com', savedAt: new Date().toISOString() });
@@ -52,7 +52,11 @@ describe('dynamic WeChat registry', () => {
     expect(next.id).toBe(first.id);
     expect(next.generation).not.toBe(first.generation);
     expect(next.enabled).toBe(true);
-    await expect(registry.register(credentials('another-bot'), first.id)).rejects.toThrow('match');
+    // #5480: a scanned new bot identity is a typed refusal carrying both
+    // identities, never an overwrite of the registered account.
+    const mismatch = await registry.register(credentials('another-bot'), first.id).catch(error => error);
+    expect(mismatch).toBeInstanceOf(WeChatIdentityMismatchError);
+    expect(mismatch).toMatchObject({ targetId: first.id, registeredBotId: 'bot-a', scannedBotId: 'another-bot' });
     expect(await registry.list()).toHaveLength(1);
     await registry.remove(first.id);
     expect(await new WeChatRegistry(dir).list()).toEqual([]);

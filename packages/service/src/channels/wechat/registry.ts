@@ -16,6 +16,19 @@ export interface WeChatRegistration {
 interface RegistryDocument { version: 1; accounts: WeChatRegistration[] }
 export const isWeChatRegistrationId = (id: string): boolean => /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id);
 
+/**
+ * A forced re-login scanned a different bot identity than the target
+ * registration (#5480). Nothing is saved and the strict identity check stays;
+ * the typed cause lets the CLI explain the change and the safe continuation
+ * instead of reporting a bare mismatch.
+ */
+export class WeChatIdentityMismatchError extends Error {
+  constructor(readonly targetId: string, readonly registeredBotId: string, readonly scannedBotId: string) {
+    super('Reauthentication must match the registered WeChat identity');
+    this.name = 'WeChatIdentityMismatchError';
+  }
+}
+
 /** Private account registry. Configuration enables the capability, never lists accounts. */
 export class WeChatRegistry {
   constructor(readonly dir = DEFAULT_WECHAT_STATE_DIR) {}
@@ -103,7 +116,10 @@ export class WeChatRegistry {
     if (!credentials.token?.trim() || !credentials.botId || credentials.botId.length > 512) { throw new Error('Incomplete WeChat login'); }
     return await this.transaction(async value => {
       const target = targetId ? value.accounts.find(account => account.id === targetId) : undefined;
-      if (targetId && (!target || target.botId !== credentials.botId)) { throw new Error('Reauthentication must match the registered WeChat identity'); }
+      if (targetId) {
+        if (!target) { throw new Error('Reauthentication must match the registered WeChat identity'); }
+        if (target.botId !== credentials.botId) { throw new WeChatIdentityMismatchError(targetId, target.botId, credentials.botId); }
+      }
       if (expectedGeneration && target?.generation !== expectedGeneration) { throw new Error('Registration changed during login; retry'); }
       const existing = target ?? value.accounts.find(account => account.botId === credentials.botId);
       const account: WeChatRegistration = { ...(existing ?? { id: randomUUID(), createdAt: new Date().toISOString() }),
