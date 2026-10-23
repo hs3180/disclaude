@@ -139,8 +139,35 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
       });
       this.messageListener.start();
 
+      // Seed the auth confirmation with a read-only session probe (#5479):
+      // health then reflects the remote verdict within one start instead of
+      // waiting for the first long poll to answer (or reject with -14).
+      await this.probeAuthState(credentials?.userId);
+
       logger.info('WeChat channel started with message listening');
     } catch (error) { await this.releaseIdentity?.(); this.releaseIdentity = undefined; await this.releaseAccount?.(); this.releaseAccount = undefined; throw error; }
+  }
+
+  /**
+   * Probe the saved login once at startup and seed the listener's auth
+   * confirmation (#5479). A -14/401 verdict marks the account login-expired
+   * immediately; any other failure is inconclusive and leaves the listener
+   * pending until poll traffic decides. Never fails the channel start.
+   */
+  private async probeAuthState(userId?: string): Promise<void> {
+    if (!this.client || !userId || !this.messageListener) { return; }
+    try {
+      await this.client.checkSession(userId);
+      this.messageListener.applyAuthProbe(false);
+      logger.info('WeChat session probe confirmed the saved login');
+    } catch (error) {
+      if (error instanceof WeChatApiError && error.authExpired) {
+        this.messageListener.applyAuthProbe(true);
+        logger.error({ code: error.code }, 'WeChat login expired; run disclaude wechat login, then restart this channel');
+        return;
+      }
+      logger.warn({ err: error instanceof Error ? error.message : String(error) }, 'WeChat session probe inconclusive; health stays pending until the first poll');
+    }
   }
 
   /**

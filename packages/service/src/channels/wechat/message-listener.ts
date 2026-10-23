@@ -34,6 +34,15 @@ const DEDUP_EVICTION_COUNT = 5_000;
  */
 export type MessageProcessor = (message: IncomingMessage) => Promise<void>;
 
+/**
+ * Remote login confirmation derived from actual traffic (#5479).
+ *
+ * - 'pending': listening started, but the remote has not answered yet
+ * - 'confirmed': the remote accepted a poll or a startup session probe
+ * - 'login-expired': the remote rejected the credentials (-14/401); re-login required
+ */
+export type WeChatAuthConfirmation = 'pending' | 'confirmed' | 'login-expired';
+
 export interface WeChatListenerState {
   cursor: string;
   seenMessageIds: string[];
@@ -67,6 +76,7 @@ export class WeChatMessageListener {
   private pollPromise?: Promise<void>;
   private readonly seenMessageIds: Set<string>;
   private consecutiveErrors: number;
+  private remoteAuth: WeChatAuthConfirmation;
 
   /**
    * Create a new message listener.
@@ -80,6 +90,7 @@ export class WeChatMessageListener {
     this.seenMessageIds = new Set(options.state?.seenMessageIds.slice(-MAX_DEDUP_CACHE_SIZE));
     if (options.state) { this.client.setUpdatesCursor(options.state.cursor); }
     this.consecutiveErrors = 0;
+    this.remoteAuth = 'pending';
   }
 
   /**
@@ -96,6 +107,7 @@ export class WeChatMessageListener {
 
     this.abortController = new AbortController();
     this.consecutiveErrors = 0;
+    this.remoteAuth = 'pending';
     this.pollPromise = this.pollLoop(this.abortController.signal);
     logger.info('WeChat message listener started');
   }
@@ -136,7 +148,26 @@ export class WeChatMessageListener {
     return !!this.abortController && !this.abortController.signal.aborted;
   }
 
-  isHealthy(): boolean { return this.isListening() && this.consecutiveErrors === 0; }
+  isHealthy(): boolean { return this.isListening() && this.consecutiveErrors === 0 && this.remoteAuth === 'confirmed'; }
+
+  /**
+   * Remote login confirmation state (#5479): a started listener stays
+   * 'pending' until the remote accepts a poll, so freshly restored
+   * credentials are never reported as proven-healthy without traffic.
+   */
+  authState(): WeChatAuthConfirmation { return this.remoteAuth; }
+
+  /**
+   * Fold a read-only session probe verdict into the auth confirmation state
+   * (#5479). An expired verdict always wins; a passing probe only confirms
+   * still-pending credentials and never overrides poll traffic. Inconclusive
+   * probes (network errors) are not reported here — the listener stays
+   * pending until real traffic decides.
+   */
+  applyAuthProbe(authExpired: boolean): void {
+    if (authExpired) { this.remoteAuth = 'login-expired'; return; }
+    if (this.remoteAuth === 'pending') { this.remoteAuth = 'confirmed'; }
+  }
 
   /**
    * Main polling loop.
@@ -155,8 +186,10 @@ export class WeChatMessageListener {
             signal,
           });
 
-          // Reset error counter on successful poll
+          // Reset error counter on successful poll; the remote just
+          // accepted these credentials, so login is confirmed (#5479).
           this.consecutiveErrors = 0;
+          this.remoteAuth = 'confirmed';
 
           // Process each update
           for (const update of updates) {
@@ -176,6 +209,7 @@ export class WeChatMessageListener {
             break;
           }
           if (error instanceof WeChatApiError && error.authExpired) {
+            this.remoteAuth = 'login-expired';
             logger.error({ code: error.code }, 'WeChat login expired; run disclaude wechat login, then restart this channel');
             break;
           }
