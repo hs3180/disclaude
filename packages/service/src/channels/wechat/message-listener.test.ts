@@ -117,6 +117,21 @@ describe('WeChatMessageListener', () => {
       expect(listener.isListening()).toBe(false);
     });
 
+    it('stops within the grace period when a poll ignores its abort signal (#5479)', async () => {
+      // The transport wait can drop its abort rejection entirely (#5479);
+      // stop() must give up waiting after the grace period instead of holding
+      // shutdown hostage while the loop stays parked on the wedged poll.
+      mockClient.getUpdates = vi.fn().mockImplementation(() => new Promise<never>(() => {}));
+
+      listener.start();
+      await vi.advanceTimersByTimeAsync(100);
+
+      const stopped = listener.stop();
+      await vi.advanceTimersByTimeAsync(5_000);
+      await stopped;
+      expect(listener.isListening()).toBe(false);
+    });
+
     it('should warn when start is called while already running', async () => {
       mockClient.getUpdates = vi.fn().mockImplementation(getUpdatesPendingUntilAborted);
 

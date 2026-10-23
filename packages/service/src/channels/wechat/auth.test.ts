@@ -196,6 +196,87 @@ describe('WeChatAuth', () => {
     });
   });
 
+  describe('login stage reporting (#5479)', () => {
+    it('reports waiting, scanned, and confirmed on a full login', async () => {
+      const stages: Array<[string, unknown]> = [];
+      mockClient.getQrCodeStatus
+        .mockResolvedValueOnce({ status: 'wait' })
+        .mockResolvedValueOnce({ status: 'scaned' })
+        .mockResolvedValueOnce({ status: 'confirmed', botToken: 'bot-token', botId: 'bot-id', userId: 'user-id' });
+
+      const promise = auth.authenticate({
+        onQrCode: () => Promise.resolve(),
+        onStage: (stage, detail) => { stages.push([stage, detail]); },
+      });
+      await vi.advanceTimersByTimeAsync(2000);
+      const result = await promise;
+
+      expect(result.success).toBe(true);
+      expect(stages.map(([stage]) => stage)).toEqual(['waiting-for-scan', 'scanned', 'confirmed']);
+    });
+
+    it('re-reports waiting with the refresh count when a QR expires', async () => {
+      const stages: Array<[string, unknown]> = [];
+      mockClient.getQrCodeStatus
+        .mockResolvedValueOnce({ status: 'expired' })
+        .mockResolvedValueOnce({ status: 'confirmed', botToken: 'bot-token', botId: 'bot-id' });
+
+      const promise = auth.authenticate({
+        onQrCode: () => Promise.resolve(),
+        onStage: (stage, detail) => { stages.push([stage, detail]); },
+      });
+      await vi.advanceTimersByTimeAsync(2000);
+      await promise;
+
+      expect(stages).toEqual([
+        ['waiting-for-scan', undefined],
+        ['waiting-for-scan', { qrRefresh: 1 }],
+        ['confirmed', undefined],
+      ]);
+    });
+
+    it('never reports confirmed for an unconfirmed or timed-out login', async () => {
+      const stages: Array<[string, unknown]> = [];
+      mockClient.getQrCodeStatus.mockResolvedValueOnce({ status: 'confirmed', botId: 'bot-id', botToken: '   ' });
+
+      await auth.authenticate({
+        onQrCode: () => Promise.resolve(),
+        onStage: (stage, detail) => { stages.push([stage, detail]); },
+      });
+      expect(stages.map(([stage]) => stage)).toEqual(['waiting-for-scan']);
+
+      stages.length = 0;
+      vi.clearAllMocks();
+      mockClient.getQrCodeStatus.mockResolvedValue({ status: 'wait' });
+      const promise = auth.authenticate({
+        timeoutMs: 3000,
+        onQrCode: () => Promise.resolve(),
+        onStage: (stage, detail) => { stages.push([stage, detail]); },
+      });
+      await vi.advanceTimersByTimeAsync(5000);
+      await promise;
+      expect(stages.map(([stage]) => stage)).toEqual(['waiting-for-scan']);
+    });
+
+    it('reports the pairing-digit request as part of the scanned stage', async () => {
+      const stages: Array<[string, unknown]> = [];
+      mockClient.getQrCodeStatus
+        .mockResolvedValueOnce({ status: 'need_verifycode' })
+        .mockResolvedValueOnce({ status: 'confirmed', botToken: 'bot-token', botId: 'bot-id' });
+
+      const promise = auth.authenticate({
+        requestVerifyCode: () => Promise.resolve('123456'),
+        onQrCode: () => Promise.resolve(),
+        onStage: (stage, detail) => { stages.push([stage, detail]); },
+      });
+      await vi.advanceTimersByTimeAsync(2000);
+      await promise;
+
+      expect(stages).toContainEqual(['scanned', { needVerifyCode: true }]);
+      expect(stages.at(-1)).toEqual(['confirmed', undefined]);
+    });
+  });
+
   describe('abort', () => {
     it('should abort authentication', async () => {
       mockClient.getQrCodeStatus.mockResolvedValue({ status: 'wait' });

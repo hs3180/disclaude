@@ -48,6 +48,22 @@ export interface AuthResult {
 }
 
 /**
+ * Login flow stage for progress reporting (#5479): waiting for the QR scan,
+ * scanned and awaiting confirmation, or confirmed with fresh credentials.
+ * Credential submission and connection verification that follow belong to
+ * the CLI's save path, not the auth flow.
+ */
+export type WeChatAuthStage = 'waiting-for-scan' | 'scanned' | 'confirmed';
+
+/** Extra context for a stage event. */
+export interface WeChatAuthStageDetail {
+  /** A previous QR expired and this many-th replacement is displayed. */
+  qrRefresh?: number;
+  /** The remote asked for the private pairing digits. */
+  needVerifyCode?: boolean;
+}
+
+/**
  * WeChat authentication handler.
  *
  * Manages the QR code login flow:
@@ -88,6 +104,8 @@ export class WeChatAuth {
     onQrCode?: (url: string) => Promise<void>;
     /** Pairing input belongs in a private terminal/card, never in chat or logs. */
     requestVerifyCode?: (signal: AbortSignal) => Promise<string>;
+    /** Stage transitions for progress reporting (#5479). */
+    onStage?: (stage: WeChatAuthStage, detail?: WeChatAuthStageDetail) => Promise<void> | void;
   }): Promise<AuthResult> {
     this.abortController = new AbortController();
     const { signal } = this.abortController;
@@ -99,11 +117,13 @@ export class WeChatAuth {
     let scannedPrinted = false;
     let verifyCode: string | undefined;
     const display = options?.onQrCode ?? ((url: string) => this.logQrCode(url));
+    const report = async (stage: WeChatAuthStage, detail?: WeChatAuthStageDetail) => { await options?.onStage?.(stage, detail); };
 
     try {
       // Step 1: Get initial QR code
       let qrData = await this.client.getBotQrCode({ signal });
       await display(qrData.qrUrl);
+      await report('waiting-for-scan');
 
       // Step 2: Poll login status
       while (!signal.aborted && Date.now() < deadline) {
@@ -120,6 +140,7 @@ export class WeChatAuth {
               if (!scannedPrinted) {
                 process.stdout.write('\nQR code scanned, waiting for confirmation...\n');
                 scannedPrinted = true;
+                await report('scanned');
               }
               break;
 
@@ -136,6 +157,7 @@ export class WeChatAuth {
               qrData = await this.client.getBotQrCode({ signal });
               await display(qrData.qrUrl);
               scannedPrinted = false;
+              await report('waiting-for-scan', { qrRefresh: qrRefreshCount });
               break;
             }
 
@@ -148,6 +170,7 @@ export class WeChatAuth {
 
               logger.info({ botId: status.botId, userId: status.userId }, 'Login confirmed!');
               process.stdout.write('\nLogin confirmed!\n');
+              await report('confirmed');
               return {
                 success: true,
                 token: status.botToken,
@@ -160,6 +183,7 @@ export class WeChatAuth {
               break; // The API client validates and applies the regional host.
             case 'need_verifycode':
               if (!options?.requestVerifyCode) { return { success: false, error: 'Private pairing input required; run disclaude wechat login in a terminal' }; }
+              await report('scanned', { needVerifyCode: true });
               try { verifyCode = await options.requestVerifyCode(signal); }
               catch { return { success: false, error: 'Private pairing input unavailable; use an interactive terminal' }; }
               break;
