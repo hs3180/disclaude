@@ -589,6 +589,58 @@ describe('MessageLogger.processedMessageIds bound (#4544)', () => {
   });
 });
 
+describe('MessageLogger.self-sent registry (#5504)', () => {
+  let tmpDir: string;
+  let logger: MessageLogger;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'message-logger-test-'));
+    mockState.workspaceDir = tmpDir;
+    mockState.sessionConfig = { historyDays: 7, maxContextLength: 10000 };
+    logger = new MessageLogger();
+    await logger.init();
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('registers an externally sent id and reports it as self-sent', () => {
+    expect(logger.isSelfSentMessage('om_external')).toBe(false);
+    logger.registerSelfSent('om_external');
+    expect(logger.isSelfSentMessage('om_external')).toBe(true);
+    expect(logger.isSelfSentMessage('om_other')).toBe(false);
+  });
+
+  it('logOutgoingMessage registers our own outbound ids as self-sent', async () => {
+    await logger.logOutgoingMessage('om_out_1', 'chat1', 'Bot reply', 'text');
+    expect(logger.isSelfSentMessage('om_out_1')).toBe(true);
+  });
+
+  it('self-sent registration does not pollute the dedup claim space', () => {
+    logger.registerSelfSent('om_external');
+    expect(logger.isMessageProcessed('om_external')).toBe(false);
+    expect(logger.claimMessage('om_external')).toBe(true);
+  });
+
+  it('clearCache clears the self-sent registry too', () => {
+    logger.registerSelfSent('om_external');
+    logger.clearCache();
+    expect(logger.isSelfSentMessage('om_external')).toBe(false);
+  });
+
+  it('evicts oldest self-sent ids FIFO once over the 10k bound', () => {
+    // Seed via the public path — registration is pure Set work, no I/O.
+    for (let i = 0; i < 10_001; i++) {
+      logger.registerSelfSent(`om_self-${i}`);
+    }
+    expect(logger.isSelfSentMessage('om_self-0')).toBe(false);
+    expect(logger.isSelfSentMessage('om_self-4999')).toBe(false);
+    expect(logger.isSelfSentMessage('om_self-5000')).toBe(true);
+    expect(logger.isSelfSentMessage('om_self-10000')).toBe(true);
+  });
+});
+
 describe('MessageLogger.migrateLegacyFiles', () => {
   let tmpDir: string;
   let chatDir: string;

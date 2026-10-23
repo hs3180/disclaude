@@ -26,6 +26,7 @@ const mockState = vi.hoisted(() => ({
   isMessageProcessed: false,
   claimMessage: vi.fn<(id: string) => boolean>(() => false),
   releaseMessage: vi.fn(),
+  selfSentIds: new Set<string>(),
   logIncomingMessage: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
   logCardInteraction: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
   getChatHistory: vi.fn<() => Promise<string | undefined>>().mockResolvedValue(undefined),
@@ -106,6 +107,7 @@ vi.mock('../../utils/message-logger.js', () => ({
     isMessageProcessed: () => mockState.isMessageProcessed,
     claimMessage: mockState.claimMessage,
     releaseMessage: mockState.releaseMessage,
+    isSelfSentMessage: (id: string) => mockState.selfSentIds.has(id),
     logIncomingMessage: mockState.logIncomingMessage,
     logCardInteraction: mockState.logCardInteraction,
     getChatHistory: mockState.getChatHistory,
@@ -234,6 +236,7 @@ describe('MessageHandler', () => {
     mockState.hasControlHandler = false;
     mockState.isMessageProcessed = false;
     mockState.claimMessage.mockImplementation(() => !mockState.isMessageProcessed);
+    mockState.selfSentIds = new Set<string>();
     mockState.isBotMentioned = false;
     mockState.topicNotifyEnabled = false;
   });
@@ -460,6 +463,28 @@ describe('MessageHandler', () => {
       const { handler } = createHandler();
       await handler.handleMessageReceive(textEvent('dup'));
       expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+
+    it('should skip self-sent echo events without consuming a dedup claim (#5504)', async () => {
+      mockState.selfSentIds.add('msg_self_echo');
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(textEvent('echoed self send', {
+        event: {
+          message: {
+            message_id: 'msg_self_echo',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ text: 'echoed self send' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      }));
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+      expect(mockState.logIncomingMessage).not.toHaveBeenCalled();
+      // The echo must be rejected before the claim so redeliveries stay filterable.
+      expect(mockState.claimMessage).not.toHaveBeenCalledWith('msg_self_echo');
     });
 
     it('should dispatch only once for concurrent deliveries of the same message', async () => {

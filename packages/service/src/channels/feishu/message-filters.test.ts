@@ -1,19 +1,27 @@
 /**
  * Tests for the Feishu message filters (Issue #4126).
  *
- * Covers all branches of evaluateMessageFilters: pass, duplicate, bot
- * (both ignored and bot-to-bot @mention allowed), and old. Pure unit
- * tests with no Feishu channel or I/O dependencies.
+ * Covers all branches of evaluateMessageFilters: pass, self-sent echo
+ * (#5504), duplicate, bot (both ignored and bot-to-bot @mention allowed),
+ * and old. Pure unit tests with no Feishu channel or I/O dependencies.
  */
 
 import { describe, it, expect } from 'vitest';
 import { evaluateMessageFilters } from './message-filters.js';
 
-const deps = (opts: { processed?: boolean; maxAge?: number; now?: () => number } = {}) => ({
-  isProcessed: () => opts.processed ?? false,
-  maxMessageAge: opts.maxAge ?? 60_000,
-  now: opts.now,
-});
+const deps = (
+  opts: { processed?: boolean; selfSent?: string[]; maxAge?: number; now?: () => number } = {},
+  claim?: (messageId: string) => boolean,
+) => {
+  const selfSent = new Set(opts.selfSent ?? []);
+  return {
+    isProcessed: () => opts.processed ?? false,
+    ...(claim ? { claim } : {}),
+    isSelfSent: (id: string) => selfSent.has(id),
+    maxMessageAge: opts.maxAge ?? 60_000,
+    now: opts.now,
+  };
+};
 
 describe('evaluateMessageFilters', () => {
   it('passes a normal, fresh, non-duplicate user message', () => {
@@ -22,6 +30,26 @@ describe('evaluateMessageFilters', () => {
       deps(),
     );
     expect(verdict).toEqual({ passed: true });
+  });
+
+  it('filters a self-sent echo with a user sender (#5504)', () => {
+    const verdict = evaluateMessageFilters(
+      { messageId: 'om_echo', createTime: Date.now(), senderType: 'user', botMentionsUs: false },
+      deps({ selfSent: ['om_echo'] }),
+    );
+    expect(verdict).toEqual({ passed: false, reason: 'self_sent' });
+  });
+
+  it('self-sent wins over duplicate, bot and age, and consumes no claim (#5504)', () => {
+    const claims: string[] = [];
+    const verdict = evaluateMessageFilters(
+      { messageId: 'om_echo', createTime: Date.now() - 999_999, senderType: 'app', botMentionsUs: false },
+      deps({ selfSent: ['om_echo'], processed: true, maxAge: 1 }, (id) => { claims.push(id); return true; }),
+    );
+    expect(verdict).toEqual({ passed: false, reason: 'self_sent' });
+    // The echo must be rejected before the dedup claim so redeliveries stay
+    // filterable without poisoning dedup state.
+    expect(claims).toEqual([]);
   });
 
   it('filters a duplicate message', () => {
@@ -36,7 +64,7 @@ describe('evaluateMessageFilters', () => {
   it('uses the atomic claim result when provided', () => {
     const verdict = evaluateMessageFilters(
       { messageId: 'dup', senderType: 'user', botMentionsUs: false },
-      { ...deps(), claim: () => false },
+      deps({}, () => false),
     );
     expect(verdict).toEqual({ passed: false, reason: 'duplicate' });
   });

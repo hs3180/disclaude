@@ -89,6 +89,29 @@ private is the per-step detail — thinking, raw tool arguments and outputs, and
 child-agent frames (configurable debug forwarding is unchanged).
 Final-reply-only workflows receive no narration.
 
+### Send identity and self-echo (#5504)
+
+Messages sent to a bridged chat with **bot identity** (everything disclaude
+and `disclaude channel …` send) are ignored on the way back by the
+`sender_type === 'app'` filter. A send made with **user identity** — a
+session-side tool using its own Feishu user credentials — echoes back to
+disclaude as an ordinary `sender_type === 'user'` message and would be
+ingested as a new user turn, looping the conversation back to the agent.
+
+Prefer sending as the bot. If a tool must send with user identity, it must
+register the message id returned by its send call immediately, so the echo is
+dropped instead:
+
+```sh
+curl -X POST "$DISCLAUDE_API_BASE_URL/api/self-sent/om_xxxxxxxx" \
+  -H "Authorization: Bearer $DISCLAUDE_API_TOKEN"
+```
+
+Registration happens in memory only (bounded, FIFO-evicted) and races only if
+it is issued after the echo event — register right after the send response,
+before the echo can arrive. `logOutgoingMessage` registers disclaude's own
+outbound ids the same way.
+
 `disclaude channel send_card --chat <chat-id> --card-file ./card.json` accepts
 legacy cards and static Card JSON 2.0. A minimal 2.0 card is:
 

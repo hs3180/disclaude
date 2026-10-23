@@ -1020,6 +1020,7 @@ export class MessageHandler {
       {
         isProcessed: (id) => messageLogger.isMessageProcessed(id),
         claim: (id) => messageLogger.claimMessage(id),
+        isSelfSent: (id) => messageLogger.isSelfSentMessage(id),
         maxMessageAge: this.MAX_MESSAGE_AGE,
       },
     );
@@ -1028,6 +1029,9 @@ export class MessageHandler {
       if (reason === 'duplicate') {
         logger.debug({ messageId: message_id }, 'Skipped duplicate message');
         this.forwardFilteredMessage('duplicate', message_id, chat_id, content, extractOpenId(sender));
+      } else if (reason === 'self_sent') {
+        logger.debug({ messageId: message_id }, 'Skipped self-sent message echo (#5504)');
+        this.forwardFilteredMessage('self_sent', message_id, chat_id, content, extractOpenId(sender));
       } else if (reason === 'bot') {
         logger.debug('Skipped bot message (not mentioning our bot)');
         this.forwardFilteredMessage('bot', message_id, chat_id, content);

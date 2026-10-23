@@ -11,7 +11,7 @@
  */
 
 /** Why an incoming message was filtered out. */
-export type MessageFilterReason = 'duplicate' | 'bot' | 'old';
+export type MessageFilterReason = 'duplicate' | 'bot' | 'old' | 'self_sent';
 
 /** Dependencies injected from MessageHandler. */
 export interface MessageFilterDeps {
@@ -19,6 +19,12 @@ export interface MessageFilterDeps {
   isProcessed(messageId: string): boolean;
   /** Atomically claims the message id when supplied. */
   claim?: (messageId: string) => boolean;
+  /**
+   * Returns true if this message id was sent by us — Feishu echoes
+   * user-identity sends back as sender_type='user' receive events (#5504).
+   * Checked before the dedup claim so an echo consumes no dedup state.
+   */
+  isSelfSent(messageId: string): boolean;
   /** Max age (ms) before a message is considered stale and dropped. */
   maxMessageAge: number;
   /**
@@ -54,7 +60,7 @@ export interface FilterVerdict {
 }
 
 /**
- * Evaluate dedup → bot → age filters in order.
+ * Evaluate self-sent → dedup → bot → age filters in order.
  *
  * Returns the first rejection, or `{ passed: true }` if all filters pass.
  * Performs no I/O; the only external operations are the injected dedup claim
@@ -64,6 +70,14 @@ export function evaluateMessageFilters(
   input: MessageFilterInput,
   deps: MessageFilterDeps,
 ): FilterVerdict {
+  // 0. Self-sent echo (#5504): a user-identity send made by us (or by a
+  // session-side tool that registered the id) echoes back as a normal
+  // user message. Drop it before claiming so no dedup state is consumed —
+  // Feishu redelivers the echo and each delivery must stay filterable.
+  if (deps.isSelfSent(input.messageId)) {
+    return { passed: false, reason: 'self_sent' };
+  }
+
   // 1. Deduplication
   const claimed = deps.claim ? deps.claim(input.messageId) : !deps.isProcessed(input.messageId);
   if (!claimed) {

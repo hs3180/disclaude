@@ -38,7 +38,10 @@ vi.mock('@disclaude/core', () => ({
   }),
   initLogger: vi.fn(),
   flushLogger: vi.fn().mockResolvedValue(undefined),
-  Config: {},
+  // cli-main wires the messageLogger self-sent registry (#5504); the module
+  // singleton's constructor reads these at import time.
+  Config: { getWorkspaceDir: () => '/tmp/disclaude-cli-test' },
+  MESSAGE_LOGGING: { LOGS_DIR: 'chat-logs' },
   createControlHandler: vi.fn(),
   ProcessLock: vi.fn(),
   ProjectManager: vi.fn(),
