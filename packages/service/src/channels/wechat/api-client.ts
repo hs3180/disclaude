@@ -613,14 +613,26 @@ export class WeChatApiClient {
     if (opts.signal?.aborted) { onAbort(); }
     else { opts.signal?.addEventListener('abort', onAbort, { once: true }); }
 
+    // An aborted request does not always reject on its own: a transport or
+    // interceptor can drop the abort (#5479), leaving callers — and through
+    // them shutdown — waiting forever. Settle on the abort signal itself so a
+    // lost transport rejection can never outlive the controller.
+    const aborted = new Promise<never>((_, reject) => {
+      controller.signal.addEventListener('abort',
+        () => { reject(new DOMException('This operation was aborted', 'AbortError')); }, { once: true });
+    });
+
     try {
-      const response = await fetch(url, {
-        method: opts.method,
-        headers: opts.headers,
-        body: opts.body,
-        signal: controller.signal,
-        redirect: 'error',
-      });
+      const response = await Promise.race([
+        fetch(url, {
+          method: opts.method,
+          headers: opts.headers,
+          body: opts.body,
+          signal: controller.signal,
+          redirect: 'error',
+        }),
+        aborted,
+      ]);
 
       if (!response.ok) {
         await response.body?.cancel();

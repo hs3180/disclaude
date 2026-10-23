@@ -71,6 +71,27 @@ describe('WeChatApiClient', () => {
       } finally { vi.useRealTimers(); }
     });
 
+    it('settles on the caller abort even when the transport drops the abort rejection (#5479)', async () => {
+      // Package-install matrix hang: a held long poll can swallow the abort of
+      // its listener signal, leaving shutdown waiting forever. Callers must
+      // settle on the abort signal itself, not on the transport's goodwill.
+      const controller = new AbortController();
+      mockFetch.mockImplementation(() => new Promise<Response>(() => {}));
+      const poll = client.getUpdates({ signal: controller.signal, timeoutMs: 60_000 });
+      controller.abort();
+      expect(await poll).toEqual([]);
+    });
+
+    it('still returns empty when the deadline fires and the transport never rejects (#5479)', async () => {
+      vi.useFakeTimers();
+      mockFetch.mockImplementation(() => new Promise<Response>(() => {}));
+      try {
+        const poll = client.getUpdates({ timeoutMs: 100 });
+        await vi.advanceTimersByTimeAsync(101);
+        expect(await poll).toEqual([]);
+      } finally { vi.useRealTimers(); }
+    });
+
     it('keeps the safe server reason and endpoint on an explicit -2 rejection (#5478)', async () => {
       mockFetch.mockResolvedValue(new Response(JSON.stringify({ ret: -2, errmsg: 'prepare failed' }), { status: 200 }));
       const failure = await client.sendText({ to: 'peer', content: 'hello' }).catch(error => error);
