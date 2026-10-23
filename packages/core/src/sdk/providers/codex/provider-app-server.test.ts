@@ -16,6 +16,7 @@ function providerFixture(
   body: string,
   transport: 'exec' | 'app-server' | undefined = 'app-server',
   extraEnv: Record<string, string> = {},
+  providerOptions: Partial<ConstructorParameters<typeof CodexAgentProvider>[0]> = {},
 ): { provider: CodexAgentProvider; dir: string } {
   const dir = mkdtempSync(join(tmpdir(), 'codex-app-provider-'));
   dirs.push(dir);
@@ -33,6 +34,7 @@ function providerFixture(
       ...(transport ? { transport } : {}),
       env: { PATH: bin, CODEX_HOME: home, CODEX_REASONING_EFFORT: '', ...extraEnv },
       builtinsDir: dir,
+      ...providerOptions,
     }),
   };
 }
@@ -1087,4 +1089,83 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
       await Promise.all(streams.map(s => s.collecting));
     }
   });
+});
+
+describe('Issue #5505: turn/start ACK timeout stays a structured terminal failure', () => {
+  it('reports the typed timeout once with method/stage/uncertain state and never replays it', async () => {
+    const { provider, dir } = providerFixture('exit 0', 'app-server', {}, { requestTimeoutMs: 1000 });
+    writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
+const fs=require('node:fs');const send=m=>console.log(JSON.stringify(m));
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);
+ if(m.method==='initialize')send({id:m.id,result:{}});
+ else if(m.method==='thread/start')send({id:m.id,result:{thread:{id:'ack-loss-thread'}}});
+ else if(m.method==='turn/start'){fs.appendFileSync(process.env.CODEX_HOME+'/writes','turn-start\\n');}
+});`);
+    const stream = provider.queryStream((async function* () { yield { role: 'user', content: 'read-only status query' } as UserInput; })(), {
+      sessionKey: 'ack-loss', settingSources: [],
+    });
+    const messages: AgentMessage[] = [];
+    const collecting = (async () => { for await (const message of stream.iterator) { messages.push(message); } })();
+    try {
+      await vi.waitFor(() => expect(readFileSync(join(dir, 'home/writes'), 'utf8')).toBe('turn-start\n'), { timeout: 5000 });
+      await vi.waitFor(() => expect(messages.some(message => message.type === 'error')).toBe(true), { timeout: 5000 });
+      await collecting;
+      // One clear terminal failure: the typed error, its RPC method, the
+      // stage, the elapsed timeout and the unknown submission state.
+      expect(messages.filter(message => message.type === 'error')).toHaveLength(1);
+      const [failure] = messages.filter(message => message.type === 'error');
+      expect(failure.content).toBe('codex app-server request timed out: turn/start');
+      expect(failure.metadata?.error).toMatchObject({
+        kind: 'CodexAppServerRequestTimeoutError', method: 'turn/start', stage: 'turn-start',
+        timeoutMs: 1000, uncertain: true,
+      });
+      // The stream ends normally without a result and without throwing; the
+      // unacknowledged turn was never retried.
+      expect(messages.filter(message => message.type === 'result')).toHaveLength(0);
+      expect(readFileSync(join(dir, 'home/writes'), 'utf8')).toBe('turn-start\n');
+    } finally { stream.handle.close(); await collecting; provider.dispose(); }
+  }, 15_000);
+
+  it('keeps already-delivered turn progress and still fails once when a later turn ACK is lost', async () => {
+    const { provider, dir } = providerFixture('exit 0', 'app-server', {}, { requestTimeoutMs: 1000 });
+    writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
+const fs=require('node:fs');const send=m=>console.log(JSON.stringify(m));
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);
+ if(m.method==='initialize')send({id:m.id,result:{}});
+ else if(m.method==='thread/start'||m.method==='thread/resume'){send({id:m.id,result:{thread:{id:'late-ack-thread'}}});}
+ else if(m.method==='turn/start'){
+  fs.appendFileSync(process.env.CODEX_HOME+'/writes','turn-start\\n');
+  if(!fs.existsSync(process.env.CODEX_HOME+'/acked')){
+   fs.writeFileSync(process.env.CODEX_HOME+'/acked','1');
+   send({id:m.id,result:{turn:{id:'late-ack-turn-1'}}});
+   send({method:'item/completed',params:{threadId:'late-ack-thread',turnId:'late-ack-turn-1',item:{id:'item-1',type:'agentMessage',text:'First turn delivered'}}});
+   send({method:'turn/completed',params:{threadId:'late-ack-thread',turn:{id:'late-ack-turn-1',status:'completed'}}});
+  }
+  // Second turn/start gets no ACK: the submission state stays unknown.
+ }
+});`);
+    const stream = provider.queryStream((async function* () {
+      yield { role: 'user', content: 'first query' } as UserInput;
+      yield { role: 'user', content: 'second query' } as UserInput;
+    })(), { sessionKey: 'late-ack', settingSources: [] });
+    const messages: AgentMessage[] = [];
+    const collecting = (async () => { for await (const message of stream.iterator) { messages.push(message); } })();
+    try {
+      await vi.waitFor(() => expect(readFileSync(join(dir, 'home/writes'), 'utf8')).toBe('turn-start\nturn-start\n'), { timeout: 5000 });
+      await vi.waitFor(() => expect(messages.some(message => message.type === 'error')).toBe(true), { timeout: 5000 });
+      await collecting;
+      // Prior turn progress stays delivered exactly once; the lost-ACK turn
+      // contributes one structured failure and no fabricated success.
+      expect(messages.filter(message => message.type === 'text' && message.content === 'First turn delivered')).toHaveLength(1);
+      expect(messages.filter(message => message.type === 'error')).toHaveLength(1);
+      const [failure] = messages.filter(message => message.type === 'error');
+      expect(failure.metadata?.error).toMatchObject({
+        kind: 'CodexAppServerRequestTimeoutError', method: 'turn/start', uncertain: true,
+      });
+      // Each submission went out exactly once — no replay of either input.
+      expect(readFileSync(join(dir, 'home/writes'), 'utf8')).toBe('turn-start\nturn-start\n');
+    } finally { stream.handle.close(); await collecting; provider.dispose(); }
+  }, 20_000);
 });

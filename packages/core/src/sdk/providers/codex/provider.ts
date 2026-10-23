@@ -79,6 +79,7 @@ import { reserveLlmSession } from '../../llm-session-limit.js';
 import { CodexAppServerLifecycle, CodexNoActiveTurnError } from './app-server-lifecycle.js';
 import { LiveInputRejectedError } from '../../live-input.js';
 import {
+  CodexAppServerRequestTimeoutError,
   CodexAppServerRpcError,
   type CodexAppServerDynamicToolCallRequest,
   type CodexAppServerDynamicToolCallResult,
@@ -245,6 +246,12 @@ export interface CodexAgentProviderOptions {
   reasoningEffortSource?: CodexEffortSource;
   /** Explicit opt-in; `exec` remains the default compatibility transport. */
   transport?: 'exec' | 'app-server';
+  /**
+   * #5505: app-server JSON-RPC request timeout in ms. Default 30,000 (the
+   * transport's own). Injectable so ACK-loss handling is deterministically
+   * testable; production keeps the default.
+   */
+  requestTimeoutMs?: number;
   /** Environment used for resolution + child spawn. Default: process.env. */
   env?: Record<string, string | undefined>;
   /**
@@ -288,6 +295,8 @@ export class CodexAgentProvider implements IAgentSDKProvider {
   private readonly maxResumeInputTokens: number;
   private readonly builtinRoot: string;
   private readonly transportMode: 'exec' | 'app-server';
+  /** #5505: app-server JSON-RPC timeout passthrough (default 30s). */
+  private readonly appServerRequestTimeoutMs: number | undefined;
   private readonly appServerRoutes = new Map<string, (method: string, params: unknown) => void>();
   private readonly appServerLifecycles = new Map<string, CodexAppServerLifecycle>();
   private readonly appServerStops = new Map<string, () => void>();
@@ -348,6 +357,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     this.maxResumeInputTokens = options.maxResumeInputTokens ?? DEFAULT_MAX_RESUME_INPUT_TOKENS;
     this.builtinRoot = options.builtinsDir ?? Config.getBuiltinsDir();
     this.transportMode = options.transport ?? 'exec';
+    this.appServerRequestTimeoutMs = options.requestTimeoutMs;
     this.governor = new CodexSessionGovernor({
       maxActiveSessions: options.maxActiveSessions,
       maxConcurrentRuns: options.maxConcurrentRuns,
@@ -1389,6 +1399,11 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     let deferredTurnOverload: CodexOverloadFailure | undefined;
     let deferredFailedTurnId: string | undefined;
     let interruptFlight: Promise<void> | undefined;
+    // #5505: RPC lifecycle stage of the current turn attempt, plus the
+    // lifecycle's own commit-state verdict read while the attempt unwinds —
+    // both feed the structured terminal failure the outer catch reports.
+    let rpcStage: string | undefined;
+    let turnCloseUncertain = false;
     const isToolItem = (type: string | undefined): boolean =>
       type === 'commandExecution' || type === 'mcpToolCall' || type === 'dynamicToolCall';
     const terminateStall = (detail: string, expectedTurnId: string): void => {
@@ -1687,6 +1702,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             deferredTurnOverload = undefined;
             deferredFailedTurnId = undefined;
             outputLimitLastTool = undefined;
+            rpcStage = undefined;
             earlyEvents.length = 0;
             llmReservation ??= reserveLlmSession(options.llmSessionLimit);
             if (llmReservation && !await Promise.race([
@@ -1769,6 +1785,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
                 await options.onAsyncUserInputAnswer(request, text, context);
               }, options.env);
               const requestedThreadId = threadId;
+              rpcStage = 'ensure-thread';
               threadId = await lifecycle.ensureThread(sessionKey, {
                 threadId,
                 cwd: options.cwd,
@@ -1796,6 +1813,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
                 : next.value.continuationContext && (!requestedThreadId || requestedThreadId !== threadId)
                   ? `${next.value.continuationContext}\n${currentInput}` : currentInput;
               capacityRecoveryNext = false;
+              rpcStage = 'turn-start';
               activeTurnId = await lifecycle.startTurn(
                 sessionKey,
                 // #5467: when wiring already proves this session cannot receive
@@ -1818,6 +1836,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
                 }
               );
               bindTurn(activeTurnId);
+              rpcStage = 'turn-active';
               logger.debug({ sessionKey, threadId, turnId: activeTurnId }, 'Codex turn started');
               // Keep the lifecycle anchor available to control/steer consumers,
               // but provide no user-facing content for this internal status.
@@ -1840,6 +1859,10 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               sessionGovernor.touchSession(sessionKey);
             } finally {
               bindTurn(undefined);
+              // #5505: read the lifecycle's own verdict while it still owns the
+              // session map — `uncertain` means the submission may have reached
+              // Codex and must never be replayed silently.
+              turnCloseUncertain = lifecycle?.snapshot(sessionKey)?.state === 'uncertain';
               try {
                 await interruptFlight;
                 if (threadId && this.appServerRoutes.get(threadId) === onNotification) {this.appServerRoutes.delete(threadId);}
@@ -1900,11 +1923,34 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           }
         }
       } catch (error) {
+        // #5505: the typed failure must reach the consumer with its structure
+        // (class, RPC method, stage, elapsed timeout, unknown submission
+        // state) instead of degrading to a bare string the stream-end
+        // settlement then overwrites with a generic iterator-ended report.
+        const failure = error instanceof Error ? error : new Error(String(error));
+        const rpcTimeout = error instanceof CodexAppServerRequestTimeoutError ? error : undefined;
         if (!stopped) {
+          logger.warn({
+            sessionKey,
+            stage: rpcStage,
+            errorKind: failure.name,
+            ...(rpcTimeout ? { method: rpcTimeout.method, timeoutMs: rpcTimeout.timeoutMs } : {}),
+            uncertainSubmission: turnCloseUncertain,
+            ...(failure.cause !== undefined ? { cause: failure.cause instanceof Error ? failure.cause.message : String(failure.cause) } : {}),
+          }, 'Codex app-server stream failed before a terminal result');
           push({
             type: 'error',
-            content: error instanceof Error ? error.message : String(error),
+            content: failure.message,
             role: 'system',
+            metadata: {
+              error: {
+                kind: failure.name,
+                ...(rpcTimeout ? { method: rpcTimeout.method, timeoutMs: rpcTimeout.timeoutMs } : {}),
+                ...(rpcStage ? { stage: rpcStage } : {}),
+                ...(turnCloseUncertain ? { uncertain: true } : {}),
+                ...(failure.cause !== undefined ? { cause: failure.cause instanceof Error ? failure.cause.message : String(failure.cause) } : {}),
+              },
+            },
           });
         }
       } finally {
@@ -1984,6 +2030,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       binary,
       sessionKey,
       correlation,
+      ...(this.appServerRequestTimeoutMs ? { requestTimeoutMs: this.appServerRequestTimeoutMs } : {}),
       onUserInput,
       onDynamicToolCall,
       asyncInputs,
