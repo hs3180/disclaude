@@ -50,6 +50,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Re-discover CDP after browser `--reload` while migrating the runtime
   identity (#5427, #5496), and validate replaced `service.lock` ownership
   by inode (#5474, #5495).
+- Explain a scanned identity change during a forced WeChat re-login instead
+  of failing without guidance for safely adopting the new bot identity
+  (#5480, #5507).
+- Keep used Feishu private-input cards on their real terminal status so a
+  successful submission no longer shows as expired (#5489, #5508).
+- Carry the real failure through a codex `turn/start` ACK timeout: the
+  structured timeout reaches settlement exactly once with its method, stage
+  and submission uncertainty, restart classification uses the real error,
+  and the timed-out request is never replayed (#5505, #5509).
+- Drop self-sent user-identity echoes before they re-enter the conversation:
+  a bounded self-sent registry, a `self_sent` filter reason ahead of the
+  dedup claim, and a Bearer-authenticated `POST /api/self-sent/:messageId`
+  registration route for session-side senders (#5504, #5510).
 
 ### Verification and scope
 
@@ -58,6 +71,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instance built from main, inbound message to agent auto-reply, and
   channel `send_text` proactive smoke; the relogin lifecycle is covered by
   the local WeChat (164/164) and integration (9/9) suites in #5502.
+- Four late-filed bugs (#5480, #5489, #5504, #5505) were added to the
+  release scope after review; each fix landed through its own PR with all
+  CI checks green on main `dcd19b29`.
 - The final archive, provenance, checksums, and fresh installation results
   are recorded in the release assets. Upgrading an existing deployed
   service remains a separate operation. The package is distributed through
