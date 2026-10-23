@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.7] - 2026-10-23
+
+### Added
+
+- Classify codex `max_output_tokens` turn failures with a progress-aware
+  receipt that reports what completed before the interruption (#5452, #5492).
+- Continue the same codex thread after a capacity failure once real progress
+  exists, instead of dropping the turn (#5468, #5494).
+
+### Changed
+
+- Degrade unsupported codex async questions to plain text instead of dumping
+  tool-surface usage instructions into the chat (#5467, #5493).
+- Adapt GFM tables in Feishu auto citation cards through a converter local
+  to the card builders (#5473, #5485, #5486).
+- Assert the Node.js security baseline (2026-10-21 release train) at service
+  image build time (#5481, #5484) and bump the Chromium base image default
+  to `v1.64.1-noble`, the first-party distribution line (#5482, #5483).
+- Pre-link the canonical config slot in the service image so official mounts
+  no longer trip the legacy-location warning (#5431, #5490), and parse
+  `channels.feishu` credentials with the loader's own primitives
+  (#5432, #5491).
+
+### Fixed
+
+- Harden the WeChat re-login path end to end: probe the old login before
+  reporting a rolled-back re-login (#5500), require remote poll confirmation
+  before listener health is declared (#5501), and report login stages while
+  verifying fresh credentials before declaring registration (#5502, carrying
+  the relogin-isolation regressions, installed-package rollback lifecycle,
+  and SIGTERM fix from #5503).
+- Keep `disclaude start` responsive to SIGTERM even when a held long poll
+  swallows both its listener abort and its own deadline (#5502).
+- Keep safe rejection detail on WeChat API errors — endpoint path, HTTP
+  status, and a diagnostic id — instead of a bare numeric code (#5478,
+  #5497), and retry the listener lock when its owner releases it
+  mid-acquisition (#5499).
+- Keep message-topic identity for Feishu p2p and group inputs so a new task
+  in the main conversation no longer threads into an old topic (#5464,
+  #5488).
+- Re-discover CDP after browser `--reload` while migrating the runtime
+  identity (#5427, #5496), and validate replaced `service.lock` ownership
+  by inode (#5474, #5495).
+
+### Verification and scope
+
+- Runtime source main `f28bc219` passed all seven returned CI checks.
+  Real-machine coverage this round: QR hot registration on an isolated
+  instance built from main, inbound message to agent auto-reply, and
+  channel `send_text` proactive smoke; the relogin lifecycle is covered by
+  the local WeChat (164/164) and integration (9/9) suites in #5502.
+- The final archive, provenance, checksums, and fresh installation results
+  are recorded in the release assets. Upgrading an existing deployed
+  service remains a separate operation. The package is distributed through
+  a prebuilt GitHub tag, not the npm registry.
+- See the [0.6.7 release notes](docs/releases/0.6.7.md).
+
 ## [0.6.6] - 2026-10-21
 
 ### Added
