@@ -303,6 +303,31 @@ describe('MessageHandler', () => {
         expect(JSON.stringify(mockState.sendMessage.mock.calls)).not.toContain('synthetic-task-private');
       } finally {handler.clearClient();}
     });
+    it('keeps a used card on its real terminal status across replays and typing events inert (#5489)', async () => {
+      const { handler } = createHandler();
+      const patch = vi.fn().mockResolvedValue({ code: 0 });
+      handler.initialize({ im: { message: { patch } } } as unknown as import('@larksuiteoapi/node-sdk').Client);
+      mockState.sendMessage.mockResolvedValueOnce('task-card' as never);
+      try {
+        await handler.requestPrivateWorkflow({ chatId: 'chat_001', actorId: 'user_001', sourceMessageId: 'msg_001',
+          workflow: { title: 'Task workflow', description: 'Agent selected', command: process.execPath,
+            args: ['-e', 'process.stdin.resume();process.stdin.on("end",()=>process.exit(0))'], env: {} } });
+        const { card } = firstCallArg(mockState.sendMessage);
+        const [{ value }] = card.body.elements[1].elements[1].behaviors;
+        const submit = cardActionEvent({ context: { open_message_id: 'task-card', open_chat_id: 'chat_001' },
+          action: { tag: 'button', value, form_value: { credential: 'synthetic-task-private' } } });
+        await handler.handleCardAction(submit);
+        await vi.waitFor(() => expect(mockState.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: '本次鉴权操作已完成。' })));
+        const typing = await handler.handleCardAction(cardActionEvent({ context: { open_message_id: 'task-card', open_chat_id: 'chat_001' }, action: { tag: 'input' } }));
+        expect(typing).toEqual({ toast: { type: 'info', content: '输入已同步。' } });
+        // A replayed submission re-asserts the terminal status, never expired text.
+        await handler.handleCardAction(submit);
+        await vi.waitFor(() => expect(patch).toHaveBeenCalledWith(expect.objectContaining({ path: { message_id: 'task-card' } })));
+        expect(JSON.stringify(patch.mock.calls)).toContain('本次鉴权操作已完成。');
+        expect(JSON.stringify([...patch.mock.calls, ...mockState.sendMessage.mock.calls])).not.toContain('重新发起');
+        expect(JSON.stringify(mockState.sendMessage.mock.calls)).not.toContain('synthetic-task-private');
+      } finally {handler.clearClient();}
+    });
 
     it('keeps private callbacks outside history, prompts and ordinary card routing', async () => {
     const secret = 'synthetic-private-input';

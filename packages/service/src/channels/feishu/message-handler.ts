@@ -1516,6 +1516,12 @@ export class MessageHandler {
       return;
     }
     if (FeishuPrivateInput.isPrivateCallback(rawData)) {
+      const action = rawData.action as { tag?: unknown } | undefined;
+      if (action?.tag === 'input') {
+        // #5489: an input callback is typing feedback, not a submission; it
+        // must never consume, repaint the live card, or read as expired.
+        return { toast: { type: 'info', content: '输入已同步。' } };
+      }
       // Acknowledge promptly; the one-shot handoff consumes before awaiting.
       // Consumer failures never enter ordinary logs or the agent channel.
       void this.privateWorkflows.submit(rawData).then(async handled => {
