@@ -614,6 +614,8 @@ export async function main(): Promise<void> {
         apiToken: options.apiToken,
       });
       httpApiServer.setInstanceId(service.getInstanceId());
+      const registrationRuntime = wechatRuntime;
+      if (registrationRuntime) { httpApiServer.setWeChatRegistrationHealthProvider(() => registrationRuntime.getHealth()); }
       httpApiServer.setBrowserIpcStatusProvider(() => service.getBrowserIpcStatus());
       httpApiServer.setChannelCapabilitiesProvider(chatId => service.getChannels()
         .filter(channel => !chatId || channel.ownsChatId(chatId))

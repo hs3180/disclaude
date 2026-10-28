@@ -217,6 +217,16 @@ describe('HttpApiServer', () => {
   });
 
   describe('GET /api/health/detailed (Issue #4718)', () => {
+    it('reports unavailable registration while liveness remains available, then reflects recovery', async () => {
+      server.setWeChatRegistrationHealthProvider(() => ({ status: 'degraded', reason: 'registry_unavailable' }));
+      const degraded = await dispatch(server, { method: 'GET', url: '/api/health/detailed' });
+      expect(degraded.statusCode).toBe(503);
+      expect(JSON.parse(degraded.body)).toMatchObject({ process: { status: 'healthy' }, wechatRegistration: { status: 'degraded', reason: 'registry_unavailable' } });
+      expect((await dispatch(server, { method: 'GET', url: '/api/status' })).statusCode).toBe(200);
+      server.setWeChatRegistrationHealthProvider(() => ({ status: 'healthy' }));
+      expect((await dispatch(server, { method: 'GET', url: '/api/health/detailed' })).statusCode).toBe(200);
+    });
+
     it('reports the local process and delivery health without external probes', async () => {
       const { statusCode, body } = await dispatch(server, {
         method: 'GET',
