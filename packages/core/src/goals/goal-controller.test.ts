@@ -24,7 +24,7 @@ async function fixture(run = vi.fn().mockResolvedValue(completed)) {
   const authorize = vi.fn().mockResolvedValue(undefined);
   const controller = new GoalController(store, { authorize, runTurn: run }); controllers.push(controller);
   const request: GoalExecutionRequest = { goalId: draft.id, expectedRevision: draft.revision, chatId: 'chat',
-    projectRoot: root, actorId: 'user', sourceMessageId: 'source' };
+    projectRoot: root, actorId: 'user', sourceMessageId: 'source', threadRootId: 'om-topic' };
   return { root, store, draft, run, authorize, controller, request };
 }
 afterEach(async () => {
@@ -39,10 +39,13 @@ describe('owned explicit Goal execution', () => {
     const run = vi.fn().mockResolvedValueOnce({ ...completed, outcome: 'continue' })
       .mockResolvedValueOnce({ ...completed, outcome: 'continue' }).mockResolvedValueOnce(completed);
     const { controller, store, request } = await fixture(run);
-    const started = await controller.start(request, 'activate');
+    const starting = controller.start(request, 'activate');
+    request.actorId = 'mutated-user'; request.threadRootId = 'another-topic';
+    const started = await starting;
     expect(started.record.status).toBe('active');
     expect(await started.handle.completion).toEqual({ reason: 'inactive', status: 'completed' });
     expect(run).toHaveBeenCalledTimes(3);
+    expect(run.mock.calls[0][1]).toMatchObject({ actorId: 'user', sourceMessageId: 'source', threadRootId: 'om-topic' });
     expect(run.mock.calls.map(([snapshot]) => snapshot.revision)).toEqual([2, 3, 4]);
     expect((await store.get(request.goalId))?.lastAssessment?.reviewedRevision).toBe(4);
   });

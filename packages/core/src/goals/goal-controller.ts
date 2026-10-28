@@ -10,6 +10,7 @@ export interface GoalExecutionRequest {
   projectRoot: string;
   actorId: string;
   sourceMessageId: string;
+  threadRootId?: string;
 }
 export interface GoalExecutionPort {
   /** Revalidate current permission and Project binding; reject if unavailable. */
@@ -33,11 +34,12 @@ export class GoalController {
   constructor(private readonly store: GoalStore, private readonly port: GoalExecutionPort) {}
 
   private capture(request: GoalExecutionRequest): Readonly<GoalExecutionRequest> {
-    const { goalId, expectedRevision, chatId, projectRoot, actorId, sourceMessageId } = request;
+    const { goalId, expectedRevision, chatId, projectRoot, actorId, sourceMessageId, threadRootId } = request;
     if (![goalId, chatId, actorId, sourceMessageId].every(value => typeof value === 'string' && value.trim() && value.length <= 512) ||
         typeof projectRoot !== 'string' || projectRoot.length > 4096 || !isAbsolute(projectRoot) ||
-        !Number.isSafeInteger(expectedRevision) || expectedRevision < 1) { throw new Error('Invalid explicit Goal request'); }
-    return Object.freeze({ goalId, expectedRevision, chatId, projectRoot, actorId, sourceMessageId });
+        !Number.isSafeInteger(expectedRevision) || expectedRevision < 1 ||
+        (threadRootId !== undefined && (typeof threadRootId !== 'string' || !threadRootId.trim() || threadRootId.length > 512))) { throw new Error('Invalid explicit Goal request'); }
+    return Object.freeze({ goalId, expectedRevision, chatId, projectRoot, actorId, sourceMessageId, ...(threadRootId ? { threadRootId } : {}) });
   }
   private async readOwned(request: Readonly<GoalExecutionRequest>): Promise<GoalRecord> {
     const record = await this.store.get(request.goalId);
