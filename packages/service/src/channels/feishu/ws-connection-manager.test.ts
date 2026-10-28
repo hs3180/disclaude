@@ -1,648 +1,175 @@
-/**
- * Tests for WsConnectionManager (Issue #1351, #1666, #2905).
- *
- * Tests cover:
- * - Connection lifecycle (start, stop)
- * - SDK event-driven reconnection (Issue #2905: replaced health check)
- * - Exponential backoff reconnection
- * - State machine transitions
- * - Event emission
- * - Metrics reporting
- *
- * Does NOT mock the @larksuiteoapi/node-sdk directly (per CLAUDE.md rules),
- * instead uses dependency-injected mocks via constructor.
- */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import dns from 'node:dns/promises';
+import * as lark from '@larksuiteoapi/node-sdk';
+import { WsConnectionManager, calculateReconnectDelay } from './ws-connection-manager.js';
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import {
-  WsConnectionManager,
-  calculateReconnectDelay,
-} from './ws-connection-manager.js';
-
-// ─── Mocked WSClient factory ────────────────────────────────────────────
-
-interface MockWSClient {
-  start: ReturnType<typeof vi.fn>;
-  close: ReturnType<typeof vi.fn>;
-  removeAllListeners?: ReturnType<typeof vi.fn>;
-  on: ReturnType<typeof vi.fn>;
-}
-
-function createMockWSClient(shouldFail = false): MockWSClient {
-  return {
-    start: vi.fn().mockResolvedValue(shouldFail ? false : undefined),
-    close: vi.fn(),
-    removeAllListeners: vi.fn(),
-    on: vi.fn(),
-  };
-}
-
-// Mock EventDispatcher (minimal — just needs register to return itself)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function createMockEventDispatcher(): any {
-  return { register: vi.fn().mockReturnThis() };
-}
-
-// ─── Mock @disclaude/core ───────────────────────────────────────────────
-
-const MOCK_WS_HEALTH = vi.hoisted(() => ({
-  RECONNECT: {
-    BASE_DELAY_MS: 100,
-    MAX_DELAY_MS: 1000,
-    BACKOFF_MULTIPLIER: 2,
-    JITTER_MS: 50,
-    MAX_ATTEMPTS: 3,
-  },
-  OFFLINE_QUEUE: {
-    MAX_SIZE: 100,
-    MAX_MESSAGE_AGE_MS: 600000,
-  },
-}));
-
+const log = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), trace: vi.fn() }));
 vi.mock('@disclaude/core', () => ({
-  WS_HEALTH: MOCK_WS_HEALTH,
-  createLogger: () => ({
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-    trace: vi.fn(),
-  }),
+  createLogger: () => log,
+  WS_HEALTH: { RECONNECT: { BASE_DELAY_MS: 100, MAX_DELAY_MS: 1000, BACKOFF_MULTIPLIER: 2, JITTER_MS: 0, MAX_ATTEMPTS: 3 } },
 }));
 
-vi.mock('@larksuiteoapi/node-sdk', () => ({
-  WSClient: vi.fn(),
-  LoggerLevel: { info: 'info' },
-  EventDispatcher: vi.fn(class { register = vi.fn().mockReturnThis(); }),
-}));
-
-// ─── Helper to create a manager with mocked WSClient ────────────────────
-
-function createTestManager(overrides: {
-  wsClient?: MockWSClient;
-  maxAttempts?: number;
-  dnsCheckHost?: string;
-} = {}): WsConnectionManager {
-  const manager = new WsConnectionManager({
-    appId: 'test-app-id',
-    appSecret: 'test-app-secret',
-    reconnectMaxAttempts: overrides.maxAttempts ?? MOCK_WS_HEALTH.RECONNECT.MAX_ATTEMPTS,
-    // Disable DNS pre-check by default for existing tests; individual tests
-    // in the Issue #2259 describe block enable it explicitly.
-    dnsCheckHost: overrides.dnsCheckHost ?? '',
+type Lifecycle = { onReady: () => void; onReconnecting: () => void; onReconnected: () => void; onError: () => void };
+type Client = Lifecycle & { start: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> };
+const managers: WsConnectionManager[] = [];
+function fixture(config: Partial<ConstructorParameters<typeof WsConnectionManager>[0]> = {}, startResult: () => Promise<unknown> = () => Promise.resolve(undefined)) {
+  const manager = new WsConnectionManager({ appId: 'cli_0000000000000000', appSecret: 'fixture', dnsCheckHost: '', ...config });
+  managers.push(manager);
+  const clients: Client[] = [];
+  const construct = vi.fn(class {
+    start = vi.fn(startResult);
+    close = vi.fn();
+    constructor(callbacks: Lifecycle) { Object.assign(this, callbacks); clients.push(this as unknown as Client); }
   });
-
-  // Monkey-patch the larkSDK reference to use our mock WSClient constructor
-  const mockClient = overrides.wsClient ?? createMockWSClient();
-  (manager as unknown as {
-    larkSDK: { WSClient: ReturnType<typeof vi.fn>; LoggerLevel: { info: string } };
-  }).larkSDK = {
-    WSClient: vi.fn(class {
-      start = mockClient.start;
-      close = mockClient.close;
-      removeAllListeners = mockClient.removeAllListeners;
-      on = mockClient.on;
-    }),
-    LoggerLevel: { info: 'info' },
-  };
-
-  return manager;
+  Object.assign(manager, { larkSDK: { WSClient: construct, LoggerLevel: lark.LoggerLevel } });
+  const start = async () => { await manager.start(new lark.EventDispatcher({})); };
+  return { manager, clients, construct, start };
+}
+function dnsProbe(manager: WsConnectionManager) {
+  return vi.spyOn(manager as unknown as { checkDns: (host: string) => Promise<boolean> }, 'checkDns');
 }
 
-/**
- * Helper to find an event listener registered on a mock WSClient.
- * Returns undefined if no listener is found for the given event type.
- */
-function findEventListener(
-  mockClient: MockWSClient,
-  eventType: string,
-): ((...args: unknown[]) => void) | undefined {
-  const onCalls = mockClient.on.mock.calls as Array<[string, ...unknown[]]>;
-  return onCalls.find((call) => call[0] === eventType)?.[1] as
-    ((...args: unknown[]) => void) | undefined;
-}
-
-// ─── Tests ──────────────────────────────────────────────────────────────
+beforeEach(() => { vi.useFakeTimers(); vi.clearAllMocks(); });
+afterEach(async () => {
+  for (const manager of managers.splice(0)) { await manager.stop(); }
+  vi.useRealTimers(); vi.restoreAllMocks();
+});
 
 describe('calculateReconnectDelay', () => {
-  it('should return base delay for attempt 0', () => {
-    const delay = calculateReconnectDelay(0, 1000, 60000, 500);
-    // baseDelay * 2^0 + jitter(0-500) = 1000 + [0, 500)
-    expect(delay).toBeGreaterThanOrEqual(1000);
-    expect(delay).toBeLessThan(1500);
+  it('doubles each failed attempt and caps the complete delay including jitter', () => {
+    expect([0, 1, 2].map(n => calculateReconnectDelay(n, 100, 1000, 0))).toEqual([100, 200, 400]);
+    for (let n = 0; n < 100; n++) { expect(calculateReconnectDelay(n, 100, 1000, 500)).toBeLessThanOrEqual(1000); }
   });
-
-  it('should double delay with each attempt', () => {
-    const delay0 = calculateReconnectDelay(0, 1000, 60000, 0);
-    const delay1 = calculateReconnectDelay(1, 1000, 60000, 0);
-    const delay2 = calculateReconnectDelay(2, 1000, 60000, 0);
-    expect(delay1).toBe(delay0 * 2);
-    expect(delay2).toBe(delay0 * 4);
-  });
-
-  it('should cap at max delay', () => {
-    const delay = calculateReconnectDelay(100, 1000, 5000, 0);
-    expect(delay).toBe(5000);
-  });
-
-  it('should add jitter within [0, jitterMs)', () => {
-    const results = Array.from({ length: 100 }, () =>
-      calculateReconnectDelay(5, 100, 100000, 200),
-    );
-    // All should be in range [3200, 3400) = 100 * 2^5 + [0, 200)
-    for (const d of results) {
-      expect(d).toBeGreaterThanOrEqual(3200);
-      expect(d).toBeLessThan(3400);
-    }
-    // Should not all be the same (randomness)
-    const unique = new Set(results);
-    expect(unique.size).toBeGreaterThan(1);
+  it('keeps jitter above the base delay', () => {
+    for (let n = 0; n < 100; n++) { expect(calculateReconnectDelay(0, 100, 1000, 50)).toBeGreaterThanOrEqual(100); }
   });
 });
 
-describe('WsConnectionManager', () => {
-  let manager: WsConnectionManager;
-  let mockEventDispatcher: ReturnType<typeof createMockEventDispatcher>;
-
-  beforeEach(() => {
-    vi.useFakeTimers();
-    mockEventDispatcher = createMockEventDispatcher();
+describe('Feishu real readiness (#5519)', () => {
+  it('does not interpret a resolved start() as a handshake receipt', async () => {
+    const { manager, start, clients } = fixture();
+    await start();
+    expect(manager.getMetrics()).toEqual({ state: 'connecting', reconnectAttempt: 0, isConnected: false });
+    expect(manager.isHealthy()).toBe(false);
+    clients[0].onReady();
+    expect(manager.isHealthy()).toBe(true);
+    expect(manager.state).toBe('connected');
   });
-
-  afterEach(() => {
-    vi.useRealTimers();
+  it('emits the queue-flush event on the first real handshake, once per transition', async () => {
+    const { manager, start, clients } = fixture();
+    const ready = vi.fn(); manager.on('reconnected', ready);
+    await start(); expect(ready).not.toHaveBeenCalled();
+    clients[0].onReady(); clients[0].onReady();
+    expect(ready).toHaveBeenCalledExactlyOnceWith(0);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(clients).toHaveLength(1); expect(clients[0].close).not.toHaveBeenCalled();
   });
-
-  describe('lifecycle', () => {
-    it('should start and transition to connected state', async () => {
-      manager = createTestManager();
-      const stateChanges: string[] = [];
-      manager.on('stateChange', (state) => stateChanges.push(state));
-
-      await manager.start(mockEventDispatcher as never);
-
-      expect(manager.state).toBe('connected');
-      expect(stateChanges).toContain('connected');
-    });
-
-    it('should stop and transition to stopped state', async () => {
-      manager = createTestManager();
-      const stateChanges: string[] = [];
-      manager.on('stateChange', (state) => stateChanges.push(state));
-
-      await manager.start(mockEventDispatcher as never);
-      await manager.stop();
-
-      expect(manager.state).toBe('stopped');
-      expect(stateChanges).toContain('connected');
-      expect(stateChanges).toContain('stopped');
-    });
-
-    it('should be healthy after successful start', async () => {
-      manager = createTestManager();
-      await manager.start(mockEventDispatcher as never);
-
-      expect(manager.isHealthy()).toBe(true);
-    });
-
-    it('should not be healthy after stop', async () => {
-      manager = createTestManager();
-      await manager.start(mockEventDispatcher as never);
-      await manager.stop();
-
-      expect(manager.isHealthy()).toBe(false);
-    });
-
-    it('should not be healthy when reconnecting', async () => {
-      manager = createTestManager();
-      await manager.start(mockEventDispatcher as never);
-      expect(manager.isHealthy()).toBe(true);
-
-      // Trigger reconnect via SDK close event
-      const mockClient = (manager as unknown as { wsClient: MockWSClient }).wsClient;
-      const closeListener = findEventListener(mockClient, 'close');
-
-      expect(closeListener).toBeDefined();
-      if (closeListener) {
-        closeListener(1000, 'test close');
-        expect(manager.state).toBe('reconnecting');
-        expect(manager.isHealthy()).toBe(false);
-      }
-    });
-
-    it('should handle start failure gracefully', async () => {
-      const failingClient = createMockWSClient(true);
-      manager = createTestManager({ wsClient: failingClient });
-
-      // start() calls connectFresh() which fails, then enters reconnect mode
-      // maxAttempts defaults to 3, so it will try to reconnect
-      await manager.start(mockEventDispatcher as never);
-
-      // State should be reconnecting (initial connect failed, entering reconnect)
-      expect(manager.state).toBe('reconnecting');
-    });
+  it('uses SDK live reconnect callbacks without constructing a second owner', async () => {
+    const { manager, start, clients } = fixture();
+    await start(); clients[0].onReady(); clients[0].onReconnecting();
+    expect(manager.isHealthy()).toBe(false); expect(manager.state).toBe('reconnecting');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(clients).toHaveLength(1);
+    clients[0].onReconnected(); expect(manager.isHealthy()).toBe(true);
   });
-
-  describe('SDK event-driven reconnection (Issue #2905)', () => {
-    it('should trigger reconnect on SDK close event', async () => {
-      const succeedingClient = createMockWSClient(false);
-      manager = createTestManager({
-        maxAttempts: 3,
-        wsClient: succeedingClient,
-      });
-
-      const stateChanges: string[] = [];
-      manager.on('stateChange', (state) => stateChanges.push(state));
-
-      await manager.start(mockEventDispatcher as never);
-      expect(manager.state).toBe('connected');
-
-      // Simulate SDK close event
-      const closeListener = findEventListener(succeedingClient, 'close');
-
-      expect(closeListener).toBeDefined();
-      if (closeListener) {
-        closeListener(1000, 'connection lost');
-      }
-
-      // Should have transitioned to reconnecting
-      expect(stateChanges).toContain('reconnecting');
-
-      // Wait for reconnect delay to pass
-      await vi.advanceTimersByTimeAsync(5000);
-
-      // After reconnect succeeds, should be connected again
-      expect(stateChanges.filter(s => s === 'connected').length).toBeGreaterThanOrEqual(2);
-    });
-
-    it('should trigger reconnect on SDK error event', async () => {
-      const succeedingClient = createMockWSClient(false);
-      manager = createTestManager({
-        maxAttempts: 3,
-        wsClient: succeedingClient,
-      });
-
-      await manager.start(mockEventDispatcher as never);
-
-      // Simulate SDK error event (error alone doesn't trigger reconnect)
-      const errorListener = findEventListener(succeedingClient, 'error');
-
-      expect(errorListener).toBeDefined();
-      // Error event should not trigger reconnect by itself (only close does)
-      if (errorListener) {
-        errorListener(new Error('test error'));
-      }
-      expect(manager.state).toBe('connected');
-    });
-
-    it('should not double-reconnect when already reconnecting', async () => {
-      const succeedingClient = createMockWSClient(false);
-      manager = createTestManager({
-        maxAttempts: 3,
-        wsClient: succeedingClient,
-      });
-
-      await manager.start(mockEventDispatcher as never);
-
-      // Simulate SDK close event
-      const closeListener = findEventListener(succeedingClient, 'close');
-      expect(closeListener).toBeDefined();
-
-      if (closeListener) {
-        closeListener(1000, 'first close');
-        expect(manager.state).toBe('reconnecting');
-
-        // Second close event should be ignored
-        closeListener(1000, 'second close');
-        expect(manager.state).toBe('reconnecting');
-      }
-    });
-
-    it('should not trigger reconnect when stopped', async () => {
-      const succeedingClient = createMockWSClient(false);
-      manager = createTestManager({
-        maxAttempts: 3,
-        wsClient: succeedingClient,
-      });
-
-      await manager.start(mockEventDispatcher as never);
-      await manager.stop();
-
-      // State should be stopped, close listener is removed with client
-      expect(manager.state).toBe('stopped');
-    });
-
-    it('should register error and close event listeners on connect', async () => {
-      const mockClient = createMockWSClient(false);
-      manager = createTestManager({ wsClient: mockClient });
-
-      await manager.start(mockEventDispatcher as never);
-
-      // Should have registered listeners for 'error' and 'close'
-      const onCalls = mockClient.on.mock.calls as Array<[string, ...unknown[]]>;
-      const eventTypes = onCalls.map((call) => call[0]);
-      expect(eventTypes).toContain('error');
-      expect(eventTypes).toContain('close');
-    });
+  it('replaces a terminal SDK failure after backoff and ignores duplicate/stale callbacks', async () => {
+    const { manager, start, clients } = fixture();
+    await start(); const [old] = clients; old.onReady(); old.onReconnecting(); old.onError(); old.onError();
+    expect(old.close).toHaveBeenCalledExactlyOnceWith({ force: true });
+    await vi.advanceTimersByTimeAsync(100); expect(clients).toHaveLength(2);
+    old.onReady(); old.onReconnected(); old.onError();
+    expect(manager.state).toBe('connecting'); expect(clients[1].close).not.toHaveBeenCalled();
+    clients[1].onReady(); expect(manager.isHealthy()).toBe(true);
   });
-
-  describe('reconnection', () => {
-    it('should successfully reconnect after SDK close event', async () => {
-      const succeedingClient = createMockWSClient(false);
-      manager = createTestManager({
-        maxAttempts: 3,
-        wsClient: succeedingClient,
-      });
-
-      const reconnectedEvents: number[] = [];
-      manager.on('reconnected', (attempt) => reconnectedEvents.push(attempt));
-
-      await manager.start(mockEventDispatcher as never);
-
-      // Trigger reconnect via SDK close event
-      const closeListener = findEventListener(succeedingClient, 'close');
-      expect(closeListener).toBeDefined();
-      if (closeListener) {
-        closeListener(1000, 'test close');
-      }
-
-      // Wait for reconnect delay to pass
-      await vi.advanceTimersByTimeAsync(5000);
-
-      // Should have reconnected
-      expect(manager.state).toBe('connected');
-      expect(reconnectedEvents.length).toBeGreaterThanOrEqual(1);
-    });
-
-    it('should stop reconnecting after max attempts when all fail', async () => {
-      // Create a mock that succeeds initially but fails on reconnects
-      const conditionalClient: MockWSClient = {
-        start: vi.fn().mockImplementationOnce(() => Promise.resolve(undefined))
-          .mockImplementation(() => Promise.resolve(false)),
-        close: vi.fn(),
-        removeAllListeners: vi.fn(),
-        on: vi.fn(),
-      };
-
-      manager = createTestManager({
-        maxAttempts: 2,
-        wsClient: conditionalClient,
-      });
-
-      const reconnectFailedEvents: number[] = [];
-      manager.on('reconnectFailed', (total) => reconnectFailedEvents.push(total));
-
-      await manager.start(mockEventDispatcher as never);
-      expect(manager.state).toBe('connected');
-
-      // Trigger reconnect via SDK close event
-      const closeListener = findEventListener(conditionalClient, 'close');
-      expect(closeListener).toBeDefined();
-      if (closeListener) {
-        closeListener(1000, 'test close');
-      }
-
-      // Advance through all reconnect attempts with enough time
-      for (let i = 0; i < 30; i++) {
-        await vi.advanceTimersByTimeAsync(2000);
-      }
-
-      // Should have given up after max attempts
-      expect(manager.state).toBe('stopped');
-      expect(reconnectFailedEvents.length).toBeGreaterThanOrEqual(1);
-    });
-
-    it('should emit reconnectFailed with correct total attempts', async () => {
-      const maxAttempts = 2;
-
-      const conditionalClient: MockWSClient = {
-        start: vi.fn().mockImplementationOnce(() => Promise.resolve(undefined))
-          .mockImplementation(() => Promise.resolve(false)),
-        close: vi.fn(),
-        removeAllListeners: vi.fn(),
-        on: vi.fn(),
-      };
-
-      manager = createTestManager({
-        maxAttempts,
-        wsClient: conditionalClient,
-      });
-
-      let failedTotal = 0;
-      manager.on('reconnectFailed', (total) => { failedTotal = total; });
-
-      await manager.start(mockEventDispatcher as never);
-
-      // Trigger reconnect via SDK close event
-      const closeListener = findEventListener(conditionalClient, 'close');
-      expect(closeListener).toBeDefined();
-      if (closeListener) {
-        closeListener(1000, 'test close');
-      }
-
-      // Run through all retries
-      for (let i = 0; i < 30; i++) {
-        await vi.advanceTimersByTimeAsync(2000);
-      }
-
-      expect(failedTotal).toBeGreaterThanOrEqual(maxAttempts);
-    });
+  it('bounds initial configuration/handshake stalls while keeping start non-blocking', async () => {
+    const { manager, start, clients } = fixture({ connectTimeoutMs: 500 }, () => new Promise(() => {}));
+    await start();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(manager.state).toBe('reconnecting'); expect(clients[0].close).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(100); expect(clients).toHaveLength(2);
   });
-
-  describe('metrics', () => {
-    it('should return correct metrics after start', async () => {
-      manager = createTestManager();
-      await manager.start(mockEventDispatcher as never);
-
-      const metrics = manager.getMetrics();
-      expect(metrics.state).toBe('connected');
-      expect(metrics.isConnected).toBe(true);
-      expect(metrics.reconnectAttempt).toBe(0);
-    });
-
-    it('should reflect state changes in metrics', async () => {
-      const succeedingClient = createMockWSClient(false);
-      manager = createTestManager({
-        maxAttempts: 3,
-        wsClient: succeedingClient,
-      });
-
-      await manager.start(mockEventDispatcher as never);
-
-      // Before any reconnect
-      const metricsBefore = manager.getMetrics();
-      expect(metricsBefore.state).toBe('connected');
-
-      // Trigger reconnect via SDK close event
-      const closeListener = findEventListener(succeedingClient, 'close');
-      expect(closeListener).toBeDefined();
-      if (closeListener) {
-        closeListener(1000, 'test close');
-      }
-
-      // State should transition to reconnecting
-      const metricsDuring = manager.getMetrics();
-      expect(metricsDuring.state).toBe('reconnecting');
-    });
+  it('honors a finite retry budget and resets attempts only after real readiness', async () => {
+    const { manager, start, clients } = fixture({ reconnectMaxAttempts: 2 });
+    const failed = vi.fn(); manager.on('reconnectFailed', failed);
+    await start(); clients[0].onError();
+    await vi.advanceTimersByTimeAsync(100); clients[1].onError();
+    await vi.advanceTimersByTimeAsync(200); clients[2].onError();
+    expect(manager.state).toBe('stopped'); expect(failed).toHaveBeenCalledExactlyOnceWith(2);
+    await vi.advanceTimersByTimeAsync(60_000); expect(clients).toHaveLength(3);
   });
-
-  describe('edge cases', () => {
-    it('should handle double stop gracefully', async () => {
-      manager = createTestManager();
-      await manager.start(mockEventDispatcher as never);
-      await manager.stop();
-      await manager.stop(); // Should not throw
-      expect(manager.state).toBe('stopped');
-    });
-
-    it('should not export removed APIs (Issue #2905)', async () => {
-      // Verify that the manager no longer has health check related methods
-      manager = createTestManager();
-      await manager.start(mockEventDispatcher as never);
-
-      // Should not have removed methods
-      expect((manager as unknown as Record<string, unknown>).recordMessageReceived).toBeUndefined();
-      expect((manager as unknown as Record<string, unknown>).startHealthCheck).toBeUndefined();
-      expect((manager as unknown as Record<string, unknown>).stopHealthCheck).toBeUndefined();
-      expect((manager as unknown as Record<string, unknown>).runHealthCheck).toBeUndefined();
-
-      // Metrics should not have health-check-specific fields
-      const metrics = manager.getMetrics();
-      expect(metrics).not.toHaveProperty('pongCount');
-      expect(metrics).not.toHaveProperty('customPingCount');
-      expect(metrics).not.toHaveProperty('customPingIntervalMs');
-      expect(metrics).not.toHaveProperty('lastPongAt');
-      expect(metrics).not.toHaveProperty('timeSinceLastPongMs');
-      expect(metrics).not.toHaveProperty('hasWsInterception');
-      expect(metrics).not.toHaveProperty('lastMessageReceivedAt');
-      expect(metrics).not.toHaveProperty('timeSinceLastMessageMs');
-    });
+  it('makes repeated starts idempotent and late events after stop inert', async () => {
+    const { manager, start, clients } = fixture();
+    await start(); await start(); expect(clients).toHaveLength(1);
+    await manager.stop(); clients[0].onReady(); clients[0].onError(); clients[0].onReconnecting();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(manager.state).toBe('stopped'); expect(clients).toHaveLength(1);
+    await start(); clients[0].onReady(); expect(manager.isHealthy()).toBe(false);
+    clients[1].onReady(); expect(manager.isHealthy()).toBe(true);
   });
-
-  describe('Issue #2259 — MaxListeners leak & DNS pre-check', () => {
-    it('should call removeAllListeners on WSClient before closing', async () => {
-      const mockClient = createMockWSClient(false);
-      const removeAllListenersSpy = vi.fn();
-      mockClient.removeAllListeners = removeAllListenersSpy;
-
-      manager = createTestManager({
-        maxAttempts: 3,
-        wsClient: mockClient,
-      });
-
-      await manager.start(mockEventDispatcher as never);
-
-      // Trigger reconnect via SDK close event (which calls closeClient)
-      const closeListener = findEventListener(mockClient, 'close');
-      expect(closeListener).toBeDefined();
-      if (closeListener) {
-        closeListener(1000, 'test close');
-      }
-
-      // removeAllListeners should have been called on the old client
-      expect(removeAllListenersSpy).toHaveBeenCalled();
-    });
-
-    it('should skip reconnect when DNS pre-check fails', async () => {
-      const mockClient = createMockWSClient(false);
-      manager = createTestManager({
-        maxAttempts: 3,
-        wsClient: mockClient,
-        dnsCheckHost: 'open.feishu.cn',
-      });
-
-      // Stub checkDns to fail (simulates macOS wake from sleep)
-      const checkDnsSpy = vi.spyOn(
-        WsConnectionManager.prototype as unknown as { checkDns: () => Promise<boolean> },
-        'checkDns',
-      ).mockResolvedValue(false);
-
-      await manager.start(mockEventDispatcher as never);
-
-      // Trigger reconnect via SDK close event
-      const closeListener = findEventListener(mockClient, 'close');
-      expect(closeListener).toBeDefined();
-      if (closeListener) {
-        closeListener(1000, 'test close');
-      }
-
-      // Wait for reconnect attempt cycle
-      await vi.advanceTimersByTimeAsync(5000);
-
-      // WSClient.start() should only have been called once (initial connect),
-      // NOT a second time for reconnect since DNS pre-check failed
-      expect(mockClient.start.mock.calls.length).toBe(1);
-
-      // checkDns should have been called during reconnect
-      expect(checkDnsSpy).toHaveBeenCalledWith('open.feishu.cn');
-
-      checkDnsSpy.mockRestore();
-    });
-
-    it('should call checkDns during reconnect when dnsCheckHost is configured', async () => {
-      const mockClient = createMockWSClient(false);
-      manager = createTestManager({
-        maxAttempts: 3,
-        wsClient: mockClient,
-        dnsCheckHost: 'open.feishu.cn',
-      });
-
-      // Stub checkDns to succeed
-      const checkDnsSpy = vi.spyOn(
-        WsConnectionManager.prototype as unknown as { checkDns: () => Promise<boolean> },
-        'checkDns',
-      ).mockResolvedValue(true);
-
-      await manager.start(mockEventDispatcher as never);
-
-      // checkDns should NOT have been called during initial connect
-      expect(checkDnsSpy).not.toHaveBeenCalled();
-
-      // Trigger reconnect via SDK close event
-      const closeListener = findEventListener(mockClient, 'close');
-      expect(closeListener).toBeDefined();
-      if (closeListener) {
-        closeListener(1000, 'test close');
-      }
-
-      // Wait for the reconnect delay to pass so performReconnectAttempt fires
-      await vi.advanceTimersByTimeAsync(5000);
-
-      // checkDns should have been called during reconnect attempt
-      expect(checkDnsSpy).toHaveBeenCalledWith('open.feishu.cn');
-
-      checkDnsSpy.mockRestore();
-    });
-
-    it('should not call checkDns when dnsCheckHost is empty', async () => {
-      const mockClient = createMockWSClient(false);
-      manager = createTestManager({
-        maxAttempts: 3,
-        wsClient: mockClient,
-        // dnsCheckHost defaults to '' in tests → DNS check disabled
-      });
-
-      const checkDnsSpy = vi.spyOn(
-        WsConnectionManager.prototype as unknown as { checkDns: () => Promise<boolean> },
-        'checkDns',
-      ).mockResolvedValue(true);
-
-      await manager.start(mockEventDispatcher as never);
-
-      // Trigger reconnect via SDK close event
-      const closeListener = findEventListener(mockClient, 'close');
-      expect(closeListener).toBeDefined();
-      if (closeListener) {
-        closeListener(1000, 'test close');
-      }
-
-      // Wait for reconnect
-      await vi.advanceTimersByTimeAsync(5000);
-
-      // checkDns should NOT have been called (dnsCheckHost is empty)
-      expect(checkDnsSpy).not.toHaveBeenCalled();
-
-      checkDnsSpy.mockRestore();
-    });
+  it.each(['false', 'rejection'])('handles SDK start %s as an unready retry', async (mode) => {
+    const { manager, start } = fixture({}, () => mode === 'rejection' ? Promise.reject(new Error('fixture')) : Promise.resolve(false));
+    await start(); await vi.advanceTimersByTimeAsync(0);
+    expect(manager.state).toBe('reconnecting'); expect(manager.isHealthy()).toBe(false);
   });
+  it('handles SDK constructor and start failures without an unhandled rejection', async () => {
+    const { manager, start, construct } = fixture();
+    construct.mockImplementationOnce(() => { throw new Error('private SDK error'); });
+    await start(); expect(manager.state).toBe('reconnecting');
+    await vi.advanceTimersByTimeAsync(100); expect(manager.state).toBe('connecting');
+  });
+});
+
+describe('initial DNS and cancellation (#5519)', () => {
+  it('waits in the background and connects automatically after DNS recovers', async () => {
+    const { manager, start, clients } = fixture({ dnsCheckHost: 'configured.example' });
+    const probe = dnsProbe(manager).mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValue(true);
+    await start(); expect(manager.state).toBe('waiting_dns'); expect(clients).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(100); expect(clients).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(200); expect(clients).toHaveLength(1);
+    expect(probe).toHaveBeenCalledWith('configured.example');
+    expect(manager.isHealthy()).toBe(false); clients[0].onReady(); expect(manager.isHealthy()).toBe(true);
+  });
+  it('does not continue an in-flight DNS attempt after stop or a new generation', async () => {
+    const { manager, start, clients } = fixture({ dnsCheckHost: 'configured.example' });
+    let release!: (ready: boolean) => void;
+    const probe = dnsProbe(manager).mockImplementationOnce(() => new Promise(resolve => { release = resolve; })).mockResolvedValue(false);
+    await start(); expect(manager.state).toBe('waiting_dns');
+    await manager.stop(); await start(); release(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(clients).toHaveLength(0); expect(probe).toHaveBeenCalledTimes(2);
+  });
+  it('bounds a stuck resolver and cancels its own in-flight query on stop', async () => {
+    vi.spyOn(dns.Resolver.prototype, 'resolve').mockReturnValue(new Promise(() => {}));
+    const cancel = vi.spyOn(dns.Resolver.prototype, 'cancel').mockImplementation(() => {});
+    const { manager, start, clients } = fixture({ dnsCheckHost: 'fixture.invalid', dnsTimeoutMs: 50 });
+    await start(); expect(manager.state).toBe('waiting_dns');
+    await vi.advanceTimersByTimeAsync(50); expect(cancel).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(100); // The next bounded query is pending.
+    await manager.stop(); expect(cancel).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(clients).toHaveLength(0); expect(manager.state).toBe('stopped');
+  });
+  it('rechecks DNS before replacing a failed client', async () => {
+    const { manager, start, clients } = fixture({ dnsCheckHost: 'configured.example' });
+    const probe = dnsProbe(manager).mockResolvedValueOnce(true).mockResolvedValueOnce(false).mockResolvedValue(true);
+    await start(); await vi.advanceTimersByTimeAsync(0); clients[0].onError();
+    await vi.advanceTimersByTimeAsync(100); expect(clients).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(200); expect(clients).toHaveLength(2); expect(probe).toHaveBeenCalledTimes(3);
+  });
+});
+
+it('reproduces the actual installed SDK early-return behavior without any network (#5519)', async () => {
+  const { manager } = fixture();
+  const request = vi.fn().mockRejectedValue(Object.assign(new Error('offline fixture'), { code: 'ENOTFOUND' }));
+  let actual!: lark.WSClient;
+  class OfflineClient extends lark.WSClient {
+    constructor(options: ConstructorParameters<typeof lark.WSClient>[0]) {
+      super({ ...options, httpInstance: { request } as never }); actual = this;
+    }
+  }
+  Object.assign(manager, { larkSDK: { WSClient: OfflineClient, LoggerLevel: lark.LoggerLevel } });
+  await manager.start(new lark.EventDispatcher({}));
+  await vi.advanceTimersByTimeAsync(0);
+  expect(request).toHaveBeenCalled(); expect(actual.getConnectionStatus().state).not.toBe('connected');
+  expect(manager.isHealthy()).toBe(false); expect(manager.state).toBe('connecting');
 });
