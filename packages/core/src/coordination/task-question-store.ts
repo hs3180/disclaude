@@ -139,6 +139,16 @@ export class TaskQuestionStore {
     if (!['delivery', 'wake'].includes(phase)) { throw new Error('Invalid task question phase'); }
     return this.change(id, current => current[phase] === 'sending' ? { ...current, [phase]: 'uncertain' } : current);
   }
+  /** Only the dispatch owner may return its exact intent before calling any
+   * external port. Unknown/entered RPCs must use uncertain, never this path.
+   */
+  deferUnsent(id: string, phase: 'delivery' | 'wake', intentRevision: number): Promise<TaskQuestionRecord> {
+    if (!['delivery', 'wake'].includes(phase) || !Number.isSafeInteger(intentRevision)) { throw new Error('Invalid unsent task question intent'); }
+    return this.change(id, current => {
+      if (current.revision !== intentRevision || current[phase] !== 'sending' || current.cancelled) { throw new Error('Task question intent changed; preserve it for reconciliation'); }
+      return { ...current, [phase]: phase === 'delivery' ? 'prepared' : 'pending' };
+    });
+  }
   cancel(id: string): Promise<TaskQuestionRecord> { return this.change(id, current => current.cancelled ? current : { ...current, cancelled: true }); }
   private async change(id: string, update: (current: TaskQuestionRecord) => TaskQuestionRecord): Promise<TaskQuestionRecord> {
     return await this.serialize(id, async () => {
