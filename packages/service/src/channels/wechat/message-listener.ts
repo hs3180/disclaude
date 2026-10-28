@@ -157,6 +157,7 @@ export class WeChatMessageListener {
       this.mediaWorker = undefined;
     }
 
+    this.mediaInbox.invalidate();
     // Clear seen messages to free memory
     this.seenMessageIds.clear();
     logger.info('WeChat message listener stopped');
@@ -266,6 +267,7 @@ export class WeChatMessageListener {
   }
 
   private async checkpoint(): Promise<void> {
+    if (!this.options.checkpoint) { return; }
     const inbox = this.mediaInbox.snapshot();
     const state = { cursor: this.client.getUpdatesCursor(), seenMessageIds: [...this.seenMessageIds], ...(inbox.length ? { mediaInbox: inbox } : {}) };
     // Polling and the media worker share one ordered stream of immutable snapshots.

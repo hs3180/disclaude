@@ -22,6 +22,22 @@ function fixture(resolve = vi.fn().mockResolvedValue(message), accept = vi.fn().
 }
 
 describe('durable WeChat media worker', () => {
+  it.each([false, true])('commits a confirmed receipt during drain but not after ownership expires (expired=%s)', async expired => {
+    vi.useFakeTimers();
+    let release!: () => void;
+    const acknowledged = new Promise<void>(resolve => { release = resolve; });
+    const f = fixture(vi.fn().mockResolvedValue(message), vi.fn(() => acknowledged));
+    try {
+      await f.inbox.enqueue(update); await vi.advanceTimersByTimeAsync(0);
+      expect(f.saved()[0].state).toBe('dispatching');
+      f.abort.abort();
+      if (expired) { f.inbox.invalidate(); }
+      release(); await f.worker;
+      expect(f.saved()).toEqual(expired ? [expect.objectContaining({ state: 'dispatching' })] : []);
+      expect(f.accept).toHaveBeenCalledOnce();
+    } finally { release(); }
+  });
+
   it('does not start an uncommitted job, and a repeated update can repair its checkpoint', async () => {
     vi.useFakeTimers();
     const f = fixture(); f.failWrites(true);

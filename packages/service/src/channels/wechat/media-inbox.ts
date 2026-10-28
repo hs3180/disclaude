@@ -17,6 +17,7 @@ export class WeChatMediaInbox {
   private readonly entries = new Map<string, MediaInboxEntry>();
   private readonly ready = new Set<string>();
   private wake?: () => void;
+  private generation = 0;
   constructor(entries: MediaInboxEntry[] = [], private readonly persist: () => Promise<void>,
     private readonly resolve: (update: WeChatUpdate, signal: AbortSignal, cached?: Attachments) => Promise<IncomingMessage | null>,
     private readonly accept: (message: IncomingMessage) => Promise<void>) {
@@ -28,6 +29,8 @@ export class WeChatMediaInbox {
   }
   snapshot(): MediaInboxEntry[] { return structuredClone([...this.entries.values()]); }
   has(id: string): boolean { return this.entries.has(id); }
+  /** Called when the owner finishes draining (or its grace expires). */
+  invalidate(): void { this.generation++; }
 
   async enqueue(update: WeChatUpdate): Promise<void> {
     const id = update.message_id ?? update.msg_id ?? update.client_id;
@@ -64,7 +67,9 @@ export class WeChatMediaInbox {
   }
 
   async run(signal: AbortSignal): Promise<void> {
-    while (!signal.aborted) {
+    const generation = ++this.generation;
+    const active = () => generation === this.generation;
+    while (!signal.aborted && active()) {
       try {
         const now = Date.now();
         const values = [...this.entries.values()].filter(e => this.ready.has(e.id));
@@ -85,7 +90,7 @@ export class WeChatMediaInbox {
         if (entry.state === 'failed') {
           // Notification has its own identity and is attempted at most once.
           entry.reported = true; await this.persist();
-          if (signal.aborted) { return; }
+          if (signal.aborted || !active()) { return; }
           const peer = entry.update.from_user_id;
           if (!peer) { throw new Error('WeChat media recovery has no bound peer'); }
           await this.accept({ messageId: `media-failure:${entry.recoveryId}`, chatId: peer, userId: peer,
@@ -102,7 +107,7 @@ export class WeChatMediaInbox {
             if (files.some(exists => !exists)) { entry.attachments = undefined; }
           }
           message = await this.resolve(entry.update, signal, entry.attachments);
-          if (signal.aborted) { return; }
+          if (signal.aborted || !active()) { return; }
           if (!message?.attachments?.length) { throw new Error('Media resolver returned no attachments'); }
         } catch (error) {
           if (signal.aborted) { return; }
@@ -114,19 +119,23 @@ export class WeChatMediaInbox {
         }
         entry.attachments = message.attachments;
         await this.persist(); // Keep the successful download across restart/dispatch failure.
-        if (signal.aborted) { return; }
+        if (signal.aborted || !active()) { return; }
         entry.state = 'dispatching';
         try { await this.persist(); } catch (error) { entry.state = 'pending'; throw error; }
-        if (signal.aborted) { entry.state = 'uncertain'; return; }
+        if (!active()) { return; }
+        if (signal.aborted) { entry.state = 'pending'; await this.persist(); return; }
         try {
           await this.accept({ ...message,
             content: `[Attachments from an earlier message are now available. Later user instructions take precedence; do not restart or repeat already completed work.]\n\n${message.content}`,
             metadata: { ...message.metadata, attachmentRecovery: { state: 'completed', failures: entry.failures,
               recoveryId: entry.recoveryId, originalMessageId: entry.id, originalTimestamp: message.timestamp } } });
         } catch {
-          entry.state = 'uncertain'; if (signal.aborted) { return; } await this.persist(); continue;
+          if (!active()) { return; }
+          entry.state = 'uncertain'; await this.persist(); continue;
         }
-        if (signal.aborted) { entry.state = 'uncertain'; return; }
+        // A fulfilled admission is a confirmed fact even if polling ended.
+        // Save it during stop's drain lease, but never after that lease expires.
+        if (!active()) { return; }
         this.entries.delete(entry.id); this.ready.delete(entry.id); await this.persist();
       } catch {
         if (signal.aborted) { return; }
