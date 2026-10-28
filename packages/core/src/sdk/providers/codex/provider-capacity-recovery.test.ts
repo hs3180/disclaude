@@ -19,6 +19,9 @@ interface Scenario {
   failures: number;
   throttle?: boolean;
   retryAfter?: string;
+  noRecoveryWork?: boolean;
+  recoveryNotice?: boolean;
+  delayedFailure?: boolean;
 }
 const owned: Array<{ provider: CodexAgentProvider; dir: string }> = [];
 const FAST = {
@@ -41,15 +44,18 @@ function run(turnId) {
  const attempt=count()+1;
  fs.writeFileSync(file('attempts'),String(attempt));fs.appendFileSync(file('times'),Date.now()+'\\n');
  if(attempt<=scenario.failures) {
+  if(!scenario.noRecoveryWork||attempt===1) {
   fs.appendFileSync(file('effects'),'effect\\n');
   const item={id:'work-'+attempt,type:'commandExecution',command:'owned effect',aggregated_output:'done',status:'completed'};
   send({method:'item/started',params:{threadId,turnId,item}});
   send({method:'item/completed',params:{threadId,turnId,item}});
+  } else if(scenario.recoveryNotice) send({method:'item/completed',params:{threadId,turnId,item:{id:'notice-'+attempt,type:'agentMessage',text:'Still working'}}});
   const error=scenario.throttle
    ?{message:'429 Too Many Requests: rate limit reached',codexErrorInfo:'other'}
    :{message:'server_overloaded: Selected model is at capacity. Please try a different model.',codexErrorInfo:'serverOverloaded',...(scenario.retryAfter?{additionalDetails:'Retry-After: '+scenario.retryAfter}:{})};
-  send({method:'error',params:{threadId,turnId,error,willRetry:false}});
-  send({method:'turn/completed',params:{threadId,turn:{id:turnId,status:'failed',error}}});
+  const fail=()=>{send({method:'error',params:{threadId,turnId,error,willRetry:false}});
+  send({method:'turn/completed',params:{threadId,turn:{id:turnId,status:'failed',error}}});};
+  if(scenario.delayedFailure)setTimeout(fail,40);else fail();
  } else {
   send({method:'item/completed',params:{threadId,turnId,item:{id:'reply-'+attempt,type:'agentMessage',text:'capacity-recovered'}}});
   send({method:'turn/completed',params:{threadId,turn:{id:turnId,status:'completed'}}});
@@ -95,9 +101,56 @@ afterEach(() => {
   for (const resource of owned.splice(0)) { resource.provider.dispose(); rmSync(resource.dir, { recursive: true, force: true }); }
   // Capacity waits publish a process-wide cooldown; keep scenarios isolated.
   clearCodexCapacityCooldowns();
+  vi.restoreAllMocks();
 });
 
 describe('Codex capacity continuation (#5468)', () => {
+  it('does not charge long productive work to later recovery or reset the total attempt cap (#5514)', async () => {
+    const fx = fixture({ failures: 4, delayedFailure: true }, {
+      DISCLAUDE_CODEX_CAPACITY_RECOVERY_MAX_ATTEMPTS: '2',
+    });
+    let elapsed = 0, recoveries = 0;
+    const realNow = Date.now.bind(Date);
+    vi.spyOn(Date, 'now').mockImplementation(() => realNow() + elapsed);
+    const messages: AgentMessage[] = [];
+    for await (const message of fx.query().iterator) {
+      messages.push(message);
+      if (message.type === 'status' && message.content.includes('自动续接')) { recoveries++; }
+      if (recoveries && message.type === 'tool_use') { elapsed += 240_000; }
+    }
+    expect(fx.attempts()).toBe(3);
+    expect(fx.recoveryStatuses(messages)).toBe(2);
+    expect(fx.inputs().filter(input => input.includes('Complete the capacity task'))).toHaveLength(1);
+    const results = messages.filter(message => message.type === 'result');
+    expect(results).toHaveLength(1);
+    expect(results[0].metadata?.terminationDetail).toContain('capacity_recovery_attempt_limit');
+  });
+
+  it('keeps empty recovery failures on the continuation path without replaying the task', async () => {
+    const fx = fixture({ failures: 4, noRecoveryWork: true }, { DISCLAUDE_CODEX_CAPACITY_RECOVERY_MAX_ATTEMPTS: '2' });
+    const messages = await collect(fx.query());
+    expect(fx.attempts()).toBe(3);
+    expect(fx.effects()).toHaveLength(1);
+    expect(fx.inputs().filter(input => input.includes('Complete the capacity task'))).toHaveLength(1);
+    expect(fx.inputs().slice(1).every(input => input.includes('上一回合因模型容量暂时不足而中止'))).toBe(true);
+    expect(messages.filter(message => message.type === 'result')).toHaveLength(1);
+  });
+
+  it('does not renew the recovery budget for status text alone', async () => {
+    const fx = fixture({ failures: 3, noRecoveryWork: true, recoveryNotice: true, delayedFailure: true });
+    let elapsed = 0;
+    const realNow = Date.now.bind(Date);
+    vi.spyOn(Date, 'now').mockImplementation(() => realNow() + elapsed);
+    const messages: AgentMessage[] = [];
+    for await (const message of fx.query().iterator) {
+      messages.push(message);
+      if (message.type === 'text' && message.content === 'Still working') { elapsed += 240_000; }
+    }
+    expect(fx.attempts()).toBe(2);
+    expect(fx.recoveryStatuses(messages)).toBe(1);
+    expect(messages.find(message => message.type === 'result')?.metadata?.terminationDetail).toContain('capacity_recovery_budget_exhausted');
+  });
+
   it('continues the same thread after post-progress capacity without replaying the original input', async () => {
     const fx = fixture({ failures: 1 });
     const messages = await collect(fx.query());

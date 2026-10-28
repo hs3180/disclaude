@@ -68,9 +68,10 @@ export function readCodexOverloadFailure(value: unknown, now = Date.now()): Code
  * #5468: bounded same-thread continuation after an explicit capacity failure
  * that already produced output or tool calls. Defaults follow the issue: at
  * most 6 host continuations with nominal 5/10/20/30/30/30s jittered waits and
- * a 180s wall-clock budget measured from the first capacity failure (waits,
- * recovery requests, and other consumed time all count; progress never resets
- * it). The env overrides exist for tests and operational tuning, mirroring
+ * a cumulative 180s recovery budget. Waits and unsuccessful recovery requests
+ * count. An accepted request proven healthy by tool/host work is excluded
+ * (#5514); accumulated recovery time and the attempt count never reset.
+ * The env overrides exist for tests and operational tuning, mirroring
  * readStallPolicy.
  */
 export const CODEX_CAPACITY_RECOVERY_MAX_ATTEMPTS = 6;
