@@ -87,6 +87,8 @@ export function toChatAgentCallbacks(callbacks: SchedulerCallbacks): ChatAgentCa
  * Uses unified configuration structure (Issue #327).
  */
 export interface AgentCreateOptions extends Partial<BaseAgentConfig> {
+  /** Compose host-owned tools/options through the selected provider's chat hook. */
+  configureQueryOptions?: ChatAgentConfig['configureQueryOptions'];
   /** Agent SDK runtime override (normally supplied by a named preset). */
   agentBackend?: AgentPreset['agentBackend'];
   /** Native provider identity; defaults to the delivery chat ID. */
@@ -234,6 +236,7 @@ export class AgentFactory {
         sdkSessionKey: options.sdkSessionKey,
         turnRecovery: options.turnRecovery,
         failureRecorder: options.failureRecorder,
+        configureQueryOptions: options.configureQueryOptions,
       };
 
       return createChatAgent(config);
@@ -297,6 +300,7 @@ export class AgentFactory {
       sdkSessionKey: options.sdkSessionKey,
       turnRecovery: options.turnRecovery,
       failureRecorder: options.failureRecorder,
+      configureQueryOptions: options.configureQueryOptions,
     };
 
     return createChatAgent(config);
