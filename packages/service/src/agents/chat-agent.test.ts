@@ -245,6 +245,8 @@ describe('ChatAgent (service)', () => {
           senderOpenId: 'original-actor', threadRootId: 'original-topic' });
         expect(callbacks.sendMessage).toHaveBeenCalledExactlyOnceWith('oc_test_chat', expect.stringContaining('无需重新发送'), 'original-topic');
         expect(chatAgent.hasPendingWork).toBe(true);
+        expect(chatAgent.hasAdmittedInput('waiting-source')).toBe(true);
+        expect(chatAgent.hasAdmittedInput('unknown-source')).toBe(false);
         const [[input]] = (chatAgent as any).channel.push.mock.calls;
         expect(input).toMatchObject({ correlation: { sourceMessageId: 'waiting-source' },
           inputContext: { actorId: 'original-actor', chatId: 'oc_test_chat', sourceMessageId: 'waiting-source', threadRootId: 'original-topic' },
@@ -267,6 +269,7 @@ describe('ChatAgent (service)', () => {
         await chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'Not accepted', messageId: 'rejected-source', threadRootId: 'original-topic' });
         expect(callbacks.sendMessage.mock.calls.some(([, text]) => text.includes('无需重新发送'))).toBe(false);
         await expect(chatAgent.turnCompleteFor('rejected-source')).rejects.toThrow('Channel closed');
+        expect(chatAgent.hasAdmittedInput('rejected-source')).toBe(false);
       } finally { chatAgent.reset(); finish?.(); ChatAgent.prototype.dispose.call(chatAgent); }
     });
 
