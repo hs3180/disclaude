@@ -28,7 +28,31 @@ callbacks (including RPC input delivery) to exit. `close()` rejects new starts, 
 for their existing handles. Cancellation does not roll back external effects,
 so inspect any partial result before an explicit retry.
 
-This first step provides the independently testable execution API. It does not
-yet expose a model tool, REST/CLI entry, durable task recovery or parent wakeup.
-Those integrations must preserve actual source authority, register the owning
-runner with service shutdown and report each result once.
+The execution API and explicit host-tool adapter are independently testable.
+Default service registration, a REST/CLI entry, durable task recovery and parent
+wakeup remain integrations. They must preserve actual source authority, register
+the owning runner with service shutdown and report each result once.
+
+## Host tool adapter
+
+`createAgentTaskTool(runner, binding)` supplies the backend-neutral
+`run_agent_task` definition for a host to pass through `AgentQueryOptions.tools`.
+Construct it for one authorized originating request with its actual source,
+Project and delivery callbacks. These bindings are immutable for that instance;
+do not reuse it for another source or derive identity from the model's arguments.
+The host must also select a Harness/transport that supports business tools.
+
+Arguments contain only `operationId`, `task` and a relative `workingDirectory`.
+Canonical directory checks reject traversal and symlinks outside the bound
+Project. The same operation ID and work reuse the existing completion handle;
+changing work under that ID fails. Cancellation stops that operation, preserving
+other operation IDs. Results are retained for this instance, up to 256 identities;
+reaching the retention limit rejects new operations without evicting retry
+evidence or cancelling work. This is a retention guard, not an execution budget.
+
+The adapter awaits a result in the parent's tool call. It does not promise that
+a finished parent can be woken later; that is F5. Retry identity is in memory,
+not durable across service restart. Do not construct a fresh instance to replay
+an uncertain external operation. Production tool registration still requires
+trusted input binding and service lifetime wiring; nothing is auto-enabled by
+importing the adapter.
