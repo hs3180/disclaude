@@ -171,3 +171,4 @@ export { type DeliveryHealth } from './health-types.js';
 export * from './messaging/index.js';
 
 export { GoalExecutionService, type GoalExecutionServiceOptions } from './goals/goal-execution-service.js';
+export { createGoalTaskTurnTools } from './goals/goal-task-tools.js';
