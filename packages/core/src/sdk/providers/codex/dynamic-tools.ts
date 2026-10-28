@@ -1,4 +1,4 @@
-import { prepareTools, type ToolDefinition } from '../../tools.js';
+import { prepareTools, type ToolContext, type ToolDefinition } from '../../tools.js';
 import { renderToolResult } from '../../tool-result.js';
 import type {
   CodexAppServerDynamicToolCallRequest,
@@ -10,7 +10,7 @@ export interface CodexDynamicToolRegistry {
   specs: CodexAppServerDynamicToolSpec[];
   /** Includes output contracts even when the native protocol only declares inputs. */
   signature: string;
-  call(request: CodexAppServerDynamicToolCallRequest): Promise<CodexAppServerDynamicToolCallResult>;
+  call(request: CodexAppServerDynamicToolCallRequest, inputContext?: ToolContext['inputContext']): Promise<CodexAppServerDynamicToolCallResult>;
 }
 
 /** The namespace is a Codex transport detail, shared by all host-owned tools. */
@@ -47,7 +47,7 @@ export function createCodexDynamicToolRegistry(
           },
         ]
       : [],
-    call: async (request) => {
+    call: async (request, inputContext) => {
       const tool = request.namespace === HOST_NAMESPACE ? registered.get(request.tool) : undefined;
       if (!tool) {
         return failure('Requested host tool is not registered');
@@ -55,6 +55,7 @@ export function createCodexDynamicToolRegistry(
       try {
         const value = await tool.execute(request.arguments as Record<string, unknown>, {
           signal: request.signal,
+          ...(inputContext ? { inputContext: Object.freeze({ ...inputContext }) } : {}),
         });
         const rendered = renderToolResult(value);
         return {
