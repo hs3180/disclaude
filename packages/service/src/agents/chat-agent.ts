@@ -2584,7 +2584,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                   : ''}。这些操作已经发生，系统不会自动重放；此前的产物尚未经过最终验证，最后一步也可能未执行成功——请先核对本轮已执行的修改与产物。\n` +
                 '确认后直接在本会话发消息继续即可（沿用原会话上下文，无需重发整个任务）。'
               : inputDeliveryFailure
-                ? `⚠️ 本轮异步提问未能确认送达，交互尚未完成。${inputDeliveryFailure.nativeCompleted ? '模型已结束本轮执行。' : ''}` +
+                ? `⚠️ 本轮异步提问未能确认送达，交互尚未完成。${inputDeliveryFailure.nativeCompleted ? '模型已结束本轮执行。' : '本轮执行尚未确认完成。'}` +
                   '请查看已发送的内容，并核对已有操作和产物；系统不会自动重放原任务。'
               : `❌ 本轮 ${failure.provider} 执行失败。${turnFailedWithConnectivityIssue
                 ? '请先核对已执行的操作；该失败特征指向出口网络（代理、DNS 或海外连通性），可先检查本机/路由器的代理与外网连通性，恢复后重试。'

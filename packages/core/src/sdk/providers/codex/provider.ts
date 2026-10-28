@@ -1598,7 +1598,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           const status = event.turn?.status;
           const failed = status === 'failed' || !!asyncDeliveryFailure;
           const interrupted = status === 'interrupted' || status === 'cancelled';
-          const detail = asyncDeliveryFailure?.message ?? event.turn?.error?.message ?? 'unknown error';
+          const detail = [asyncDeliveryFailure?.message, event.turn?.error?.message].filter(Boolean).join('; ') || 'unknown error';
           // #5468: classify capacity even after progress — the post-progress
           // consumer is same-thread continuation, not the pre-work replay.
           const overload = failed && !asyncDeliveryFailure
