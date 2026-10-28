@@ -39,9 +39,12 @@ describe('WeChat channel protocol integration', () => {
     nock('https://novac2c.cdn.weixin.qq.com').get('/c2c/download').query({ encrypted_query_param: 'file-ref' }).reply(200, encrypt(file));
     nock('https://ilinkai.weixin.qq.com').persist().post('/ilink/bot/getconfig').reply(200, { ret: 0, typing_ticket: 'ticket' });
     nock('https://ilinkai.weixin.qq.com').persist().post('/ilink/bot/sendtyping').reply(200, { ret: 0 });
-    nock('https://ilinkai.weixin.qq.com').persist().post('/ilink/bot/getupdates').reply(() => {
+    nock('https://ilinkai.weixin.qq.com').persist().post('/ilink/bot/getupdates').reply(async () => {
       polls++;
       if (polls === 2) { replay(); }
+      // Media and polling now progress independently. In this normal-flow
+      // test, expire auth after the owned handoff, not after an I/O-speed race.
+      if (polls === 3) { await received; }
       return polls === 3 || polls >= 5 ? [200, { ret: -14 }] : [200, { ret: 0, msgs: [update, { ...update, message_id: 'echo', message_type: 2 }], get_updates_buf: 'accepted-cursor' }];
     });
     const sent = nock('https://ilinkai.weixin.qq.com').post('/ilink/bot/sendmessage', body => body.msg.to_user_id === peer && body.msg.context_token === 'private-context' && body.msg.item_list[0].text_item.text === 'agent reply').reply(200, { ret: 0, message_id: 'server-reply-id' });
