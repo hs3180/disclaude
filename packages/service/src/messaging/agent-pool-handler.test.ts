@@ -30,6 +30,7 @@ function createMockAgent(): ChatAgent {
     // turn via turnCompleteFor(messageId) — undefined by default so tests can
     // override per-case.
     turnCompleteFor: vi.fn(() => undefined),
+    waitForWorkSettlement: vi.fn().mockResolvedValue(undefined),
   } as unknown as ChatAgent;
 }
 
