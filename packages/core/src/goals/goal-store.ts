@@ -4,6 +4,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 export type GoalStatus = 'draft' | 'active' | 'paused' | 'blocked' | 'completed' | 'abandoned';
+export type GoalControlAction = 'activate' | 'pause' | 'resume' | 'stop';
 export interface GoalContent {
   objective: string;
   acceptance: string[];
@@ -117,11 +118,33 @@ export class GoalStore {
     return structuredClone(record);
   }
   async update(id: string, expectedRevision: number, patch: Partial<GoalContent>): Promise<GoalRecord> {
-    this.file(id);
     keys(patch, ['objective', 'acceptance', 'progress', 'artifacts']);
-    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1 || Object.values(patch).some(value => value === undefined)) { throw new Error('Invalid goal update'); }
+    if (Object.values(patch).some(value => value === undefined)) { throw new Error('Invalid goal update'); }
     validateContent(patch);
     const snapshot = structuredClone(patch);
+    return await this.change(id, expectedRevision, previous => ({ ...previous, ...snapshot }));
+  }
+  /**
+   * Persist an explicit user command. The authenticated entry point must check
+   * user/chat authority before calling and separately reconcile/cancel native
+   * work. This storage operation never starts a turn or certifies completion.
+   */
+  async control(id: string, expectedRevision: number, action: GoalControlAction): Promise<GoalRecord> {
+    const transitions: Record<GoalControlAction, Partial<Record<GoalStatus, GoalStatus>>> = {
+      activate: { draft: 'active' }, pause: { active: 'paused' },
+      resume: { paused: 'active', blocked: 'active' },
+      stop: { draft: 'abandoned', active: 'abandoned', paused: 'abandoned', blocked: 'abandoned' },
+    };
+    if (!Object.hasOwn(transitions, action)) { throw new Error('Invalid goal control'); }
+    return await this.change(id, expectedRevision, previous => {
+      const status = transitions[action][previous.status];
+      if (!status) { throw new Error('Goal control is not valid in the current state'); }
+      return { ...previous, status };
+    });
+  }
+  private async change(id: string, expectedRevision: number, edit: (previous: GoalRecord) => GoalRecord): Promise<GoalRecord> {
+    this.file(id);
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) { throw new Error('Invalid goal revision'); }
     // Canonicalize existing storage so parent-directory aliases share a queue.
     const file = join(await fs.realpath(this.directory), `${id}.json`);
     const operation = (writes.get(file) ?? Promise.resolve()).then(async () => {
@@ -130,7 +153,7 @@ export class GoalStore {
       if (previous.revision !== expectedRevision) { throw new GoalRevisionConflictError(); }
       if (['completed', 'abandoned'].includes(previous.status)) { throw new Error('Cannot edit a terminal goal'); }
       if (previous.revision === Number.MAX_SAFE_INTEGER) { throw new Error('Goal revision exhausted'); }
-      const record = { ...previous, ...snapshot, revision: previous.revision + 1, updatedAt: new Date().toISOString() };
+      const record = { ...edit(previous), revision: previous.revision + 1, updatedAt: new Date().toISOString() };
       await this.publish(record, false);
       return structuredClone(record);
     });

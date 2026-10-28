@@ -444,4 +444,4 @@ export type {
 
 // Explicit, durable goal records; execution/control is wired separately.
 export { GoalStore, GoalRevisionConflictError } from './goals/goal-store.js';
-export type { GoalRecord, GoalContent, GoalStatus, CreateGoal } from './goals/goal-store.js';
+export type { GoalRecord, GoalContent, GoalStatus, CreateGoal, GoalControlAction } from './goals/goal-store.js';
