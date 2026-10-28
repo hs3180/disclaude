@@ -437,3 +437,7 @@ export type {
   SkillDiagnostic,
   SkillsRegistryResolution,
 } from './skills/index.js';
+
+// Explicit, durable goal records; execution/control is wired separately.
+export { GoalStore, GoalRevisionConflictError } from './goals/goal-store.js';
+export type { GoalRecord, GoalContent, GoalStatus, CreateGoal } from './goals/goal-store.js';
