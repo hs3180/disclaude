@@ -1391,6 +1391,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     let probingLifecycle: CodexAppServerLifecycle | undefined;
     const { timeoutMs: stallTimeoutMs } = readStallPolicy({ ...process.env, ...this.env, ...options.env });
     const capacityRecoveryPolicy = readCodexCapacityRecoveryPolicy({ ...process.env, ...this.env, ...options.env });
+    let noteCapacityProgress = (): void => {};
     let turnCanRetry = true;
     // #5452: bounded probe of the latest tool item this turn (kind/status/input
     // length only) so an output-cap failure receipt can say what the last tool
@@ -1519,6 +1520,9 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       }
       if (eventTurnId !== activeTurnId) {return;}
       if (unsafeItem) { turnCanRetry = false; }
+      if ((method === 'item/started' || method === 'item/completed') && isToolItem(event.item?.type)) {
+        noteCapacityProgress();
+      }
       // #5467: an async question this session cannot deliver interactively
       // degrades to a plain-text question. It is NOT a failure — the turn
       // completes normally and the user answers in-band as a new message
@@ -1692,16 +1696,24 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           ]);
           if (next.done || stopped) {break;}
           let retryWaitedMs = 0;
-          // #5468: post-progress capacity-continuation state, per logical
-          // input — the wall-clock budget never resets on progress.
+          // #5514: charge recovery waits/unsuccessful requests cumulatively,
+          // while proven productive runs do not spend later recovery eligibility.
           let capacityRecoveryAttempt = 0;
           let capacityFirstFailureAt: number | undefined;
+          let capacityAcceptedAt: number | undefined;
+          let capacityHealthyFrom: number | undefined;
+          noteCapacityProgress = () => {
+            // A real tool/host interaction proves this accepted request resumed
+            // work. Status text, reasoning heartbeats and turn/start alone do not.
+            capacityHealthyFrom ??= capacityAcceptedAt;
+          };
           let capacityRecoveryNext = false;
           for (let retryAttempt = 0; ; retryAttempt++) {
             turnCanRetry = true;
             deferredTurnOverload = undefined;
             deferredFailedTurnId = undefined;
             outputLimitLastTool = undefined;
+            capacityAcceptedAt = undefined;
             rpcStage = undefined;
             earlyEvents.length = 0;
             llmReservation ??= reserveLlmSession(options.llmSessionLimit);
@@ -1725,6 +1737,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
                 throw new Error('Host tool request has no matching active Codex turn');
               }
               turnCanRetry = false;
+              noteCapacityProgress();
               return dynamicToolRegistry.call(request);
             } : undefined;
             try {
@@ -1746,6 +1759,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
                 if (!boundTurn || stopped || request.signal.aborted || request.threadId !== threadId || request.turnId !== boundTurn
                   || activeTurnId !== boundTurn || !options.onUserInput) { throw new Error('Input request has no active channel turn'); }
                 turnCanRetry = false;
+                noteCapacityProgress();
                 if (request.kind === 'async-message' && (!next.value.inputContext || !options.onAsyncUserInputAnswer)) {
                   throw new CodexAsyncInputDeliveryError('unsupported');
                 }
@@ -1837,6 +1851,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               );
               bindTurn(activeTurnId);
               rpcStage = 'turn-active';
+              if (capacityRecoveryAttempt > 0) { capacityAcceptedAt = Date.now(); }
               logger.debug({ sessionKey, threadId, turnId: activeTurnId }, 'Codex turn started');
               // Keep the lifecycle anchor available to control/steer consumers,
               // but provide no user-facing content for this internal status.
@@ -1882,8 +1897,17 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             }
             if (stopped || !deferredTurnOverload) { break; }
             const failure = deferredTurnOverload as CodexOverloadFailure;
+            if (capacityHealthyFrom !== undefined && capacityFirstFailureAt !== undefined) {
+              // Exclude the proven-healthy accepted request, preserving every
+              // previous wait and failed recovery interval plus the attempt cap.
+              capacityFirstFailureAt += Math.max(0, Date.now() - capacityHealthyFrom);
+              capacityHealthyFrom = undefined;
+            }
+            // Once the logical input has made work, even an empty failed recovery
+            // must continue the thread rather than replay the original request.
+            const preWorkRetry = turnCanRetry && capacityRecoveryAttempt === 0;
             let delayMs: number | undefined;
-            if (turnCanRetry) {
+            if (preWorkRetry) {
               delayMs = codexOverloadRetryDelay(failure, retryAttempt, retryWaitedMs);
             } else {
               // #5468: an explicit capacity failure after progress continues
@@ -1898,17 +1922,21 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             // publish the final wait for other sessions to align behind.
             if (delayMs !== undefined && isCodexCapacityFailure(failure)) {
               delayMs = alignCodexCapacityWait(codexModel ?? '', delayMs);
-              const fitsBudget = turnCanRetry
+              const fitsBudget = preWorkRetry
                 ? retryWaitedMs + delayMs <= CODEX_OVERLOAD_MAX_WAIT_MS
                 : Date.now() + delayMs - (capacityFirstFailureAt as number) <= capacityRecoveryPolicy.budgetMs;
               if (!fitsBudget) { delayMs = undefined; } else { recordCodexCapacityCooldown(codexModel ?? '', delayMs); }
             }
             if (delayMs === undefined) {
+              const recoveryReason = !preWorkRetry && isCodexCapacityFailure(failure)
+                ? capacityRecoveryAttempt >= capacityRecoveryPolicy.maxAttempts
+                  ? 'capacity_recovery_attempt_limit' : 'capacity_recovery_budget_exhausted'
+                : undefined;
               push({ type: 'result', role: 'assistant', content: `❌ Codex turn failed: ${failure.message}${capacityRecoveryAttempt ? `（已自动续接 ${capacityRecoveryAttempt} 次后仍容量不足）` : ''}`,
-                metadata: { terminatedReason: 'turn_failed', terminationDetail: `${failure.message}${capacityRecoveryAttempt ? `; capacityRecoveryAttempts=${capacityRecoveryAttempt}` : ''}` } });
+                metadata: { terminatedReason: 'turn_failed', terminationDetail: `${failure.message}${capacityRecoveryAttempt ? `; capacityRecoveryAttempts=${capacityRecoveryAttempt}` : ''}${recoveryReason ? `; ${recoveryReason}; capacityRecoveryElapsedMs=${Math.max(0, Date.now() - (capacityFirstFailureAt as number))}; capacityRecoveryBudgetMs=${capacityRecoveryPolicy.budgetMs}` : ''}` } });
               break;
             }
-            if (turnCanRetry) {
+            if (preWorkRetry) {
               logger.warn({ sessionKey, retryAttempt: retryAttempt + 1, delayMs, cause: failure.message }, 'Retrying Codex overload before output or tools');
               push({ type: 'status', role: 'system', content: `⏳ Codex 服务暂时过载，将在 ${(delayMs / 1000).toFixed(1)} 秒后重试（${retryAttempt + 1}/${CODEX_OVERLOAD_MAX_RETRIES}）。` });
             } else {
