@@ -1,48 +1,8 @@
 /**
- * WebSocket Connection Manager & Auto-Reconnect.
- *
- * Wraps the Feishu SDK's WSClient with connection state tracking and
- * exponential-backoff reconnection triggered by SDK error/close events.
- *
- * ### Why no custom health check?
- *
- * The Feishu SDK (@larksuiteoapi/node-sdk) WSClient has built-in keepalive:
- * - `pingInterval: 120s` — SDK automatically sends ping frames
- * - `reconnectCount: -1` — infinite reconnect attempts
- * - `reconnectInterval: 120s` — reconnect delay
- *
- * A previous custom health check (Issue #1351, simplified in #1666) monitored
- * `lastMessageReceivedAt` and triggered reconnect when no message arrived within
- * 130s. However, `recordMessageReceived()` was only called from EventDispatcher
- * handlers, **not** from SDK-level ping/pong frames — causing ~15 false-positive
- * reconnections per 50 minutes (Issue #2905).
- *
- * This module now relies on SDK error/close events to detect connection failures,
- * and adds its own exponential-backoff reconnect with DNS pre-check on top of the
- * SDK's built-in mechanism.
- *
- * ### Architecture
- *
- * ```
- * connectFresh() → create WSClient + register error/close listeners
- *     ↓
- * SDK detects connection loss → emits 'close'/'error'
- *     ↓
- * initiateReconnect() → force-close old client → create new one with backoff
- * ```
- *
- * Usage:
- * ```typescript
- * const manager = new WsConnectionManager({ appId, appSecret });
- * manager.on('stateChange', (state) => logger.info({ state }, 'Connection state'));
- * await manager.start(eventDispatcher);
- * await manager.stop();
- * ```
- *
- * @module channels/feishu/ws-connection-manager
- * @see https://github.com/hs3180/disclaude/issues/2905
- * @see https://github.com/hs3180/disclaude/issues/1666
- * @see https://github.com/hs3180/disclaude/issues/1351
+ * Track Feishu's actual SDK lifecycle. DNS/initial connection attempts run in
+ * the background; an SDK start acknowledgement is never a readiness receipt.
+ * The SDK owns live reconnects. Only terminal/initial failures create a fresh
+ * client, with DNS preflight and bounded backoff. No business-message watchdog.
  */
 
 import dns from 'dns/promises';
@@ -55,7 +15,7 @@ const logger = createLogger('WsConnectionManager');
 /**
  * WebSocket connection states.
  */
-export type WsConnectionState = 'connected' | 'reconnecting' | 'stopped';
+export type WsConnectionState = 'waiting_dns' | 'connecting' | 'connected' | 'reconnecting' | 'stopped';
 
 /**
  * Event map for WsConnectionManager.
@@ -103,7 +63,7 @@ export interface WsConnectionManagerConfig {
   /** Override reconnect max attempts (-1 = infinite) */
   reconnectMaxAttempts?: number;
   /**
-   * DNS pre-check host for reconnect attempts (Issue #2259).
+   * DNS pre-check host for initial and reconnect attempts (Issue #5519).
    *
    * Before each reconnect attempt, the manager resolves this hostname to verify
    * that the network is available.  This prevents futile WebSocket connection
@@ -113,6 +73,10 @@ export interface WsConnectionManagerConfig {
    * @default 'open.feishu.cn'
    */
   dnsCheckHost?: string;
+  /** Bound each DNS probe; default 3000 ms. */
+  dnsTimeoutMs?: number;
+  /** Bound initial SDK configuration/handshake; default 30000 ms. */
+  connectTimeoutMs?: number;
 }
 
 /**
@@ -137,7 +101,7 @@ export function calculateReconnectDelay(
   const exponentialDelay = baseDelayMs * Math.pow(WS_HEALTH.RECONNECT.BACKOFF_MULTIPLIER, attempt);
   const cappedDelay = Math.min(exponentialDelay, maxDelayMs);
   const jitter = Math.floor(Math.random() * jitterMs);
-  return cappedDelay + jitter;
+  return Math.min(cappedDelay + jitter, maxDelayMs);
 }
 
 /**
@@ -159,30 +123,6 @@ function createDefaultSdkLogger(): {
   };
 }
 
-/**
- * WebSocket Connection Manager.
- *
- * Wraps the Feishu SDK's WSClient with connection state tracking and
- * exponential-backoff reconnection triggered by SDK error/close events.
- *
- * ### How it works (Issue #2905)
- *
- * 1. **Start**: Creates a WSClient and registers error/close listeners.
- *
- * 2. **SDK-driven reconnect**: When the SDK emits `error` or `close` events,
- *    the manager initiates its own reconnect sequence with exponential backoff
- *    and DNS pre-check.
- *
- * 3. **Connection state machine**: Explicit state tracking (connected, reconnecting, stopped).
- *
- * ### No custom health check
- *
- * The Feishu SDK already has built-in ping/pong with auto-reconnect
- * (pingInterval: 120s, reconnectCount: -1). A previous custom health check
- * (Issue #1351/#1666) that monitored `lastMessageReceivedAt` produced false
- * positives because it only tracked EventDispatcher events, not SDK-level
- * ping/pong frames — causing ~15 spurious reconnections per 50 minutes.
- */
 export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents> {
   private readonly config: WsConnectionManagerConfig;
 
@@ -194,6 +134,10 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
 
   // State machine
   private _state: WsConnectionState = 'stopped';
+  private started = false;
+  private generation = 0;
+  private connectTimer?: ReturnType<typeof setTimeout>;
+  private dnsAbort?: AbortController;
 
   // Reconnect state
   private reconnectAttempt: number = 0;
@@ -270,30 +214,27 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
    * @param eventDispatcher - Feishu SDK EventDispatcher for handling events
    */
   async start(eventDispatcher: lark.EventDispatcher): Promise<void> {
+    if (this.started) { return; }
+    this.started = true;
     this.eventDispatcher = eventDispatcher;
-    const success = await this.connectFresh();
-
-    if (!success) {
-      logger.warn('Initial connection failed, entering reconnect mode');
-      this.initiateReconnect();
-    }
+    this.dnsAbort = new AbortController();
+    const generation = ++this.generation;
+    // Scheduling the attempt must not hold up other channels or local HTTP.
+    void this.performReconnectAttempt(generation, true);
+    await Promise.resolve();
   }
 
-  /**
-   * Stop the connection manager and clean up all resources.
-   */
+  /** Stop DNS, timers and SDK ownership before any asynchronous work resumes. */
   async stop(): Promise<void> {
-    await Promise.resolve();
-    logger.info('WsConnectionManager stopping');
-
+    this.started = false;
+    this.generation++;
+    this.dnsAbort?.abort();
     this.clearReconnectTimer();
     this.closeClient();
-
     this.transitionTo('stopped');
     this.isReconnecting = false;
     this.reconnectAttempt = 0;
-
-    logger.info('WsConnectionManager stopped');
+    await Promise.resolve();
   }
 
   /**
@@ -308,74 +249,54 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
 
   // ─── Connection lifecycle ────────────────────────────────────────────────
 
-  /**
-   * Create a fresh WSClient and connect.
-   *
-   * Registers error/close event listeners on the WSClient to trigger
-   * reconnection when the SDK detects connection failures (Issue #2905).
-   *
-   * @returns `true` if connection succeeded
-   */
-  private async connectFresh(): Promise<boolean> {
-    const sdkLogger = this.config.sdkLogger ?? createDefaultSdkLogger();
-    const connectStartMs = Date.now(); // Issue #3292: track connection attempt timing
-    logger.debug({ timing: 'ws:connect', attempt: this.reconnectAttempt, elapsedMs: 0 });
-
+  /** Start one SDK owner; only its lifecycle callbacks may declare readiness. */
+  private async connectFresh(generation: number): Promise<void> {
+    if (!this.started || generation !== this.generation) { return; }
+    const connectStartMs = Date.now();
+    this.transitionTo('connecting');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let client: any;
+    const ownsClient = (): boolean => this.started && this.generation === generation && this.wsClient === client;
+    const ready = (): void => {
+      if (!ownsClient() || this._state === 'connected') { return; }
+      this.clearConnectTimer();
+      const attempt = this.reconnectAttempt;
+      this.reconnectAttempt = 0;
+      this.isReconnecting = false;
+      this.transitionTo('connected');
+      logger.info({ timing: 'ws:connect', attempt, elapsedMs: Date.now() - connectStartMs, ok: true },
+        'WebSocket connection established');
+      // Also flush messages queued before the very first handshake.
+      this.emit('reconnected', attempt);
+    };
     try {
-      this.wsClient = new this.larkSDK.WSClient({
+      client = new this.larkSDK.WSClient({
         appId: this.config.appId,
         appSecret: this.config.appSecret,
-        logger: sdkLogger,
+        logger: this.config.sdkLogger ?? createDefaultSdkLogger(),
         loggerLevel: this.config.sdkLogLevel ?? this.larkSDK.LoggerLevel.info,
+        handshakeTimeoutMs: this.config.connectTimeoutMs ?? 30_000,
+        onReady: ready,
+        onReconnected: ready,
+        onReconnecting: () => {
+          if (ownsClient()) { this.transitionTo('reconnecting'); }
+        },
+        onError: () => {
+          if (ownsClient()) { this.initiateReconnect(); }
+        },
       });
-
-      if (!this.eventDispatcher) {
-        throw new Error('EventDispatcher not set');
+      this.wsClient = client;
+      this.connectTimer = setTimeout(() => {
+        if (ownsClient()) { this.initiateReconnect(); }
+      }, this.config.connectTimeoutMs ?? 30_000);
+      this.connectTimer.unref?.();
+      const result = await client.start({ eventDispatcher: this.eventDispatcher });
+      if (ownsClient() && result === false) { this.initiateReconnect(); }
+    } catch {
+      // SDK errors can contain credentials; lifecycle state is sufficient here.
+      if (this.started && generation === this.generation && (!client || ownsClient())) {
+        this.initiateReconnect();
       }
-
-      const startResult = await this.wsClient.start({ eventDispatcher: this.eventDispatcher });
-
-      // SDK may resolve to false (instead of throwing) when connection fails
-      if (startResult === false) {
-        throw new Error('WSClient.start() returned false');
-      }
-
-      // Register SDK error/close event listeners (Issue #2905)
-      // These trigger reconnect when the SDK detects connection failures,
-      // replacing the previous custom health check mechanism.
-      if (typeof this.wsClient.on === 'function') {
-        this.wsClient.on('error', (err: unknown) => {
-          logger.warn({ err }, 'WSClient error event received');
-        });
-
-        this.wsClient.on('close', (code?: number, reason?: string) => {
-          logger.warn(
-            { code, reason, state: this._state, isReconnecting: this.isReconnecting },
-            'WSClient close event received',
-          );
-          // Only trigger reconnect if we're currently connected and not already
-          // in the reconnect loop — prevents double-reconnect
-          if (this._state === 'connected' && !this.isReconnecting) {
-            this.initiateReconnect();
-          }
-        });
-      }
-
-      this.reconnectAttempt = 0;
-      this.transitionTo('connected');
-
-      logger.info(
-        { timing: 'ws:connect', attempt: this.reconnectAttempt, elapsedMs: Date.now() - connectStartMs, ok: true },
-        'WebSocket connection established',
-      );
-      return true;
-    } catch (error) {
-      logger.error(
-        { err: error, attempt: this.reconnectAttempt, timing: 'ws:connect', elapsedMs: Date.now() - connectStartMs, ok: false },
-        'Failed to establish WebSocket connection',
-      );
-      this.closeClient();
-      return false;
     }
   }
 
@@ -386,14 +307,17 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
    * accumulation across reconnect cycles (Issue #2259 — MaxListenersExceededWarning).
    */
   private closeClient(): void {
-    if (this.wsClient) {
+    this.clearConnectTimer();
+    const client = this.wsClient;
+    this.wsClient = undefined; // Invalidate callbacks before close can invoke them.
+    if (client) {
       try {
         // Prevent listener accumulation: old WSClient instances may hold
         // registered event listeners that pile up across reconnect cycles.
-        if (typeof this.wsClient.removeAllListeners === 'function') {
-          this.wsClient.removeAllListeners();
+        if (typeof client.removeAllListeners === 'function') {
+          client.removeAllListeners();
         }
-        this.wsClient.close({ force: true });
+        client.close({ force: true });
       } catch (error) {
         logger.debug({ err: error }, 'Error while closing WSClient');
       }
@@ -407,7 +331,7 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
    * Begin the reconnect sequence with exponential backoff + jitter.
    */
   private initiateReconnect(): void {
-    if (this.isReconnecting) {
+    if (!this.started || this.isReconnecting) {
       logger.debug('Reconnect already in progress, skipping');
       return;
     }
@@ -429,6 +353,7 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
    */
   private scheduleReconnectAttempt(): void {
     this.clearReconnectTimer();
+    if (!this.started) { return; }
 
     if (this.reconnectMaxAttempts >= 0 && this.reconnectAttempt >= this.reconnectMaxAttempts) {
       const reconnectDurationMs = Date.now() - this.reconnectStartMs; // Issue #3292
@@ -437,6 +362,8 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
         'Max reconnect attempts exhausted',
       );
       this.isReconnecting = false;
+      this.started = false;
+      this.dnsAbort?.abort();
       this.transitionTo('stopped');
       this.emit('reconnectFailed', this.reconnectAttempt);
       return;
@@ -454,8 +381,9 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
       'Scheduling reconnect attempt',
     );
 
+    const { generation } = this;
     this.reconnectTimer = setTimeout(() => {
-      void this.performReconnectAttempt();
+      void this.performReconnectAttempt(generation);
     }, delay);
 
     if (this.reconnectTimer.unref) {
@@ -463,72 +391,48 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
     }
   }
 
-  /**
-   * Perform a single reconnect attempt.
-   *
-   * Includes a configurable DNS pre-check (Issue #2259): on macOS, after waking
-   * from sleep, DNS resolution may briefly fail.  When `dnsCheckHost` is set, we
-   * probe that hostname before trying the expensive WSClient startup; if DNS is
-   * not ready we skip this round and let the normal back-off schedule the next
-   * attempt.
-   */
-  private async performReconnectAttempt(): Promise<void> {
-    this.reconnectAttempt++;
-
-    if (!this.eventDispatcher) {
-      logger.error('No event dispatcher available for reconnect');
-      this.isReconnecting = false;
-      return;
-    }
-
-    // DNS pre-check: skip reconnect when DNS is not yet available
-    // (e.g. macOS DarkWake after sleep — Issue #2259)
+  /** DNS failures never construct an SDK client or block local startup. */
+  private async performReconnectAttempt(generation: number, initial = false): Promise<void> {
+    if (!this.started || generation !== this.generation) { return; }
+    if (!initial) { this.reconnectAttempt++; }
     if (this.dnsCheckHost) {
-      const dnsReady = await this.checkDns(this.dnsCheckHost);
-      if (!dnsReady) {
-        logger.warn(
-          { attempt: this.reconnectAttempt, host: this.dnsCheckHost },
-          'DNS pre-check failed — network not ready, skipping reconnect attempt',
-        );
+      this.transitionTo('waiting_dns');
+      let ready = false;
+      try { ready = await this.checkDns(this.dnsCheckHost); } catch { /* Retry below. */ }
+      if (!this.started || generation !== this.generation) { return; }
+      if (!ready) {
+        this.isReconnecting = true;
         this.scheduleReconnectAttempt();
         return;
       }
     }
-
-    const success = await this.connectFresh();
-
-    if (success) {
-      this.isReconnecting = false;
-      const reconnectDurationMs = Date.now() - this.reconnectStartMs; // Issue #3292
-      logger.info(
-        { attempt: this.reconnectAttempt, timing: 'ws:reconnect', elapsedMs: reconnectDurationMs, ok: true },
-        'Reconnected successfully',
-      );
-      this.emit('reconnected', this.reconnectAttempt);
-    } else {
-      logger.warn(
-        { attempt: this.reconnectAttempt },
-        'Reconnect attempt failed, scheduling next',
-      );
-      this.scheduleReconnectAttempt();
-    }
+    if (!this.started || generation !== this.generation) { return; }
+    this.isReconnecting = false;
+    await this.connectFresh(generation);
   }
 
-  /**
-   * Check whether DNS resolution works for the given host.
-   *
-   * Protected (instead of private) so tests can spy on or override it via
-   * the prototype without module-level mocking of `dns/promises`.
-   *
-   * @returns `true` if resolution succeeded, `false` otherwise
-   */
+  /** A cancellable, bounded resolver per probe; never cancel another caller's DNS. */
   protected async checkDns(host: string): Promise<boolean> {
-    try {
-      await dns.resolve(host);
-      return true;
-    } catch {
-      return false;
-    }
+    const signal = this.dnsAbort?.signal;
+    if (signal?.aborted) { return false; }
+    const timeoutMs = this.config.dnsTimeoutMs ?? 3_000;
+    const resolver = new dns.Resolver({ timeout: timeoutMs, tries: 1 });
+    return await new Promise<boolean>((resolve) => {
+      const finish = (ready: boolean): void => {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', cancel);
+        resolve(ready);
+      };
+      const cancel = (): void => { resolver.cancel(); finish(false); };
+      const timer = setTimeout(cancel, timeoutMs);
+      timer.unref?.();
+      signal?.addEventListener('abort', cancel, { once: true });
+      void resolver.resolve(host).then(() => finish(true), () => finish(false));
+    });
+  }
+
+  private clearConnectTimer(): void {
+    if (this.connectTimer) { clearTimeout(this.connectTimer); this.connectTimer = undefined; }
   }
 
   private clearReconnectTimer(): void {
