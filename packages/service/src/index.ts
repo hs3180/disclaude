@@ -124,6 +124,8 @@ export { ChatSessionPool, type ChatSessionPoolOptions } from './chat-session-poo
 // Agents (Issue #2717: consolidated into service)
 export { AgentFactory, toChatAgentCallbacks, type AgentCreateOptions } from './agents/factory.js';
 export { AgentTaskRunner, type AgentTaskRequest, type AgentTaskResult, type AgentTaskHandle } from './agents/agent-task-runner.js';
+export { NativeGoalExecutor, type NativeGoalSource, type NativeGoalExecutorOptions } from './agents/native-goal-executor.js';
+export type { NativeGoalReport } from './agents/goal-report-tool.js';
 export { ChatAgent } from './agents/chat-agent.js';
 export type { ChatAgentCallbacks, ChatAgentConfig } from './agents/types.js';
 
