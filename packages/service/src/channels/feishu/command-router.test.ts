@@ -57,6 +57,15 @@ describe('tryHandleSlashCommand', () => {
       expect(await store.listIds()).toEqual([id]);
     } finally { rmSync(workspaceDir, { recursive: true, force: true }); }
   });
+  it('carries the raw platform source ID outside Goal arguments into control dispatch', async () => {
+    const { deps } = makeDeps({ hasControlHandler: true, controlResponse: { success: true, message: 'accepted' } });
+    await tryHandleSlashCommand({ textWithoutMentions: '/goal start some-id 1', chatId: 'oc_x',
+      actorId: 'ou_actual', sourceMessageId: 'om_source', threadRootId: 'om_topic' }, deps);
+    expect(deps.emitControl).toHaveBeenCalledWith(expect.objectContaining({ actorId: 'ou_actual',
+      sourceMessageId: 'om_source', threadRootId: 'om_topic', data: { args: ['start', 'some-id', '1'] } }));
+    expect(deps.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ threadId: 'om_topic' }));
+  });
+
   it.each([
     '/project use my project@home @_user_1',
     '/project use my project@home ${@_user_1}',

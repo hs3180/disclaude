@@ -1416,7 +1416,7 @@ export class MessageHandler {
     // /reset or /stop typed inside a topic-group thread addresses that
     // thread's agent slot rather than the chat-scoped one.
     const commandInput: import('./command-router.js').CommandRouterInput = {
-      textWithoutMentions, mentions, chatId: chat_id, threadRootId,
+      textWithoutMentions, mentions, chatId: chat_id, threadRootId, sourceMessageId: message_id,
       ...(chat_type === 'p2p' || chat_type === 'group' || chat_type === 'topic' ? { chatType: chat_type } : {}),
       actorId: extractOpenId(sender),
     };

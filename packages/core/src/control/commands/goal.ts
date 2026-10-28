@@ -6,6 +6,7 @@ const usage = [
   '`/goal show <ID>` 查看目标、版本及验收要求',
   '`/goal create <目标> | <验收要求1> | <验收要求2>` 保存草稿',
   '`/goal edit <ID> <版本> <目标> | <验收要求1> | <验收要求2>` 修订目标和验收要求',
+  '`/goal start|pause|resume|stop <ID> <版本>` 显式控制执行（需启用原生执行器）',
 ].join('\n');
 const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const labels = { draft: '草稿（尚未启动）', active: '已激活', paused: '已暂停', blocked: '有阻塞', completed: '已完成', abandoned: '已停止' };
@@ -24,13 +25,15 @@ export const handleGoal: CommandHandler<'goal'> = async (command, context) => {
   if (typeof command.actorId !== 'string' || !command.actorId.trim()) {
     return { success: false, message: '无法核对用户身份，请在聊天中直接发送 /goal 命令。' };
   }
+  const { chatId, actorId } = command;
   const args = command.data?.args ?? [];
   if (!Array.isArray(args) || args.length > 2048 || !args.every(item => typeof item === 'string')) {
     return { success: false, message: usage };
   }
   const [action = 'list', id] = args;
-  const projectRoot = project.resolveCwd(command.chatId).boundWorkingDir ?? project.getWorkspaceDir();
-  const belongs = (record: GoalRecord) => record.chatId === command.chatId && record.projectRoot === projectRoot;
+  const resolution = project.resolveCwd(chatId);
+  const projectRoot = resolution.boundWorkingDir ?? project.getWorkspaceDir();
+  const belongs = (record: GoalRecord) => record.chatId === chatId && record.projectRoot === projectRoot;
   try {
     if (action === 'list') {
       const page = args[1] === undefined ? 1 : Number(args[1]);
@@ -50,6 +53,38 @@ export const handleGoal: CommandHandler<'goal'> = async (command, context) => {
         ].join('\n\n');
       return { success: !unreadable, message: message + (unreadable ? '\n\n部分 Goal 记录暂不可读取，请联系维护者核查。' : '') };
     }
+    if (['start', 'pause', 'resume', 'stop'].includes(action)) {
+      const revision = Number(args[2]);
+      if (args.length !== 3 || !id || !idPattern.test(id) || !Number.isSafeInteger(revision) || revision < 1) {
+        return { success: false, message: usage };
+      }
+      if (!context.goalExecution) { return { success: false, message: '当前入口尚未启用 Goal 原生执行器，未启动或改变执行状态。' }; }
+      const { sourceMessageId, threadRootId } = command;
+      if (typeof sourceMessageId !== 'string' || !sourceMessageId.trim()) {
+        return { success: false, message: '缺少原始消息上下文，请在聊天中直接发送 Goal 控制命令。' };
+      }
+      const previous = await store.get(id);
+      if (!previous || !belongs(previous)) { return { success: false, message: '当前聊天和项目中找不到此 Goal。' }; }
+      if (previous.revision !== revision) { throw new GoalRevisionConflictError(); }
+      if ((action === 'start' || action === 'resume') && resolution.reason === 'bound-missing') {
+        return { success: false, message: '绑定的项目目录暂不可用，未启动执行。请先恢复目录；仍可查看、暂停或停止 Goal。' };
+      }
+      const request = { goalId: id, expectedRevision: revision, chatId, projectRoot,
+        actorId, sourceMessageId, ...(threadRootId ? { threadRootId } : {}) };
+      let record: GoalRecord;
+      if (action === 'start' || action === 'resume') {
+        ({ record } = await context.goalExecution.start(request, action === 'start' ? 'activate' : 'resume'));
+      } else {
+        const result = await context.goalExecution.control(request, action as 'pause' | 'stop');
+        ({ record } = result);
+        void result.settlement?.catch(() => context.logger?.warn({ goalId: id }, 'Goal cancellation settlement could not be confirmed'));
+      }
+      if (record.id !== id || !belongs(record)) { throw new Error('Unexpected Goal scope'); }
+      const notice = action === 'start' ? '已启动 Goal。' : action === 'resume' ? '已恢复 Goal。'
+        : action === 'pause' ? '已记录暂停；如有正在执行的工作，等待其结算后才能恢复。'
+          : '已记录停止；如有正在执行的工作，仍需等待取消结算。';
+      return { success: true, message: `${notice}\n\n${format(record)}` };
+    }
     if (action !== 'create' && action !== 'show' && action !== 'edit') { return { success: false, message: usage }; }
     if (action !== 'create' && (!id || !idPattern.test(id))) { return { success: false, message: usage }; }
     if (action === 'show') {
@@ -64,7 +99,7 @@ export const handleGoal: CommandHandler<'goal'> = async (command, context) => {
       || (action === 'edit' && (!Number.isSafeInteger(revision) || (revision as number) < 1))) { return { success: false, message: usage }; }
     const [objective, ...acceptance] = parts;
     if (action === 'create') {
-      const record = await store.create({ chatId: command.chatId, projectRoot, objective, acceptance });
+      const record = await store.create({ chatId, projectRoot, objective, acceptance });
       return { success: true, message: `已保存 Goal 草稿，尚未启动执行。\n\n${format(record)}` };
     }
     const previous = await store.get(id);
@@ -76,9 +111,9 @@ export const handleGoal: CommandHandler<'goal'> = async (command, context) => {
     return { success: true, message: `已修订 Goal。\n\n${format(revised)}` };
   } catch (error) {
     if (error instanceof GoalRevisionConflictError) {
-      return { success: false, message: `Goal 已有更新，未覆盖新内容。请先用 /goal show ${id} 查看最新版本，再修订。` };
+      return { success: false, message: `Goal 已有更新，未覆盖新内容。请先用 /goal show ${id} 查看最新版本，再提交操作。` };
     }
     context.logger?.warn({ action }, 'Goal record command could not be confirmed');
-    return { success: false, message: 'Goal 记录读写未成功确认。请联系维护者核查存储，并用 /goal list 核对已保存记录。' };
+    return { success: false, message: 'Goal 操作未成功确认。请先用 /goal list 或 /goal show 核对状态，再联系维护者检查执行与存储。' };
   }
 };

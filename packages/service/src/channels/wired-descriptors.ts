@@ -207,6 +207,7 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
     const helpContext: ControlHandlerContext = {
       ...context.controlHandlerContext as unknown as ControlHandlerContext,
       goalStore: context.goalStore,
+      goalExecution: context.goalExecution,
       triggerMode: triggerModeAdapter,
       getHelpCapabilities: () => feishuChannel.getCapabilities(),
     };

@@ -987,6 +987,17 @@ describe('MessageHandler', () => {
   });
 
   // -----------------------------------------------------------------------
+  it('preserves the original user-event source ID for Goal control commands', async () => {
+    mockState.hasControlHandler = true;
+    mockState.emitControl.mockResolvedValueOnce({ success: true });
+    const { handler } = createHandler();
+    handler.setControlHandler(true);
+    await handler.handleMessageReceive(textEvent('/goal list'));
+    expect(mockState.emitControl).toHaveBeenCalledWith(expect.objectContaining({ type: 'goal',
+      actorId: 'user_001', sourceMessageId: 'msg_001', chatId: 'chat_001' }));
+    expect(mockState.emitMessage).not.toHaveBeenCalled();
+  });
+
   // File/image message handling
   // -----------------------------------------------------------------------
   describe('handleMessageReceive — file/image messages', () => {

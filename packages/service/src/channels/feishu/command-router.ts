@@ -53,6 +53,7 @@ export interface CommandRouterInput {
   threadRootId?: string;
   chatType?: ChatType;
   actorId?: string;
+  sourceMessageId?: string;
 }
 
 /**
@@ -93,10 +94,11 @@ export async function tryHandleSlashCommand(
     const rawData = { args };
     const response = await deps.emitControl(
       createControlCommand(cmd as ControlCommandType, input.chatId, rawData,
-        input.threadRootId || input.chatType || input.actorId ? {
+        input.threadRootId || input.chatType || input.actorId || input.sourceMessageId ? {
           ...(input.threadRootId ? { threadRootId: input.threadRootId } : {}),
           ...(input.chatType ? { chatType: input.chatType } : {}),
           ...(input.actorId ? { actorId: input.actorId } : {}),
+          ...(input.sourceMessageId ? { sourceMessageId: input.sourceMessageId } : {}),
         } : undefined),
     );
 
