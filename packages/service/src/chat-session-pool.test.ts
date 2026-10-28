@@ -18,7 +18,7 @@ import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { CwdProvider } from '@disclaude/core';
+import type { AgentQueryOptions, CwdProvider } from '@disclaude/core';
 
 // Issue #4256: mock createLogger so logPoolSnapshot() output is observable in
 // tests without a real pino instance. vi.hoisted() makes mockLogger available
@@ -94,6 +94,17 @@ const createMockCallbacks = () => ({
 });
 
 describe('ChatSessionPool', () => {
+  it('forwards host query hooks with the original chat identity across topic sessions', () => {
+    const configureQueryOptions = vi.fn((options: AgentQueryOptions, chatId: string) => ({ ...options, systemPrompt: `host:${chatId}` }));
+    const pool = new ChatSessionPool({ configureQueryOptions });
+    try {
+      pool.getOrCreateChatAgent('hook-chat', createMockCallbacks(), 'hook-topic');
+      const options = vi.mocked(AgentFactory.createChatAgent).mock.calls.at(-1)![3] as AgentCreateOptions;
+      const original: AgentQueryOptions = { cwd: '/fixture/project', settingSources: ['project'] };
+      expect(options.configureQueryOptions?.(original)).toEqual({ ...original, systemPrompt: 'host:hook-chat' });
+      expect(configureQueryOptions).toHaveBeenCalledExactlyOnceWith(original, 'hook-chat');
+    } finally { pool.disposeAll(); }
+  });
   it.each(['resolver', 'provider'] as const)('pins isolated execution to its original directory (%s)', mode => {
     const root = mkdtempSync(join(tmpdir(), 'isolated-directory-'));
     const first = join(root, 'first'), second = join(root, 'second');
