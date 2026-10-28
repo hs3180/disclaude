@@ -241,6 +241,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   private lastActivityTypePrivate = 'created';
   private readonly backgroundTaskIds = new Set<string>();
   private hasBackgroundTaskSnapshot = false;
+  private releaseBackgroundIndicator?: () => void;
   private activityThreadRootId?: string;
 
   // Provider stall (#3706, #5283): set when the provider's watchdog
@@ -584,6 +585,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       settle = (error?: Error) => (error ? reject(error) : resolve());
     });
     const entry: TurnCompletionEntry = { promise, settle, settled: false };
+    let releaseIndicator: (() => void) | undefined;
+    try { releaseIndicator = this.callbacks.beginProcessing?.(this.boundChatId, messageId); }
+    catch { this.logger.warn({ messageId }, 'Could not start work indicator'); }
+    const release = (): void => {
+      try { releaseIndicator?.(); } catch { this.logger.warn({ messageId }, 'Could not release work indicator'); }
+    };
+    void promise.then(release, release);
     // Prevent unhandled rejection when nobody awaits (ordinary user messages)
     promise.catch(() => {});
     this.turnCompletions.set(messageId, entry);
@@ -768,6 +776,23 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       if (state === 'running') { this.backgroundTaskIds.add(id); }
       else { this.backgroundTaskIds.delete(id); }
     }
+    this.updateBackgroundIndicator();
+  }
+
+  private updateBackgroundIndicator(): void {
+    if (this.backgroundTaskIds.size && !this.releaseBackgroundIndicator) {
+      try { this.releaseBackgroundIndicator = this.callbacks.beginProcessing?.(this.boundChatId, `native-background:${this.sdkSessionKey}`); }
+      catch { this.logger.warn('Could not start native background work indicator'); }
+    } else if (!this.backgroundTaskIds.size) { this.finishBackgroundIndicator(); }
+  }
+
+  private finishBackgroundIndicator(): void {
+    try { this.releaseBackgroundIndicator?.(); } catch { this.logger.warn('Could not release native background work indicator'); }
+    this.releaseBackgroundIndicator = undefined;
+  }
+
+  private clearBackgroundTasks(): void {
+    this.backgroundTaskIds.clear(); this.finishBackgroundIndicator();
   }
 
   /**
@@ -1713,7 +1738,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const queryOptions = this.configureQueryOptions?.(sdkOptions) ?? sdkOptions;
     // Invalidate old activity callbacks before creating the next query.
     const activityGeneration = ++this.sessionGeneration;
-    this.backgroundTaskIds.clear();
+    this.clearBackgroundTasks();
     this.hasBackgroundTaskSnapshot = false;
     this.noteActivity('session-start');
     const existingActivityObserver = queryOptions.onActivity;
@@ -1771,6 +1796,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     this.processIterator(iterator).catch(async (err) => {
       if (this.sessionGeneration !== activityGeneration || this.disposed ||
           this.stoppedQueryGenerations.has(activityGeneration)) { return; }
+      this.finishBackgroundIndicator();
       const diagnosticId = crypto.randomUUID();
       const detail = sanitizeDiagnosticText(err instanceof Error ? err.message : String(err));
       const safeError = Object.assign(new Error(detail), { diagnosticId, backend: this.agentBackend, provider: this.sdkProvider.name });
@@ -3311,6 +3337,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           );
         }
       }
+      if (this.sessionGeneration === myGeneration) { this.finishBackgroundIndicator(); }
     }
 
     // A user stop or backend interruption is terminal, not an unknown failure.
@@ -3644,7 +3671,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Mark session as inactive BEFORE closing to signal explicit close
     this.isSessionActive = false;
     this.isProcessingMessage = false;
-    this.backgroundTaskIds.clear();
+    this.clearBackgroundTasks();
     this.activityThreadRootId = undefined;
 
     // Close channel and query
@@ -3778,7 +3805,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
     this.queryHandle.close();
     this.queryHandle = undefined;
-    this.backgroundTaskIds.clear();
+    this.clearBackgroundTasks();
 
     // Note: We do NOT set isSessionActive to false here.
     // processIterator settles the cancelled turn and ends this native query.
@@ -3896,7 +3923,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Issue #4391 (part 2 review): mark disposed synchronously first, so a
     // replay timer firing mid-dispose (or right after) sees the flag.
     this.disposed = true;
-    this.backgroundTaskIds.clear();
+    this.clearBackgroundTasks();
     // Issue #3745: Synchronously close queryHandle and channel to prevent
     // exit listener leaks. The previous fire-and-forget pattern (dispose →
     // shutdown() without await) meant shutdown()'s `await Promise.resolve()`
@@ -3933,7 +3960,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Mark session as inactive
     this.isSessionActive = false;
     this.isProcessingMessage = false;
-    this.backgroundTaskIds.clear();
+    this.clearBackgroundTasks();
 
     // Issue #2926: Abort any running agent loop
     if (this.abortController) {

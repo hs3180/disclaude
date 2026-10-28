@@ -612,6 +612,26 @@ describe('WeChatApiClient', () => {
   });
 
   describe('sendTyping (Issue #1556 Phase 3.2)', () => {
+    it('uses a fresh ticket for explicit cancellation and reports missing-ticket unavailability', async () => {
+      mockFetch.mockResolvedValueOnce(new Response('{"ret":0,"typing_ticket":"fixture-cancel"}'))
+        .mockResolvedValueOnce(new Response('{"ret":0}')).mockResolvedValueOnce(new Response('{"ret":0}'));
+      client.setToken('test-token');
+      expect(await client.sendTyping({ to: 'user-123', status: 2, contextToken: 'fixture-context' })).toBe(true);
+      expect(JSON.parse(mockFetch.mock.calls[0][1].body).context_token).toBe('fixture-context');
+      expect(JSON.parse(mockFetch.mock.calls[1][1].body)).toMatchObject({ status: 2, typing_ticket: 'fixture-cancel' });
+      expect(await client.sendTyping({ to: 'user-123' })).toBe(false);
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+    });
+
+    it('cancels pending typing HTTP without throwing into the work owner', async () => {
+      const abort = new AbortController();
+      mockFetch.mockImplementation((_url: unknown, options: RequestInit) => new Promise((_resolve, reject) => {
+        options.signal?.addEventListener('abort', () => reject(new Error('aborted-private-context')), { once: true });
+      }));
+      const sending = client.sendTyping({ to: 'user-123', signal: abort.signal });
+      abort.abort(); await expect(sending).resolves.toBe(false);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
     it('should send typing indicator via POST', async () => {
       mockFetch.mockResolvedValue({
         ok: true,
