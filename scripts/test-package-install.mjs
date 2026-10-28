@@ -32,7 +32,15 @@ async function verifyPackage() {
     NODE_ENV: 'production',
     HOME: temp,
     XDG_CONFIG_HOME: join(temp, '.config'),
+    // Managed agents inherit overrides that outrank the smoke configuration.
+    // Keep recovery journals, schedules and logs inside this owned test root.
+    DISCLAUDE_WORKSPACE_DIR: temp,
+    WORKSPACE_DIR: temp,
+    LOG_DIR: join(temp, 'logs'),
+    LOG_TO_FILE: 'false',
   };
+  delete env.DISCLAUDE_API_BASE_URL;
+  delete env.DISCLAUDE_API_TOKEN;
   const config = join(temp, 'smoke.json');
   writeFileSync(
     config,
@@ -267,6 +275,8 @@ async function verifyPackage() {
     await createJupyterCookieJar();
     const { DisclaudeService } = await load('service', 'service.js');
     const { Config } = await load('core');
+    assert.equal(realpathSync(Config.getWorkspaceDir()), realpathSync(${JSON.stringify(temp)}),
+      'Installation checks must never use an inherited production workspace');
     if (${isPrebuilt} && realpathSync(Config.getBuiltinsDir()) !== realpathSync(installed)) throw new Error('Builtins do not resolve to installed release');
     // Exercise the installed Codex discovery path from the user's execution root,
     // not a copied skill fixture or the source checkout.
