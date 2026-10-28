@@ -31,6 +31,8 @@ const defaultLogger = createLogger('InputMessageRouter');
  * Issue #3779: Convert positional parameters to options objects for type safety.
  */
 export interface UserMessageParams {
+  /** Opaque host provenance, preserved by reference rather than serialized. */
+  runtimeSource?: UserMessage['runtimeSource'];
   /** System-trigger delivery anchor; null explicitly means no reply root. */
   replyRootId?: string | null;
   agentSession?: Message['agentSession'];
@@ -215,6 +217,7 @@ export class MessageRouter {
       threadContext: message.threadContext,
       threadRootId: message.threadRootId,
       ...(message.agentSession ? { agentSession: message.agentSession } : {}),
+      ...(message.runtimeSource !== undefined ? { runtimeSource: message.runtimeSource } : {}),
     });
   }
 
