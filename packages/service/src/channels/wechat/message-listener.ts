@@ -12,6 +12,7 @@ import { createLogger, type IncomingMessage } from '@disclaude/core';
 import { WeChatApiError, type WeChatApiClient } from './api-client.js';
 import type { WeChatUpdate, WeChatImageItem, WeChatFileItem } from './types.js';
 import { WeChatMediaError } from './media-error.js';
+import { WeChatMediaInbox, type MediaInboxEntry } from './media-inbox.js';
 
 const logger = createLogger('WeChatMessageListener');
 
@@ -54,6 +55,7 @@ export type WeChatAuthConfirmation = 'pending' | 'confirmed' | 'login-expired';
 export interface WeChatListenerState {
   cursor: string;
   seenMessageIds: string[];
+  mediaInbox?: MediaInboxEntry[];
 }
 
 export interface WeChatListenerOptions {
@@ -85,6 +87,9 @@ export class WeChatMessageListener {
   private readonly seenMessageIds: Set<string>;
   private consecutiveErrors: number;
   private remoteAuth: WeChatAuthConfirmation;
+  private readonly mediaInbox: WeChatMediaInbox;
+  private mediaWorker?: Promise<void>;
+  private checkpointFlight: Promise<void> = Promise.resolve();
 
   /**
    * Create a new message listener.
@@ -99,6 +104,11 @@ export class WeChatMessageListener {
     if (options.state) { this.client.setUpdatesCursor(options.state.cursor); }
     this.consecutiveErrors = 0;
     this.remoteAuth = 'pending';
+    this.mediaInbox = new WeChatMediaInbox(options.state?.mediaInbox?.filter(e => !this.seenMessageIds.has(e.id)),
+      () => this.checkpoint(), (update, signal, cached) => this.convertToIncomingMessage(update, signal, cached), async message => {
+        await this.processor(message);
+        this.seenMessageIds.add(message.messageId); this.evictDedupCacheIfNeeded();
+      });
   }
 
   /**
@@ -116,6 +126,7 @@ export class WeChatMessageListener {
     this.abortController = new AbortController();
     this.consecutiveErrors = 0;
     this.remoteAuth = 'pending';
+    this.mediaWorker = this.mediaInbox.run(this.abortController.signal);
     this.pollPromise = this.pollLoop(this.abortController.signal);
     logger.info('WeChat message listener started');
   }
@@ -135,16 +146,18 @@ export class WeChatMessageListener {
     this.abortController?.abort();
     this.abortController = undefined;
 
-    if (this.pollPromise) {
+    if (this.pollPromise || this.mediaWorker) {
       const grace = new Promise<void>((resolve) => { setTimeout(resolve, STOP_GRACE_MS).unref(); });
       try {
-        await Promise.race([this.pollPromise, grace]);
+        await Promise.race([Promise.allSettled([this.pollPromise, this.mediaWorker]), grace]);
       } catch {
         // Expected: poll loop throws on abort
       }
       this.pollPromise = undefined;
+      this.mediaWorker = undefined;
     }
 
+    this.mediaInbox.invalidate();
     // Clear seen messages to free memory
     this.seenMessageIds.clear();
     logger.info('WeChat message listener stopped');
@@ -249,12 +262,17 @@ export class WeChatMessageListener {
         }
       }
     } finally {
-      if (this.abortController?.signal === signal) { this.abortController = undefined; }
+      if (this.abortController?.signal === signal) { this.abortController.abort(); this.abortController = undefined; }
     }
   }
 
   private async checkpoint(): Promise<void> {
-    await this.options.checkpoint?.({ cursor: this.client.getUpdatesCursor(), seenMessageIds: [...this.seenMessageIds] });
+    if (!this.options.checkpoint) { return; }
+    const inbox = this.mediaInbox.snapshot();
+    const state = { cursor: this.client.getUpdatesCursor(), seenMessageIds: [...this.seenMessageIds], ...(inbox.length ? { mediaInbox: inbox } : {}) };
+    // Polling and the media worker share one ordered stream of immutable snapshots.
+    const flight = this.checkpointFlight.catch(() => {}).then(() => this.options.checkpoint?.(state));
+    this.checkpointFlight = flight; await flight;
   }
 
   /**
@@ -264,7 +282,7 @@ export class WeChatMessageListener {
    * calls the registered processor.
    */
   private async processUpdate(update: WeChatUpdate, signal?: AbortSignal): Promise<void> {
-    if (update.message_type === 2 || update.group_id) { return; }
+    if (update.message_type === 2 || update.group_id || !update.from_user_id || !update.item_list?.length) { return; }
     const id = update.message_id ?? update.msg_id ?? update.client_id;
     if (!id) {
       logger.warn('Received update without message ID, skipping');
@@ -276,7 +294,13 @@ export class WeChatMessageListener {
       logger.debug({ msgId: id }, 'Duplicate message, skipping');
       return;
     }
+    const pendingMedia = this.mediaInbox.has(id);
+    if (pendingMedia || (this.options.resolveAttachment && this.options.checkpoint && update.item_list?.some(i => i.type === 2 || i.type === 4))) {
+      if (!pendingMedia && update.context_token && update.from_user_id) { this.options.onContext?.(update.from_user_id, update.context_token); }
+      await this.mediaInbox.enqueue(update); return;
+    }
     const message = await this.convertToIncomingMessage(update, signal);
+    if (signal?.aborted) { return; }
     if (!message) {
       logger.debug({ msgId: id }, 'Could not convert update to message, skipping');
       return;
@@ -331,7 +355,7 @@ export class WeChatMessageListener {
   /**
    * Convert a WeChat update to the universal IncomingMessage format.
    */
-  private async convertToIncomingMessage(update: WeChatUpdate, signal?: AbortSignal): Promise<IncomingMessage | null> {
+  private async convertToIncomingMessage(update: WeChatUpdate, signal?: AbortSignal, cached?: NonNullable<IncomingMessage['attachments']>): Promise<IncomingMessage | null> {
     if (!update.from_user_id || !update.item_list?.length) {
       return null;
     }
@@ -339,6 +363,7 @@ export class WeChatMessageListener {
     const textParts: string[] = [];
     const attachments: NonNullable<IncomingMessage['attachments']> = [];
     let messageType: IncomingMessage['messageType'] = 'text';
+    let mediaIndex = 0;
     for (const item of update.item_list) {
       if (item.type === 1) {
         if (item.text_item?.text) { textParts.push(item.text_item.text); }
@@ -353,16 +378,17 @@ export class WeChatMessageListener {
         textParts.push(`[Unsupported message type: ${String((item as { type?: number }).type)}]`);
       }
       if (item.type === 2 || item.type === 4) {
+        if (cached) { attachments.push(cached[mediaIndex++]); continue; }
         try {
           if (this.options.resolveAttachment) { attachments.push(await this.options.resolveAttachment(item, signal)); }
           else if (item.type === 2 && item.image_item?.url) { attachments.push({ fileName: 'image', filePath: item.image_item.url }); }
           else if (item.type === 4 && item.file_item?.url) { attachments.push({ fileName: item.file_item.file_name ?? 'unknown', filePath: item.file_item.url, size: item.file_item.file_size }); }
-          else { textParts.push('[Attachment unavailable: no media downloader]'); }
+          else { throw new Error('WeChat attachment has no media downloader'); }
         } catch (error) {
           if (signal?.aborted) { throw new DOMException('aborted', 'AbortError'); }
           logger.warn({ event: 'attachment_failure', msgId: update.message_id ?? update.msg_id ?? update.client_id,
             itemType: item.type, ...(error instanceof WeChatMediaError ? error.detail : { stage: 'unknown' }) }, 'WeChat attachment resolution failed');
-          textParts.push('[Attachment unavailable: download, size or decryption failure; ask the user to resend]');
+          throw error instanceof WeChatMediaError ? error : new Error('WeChat attachment resolution failed; no media was accepted');
         }
       }
     }

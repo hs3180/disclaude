@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { WeChatListenerState } from './message-listener.js';
+import { validMediaInbox } from './media-inbox-state.js';
 
 export const DEFAULT_WECHAT_STATE_DIR = join(homedir(), '.disclaude', 'wechat');
 export const DEFAULT_WECHAT_BASE_URL = 'https://ilinkai.weixin.qq.com';
@@ -54,10 +55,12 @@ export class WeChatStateStore {
   }
 
   private async write(name: string, value: unknown): Promise<void> {
+    const content = JSON.stringify(value);
+    if (Buffer.byteLength(content) > 4 * 1024 * 1024) { throw new Error(`WeChat ${name} exceeds private storage limit`); }
     await this.prepare();
     const temp = join(this.dir, `.${randomUUID()}.tmp`);
     try {
-      await fs.writeFile(temp, JSON.stringify(value), { mode: 0o600, flag: 'wx' });
+      await fs.writeFile(temp, content, { mode: 0o600, flag: 'wx' });
       await fs.rename(temp, join(this.dir, name));
     } finally { await fs.rm(temp, { force: true }); }
   }
@@ -85,6 +88,7 @@ export class WeChatStateStore {
     if (typeof value.cursor !== 'string' || !Array.isArray(value.seenMessageIds) || !value.seenMessageIds.every(x => typeof x === 'string') || !value.contexts || typeof value.contexts !== 'object' || Array.isArray(value.contexts) || Object.values(value.contexts).some(x => typeof x !== 'string')) {
       throw new Error('Invalid WeChat session state; restore the file before restarting');
     }
+    if (value.mediaInbox !== undefined && !validMediaInbox(value.mediaInbox)) { throw new Error('Invalid WeChat media recovery state; restore the session file'); }
     return value;
   }
 
