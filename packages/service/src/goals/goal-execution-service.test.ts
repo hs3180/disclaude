@@ -9,8 +9,11 @@ const repo = fileURLToPath(new URL('../../../../', import.meta.url));
 
 /** Single-entry scenarios (#5212): `/goal <prompt>` launches, `/stop` stops.
  * Continuation after `blocked` starts a new Goal and keeps the old record.
+ * The scoped-* scenarios exercise host-supplied turn tools bound to the
+ * goal's current authority and settlement.
  */
-it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', 'missing-project-stop', 'two-goals-stop'])(
+it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', 'missing-project-stop', 'two-goals-stop',
+  'scoped-tools', 'scope-edit', 'scope-project'])(
   'runs the single-entry Goal service through %s', scenario => {
     const root = mkdtempSync(join(tmpdir(), 'disclaude-goal-service-'));
     try {
@@ -40,7 +43,7 @@ it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', '
           while (!check()) { if (Date.now() > end) { return; } await new Promise(resolve => setTimeout(resolve, 1)); } };
         const settle = async () => { for (let i = 0; i < 30; i++) {
           await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setTimeout(resolve, 0)); } };
-        const queries = [], policies = [], replies = [], sends = [];
+        const queries = [], policies = [], replies = [], sends = [], scopes = []; let toolClosed = 0;
         let allowed = scenario !== 'denied'; const runtime = { model: 'fixed-offline' };
         // Per-round assessment table: round 1 belongs to the first Goal; a
         // 'continue' keeps it running while later rounds may belong to another.
@@ -49,6 +52,7 @@ it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', '
           'blocked-new-goal': ['blocked', 'completed'],
           'stop': ['continue'], 'close': ['continue', 'completed'], 'revoked': ['continue'],
           'missing-project-stop': ['continue'], 'two-goals-stop': ['continue', 'completed'],
+          'scoped-tools': ['completed'], 'scope-edit': ['completed'], 'scope-project': ['completed'],
         }[scenario];
         const parksRoundResult = ['stop', 'close', 'missing-project-stop', 'two-goals-stop'].includes(scenario);
         // Runtime selection is pinned at each Goal's launch: only rounds of a
@@ -62,11 +66,27 @@ it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', '
               assert.equal(options.model, changedRounds.includes(round) ? 'changed-offline' : 'fixed-offline');
               appendFileSync(join(project, 'work.log'), 'write ' + round + '\\n');
               const tool = prepareTools(options.tools).find(tool => tool.name === 'goal_report');
+              if (['scoped-tools', 'scope-edit', 'scope-project'].includes(scenario)) {
+                // Host-supplied turn tools answer for the goal's live scope;
+                // each probe exercises one way it can go stale.
+                const probe = prepareTools(options.tools).find(tool => tool.name === 'goal_scope_probe'); assert.ok(probe);
+                const value = await probe.execute({}, { signal: new AbortController().signal });
+                assert.equal(value.actor, 'fixture-user'); assert.equal(value.root, project);
+                allowed = false; await assert.rejects(scopes[0].authorize(), /authorized/); allowed = true;
+                if (scenario === 'scope-edit') {
+                  const latest = await store.get(scopes[0].goal.id);
+                  await store.update(latest.id, latest.revision, { progress: 'Latest user feedback' });
+                  await assert.rejects(scopes[0].authorize(), /changed/);
+                }
+                if (scenario === 'scope-project') {
+                  manager.use('fixture-chat', other); await assert.rejects(scopes[0].authorize(), /Project/);
+                }
+              }
               const outcome = outcomes[round - 1] ?? 'completed';
               const done = outcome === 'completed';
               await tool.execute({ outcome, progress: 'round ' + round,
                 artifacts: ['work.log'], checks: [{ criterion: 0, satisfied: done, evidence: done ? ['work.log'] : [] }] },
-              { signal: new AbortController().signal });
+                { signal: new AbortController().signal });
               admitted.release(); if (scenario === 'revoked') allowed = false;
               yield { type: 'text', role: 'assistant', content: 'round result ' + round };
               yield { type: 'result', content: '', metadata: { stopReason: 'end_turn' } };
@@ -81,6 +101,15 @@ it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', '
           if (text.startsWith('Goal ')) notified.release(); return 'fixture-receipt';
         }, sendCard: async () => {}, sendFile: async () => {} };
         const options = { store, projectManager: manager, runtimeOptions: () => runtime, callbacks: () => callbacks,
+          ...(['scoped-tools','scope-edit','scope-project'].includes(scenario)?{createTurnTools:scope=>{
+            scopes.push(scope);assert.equal(scope.source.actorId,'fixture-user');assert.equal(scope.source.chatId,'fixture-chat');
+            assert.equal(scope.source.threadRootId,'fixture-topic');assert.equal(scope.runtimeOptions().model,'fixed-offline');
+            assert.equal(scope.callbacks,callbacks);
+            return {tools:[{name:'goal_scope_probe',description:'Host scope fixture',inputSchema:{type:'object',additionalProperties:false},
+              outputSchema:{type:'object',properties:{actor:{type:'string'},root:{type:'string'}},required:['actor','root'],additionalProperties:false},
+              execute:async()=>{await scope.authorize();return {actor:scope.source.actorId,root:scope.source.projectRoot};}}],
+              close:()=>{toolClosed++;return Promise.resolve();}};
+          }}:{}),
           isCommandAllowed: command => { policies.push(command); return allowed; } };
         let service = new GoalExecutionService(options);
         const common = { projectManager: manager,
@@ -163,6 +192,13 @@ it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', '
                 assert.equal(record.status, 'active'); assert.equal(queries.length, 1);
                 assert.ok(sends.some(send => send.text.includes('本轮推进失败')));
                 assert.ok(sends.every(send => !send.text.includes('/goal show')));
+              } else if (scenario === 'scoped-tools') {
+                assert.equal(record.status, 'completed'); assert.equal(queries.length, 1);
+              } else if (scenario === 'scope-edit' || scenario === 'scope-project') {
+                // The turn tool saw a live scope, but the edit/Project change
+                // failed the turn at settlement, so nothing was recorded.
+                assert.equal(record.status, 'active'); assert.equal(queries.length, 1);
+                assert.ok(sends.some(send => send.text.includes('本轮推进失败')));
               } else {
                 assert.equal(record.status, 'completed'); assert.equal(queries.length, 3);
                 assert.ok(sends.some(send => send.text.includes('已完成') && send.text.includes('Deliver the artifact') && send.text.includes('round 3')));
@@ -171,6 +207,10 @@ it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', '
             }
           }
           assert.ok(policies.every(command => command.chatType === 'topic'));
+          if (scopes.length) {
+            assert.equal(scopes.length, 1); assert.equal(toolClosed, 1);
+            await assert.rejects(scopes[0].authorize(), /active|changed|Project|authorized/);
+          }
           assert.ok(sends.every(send => send.chat === 'fixture-chat' && send.topic === 'fixture-topic'));
           console.log('goal-execution-service: passed');
         } finally { delivery.release(); await service.close(); }
