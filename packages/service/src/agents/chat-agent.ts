@@ -1610,6 +1610,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * operations are exposed through the runtime-agnostic channel CLI Skill.
    */
   private startAgentLoop(): void | Promise<boolean> {
+    if (this.disposed) { return; }
     const chatId = this.boundChatId;
     const startMs = Date.now(); // Issue #3292: timing for agent startup diagnostics
     this.logger.info({ chatId, timing: 'agent:startLoop', elapsedMs: 0 });
@@ -3541,6 +3542,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     this.isSessionActive = false;
     this.isProcessingMessage = false;
 
+    // A disposed owner must not reconnect after asynchronous failure delivery.
+    if (this.disposed) { return; }
+
     // Issue #3124: In once-mode, resolve completion and skip restart logic.
     // The channel was closed by the result handler or an error occurred.
     if (this.onceMode) {
@@ -3627,14 +3631,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
 
     // A reset/stop/new request during backoff owns the replacement session.
-    if (this.sessionGeneration !== myGeneration || this.isSessionActive || this.stoppedQueryGenerations.has(myGeneration)) {return;}
+    if (this.disposed || this.sessionGeneration !== myGeneration || this.isSessionActive || this.stoppedQueryGenerations.has(myGeneration)) {return;}
     const threadRoot = resolveReplyThreadRoot();
     const restartMessage = `⚠️ 会话正在重新连接，后续消息可继续处理。上次请求不会自动重放。诊断 ID: ${diagnosticId}`;
     // Issue #4626: isolated delivery (same rationale as the notices above).
     if (interruptedTurnCount === 0) { await this.deliverUserVisible(chatId, restartMessage, threadRoot); }
 
     // Restart the agent loop to preserve context for future messages
-    if (this.sessionGeneration !== myGeneration || this.isSessionActive || this.stoppedQueryGenerations.has(myGeneration)) {return;}
+    if (this.disposed || this.sessionGeneration !== myGeneration || this.isSessionActive || this.stoppedQueryGenerations.has(myGeneration)) {return;}
     void this.startAgentLoop();
     this.logger.info({ chatId, diagnosticId }, 'Agent loop restarted');
   }
