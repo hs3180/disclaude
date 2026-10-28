@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import * as fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,6 +8,7 @@ import { WeChatStateStore, validateWechatBaseUrl } from './state-store.js';
 // functions lets one call be interleaved deterministically while every other
 // fs operation stays the real implementation.
 vi.mock('node:fs/promises', async (importOriginal) => ({ ...(await importOriginal<typeof import('node:fs/promises')>()) }));
+afterEach(() => vi.restoreAllMocks());
 
 describe('WeChat account storage', () => {
   it('persists private credentials, replay state and reply context; excludes competing processes', async () => {
@@ -42,14 +43,48 @@ describe('WeChat account storage', () => {
       // Simulate the owner releasing between the contender's EEXIST and its
       // owner read: the real exclusive write fails, the holder unlocks, and the
       // subsequent read finds the lock gone.
-      const realWriteFile = fs.writeFile.bind(fs);
-      vi.spyOn(fs, 'writeFile').mockImplementationOnce(async (...args: Parameters<typeof fs.writeFile>) => {
-        try { await realWriteFile(...args); } finally { await release(); }
+      const realLink = fs.link.bind(fs);
+      vi.spyOn(fs, 'link').mockImplementationOnce(async (...args: Parameters<typeof fs.link>) => {
+        try { await realLink(...args); } finally { await release(); }
       });
       const acquired = await contender.lock();
       await acquired();
       await fs.writeFile(join(dir, 'listener.lock'), 'not-json');
       await expect(new WeChatStateStore(dir).lock()).rejects.toThrow('Invalid WeChat listener lock');
+    } finally { await fs.rm(dir, { recursive: true, force: true }); }
+  });
+
+  it('leaves no canonical empty lock when the owner record cannot be written', async () => {
+    const dir = await fs.mkdtemp(join(tmpdir(), 'wechat-state-'));
+    try {
+      const realOpen = fs.open.bind(fs);
+      vi.spyOn(fs, 'open').mockImplementationOnce(async (...args: Parameters<typeof fs.open>) => {
+        const handle = await realOpen(...args);
+        vi.spyOn(handle, 'writeFile').mockRejectedValueOnce(Object.assign(new Error('disk full'), { code: 'ENOSPC' }));
+        return handle;
+      });
+      await expect(new WeChatStateStore(dir).lock()).rejects.toMatchObject({ code: 'ENOSPC' });
+      expect(await fs.readdir(dir)).toEqual([]);
+      const release = await new WeChatStateStore(dir).lock();
+      await release();
+    } finally { await fs.rm(dir, { recursive: true, force: true }); }
+  });
+
+  it('publishes a complete private record and preserves the winning owner on contention', async () => {
+    const dir = await fs.mkdtemp(join(tmpdir(), 'wechat-state-'));
+    try {
+      const realLink = fs.link.bind(fs);
+      vi.spyOn(fs, 'link').mockImplementationOnce(async (from, to) => {
+        expect(JSON.parse(await fs.readFile(from, 'utf8'))).toMatchObject({ pid: process.pid, nonce: expect.any(String) });
+        await realLink(from, to);
+      });
+      const release = await new WeChatStateStore(dir).lock();
+      const record = await fs.readFile(join(dir, 'listener.lock'), 'utf8');
+      expect((await fs.stat(join(dir, 'listener.lock'))).mode & 0o777).toBe(0o600);
+      await expect(new WeChatStateStore(dir).lock()).rejects.toThrow('already in use');
+      expect(await fs.readFile(join(dir, 'listener.lock'), 'utf8')).toBe(record);
+      expect(await fs.readdir(dir)).toEqual(['listener.lock']);
+      await release();
     } finally { await fs.rm(dir, { recursive: true, force: true }); }
   });
 

@@ -90,6 +90,25 @@ export class WeChatStateStore {
 
   async saveSession(state: WeChatSessionState): Promise<void> { await this.write('session.json', state); }
 
+  /** Publish a complete owner record, never an empty canonical lock on write failure. */
+  private async publishLock(file: string, nonce: string): Promise<void> {
+    const pending = join(this.dir, `.listener-${nonce}.tmp`);
+    const handle = await fs.open(pending, 'wx', 0o600);
+    try {
+      await handle.writeFile(JSON.stringify({ pid: process.pid, nonce }));
+      await handle.sync();
+      await handle.close();
+      // link is exclusive like wx, but makes the already-written inode visible
+      // in one operation. Both paths are in the same account directory.
+      await fs.link(pending, file);
+    } finally {
+      await handle.close().catch(() => {});
+      // Only our unique staging file is removed. A published canonical lock
+      // stays owned even if best-effort staging cleanup fails.
+      await fs.rm(pending, { force: true }).catch(() => {});
+    }
+  }
+
   /** Excludes concurrent listeners/login writers, recovering locks from dead PIDs. */
   async lock(): Promise<() => Promise<void>> {
     await this.prepare();
@@ -97,7 +116,7 @@ export class WeChatStateStore {
     const nonce = randomUUID();
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        await fs.writeFile(file, JSON.stringify({ pid: process.pid, nonce }), { flag: 'wx', mode: 0o600 });
+        await this.publishLock(file, nonce);
         return async () => {
           const owner = await this.read<{ nonce: string }>('listener.lock');
           if (owner?.nonce === nonce) { await fs.rm(file, { force: true }); }
