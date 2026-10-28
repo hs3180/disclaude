@@ -217,6 +217,24 @@ describe('HttpApiServer', () => {
   });
 
   describe('GET /api/health/detailed (Issue #4718)', () => {
+    it.each(['waiting_dns', 'connecting', 'reconnecting', 'stopped'])('reports %s as unready even after a successful outbound send (#5519)', async state => {
+      server.setDeliveryHealthProvider(() => ({ status: 'healthy', attempts: 1, successes: 1, failures: 0 }));
+      const connection = { state, healthy: false };
+      server.setFeishuConnectionHealthProvider(() => ({ ...connection }));
+      const unready = await dispatch(server, { method: 'GET', url: '/api/health/detailed' });
+      expect(unready.statusCode).toBe(503);
+      expect(JSON.parse(unready.body)).toMatchObject({ status: 'degraded', process: { status: 'healthy' },
+        delivery: { status: 'healthy' }, feishuConnection: { state, healthy: false } });
+      expect((await dispatch(server, { method: 'GET', url: '/api/ping' })).statusCode).toBe(200);
+      expect((await dispatch(server, { method: 'GET', url: '/api/status' })).statusCode).toBe(200);
+      connection.state = 'connected'; connection.healthy = true;
+      const ready = await dispatch(server, { method: 'GET', url: '/api/health/detailed' });
+      expect(ready.statusCode).toBe(200);
+      expect(JSON.parse(ready.body)).toMatchObject({ feishuConnection: { state: 'connected', healthy: true } });
+      server.setDeliveryHealthProvider(() => ({ status: 'degraded', attempts: 2, successes: 1, failures: 1 }));
+      expect((await dispatch(server, { method: 'GET', url: '/api/health/detailed' })).statusCode).toBe(503);
+    });
+
     it('reports unavailable registration while liveness remains available, then reflects recovery', async () => {
       server.setWeChatRegistrationHealthProvider(() => ({ status: 'degraded', reason: 'registry_unavailable' }));
       const degraded = await dispatch(server, { method: 'GET', url: '/api/health/detailed' });

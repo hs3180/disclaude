@@ -169,6 +169,17 @@ describe('native welcome event dispatch through the actual SDK parser', () => {
   });
 });
 
+it('reports live Feishu connection state separately from delivery history (#5519)', () => {
+  const { client } = createMockClient();
+  const channel = createTestChannel(client);
+  expect(channel.getConnectionHealth()).toEqual({ state: 'stopped', healthy: false });
+  const connection = { state: 'reconnecting', isHealthy: () => false };
+  Object.assign(channel, { wsConnectionManager: connection });
+  expect(channel.getConnectionHealth()).toEqual({ state: 'reconnecting', healthy: false });
+  Object.assign(connection, { state: 'connected', isHealthy: () => true });
+  expect(channel.getConnectionHealth()).toEqual({ state: 'connected', healthy: true });
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // extractChatIdFromEvent
 // ═══════════════════════════════════════════════════════════════════════════

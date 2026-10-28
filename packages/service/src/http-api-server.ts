@@ -64,6 +64,8 @@ export interface DetailedHealthResponse {
   process: { status: 'healthy'; pid: number; uptime: number };
   delivery: DeliveryHealth;
   wechatRegistration?: WeChatRegistrationHealth;
+  /** Current ingress readiness; independent of previous successful sends. */
+  feishuConnection?: { state: string; healthy: boolean };
 }
 
 /**
@@ -291,6 +293,11 @@ export class HttpApiServer {
   private markChatRespondedHandler?: MarkChatRespondedHandler;
   private selfSentRegistrar?: SelfSentRegistrar;
   private deliveryHealthProvider?: () => DeliveryHealth;
+  private feishuConnectionHealthProvider?: () => NonNullable<DetailedHealthResponse['feishuConnection']>;
+
+  setFeishuConnectionHealthProvider(provider: () => NonNullable<DetailedHealthResponse['feishuConnection']>): void {
+    this.feishuConnectionHealthProvider = provider;
+  }
   private wechatRegistrationHealthProvider?: () => WeChatRegistrationHealth;
   private browserIpcStatusProvider?: () => NonNullable<StatusResponse['browserIpc']>;
   private channelCapabilitiesProvider?: (chatId?: string) => ChannelCapabilitySnapshot[];
@@ -725,13 +732,16 @@ export class HttpApiServer {
       failures: 0,
     };
     const wechatRegistration = this.wechatRegistrationHealthProvider?.();
-    const status = delivery.status === 'degraded' || (wechatRegistration && wechatRegistration.status !== 'healthy') ? 'degraded' : 'healthy';
+    const feishuConnection = this.feishuConnectionHealthProvider?.();
+    const status = delivery.status === 'degraded' || (wechatRegistration && wechatRegistration.status !== 'healthy')
+      || (feishuConnection && !feishuConnection.healthy) ? 'degraded' : 'healthy';
     const response: DetailedHealthResponse = {
       status,
       timestamp: new Date().toISOString(),
       process: { status: 'healthy', pid: process.pid, uptime: process.uptime() },
       delivery,
       ...(wechatRegistration ? { wechatRegistration } : {}),
+      ...(feishuConnection ? { feishuConnection } : {}),
     };
     this.sendJson(res, status === 'healthy' ? 200 : 503, response);
     return Promise.resolve();
