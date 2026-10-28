@@ -62,11 +62,13 @@ it.each(['success', 'missing-report', 'native-failure', 'background', 'delivery'
         };
         const executor = new NativeGoalExecutor({ runtimeOptions: () => ({ model: 'selected-offline',
           configureQueryOptions: options => { hookCalls++; return options; } }),
-          callbacks: () => ({ sendMessage: async (chat, text, topic) => {
+          callbacks: (source, snapshot) => {
+            assert.equal(source.projectRoot, snapshot.projectRoot); assert.equal(snapshot.revision, 2);
+            return { sendMessage: async (chat, text, topic) => {
             sends.push({ chat, text, topic });
             if (scenario === 'delivery-failure') throw new Error('offline delivery failed');
             if (scenario === 'delivery') { delivering.release(); await delivery.promise; }
-          }, sendCard: async () => {}, sendFile: async () => {} }) });
+          }, sendCard: async () => {}, sendFile: async () => {} }; } });
         const goal = { version: 1, id: '00000000-0000-4000-8000-000000000000', revision: 2, status: 'active',
           chatId: 'actual-chat', projectRoot: project, objective: 'Verify the artifact', acceptance: ['Record evidence'], progress: '', artifacts: [],
           createdAt: '2026-10-28T00:00:00Z', updatedAt: '2026-10-28T00:00:00Z' };
