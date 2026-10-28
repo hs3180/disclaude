@@ -16,6 +16,8 @@ export * from './types/index.js';
 
 // Goal execution scheduling primitive; persistence/native admission remain adapters.
 export { GoalLoop } from './goals/goal-loop.js';
+export { GoalController } from './goals/goal-controller.js';
+export type { GoalExecutionRequest, GoalExecutionPort, GoalExecutionStart } from './goals/goal-controller.js';
 export type { GoalLoopSnapshot, GoalLoopPort, GoalLoopHandle, GoalLoopOutcome } from './goals/goal-loop.js';
 
 // Constants
