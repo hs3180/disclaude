@@ -336,44 +336,7 @@ describe('WeChatChannel', () => {
     });
   });
 
-  describe('typing indicator integration (Issue #1556 Phase 3.2)', () => {
-    it('should send typing indicator before emitting message', async () => {
-      const channel = readyChannel();
-
-      // Set up the client mock directly
-      const mockClient = {
-        sendText: mockSendText,
-        sendTyping: mockSendTyping,
-        hasToken: mockHasToken,
-      };
-      (channel as any).client = mockClient;
-
-      // Simulate the processor that doStart() creates:
-      // it calls sendTyping then emitMessage
-      const emitSpy = vi.fn().mockResolvedValue(undefined);
-      (channel as any).emitMessage = emitSpy;
-
-      // Replicate the processor logic from wechat-channel.ts doStart()
-      const processor = async (message: any) => {
-        await mockClient.sendTyping?.({ to: message.chatId });
-        await (channel as any).emitMessage(message);
-      };
-
-      const incomingMessage = {
-        messageId: 'msg-1',
-        chatId: 'user-123',
-        userId: 'user-123',
-        content: 'Hello!',
-        messageType: 'text' as const,
-        timestamp: Date.now(),
-      };
-
-      await processor(incomingMessage);
-
-      expect(mockSendTyping).toHaveBeenCalledWith({ to: 'user-123' });
-      expect(emitSpy).toHaveBeenCalledWith(incomingMessage);
-    });
-  });
+  // Typing now uses actual processor/ChatAgent/transport integration in typing-lifecycle.test.ts.
 
   describe('file sending via CDN (Issue #1556 Phase 3.2)', () => {
     it('should upload and send image file', async () => {

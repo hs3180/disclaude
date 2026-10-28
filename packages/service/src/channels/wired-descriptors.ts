@@ -368,6 +368,7 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
     });
     return (chatId, threadRootId) => ({
       ...factory(chatId, threadRootId),
+      beginProcessing: (target) => (channel as WeChatChannel).beginTyping(target),
       sendFile: async (target, filePath) => { await channel.sendMessage({ chatId: target, type: 'file', filePath }); },
     });
   },

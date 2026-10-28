@@ -29,6 +29,8 @@ import { WeChatStateStore, type WeChatSessionState } from './state-store.js';
 import { wechatChannelId, wechatPeer, lockWeChatIdentity } from './identity.js';
 import { downloadWeChatMedia, WECHAT_MEDIA_MAX_BYTES } from './media.js';
 import { tmpdir } from 'node:os';
+import { createHash } from 'node:crypto';
+import { WeChatTypingController } from './typing-controller.js';
 
 const logger = createLogger('WeChatChannel');
 
@@ -54,6 +56,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
   private readonly contexts = new Map<string, string>();
   private releaseAccount?: () => Promise<void>;
   private releaseIdentity?: () => Promise<void>;
+  private typing?: WeChatTypingController;
 
   constructor(config: WeChatChannelConfig = {}) {
     const id = config.registrationId ? wechatChannelId(config.registrationId) : 'wechat';
@@ -118,11 +121,13 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
         );
       }
 
+      const typingClient = this.client;
+      this.typing = new WeChatTypingController((peer, status) => typingClient.sendTyping({
+        to: peer, status, contextToken: this.contexts.get(peer),
+      }), (peer, event, owners) => logger.debug({ channelId: this.id, peerHash: createHash('sha256').update(peer).digest('hex').slice(0, 12), event, owners }, 'WeChat typing lifecycle'));
+
       // Start message listener (Issue #1556 Phase 3.1)
       const processor: MessageProcessor = async (message: IncomingMessage) => {
-        // Send typing indicator before processing (Issue #1556 Phase 3.2)
-        void this.client?.sendTyping({ to: message.chatId, contextToken: this.contexts.get(message.chatId) });
-
         await this.emitMessage(this.config.registrationId ? {
           ...message, chatId: `${this.id}:${message.chatId}`, messageId: `${this.id}:${message.messageId}`,
           metadata: { ...message.metadata, channelId: this.id, registrationId: this.config.registrationId },
@@ -145,7 +150,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
       await this.probeAuthState(credentials?.userId);
 
       logger.info('WeChat channel started with message listening');
-    } catch (error) { await this.releaseIdentity?.(); this.releaseIdentity = undefined; await this.releaseAccount?.(); this.releaseAccount = undefined; throw error; }
+    } catch (error) { await this.typing?.close(); this.typing = undefined; await this.releaseIdentity?.(); this.releaseIdentity = undefined; await this.releaseAccount?.(); this.releaseAccount = undefined; throw error; }
   }
 
   /**
@@ -176,6 +181,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
    * Stops message listener and aborts any in-progress authentication.
    */
   protected async doStop(): Promise<void> {
+    const closingTyping = this.typing?.close();
     try {
       // Stop message listener first
       if (this.messageListener) {
@@ -190,9 +196,26 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
       this.client = undefined;
       logger.info('WeChat channel stopped');
     } finally {
-      try { await this.releaseIdentity?.(); this.releaseIdentity = undefined; }
-      finally { await this.releaseAccount?.(); this.releaseAccount = undefined; }
+      try { await closingTyping; }
+      finally {
+        this.typing = undefined; this.client = undefined;
+        try { await this.releaseIdentity?.(); this.releaseIdentity = undefined; }
+        finally { await this.releaseAccount?.(); this.releaseAccount = undefined; }
+      }
     }
+  }
+
+  /** Account/peer-local leases. A stopped/missing-context channel never starts a new indicator. */
+  beginTyping(chatId: string): () => void {
+    if (!this.typing) { return () => {}; }
+    const peer = wechatPeer(chatId, this.config.registrationId);
+    return this.contexts.has(peer) ? this.typing.begin(peer) : () => {};
+  }
+
+  /** Keep final text and attachments covered even after their model input has settled. */
+  override async sendMessage(message: OutgoingMessage): Promise<string | void> {
+    const release = message.type === 'done' ? () => {} : this.beginTyping(message.chatId);
+    try { return await super.sendMessage(message); } finally { release(); }
   }
 
   /**

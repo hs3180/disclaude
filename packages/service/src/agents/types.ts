@@ -23,6 +23,8 @@ import type { ServiceTurnRecoveryStore } from '../service-turn-recovery.js';
  * (channels) provides implementations of these callbacks.
  */
 export interface ChatAgentCallbacks {
+  /** Own a non-blocking indicator for an input or explicitly reported native background work. */
+  beginProcessing?: (chatId: string, messageId: string) => (() => void);
   requestAgentInput?: import('@disclaude/core').IChannel['requestAgentInput'];
   /**
    * Send a text message to the user.
