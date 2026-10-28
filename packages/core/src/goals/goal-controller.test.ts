@@ -172,9 +172,10 @@ describe('owned explicit Goal execution', () => {
     const checking = gate(); const { controller, request, authorize, store, run } = await fixture();
     authorize.mockImplementationOnce(() => checking.promise);
     const pending = controller.start(request, 'activate');
-    const rejected = expect(pending).rejects.toThrow('Goal changed');
+    const outcome = pending.then(() => undefined, (error: unknown) => error);
+    await vi.waitFor(() => expect(authorize).toHaveBeenCalledOnce());
     const stopped = await controller.control({ ...request, sourceMessageId: 'stop' }, 'stop');
-    checking.release(); await rejected;
+    checking.release(); expect(await outcome).toMatchObject({ name: 'GoalRevisionConflictError' });
     expect(await stopped.settlement).toMatchObject({ reason: 'failed', error: expect.any(Error) });
     expect((await store.get(request.goalId))?.status).toBe('abandoned'); expect(run).not.toHaveBeenCalled();
   });
