@@ -10,6 +10,21 @@ export interface AgentTaskToolBinding {
   callbacks: ChatAgentCallbacks;
 }
 
+/** Shared wire contract; admission remains owned by the caller. */
+export const AGENT_TASK_TOOL_SPEC: Omit<ToolDefinition, 'execute'> = {
+  name: 'run_agent_task',
+  description: 'Run an explicit independent subtask in an existing subdirectory of this Project; use workingDirectory="." for its root. Await its real result. Reuse operationId for an uncertain retry, and inspect failed/stopped partial results before requesting new work. Execution success is not Goal acceptance.',
+  inputSchema: { type: 'object', properties: {
+    operationId: { type: 'string', pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$' },
+    task: { type: 'string', minLength: 1, maxLength: 64_000 },
+    workingDirectory: { type: 'string', minLength: 1, maxLength: 4096 },
+  }, required: ['operationId', 'task', 'workingDirectory'], additionalProperties: false },
+  outputSchema: { type: 'object', properties: {
+    id: { type: 'string' }, outcome: { type: 'string', enum: ['succeeded', 'failed', 'stopped'] },
+    text: { type: 'string', maxLength: 65_536 }, truncated: { type: 'boolean' }, error: { type: 'string' },
+  }, required: ['id', 'outcome', 'text', 'truncated'], additionalProperties: false },
+};
+
 /** One trusted originating request, with retry identity retained for this tool's
  * lifetime. The host must authorize/freeze the source before constructing it;
  * neither identity nor runtime permissions are accepted from model arguments.
@@ -27,17 +42,7 @@ export function createAgentTaskTool(
   const callbacks = { ...binding.callbacks };
   const operations = new Map<string, { task: string; directory: string; handle: ReturnType<AgentTaskRunner['start']> }>();
   return {
-    name: 'run_agent_task',
-    description: 'Run an explicit independent subtask in an existing subdirectory of this Project; use workingDirectory="." for its root. Await its real result. Reuse operationId for an uncertain retry, and inspect failed/stopped partial results before requesting new work. Execution success is not Goal acceptance.',
-    inputSchema: { type: 'object', properties: {
-      operationId: { type: 'string', pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$' },
-      task: { type: 'string', minLength: 1, maxLength: 64_000 },
-      workingDirectory: { type: 'string', minLength: 1, maxLength: 4096 },
-    }, required: ['operationId', 'task', 'workingDirectory'], additionalProperties: false },
-    outputSchema: { type: 'object', properties: {
-      id: { type: 'string' }, outcome: { type: 'string', enum: ['succeeded', 'failed', 'stopped'] },
-      text: { type: 'string', maxLength: 65_536 }, truncated: { type: 'boolean' }, error: { type: 'string' },
-    }, required: ['id', 'outcome', 'text', 'truncated'], additionalProperties: false },
+    ...AGENT_TASK_TOOL_SPEC,
     execute: async (input, context) => {
       context.signal.throwIfAborted();
       if (Object.keys(input).some(key => !['operationId', 'task', 'workingDirectory'].includes(key))

@@ -1,5 +1,27 @@
 # Independent agent tasks
 
+`AgentTaskService` composes the scoped tool with service-owned admission. The
+host supplies a current Project resolver, explicit permission predicate, runtime
+selection and real channel callbacks. `createTool(queryCwd)` binds that query's
+directory; each call requires the process-local provenance of an accepted Feishu
+user input. JSON identity fields, push/REST inputs and changed source scope cannot
+authorize a task. Permission and the current Project are checked before work and
+again before returning its result.
+
+One originating input retains its runtime, reply route and operation identities
+across tool registrations in that service. Repeating the same operation shares
+its real execution/result; another input has a separate namespace. Changing a
+route, Project or an existing operation's work is refused. These identities are
+not durable across a process restart: reconcile previous effects before issuing
+new work after restart. Completed results do not establish Goal acceptance.
+
+`isBusy(chatId)` includes native work and admitted callbacks; `close()` requests
+cancellation and awaits actual settlement. Parent-tool cancellation stops only
+the referenced child operation. Cross-round async questions are disabled for
+these finite workers; a blocking question can still be handled while its query
+is live. The component does not itself register tools in the default pool or
+enable providers lacking originating tool context; that wiring remains separate.
+
 `AgentTaskRunner` is a service-side building block for explicitly requested
 subtasks. It works without a Goal loop or task board. The owning service supplies
 the task, an existing absolute working directory, actual source chat/message/
