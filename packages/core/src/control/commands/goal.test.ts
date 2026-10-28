@@ -19,7 +19,7 @@ async function fixture() {
     debugGroups: { getDebugGroup: () => null, setDebugGroup: vi.fn(), clearDebugGroup: () => null },
   };
   const dispatch = createControlHandler(context);
-  const invoke = (args: string[], chatId = 'chat') => dispatch(createControlCommand('goal', chatId, { args }, { actorId: 'actual-user', chatType: 'group' }));
+  const invoke = (args: string[], chatId = 'chat') => dispatch(createControlCommand('goal', chatId, { args }, { actorId: 'actual-user', chatType: 'group', sourceMessageId: 'actual-source' }));
   return { root, store, project, context, dispatch, invoke };
 }
 const description = ['Write the revised report', '|', 'Cite original evidence', '|', 'Record remaining acceptance'];
@@ -109,5 +109,87 @@ describe('explicit chat Goal record commands (#5212)', () => {
     await writeFile(join(store.directory, `${id}.json`), JSON.stringify({ ...record, chatId: 'chat', status: 'completed' }));
     expect((await invoke(['edit', id, '1', 'reopen', '|', 'new work'])).message).toContain('已完成或停止');
     expect((await store.get(id))?.status).toBe('completed');
+  });
+});
+
+
+describe('explicit Goal lifecycle command entry', () => {
+  async function executableFixture() {
+    const result = await fixture(); await result.invoke(['create', ...description]);
+    const [id] = await result.store.listIds();
+    const execution: NonNullable<ControlHandlerContext['goalExecution']> = {
+      start: vi.fn(async (request, action) => ({ record: await result.store.control(request.goalId, request.expectedRevision, action) })),
+      control: vi.fn(async (request, action) => ({ record: await result.store.control(request.goalId, request.expectedRevision, action) })),
+    };
+    result.context.goalExecution = execution;
+    return { ...result, id, execution };
+  }
+  it('routes start, pause, resume and stop through the explicit execution capability with captured source', async () => {
+    const { invoke, store, id, execution, root } = await executableFixture();
+    for (const [action, revision, status] of [['start', 1, 'active'], ['pause', 2, 'paused'], ['resume', 3, 'active'], ['stop', 4, 'abandoned']] as const) {
+      const response = await invoke([action, id, String(revision)]);
+      expect(response.success).toBe(true); expect((await store.get(id))?.status).toBe(status);
+    }
+    expect(execution.start).toHaveBeenNthCalledWith(1, { goalId: id, expectedRevision: 1, actorId: 'actual-user',
+      chatId: 'chat', projectRoot: root, sourceMessageId: 'actual-source' }, 'activate');
+    expect(execution.start).toHaveBeenNthCalledWith(2, expect.objectContaining({ expectedRevision: 3 }), 'resume');
+    expect(execution.control).toHaveBeenNthCalledWith(1, expect.objectContaining({ expectedRevision: 2 }), 'pause');
+    expect(execution.control).toHaveBeenNthCalledWith(2, expect.objectContaining({ expectedRevision: 4 }), 'stop');
+  });
+  it('refuses to activate when no native executor is configured', async () => {
+    const { invoke, store } = await fixture(); await invoke(['create', ...description]); const [id] = await store.listIds();
+    expect((await invoke(['start', id, '1'])).message).toContain('尚未启用');
+    expect((await store.get(id))?.status).toBe('draft');
+  });
+  it('requires channel source context, ignores source/actor claims in arguments and keeps topic metadata', async () => {
+    const { dispatch, id, execution } = await executableFixture();
+    const data = { args: ['start', id, '1'], sourceMessageId: 'forged', actorId: 'forged' };
+    expect((await dispatch(createControlCommand('goal', 'chat', data, { actorId: 'actual-user' }))).message).toContain('原始消息上下文');
+    expect(execution.start).not.toHaveBeenCalled();
+    expect((await dispatch(createControlCommand('goal', 'chat', data, { actorId: 'actual-user', sourceMessageId: 'om-real', threadRootId: 'om-topic' }))).success).toBe(true);
+    expect(execution.start).toHaveBeenCalledWith(expect.objectContaining({ actorId: 'actual-user', sourceMessageId: 'om-real', threadRootId: 'om-topic' }), 'activate');
+  });
+  it('rejects stale revisions and foreign scopes before calling the execution capability', async () => {
+    const { invoke, store, project, root, id, execution } = await executableFixture();
+    await store.update(id, 1, { objective: 'Latest requirements' });
+    expect((await invoke(['start', id, '1'])).message).toContain('未覆盖');
+    expect((await invoke(['start', id, '2'], 'other-chat')).message).toContain('找不到');
+    const other = join(root, 'other'); await mkdir(other); project.use('chat', other);
+    expect((await invoke(['start', id, '2'])).message).toContain('找不到');
+    expect(execution.start).not.toHaveBeenCalled();
+  });
+  it('blocks starts for a missing Project while keeping pause and stop available', async () => {
+    const { context, project, root, store, invoke } = await fixture();
+    const selected = join(root, 'selected'); await mkdir(selected); project.use('chat', selected);
+    await invoke(['create', ...description]); const [id] = await store.listIds();
+    const start = vi.fn();
+    context.goalExecution = { start, control: async (request, action) => ({ record: await store.control(request.goalId, request.expectedRevision, action) }) };
+    await rm(selected, { recursive: true });
+    expect((await invoke(['start', id, '1'])).message).toContain('目录暂不可用'); expect(start).not.toHaveBeenCalled();
+    await store.control(id, 1, 'activate');
+    expect((await invoke(['pause', id, '2'])).success).toBe(true);
+    expect((await invoke(['stop', id, '3'])).success).toBe(true);
+    expect((await store.get(id))?.projectRoot).toBe(selected);
+  });
+  it('returns the persisted pause without waiting for native settlement', async () => {
+    const { context, invoke, id, store } = await executableFixture(); await invoke(['start', id, '1']);
+    let release!: () => void; const settlement = new Promise<void>(resolve => { release = resolve; });
+    context.goalExecution!.control = async (request, action) => ({ record: await store.control(request.goalId, request.expectedRevision, action), settlement });
+    try {
+      const response = await invoke(['pause', id, '2']);
+      expect(response.success).toBe(true); expect(response.message).toContain('等待其结算');
+      expect((await store.get(id))?.status).toBe('paused');
+    } finally { release(); }
+  });
+  it('reports execution failures without revealing private errors or falsely activating', async () => {
+    const { invoke, store, id, context } = await executableFixture();
+    context.goalExecution!.start = vi.fn().mockRejectedValue(new Error('private-path and credentials'));
+    const response = await invoke(['start', id, '1']);
+    expect(response.success).toBe(false); expect(response.message).toContain('未成功确认');
+    expect(response.message).not.toContain('private-path'); expect((await store.get(id))?.status).toBe('draft');
+  });
+  it('honors host policy before attempting a lifecycle operation', async () => {
+    const { context, invoke, id, execution } = await executableFixture(); context.isCommandAllowed = () => false;
+    expect((await invoke(['start', id, '1'])).message).toContain('权限'); expect(execution.start).not.toHaveBeenCalled();
   });
 });
