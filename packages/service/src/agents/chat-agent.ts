@@ -3292,6 +3292,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // after a result are not expected but read the frozen value).
           turnAnchorConsumed = false;
           if (this.sessionGeneration === myGeneration) {
+            turnResultText = '';
+            turnResultTruncated = false;
             this.activeTurnMessageId = undefined;
             const backgroundError = this.backgroundContinuationPending && !turnSucceeded
               ? turnError ?? new Error('Native background continuation did not complete successfully') : undefined;
