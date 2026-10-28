@@ -11,6 +11,7 @@
 import { createLogger, type IncomingMessage } from '@disclaude/core';
 import { WeChatApiError, type WeChatApiClient } from './api-client.js';
 import type { WeChatUpdate, WeChatImageItem, WeChatFileItem } from './types.js';
+import { WeChatMediaError } from './media-error.js';
 
 const logger = createLogger('WeChatMessageListener');
 
@@ -357,8 +358,10 @@ export class WeChatMessageListener {
           else if (item.type === 2 && item.image_item?.url) { attachments.push({ fileName: 'image', filePath: item.image_item.url }); }
           else if (item.type === 4 && item.file_item?.url) { attachments.push({ fileName: item.file_item.file_name ?? 'unknown', filePath: item.file_item.url, size: item.file_item.file_size }); }
           else { textParts.push('[Attachment unavailable: no media downloader]'); }
-        } catch {
+        } catch (error) {
           if (signal?.aborted) { throw new DOMException('aborted', 'AbortError'); }
+          logger.warn({ event: 'attachment_failure', msgId: update.message_id ?? update.msg_id ?? update.client_id,
+            itemType: item.type, ...(error instanceof WeChatMediaError ? error.detail : { stage: 'unknown' }) }, 'WeChat attachment resolution failed');
           textParts.push('[Attachment unavailable: download, size or decryption failure; ask the user to resend]');
         }
       }

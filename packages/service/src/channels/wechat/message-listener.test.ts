@@ -21,6 +21,7 @@ vi.mock('@disclaude/core', () => ({
 
 import { WeChatMessageListener } from './message-listener.js';
 import { WeChatApiError, type WeChatApiClient } from './api-client.js';
+import { WeChatMediaError } from './media-error.js';
 
 // Store original fetch
 const originalFetch = globalThis.fetch;
@@ -390,6 +391,21 @@ describe('WeChatMessageListener', () => {
   });
 
   describe('error handling and backoff', () => {
+    it('logs the safe media diagnostic at the listener boundary', async () => {
+      const error = new WeChatMediaError({ stage: 'fetch', reason: 'network', elapsedMs: 12 },
+        Object.assign(new TypeError('private-signed-url'), { cause: { code: 'ECONNRESET' } }));
+      listener = new WeChatMessageListener(mockClient as WeChatApiClient, mockProcessor, {
+        resolveAttachment: vi.fn().mockRejectedValue(error),
+      });
+      mockClient.getUpdates = vi.fn().mockResolvedValueOnce([{ message_id: 'image', from_user_id: 'peer', item_list: [{ type: 2, image_item: {} }] }])
+        .mockImplementation(getUpdatesPendingUntilAborted);
+      listener.start(); await vi.advanceTimersByTimeAsync(100); await stopAndFlush(listener);
+      expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ event: 'attachment_failure',
+        diagnosticId: error.detail.diagnosticId, stage: 'fetch', reason: 'network', cause: { name: 'TypeError', code: 'ECONNRESET' } }),
+      'WeChat attachment resolution failed');
+      expect(JSON.stringify(mockLogger.warn.mock.calls)).not.toContain('private-signed-url');
+    });
+
     it('retries a failed handoff, deduplicates accepted replays, and checkpoints only accepted IDs', async () => {
       const update = { message_id: '18446744073709551615', from_user_id: 'peer', message_type: 1, create_time_ms: 1234567890123, item_list: [{ type: 1, text_item: { text: 'hello' } }] };
       const checkpoint = vi.fn().mockResolvedValue(undefined);
