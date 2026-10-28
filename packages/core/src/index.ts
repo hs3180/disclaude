@@ -19,6 +19,8 @@ export { GoalLoop } from './goals/goal-loop.js';
 export { GoalController } from './goals/goal-controller.js';
 export type { GoalExecutionRequest, GoalExecutionPort, GoalExecutionStart } from './goals/goal-controller.js';
 export type { GoalLoopSnapshot, GoalLoopPort, GoalLoopHandle, GoalLoopOutcome } from './goals/goal-loop.js';
+export { TaskClaimStore, TaskClaimConflictError } from './coordination/task-claim-store.js';
+export type { TaskClaimSnapshot, TaskClaimLease } from './coordination/task-claim-store.js';
 
 // Constants
 export * from './constants/index.js';
