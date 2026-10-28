@@ -54,6 +54,7 @@ export interface CommandRouterInput {
   chatType?: ChatType;
   actorId?: string;
   sourceMessageId?: string;
+  senderType?: string;
 }
 
 /**
@@ -86,6 +87,12 @@ export async function tryHandleSlashCommand(
     chatId: input.chatId,
     ...(input.threadRootId ? { threadId: input.threadRootId } : {}),
   };
+
+  // Goal execution must originate from a human event, including in bot-to-bot chats.
+  if (cmd === 'goal' && input.senderType !== 'user') {
+    await deps.sendMessage({ ...replyTarget, type: 'text', text: 'Goal 命令需由用户直接发送，未创建或改变目标。' });
+    return true;
+  }
 
   // Control-handler path (Issue #3529: typed command data).
   // Issue #4587 (part 3): threadRootId rides along so /reset and /stop

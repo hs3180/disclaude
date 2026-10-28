@@ -44,7 +44,7 @@ describe('tryHandleSlashCommand', () => {
         agentPool: { reset: vi.fn(), stop: vi.fn() },
         debugGroups: { getDebugGroup: () => null, setDebugGroup: vi.fn(), clearDebugGroup: vi.fn() },
       }), sendMessage: vi.fn().mockResolvedValue(undefined) };
-      const source = { chatId: 'oc_x', threadRootId: 'om_root', actorId: 'ou_actual', chatType: 'topic' as const, mentions };
+      const source = { chatId: 'oc_x', threadRootId: 'om_root', actorId: 'ou_actual', chatType: 'topic' as const, senderType: 'user', mentions };
       expect(await tryHandleSlashCommand({ ...source, textWithoutMentions: 'This task mentions a goal' }, deps)).toBe(false);
       expect(await store.listIds()).toEqual([]);
       expect(await tryHandleSlashCommand({ ...source, textWithoutMentions: '/goal create 研究报告 | 引用证据 | 记录待验收项 @_user_1' }, deps)).toBe(true);
@@ -57,10 +57,18 @@ describe('tryHandleSlashCommand', () => {
       expect(await store.listIds()).toEqual([id]);
     } finally { rmSync(workspaceDir, { recursive: true, force: true }); }
   });
+  it.each(['app', undefined])('refuses Goal control from a non-user event (%s)', async senderType => {
+    const { deps } = makeDeps({ hasControlHandler: true });
+    expect(await tryHandleSlashCommand({ textWithoutMentions: '/goal start id 1', chatId: 'oc_x',
+      actorId: 'ou_claimed', sourceMessageId: 'om_source', senderType }, deps)).toBe(true);
+    expect(deps.emitControl).not.toHaveBeenCalled();
+    expect(deps.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining('用户直接发送') }));
+  });
+
   it('carries the raw platform source ID outside Goal arguments into control dispatch', async () => {
     const { deps } = makeDeps({ hasControlHandler: true, controlResponse: { success: true, message: 'accepted' } });
     await tryHandleSlashCommand({ textWithoutMentions: '/goal start some-id 1', chatId: 'oc_x',
-      actorId: 'ou_actual', sourceMessageId: 'om_source', threadRootId: 'om_topic' }, deps);
+      actorId: 'ou_actual', sourceMessageId: 'om_source', threadRootId: 'om_topic', senderType: 'user' }, deps);
     expect(deps.emitControl).toHaveBeenCalledWith(expect.objectContaining({ actorId: 'ou_actual',
       sourceMessageId: 'om_source', threadRootId: 'om_topic', data: { args: ['start', 'some-id', '1'] } }));
     expect(deps.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ threadId: 'om_topic' }));
