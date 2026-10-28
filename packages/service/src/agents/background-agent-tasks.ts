@@ -36,7 +36,8 @@ export class BackgroundAgentTasks {
   private closeFlight?: Promise<void>;
   constructor(private readonly options: BackgroundAgentTaskOptions) {}
 
-  async start(operationId: string, request: BackgroundAgentTaskRequest): Promise<BackgroundAgentTaskHandle> {
+  async start(operationId: string, request: BackgroundAgentTaskRequest, signal?: AbortSignal): Promise<BackgroundAgentTaskHandle> {
+    signal?.throwIfAborted();
     if (this.closing) { throw new Error('Background task owner is closing'); }
     if (typeof operationId !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(operationId)) { throw new Error('Invalid background operation ID'); }
     if (!isAbsolute(request.workingDirectory) || !isAbsolute(request.projectRoot)) { throw new Error('Background task needs an absolute Project and directory'); }
@@ -61,11 +62,15 @@ export class BackgroundAgentTasks {
     }
     const entry: Entry = { fingerprint, chatId: input.chatId, threadRootId: input.threadRootId, busy: true, stopped: false };
     this.operations.set(key, entry);
+    const cancelAdmission = (): void => { entry.stopped = true; entry.stopNative?.(); };
+    signal?.addEventListener('abort', cancelAdmission, { once: true });
+    if (signal?.aborted) { cancelAdmission(); }
     entry.admission = this.admit(input, entry);
     const { admission } = entry;
     void admission.catch(() => { if (!entry.id) { this.operations.delete(key); entry.busy = false; } });
     this.track(admission);
-    return await admission;
+    try { return await admission; }
+    finally { signal?.removeEventListener('abort', cancelAdmission); }
   }
   private track(work: Promise<unknown>): void {
     this.inFlight.add(work);

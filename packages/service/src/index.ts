@@ -127,6 +127,7 @@ export { AgentTaskRunner, type AgentTaskRequest, type AgentTaskResult, type Agen
 export { AgentTaskService, type AgentTaskServiceOptions } from './agents/agent-task-service.js';
 export { createAgentTaskTool, type AgentTaskToolBinding } from './agents/agent-task-tool.js';
 export { BackgroundAgentTasks, type BackgroundAgentTaskHandle, type BackgroundAgentTaskOptions, type BackgroundAgentTaskRequest } from './agents/background-agent-tasks.js';
+export { BackgroundTaskTools, type BackgroundTaskToolsOptions } from './agents/background-task-tools.js';
 export { ChatAgent } from './agents/chat-agent.js';
 export type { ChatAgentCallbacks, ChatAgentConfig } from './agents/types.js';
 

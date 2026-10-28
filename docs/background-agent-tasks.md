@@ -34,3 +34,17 @@ operation index and unfinished workers are not automatically restored; the host
 must reconcile its service interruption journal and previously issued task IDs
 after restart. This component does not supply the default tool registration,
 inbox deduplication, current-policy UI or final platform acceptance for F5.
+
+`BackgroundTaskTools` adapts that owner to `start_agent_task`, `get_agent_task`
+and `stop_agent_task`. Its authorization port is the same verified input/current
+Project check used by synchronous tasks. Work and task IDs are the only model
+arguments. A different actor/chat/Project/topic cannot inspect or stop a task;
+status reads recheck permission after storage I/O. A later real user input in
+the same scope can inspect a saved result.
+
+Starting returns host admission, not completion. Cancellation before admission
+can prevent launch; after the tool returns, its parent turn ending does not
+cancel the background child. Explicit task stop remains separate and does not
+claim physical settlement. The model tools do not register themselves in the
+default service or manufacture provenance for system reports; default parent
+admission and continuation policy must be supplied by the host.

@@ -33,7 +33,7 @@ export class AgentTaskService {
     return { ...options, tools: [...(options.tools ?? []), this.createTool(options.cwd)] };
   }
 
-  private authorize(input: Readonly<AgentInputContext>, directory: string): {
+  authorizeInput(input: Readonly<AgentInputContext>, directory: string): {
     facts: Readonly<VerifiedFeishuInput>; root: string;
   } {
     if (this.closing) { throw new Error('Agent task service is closing'); }
@@ -55,7 +55,7 @@ export class AgentTaskService {
       context.signal.throwIfAborted();
       if (!context.inputContext) { throw new Error('Agent task input context is unavailable'); }
       const input = Object.freeze({ ...context.inputContext });
-      const { facts, root } = this.authorize(input, directory);
+      const { facts, root } = this.authorizeInput(input, directory);
       let binding = this.bindings.get(facts);
       if (binding && (binding.root !== root || binding.route !== routeKey(input))) {
         throw new Error('Agent task source already belongs to another Project or reply route');
@@ -70,7 +70,7 @@ export class AgentTaskService {
           }) };
         const runner = new AgentTaskRunner(runtime);
         const tool = createAgentTaskTool({ start: (request, callbacks) => {
-          this.authorize(input, root);
+          this.authorizeInput(input, root);
           const handle = runner.start(request, callbacks);
           this.active.set(runner, facts.chatId);
           const release = (): void => { if (runner.activeCount === 0) { this.active.delete(runner); } };
@@ -86,7 +86,7 @@ export class AgentTaskService {
         this.bindings.set(facts, binding);
       }
       const result = await binding.tool.execute(args, context);
-      this.authorize(input, root);
+      this.authorizeInput(input, root);
       return result;
     } };
   }
