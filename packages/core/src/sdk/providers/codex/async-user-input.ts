@@ -1,14 +1,14 @@
-import { parseAgentInputParams, validateAgentInputAnswers, type AgentInputRequest, type AgentInputParams } from '../../user-input.js';
+import { AgentInputDeliveryError, parseAgentInputParams, validateAgentInputAnswers, type AgentInputRequest, type AgentInputParams } from '../../user-input.js';
 
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value)
   ? value as Record<string, unknown> : {};
 
 export class CodexAsyncInputDeliveryError extends Error {
   readonly code: string;
-  constructor(reason: 'unsupported' | 'delivery-failed' = 'delivery-failed') {
-    super(reason === 'unsupported'
+  constructor(reason: 'unsupported' | 'delivery-failed' = 'delivery-failed', cause?: AgentInputDeliveryError) {
+    super((reason === 'unsupported'
       ? 'Async question was not delivered: asynchronous answers are unsupported in this conversation.'
-      : 'Async question was not delivered: the channel could not confirm card delivery.');
+      : 'Async question was not delivered: the channel could not confirm card delivery.') + (cause ? ` ${cause.message}` : ''), { cause });
     this.code = reason === 'unsupported' ? 'CODEX_ASYNC_INPUT_UNSUPPORTED' : 'CODEX_ASYNC_INPUT_DELIVERY_FAILED';
     this.name = 'CodexAsyncInputDeliveryError';
   }
@@ -128,7 +128,7 @@ export class CodexAsyncUserInput {
       if (error instanceof CodexAsyncInputDeliveryError) { mapped = error; }
       else if (error instanceof Error && 'code' in error && error.code === 'AGENT_ASYNC_INPUT_UNSUPPORTED') {
         mapped = new CodexAsyncInputDeliveryError('unsupported');
-      } else { mapped = new CodexAsyncInputDeliveryError(); }
+      } else { mapped = new CodexAsyncInputDeliveryError('delivery-failed', error instanceof AgentInputDeliveryError ? error : undefined); }
       // #5467: "unsupported" is a session capability mismatch, not a delivery
       // accident — every origin (no interactive channel wired, no input
       // context / answer host, once-mode or stale-session rejection

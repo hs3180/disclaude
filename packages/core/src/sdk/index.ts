@@ -64,6 +64,7 @@
 // 类型导出
 // ============================================================================
 export type { AgentInputRequest, AgentInputParams, AgentInputQuestion, AgentInputAnswers, AgentInputContext } from './user-input.js';
+export { AgentInputDeliveryError } from './user-input.js';
 export type { ToolDefinition, ToolContext } from './tools.js';
 export type { ToolMediaResult, ToolImage } from './tool-result.js';
 

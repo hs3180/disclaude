@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentMessage, AgentQueryOptions, UserInput } from '../../types.js';
+import { AgentInputDeliveryError } from '../../user-input.js';
 import { CodexAgentProvider } from './provider.js';
 
 type Transport = 'exec' | 'app-server';
@@ -244,7 +245,7 @@ describe('Codex overload preserves host-side input and effects', () => {
   it.each([false, true])('does not replay an async question after overload (delivery fails=%s)', async deliveryFails => {
     const fx = fixture('app-server', { failures: 1, special: 'async-question' }, CAPACITY_FAST);
     const onUserInput = vi.fn(() => deliveryFails
-      ? Promise.reject(new Error('Owned card delivery failed')) : Promise.resolve());
+      ? Promise.reject(new AgentInputDeliveryError({ channel: 'feishu', operation: 'public-card', stage: 'send', outcome: 'rejected', apiCode: 230001 })) : Promise.resolve());
     const onAsyncUserInputAnswer = vi.fn().mockResolvedValue(undefined);
     const messages = await collect(fx.query({ onUserInput, onAsyncUserInputAnswer }, {
       inputContext: { actorId: 'owned-actor', chatId: 'owned-chat', sourceMessageId: 'owned-overload-source' },
@@ -258,6 +259,8 @@ describe('Codex overload preserves host-side input and effects', () => {
       expect(fx.attempts()).toBe(1);
       expect(results[0].metadata?.terminatedReason).toBe('turn_failed');
       expect(results[0].metadata?.terminationDetail).toContain('Async question was not delivered');
+      expect(results[0].metadata?.terminationDetail).toContain('"apiCode":230001');
+      expect(results[0].metadata?.terminationDetail).toContain('"stage":"send"');
     } else {
       // #5468: the delivered question is progress; the thread continues.
       expect(fx.attempts()).toBe(2);
