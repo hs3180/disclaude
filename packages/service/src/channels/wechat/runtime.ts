@@ -5,11 +5,17 @@ import type { WeChatChannelConfig } from './types.js';
 
 const logger = createLogger('WeChatRegistrationRuntime');
 
+export interface WeChatRegistrationHealth {
+  status: 'healthy' | 'degraded' | 'stopped';
+  reason?: 'registry_unavailable';
+}
+
 /** Watches the host-private registry; account changes do not restart the service. */
 export class WeChatRegistrationRuntime {
   private running = false;
   private timer?: ReturnType<typeof setTimeout>;
   private pending: Promise<void> = Promise.resolve();
+  private registryUnavailable = false;
   private readonly active = new Map<string, { generation: string; channel?: IChannel }>();
 
   constructor(
@@ -19,27 +25,38 @@ export class WeChatRegistrationRuntime {
     private readonly options: { routeTag?: string; intervalMs?: number } = {},
   ) {}
 
+  getHealth(): WeChatRegistrationHealth {
+    return !this.running ? { status: 'stopped' } : this.registryUnavailable
+      ? { status: 'degraded', reason: 'registry_unavailable' } : { status: 'healthy' };
+  }
+
   async start(): Promise<void> {
     if (this.running) { return; }
     this.running = true;
-    try { await this.sync(); }
-    catch (error) { this.running = false; throw error; }
-    logger.info('WeChat registration enabled; use disclaude wechat login to add an account');
+    await this.sync();
+    if (!this.running) { return; }
+    logger.info({ status: this.getHealth().status }, 'WeChat registration watcher started; use disclaude wechat login to add an account');
     this.schedule();
   }
 
   private schedule(): void {
     if (!this.running) { return; }
     this.timer = setTimeout(() => {
-      void this.sync().catch(() => logger.error('Cannot reconcile WeChat registry; existing accounts retained')).finally(() => this.schedule());
+      void this.sync().finally(() => this.schedule());
     }, this.options.intervalMs ?? 1000);
     this.timer.unref();
   }
 
   private sync(): Promise<void> {
     const operation = this.pending.then(() => this.reconcile());
-    this.pending = operation.catch(() => {});
-    return operation;
+    this.pending = operation.then(() => {
+      if (this.registryUnavailable) { logger.info('WeChat registry recovered; registration reconciliation resumed'); }
+      this.registryUnavailable = false;
+    }, () => {
+      if (!this.registryUnavailable) { logger.error('Cannot reconcile WeChat registry; repair or restore its private state/lock. Other channels and existing accounts remain available; retrying automatically'); }
+      this.registryUnavailable = true;
+    });
+    return this.pending;
   }
 
   private async remove(id: string): Promise<void> {

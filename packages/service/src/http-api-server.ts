@@ -33,6 +33,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { createLogger, type TopicGroupMessageEvent, type FeishuCard, type ChannelCapabilities, type ChannelStatus } from '@disclaude/core';
 import { SERVICE_VERSION } from './version.js';
 import type { DeliveryHealth } from './health-types.js';
+import type { WeChatRegistrationHealth } from './channels/wechat/runtime.js';
 import { channelError } from './channel-error.js';
 
 const logger = createLogger('HttpApiServer');
@@ -62,6 +63,7 @@ export interface DetailedHealthResponse {
   timestamp: string;
   process: { status: 'healthy'; pid: number; uptime: number };
   delivery: DeliveryHealth;
+  wechatRegistration?: WeChatRegistrationHealth;
 }
 
 /**
@@ -289,6 +291,7 @@ export class HttpApiServer {
   private markChatRespondedHandler?: MarkChatRespondedHandler;
   private selfSentRegistrar?: SelfSentRegistrar;
   private deliveryHealthProvider?: () => DeliveryHealth;
+  private wechatRegistrationHealthProvider?: () => WeChatRegistrationHealth;
   private browserIpcStatusProvider?: () => NonNullable<StatusResponse['browserIpc']>;
   private channelCapabilitiesProvider?: (chatId?: string) => ChannelCapabilitySnapshot[];
 
@@ -315,6 +318,10 @@ export class HttpApiServer {
   /** Supply channel delivery counters without making health checks send a message. */
   setDeliveryHealthProvider(provider: () => DeliveryHealth): void {
     this.deliveryHealthProvider = provider;
+  }
+
+  setWeChatRegistrationHealthProvider(provider: () => WeChatRegistrationHealth): void {
+    this.wechatRegistrationHealthProvider = provider;
   }
 
   /** Supply local browser IPC lifecycle state without probing another service. */
@@ -717,12 +724,14 @@ export class HttpApiServer {
       successes: 0,
       failures: 0,
     };
-    const status = delivery.status === 'degraded' ? 'degraded' : 'healthy';
+    const wechatRegistration = this.wechatRegistrationHealthProvider?.();
+    const status = delivery.status === 'degraded' || (wechatRegistration && wechatRegistration.status !== 'healthy') ? 'degraded' : 'healthy';
     const response: DetailedHealthResponse = {
       status,
       timestamp: new Date().toISOString(),
       process: { status: 'healthy', pid: process.pid, uptime: process.uptime() },
       delivery,
+      ...(wechatRegistration ? { wechatRegistration } : {}),
     };
     this.sendJson(res, status === 'healthy' ? 200 : 503, response);
     return Promise.resolve();

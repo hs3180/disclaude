@@ -1,6 +1,6 @@
 /** Real registry, lifecycle and REST; Tencent long polls are intercepted. */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, rm, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import nock from 'nock';
@@ -77,7 +77,7 @@ describe('WeChat registration runtime', () => {
     } finally { if (!stopped) { await runtime.stop(); } await lifecycle.stopAll(); await rm(dir, { recursive: true, force: true }); }
   });
 
-  it('retains working accounts on a corrupt update and rejects a corrupt registry on startup', async () => {
+  it('retains working accounts on a corrupt update and isolates a corrupt registry on startup', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'wechat-registry-corruption-'));
     const { manager, registry, runtime } = setup(dir);
     answerSessionProbes();
@@ -88,8 +88,30 @@ describe('WeChat registration runtime', () => {
       await new Promise(resolve => setTimeout(resolve, 40));
       expect(manager.get(registry.channelId(account))?.isHealthy()).toBe(true);
       const other = setup(dir);
-      await expect(other.runtime.start()).rejects.toThrow('Invalid WeChat registry');
+      await expect(other.runtime.start()).resolves.toBeUndefined();
+      expect(other.runtime.getHealth()).toEqual({ status: 'degraded', reason: 'registry_unavailable' });
       await other.runtime.stop();
     } finally { await runtime.stop(); await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it('keeps REST available with an empty registry lock and resumes after its explicit repair', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'wechat-registry-empty-lock-'));
+    const { manager, lifecycle, runtime } = setup(dir);
+    try {
+      await lifecycle.createAndWire(REST_WIRED_DESCRIPTOR, { port: 0, host: '127.0.0.1', fileStorageDir: join(dir, 'rest') });
+      const guard = join(dir, '.registry-lock');
+      await mkdir(guard, { recursive: true });
+      await writeFile(join(guard, 'listener.lock'), '');
+      // Same ordering as cli-main: registration precedes ordinary channel startup.
+      await runtime.start();
+      await lifecycle.startAll();
+      expect(manager.get('rest')?.isHealthy()).toBe(true);
+      expect(runtime.getHealth().status).toBe('degraded');
+      expect(await readFile(join(guard, 'listener.lock'), 'utf8')).toBe('');
+      // Simulate an operator repairing only this known test-owned empty lock.
+      await unlink(join(guard, 'listener.lock'));
+      await vi.waitFor(() => expect(runtime.getHealth().status).toBe('healthy'));
+      expect(manager.get('rest')?.isHealthy()).toBe(true);
+    } finally { await runtime.stop(); await lifecycle.stopAll(); await rm(dir, { recursive: true, force: true }); }
   });
 });
