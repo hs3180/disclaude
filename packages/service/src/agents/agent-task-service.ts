@@ -28,6 +28,11 @@ export class AgentTaskService {
   private closeFlight?: Promise<void>;
   constructor(private readonly options: AgentTaskServiceOptions) {}
 
+  configureQueryOptions(options: AgentQueryOptions): AgentQueryOptions {
+    if (options.codexRuntime?.transport !== 'app-server' || !options.cwd) { return options; }
+    return { ...options, tools: [...(options.tools ?? []), this.createTool(options.cwd)] };
+  }
+
   private authorize(input: Readonly<AgentInputContext>, directory: string): {
     facts: Readonly<VerifiedFeishuInput>; root: string;
   } {
@@ -61,6 +66,7 @@ export class AgentTaskService {
           ...(selected.env ? { env: { ...selected.env } } : {}),
           configureQueryOptions: (options: AgentQueryOptions) => ({
             ...(selected.configureQueryOptions?.(options) ?? options), onAsyncUserInputAnswer: undefined,
+            capacityAdmission: 'reject' as const,
           }) };
         const runner = new AgentTaskRunner(runtime);
         const tool = createAgentTaskTool({ start: (request, callbacks) => {
@@ -72,6 +78,7 @@ export class AgentTaskService {
           return handle;
         } }, { projectRoot: root, source: { chatId: facts.chatId, senderOpenId: facts.actorId,
           sourceMessageId: facts.sourceMessageId,
+          ...(facts.chatType ? { chatType: facts.chatType } : {}),
           ...(input.threadRootId ? { threadRootId: input.threadRootId } : {}),
           ...(input.replyRootId !== undefined ? { replyRootId: input.replyRootId } : {}) },
         callbacks: this.options.callbacks(input) });

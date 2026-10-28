@@ -11,7 +11,7 @@
  * @see Issue #1040 - Separate disclaude service code to @disclaude/service
  */
 
-import { type MessageBuilderOptions, type CwdProvider, type CwdResolution, type AgentPreset, type AgentSessionOptions, type AgentPresets, type BaseAgentConfig, type ChatFailureRecord, buildSessionKey, chatIdOfSessionKey, createLogger, getProvider, Config, resolveAgentPreset } from '@disclaude/core';
+import { type AgentQueryOptions, type MessageBuilderOptions, type CwdProvider, type CwdResolution, type AgentPreset, type AgentSessionOptions, type AgentPresets, type BaseAgentConfig, type ChatFailureRecord, buildSessionKey, chatIdOfSessionKey, createLogger, getProvider, Config, resolveAgentPreset } from '@disclaude/core';
 import { statSync } from 'node:fs';
 import { AgentFactory } from './agents/factory.js';
 import type { ChatAgentCallbacks } from './agents/types.js';
@@ -25,6 +25,8 @@ import type { ServiceTurnRecoveryStore } from './service-turn-recovery.js';
  * at pool creation time.
  */
 export interface ChatSessionPoolOptions {
+  /** Host-owned tools for a chat; providers keep their own transport hooks. */
+  configureQueryOptions?: (options: AgentQueryOptions, chatId: string) => AgentQueryOptions;
   /** Named runtime presets. Defaults to Config.getAgentPresets(). */
   agentPresets?: AgentPresets;
   /** Backend availability probe; injectable for deterministic tests. */
@@ -311,6 +313,7 @@ export class ChatSessionPool {
     freezeDirectory = false,
   ): ChatAgent {
     let { cwdProvider, cwdResolver } = this.options;
+    const { configureQueryOptions } = this.options;
     if (freezeDirectory) {
       const initial = cwdResolver?.(chatId);
       // Preserve an unavailable bound target too: taking effectiveCwd alone
@@ -333,6 +336,7 @@ export class ChatSessionPool {
       sdkSessionKey,
       turnRecovery: this.options.turnRecovery,
       failureRecorder: this.options.failureRecorder,
+      ...(configureQueryOptions ? { configureQueryOptions: (options: AgentQueryOptions) => configureQueryOptions(options, chatId) } : {}),
       ...(preset ? {
         ...preset,
         settings: preset,

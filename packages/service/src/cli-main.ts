@@ -34,6 +34,8 @@ import {
   channelCredentialErrors,
   resolveChannelCredential,
   ChatFailureRegistry,
+  resolveAgentPreset,
+  getProvider,
 } from '@disclaude/core';
 import crypto from 'node:crypto';
 import { DisclaudeService } from './service.js';
@@ -44,6 +46,8 @@ import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
 import { createChannelCallbacksFactory } from './utils/channel-handlers.js';
 import { ServiceTurnRecoveryStore } from './service-turn-recovery.js';
+import { AgentTaskService } from './agents/agent-task-service.js';
+import { AgentFactory } from './agents/factory.js';
 import { messageLogger } from './utils/message-logger.js';
 import { DEFAULT_WECHAT_STATE_DIR } from './channels/wechat/state-store.js';
 import { WeChatRegistry } from './channels/wechat/registry.js';
@@ -371,7 +375,9 @@ export async function main(): Promise<void> {
   // recorded by ChatAgent for the /issue feedback entry.
   const failureRegistry = new ChatFailureRegistry();
 
-  const agentPool = new ChatSessionPool({
+  const agentPool: ChatSessionPool = new ChatSessionPool({
+    configureQueryOptions: (options, chatId) => service.getChannelManager().resolveChannelForChatId(chatId)?.id === 'feishu'
+      ? agentTasks.configureQueryOptions(options) : options,
     agentPresets: Config.getAgentPresets(),
     turnRecovery,
     // Issue #5400: per-chat last-failure registry backing the /issue entry.
@@ -395,7 +401,7 @@ export async function main(): Promise<void> {
     agentPool: {
       reset: (chatId: string, skipContext?: boolean) => agentPool.reset(chatId, skipContext),
       resetProjectSessions: (chatId: string) => agentPool.resetProjectSessions(chatId),
-      isProjectBusy: (chatId: string) => agentPool.isProjectBusy(chatId),
+      isProjectBusy: (chatId: string) => agentPool.isProjectBusy(chatId) || agentTasks.isBusy(chatId),
       stop: (chatId: string) => agentPool.stop(chatId),
       // Issue #4587 (part 3): thread-scoped reset/stop for commands typed
       // inside a topic-group thread — the pool's part-2 slots, previously
@@ -466,6 +472,29 @@ export async function main(): Promise<void> {
     // Fallback for channels without a registered descriptor
     return createChannelCallbacksFactory(channel, logger)(chatId, threadRootId);
   };
+  const agentTasks: AgentTaskService = new AgentTaskService({
+    projectManager,
+    isAllowed: (source, input) => service.getChannelManager().resolveChannelForChatId(source.chatId)?.id === 'feishu' &&
+      (!controlHandlerContext.isCommandAllowed || controlHandlerContext.isCommandAllowed({ type: 'steer', chatId: source.chatId,
+        actorId: source.actorId,
+        ...(source.chatType ? { chatType: source.chatType } : {}), ...(input.threadRootId ? { threadRootId: input.threadRootId } : {}),
+        data: { prompt: 'run_agent_task' } })),
+    callbacks: input => routerCallbacksFactory(input.chatId, input.threadRootId),
+    runtimeOptions: input => {
+      const presets = Config.getAgentPresets();
+      const selected = agentPool.getActiveAgentPreset(input.chatId, input.threadRootId);
+      const resolved = presets ? resolveAgentPreset(presets, selected?.name) : undefined;
+      if (resolved && !resolved.ok) { throw new Error('Selected subtask runtime is unavailable'); }
+      const preset = resolved?.ok ? structuredClone(resolved.preset) : undefined;
+      const options = { ...(preset ?? Config.getAgentConfig()), ...(preset ? { settings: preset } : {}),
+        turnRecovery, failureRecorder: (failure: import('@disclaude/core').ChatFailureRecord) => failureRegistry.record(failure),
+        messageBuilderOptions: createFeishuMessageBuilderOptions() };
+      if (!getProvider(options.agentBackend, options.settings).getInfo(AgentFactory.resolveConfig(options)).available) {
+        throw new Error('Selected subtask runtime is unavailable');
+      }
+      return options;
+    },
+  });
   service.initInputMessageRouter(agentPool, routerCallbacksFactory);
 
   // Create ChannelLifecycleManager (Issue #1594 Phase 3)
@@ -505,6 +534,7 @@ export async function main(): Promise<void> {
     logger.info('Shutting down disclaude service...');
 
     try {
+      await agentTasks.close();
       await agentPool.shutdownForServiceRestart({ drainTimeoutMs: 10_000, noticeTimeoutMs: 2_000 });
       await httpApiServer?.stop();
       await wechatRuntime?.stop();
