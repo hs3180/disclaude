@@ -8,6 +8,7 @@ import type { IncomingMessage } from '@disclaude/core';
 import { WeChatRegistry } from '../../packages/service/src/channels/wechat/registry.js';
 import { WeChatChannel } from '../../packages/service/src/channels/wechat/wechat-channel.js';
 import { WeChatStateStore } from '../../packages/service/src/channels/wechat/state-store.js';
+import { WECHAT_WELCOME_TEXT } from '../../packages/service/src/channels/wechat/welcome.js';
 import { wechatPeer, lockWeChatIdentity } from '../../packages/service/src/channels/wechat/identity.js';
 import { DisclaudeService } from '../../packages/service/src/service.js';
 import { createChannelApiHandlers } from '../../packages/service/src/utils/channel-handlers.js';
@@ -23,6 +24,7 @@ describe('registered WeChat account identity and routing', () => {
     const service = new DisclaudeService();
     const received: IncomingMessage[] = [];
     const channels: WeChatChannel[] = [];
+    const welcomes: ReturnType<typeof nock>[] = [];
     try {
       for (const suffix of ['a', 'b']) {
         const baseUrl = `https://${suffix}.weixin.qq.com`;
@@ -37,6 +39,9 @@ describe('registered WeChat account identity and routing', () => {
         });
         nock(baseUrl).persist().post('/ilink/bot/getconfig').reply(200, { ret: 0, typing_ticket: 'ticket' });
         nock(baseUrl).persist().post('/ilink/bot/sendtyping').reply(200, { ret: 0 });
+        welcomes.push(nock(baseUrl).post('/ilink/bot/sendmessage', body => body.msg.to_user_id === peer
+          && body.msg.context_token === `private-context-${suffix}` && body.msg.item_list[0].text_item.text === WECHAT_WELCOME_TEXT)
+          .reply(200, { ret: 0, message_id: `welcome-${suffix}` }));
         const channel = new WeChatChannel({ registrationId: account.id, stateDir: registry.stateDir(account) });
         channels.push(channel);
         channel.onMessage(async message => { received.push(message); });
@@ -56,7 +61,7 @@ describe('registered WeChat account identity and routing', () => {
         expect(channel.ownsChatId(peer)).toBe(false);
         expect(channel.ownsChatId(`${channels[1 - index].id}:${peer}`)).toBe(false);
         const send = nock(`https://${suffix}.weixin.qq.com`).post('/ilink/bot/sendmessage', body =>
-          body.msg.to_user_id === peer && body.msg.context_token === `private-context-${suffix}`)
+          body.msg.to_user_id === peer && body.msg.context_token === `private-context-${suffix}` && body.msg.item_list[0].text_item.text === 'reply')
           .reply(200, { ret: 0, message_id: `reply-${suffix}` });
         await expect(service.sendMessage(chatId, 'reply')).resolves.toMatchObject({ messageId: `reply-${suffix}` });
         expect(send.isDone()).toBe(true);
@@ -66,6 +71,7 @@ describe('registered WeChat account identity and routing', () => {
       await channels[0].stop();
       service.unregisterChannel(channels[0].id);
       await expect(service.sendMessage(`${channels[0].id}:${peer}`, 'removed')).rejects.toThrow('No registered channel owns');
+      await channels[1].stop(); expect(welcomes.every(scope => scope.isDone())).toBe(true);
     } finally { await Promise.all(channels.map(channel => channel.stop())); await rm(dir, { recursive: true, force: true }); }
   });
 

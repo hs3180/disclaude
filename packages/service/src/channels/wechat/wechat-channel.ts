@@ -31,6 +31,7 @@ import { downloadWeChatMedia, WECHAT_MEDIA_MAX_BYTES } from './media.js';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { WeChatTypingController } from './typing-controller.js';
+import { emptyWelcomeState, WeChatWelcome, WECHAT_WELCOME_TEXT } from './welcome.js';
 
 const logger = createLogger('WeChatChannel');
 
@@ -54,6 +55,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
   private auth?: WeChatAuth;
   private messageListener?: WeChatMessageListener;
   private readonly contexts = new Map<string, string>();
+  private welcome?: WeChatWelcome;
   private releaseAccount?: () => Promise<void>;
   private releaseIdentity?: () => Promise<void>;
   private typing?: WeChatTypingController;
@@ -92,6 +94,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
       } catch (error) { await this.releaseIdentity?.(); this.releaseIdentity = undefined; await this.releaseAccount(); this.releaseAccount = undefined; throw error; }
     }
     try {
+      let botId = credentials?.botId ?? 'ephemeral-account';
       // Create API client
       this.client = new WeChatApiClient({
         baseUrl: credentials?.baseUrl ?? this.baseUrl,
@@ -114,6 +117,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
         }
 
         this.client.setToken(result.token);
+        botId = result.botId ?? botId;
         if (result.baseUrl) { this.client = new WeChatApiClient({ baseUrl: result.baseUrl, token: result.token, routeTag: this.routeTag }); }
         logger.info(
           { botId: result.botId, userId: result.userId },
@@ -136,12 +140,20 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
 
       this.messageListener = new WeChatMessageListener(this.client, processor, {
         state: session,
-        onContext: (peer, token) => this.contexts.set(peer, token),
+        onContext: (peer, token) => { this.contexts.set(peer, token); this.welcome?.request(peer); },
         resolveAttachment: (item, signal) => downloadWeChatMedia(item, path.join(this.config.stateDir ?? path.join(tmpdir(), 'disclaude-wechat', this.id), 'media'), signal),
         checkpoint: store && session ? async (state) => {
           await store.saveSession({ ...state, botId: session.botId, contexts: Object.fromEntries(this.contexts) });
         } : undefined,
       });
+      // A dedicated file avoids racing cursor/media checkpoints in session.json.
+      try {
+        const welcomeClient = this.client;
+        this.welcome = new WeChatWelcome(store ? await store.loadWelcome(botId) : emptyWelcomeState(botId),
+          state => store ? store.saveWelcome(state) : Promise.resolve(), peer => this.contexts.get(peer),
+          (peer, contextToken) => welcomeClient.sendText({ to: peer, content: WECHAT_WELCOME_TEXT, contextToken }),
+          (peer, event) => logger.info({ channelId: this.id, peerHash: createHash('sha256').update(peer).digest('hex').slice(0, 12), event }, 'WeChat onboarding'));
+      } catch { logger.warn({ channelId: this.id }, 'Welcome state unavailable; task reception continues without resetting it'); }
       this.messageListener.start();
 
       // Seed the auth confirmation with a read-only session probe (#5479):
@@ -150,7 +162,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
       await this.probeAuthState(credentials?.userId);
 
       logger.info('WeChat channel started with message listening');
-    } catch (error) { await this.typing?.close(); this.typing = undefined; await this.releaseIdentity?.(); this.releaseIdentity = undefined; await this.releaseAccount?.(); this.releaseAccount = undefined; throw error; }
+    } catch (error) { await Promise.all([this.typing?.close(), this.welcome?.close()]); this.typing = undefined; this.welcome = undefined; await this.releaseIdentity?.(); this.releaseIdentity = undefined; await this.releaseAccount?.(); this.releaseAccount = undefined; throw error; }
   }
 
   /**
@@ -182,6 +194,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
    */
   protected async doStop(): Promise<void> {
     const closingTyping = this.typing?.close();
+    const closingWelcome = this.welcome?.close();
     try {
       // Stop message listener first
       if (this.messageListener) {
@@ -196,9 +209,9 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
       this.client = undefined;
       logger.info('WeChat channel stopped');
     } finally {
-      try { await closingTyping; }
+      try { await Promise.all([closingTyping, closingWelcome]); }
       finally {
-        this.typing = undefined; this.client = undefined;
+        this.typing = undefined; this.welcome = undefined; this.client = undefined;
         try { await this.releaseIdentity?.(); this.releaseIdentity = undefined; }
         finally { await this.releaseAccount?.(); this.releaseAccount = undefined; }
       }

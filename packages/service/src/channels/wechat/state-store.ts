@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { WeChatListenerState } from './message-listener.js';
 import { validMediaInbox } from './media-inbox-state.js';
+import { emptyWelcomeState, validWelcomeState, type WeChatWelcomeState } from './welcome.js';
 
 export const DEFAULT_WECHAT_STATE_DIR = join(homedir(), '.disclaude', 'wechat');
 export const DEFAULT_WECHAT_BASE_URL = 'https://ilinkai.weixin.qq.com';
@@ -93,6 +94,17 @@ export class WeChatStateStore {
   }
 
   async saveSession(state: WeChatSessionState): Promise<void> { await this.write('session.json', state); }
+
+  async loadWelcome(botId: string): Promise<WeChatWelcomeState> {
+    const state = await this.read<WeChatWelcomeState>('welcome.json');
+    if (!state) { return emptyWelcomeState(botId); }
+    if (!validWelcomeState(state)) { throw new Error('Invalid WeChat welcome state; repair it privately'); }
+    return state.botId === botId ? state : emptyWelcomeState(botId);
+  }
+  async saveWelcome(state: WeChatWelcomeState): Promise<void> {
+    if (!validWelcomeState(state)) { throw new Error('Invalid WeChat welcome state'); }
+    await this.write('welcome.json', state);
+  }
 
   /** Publish a complete owner record, never an empty canonical lock on write failure. */
   private async publishLock(file: string, nonce: string): Promise<void> {
