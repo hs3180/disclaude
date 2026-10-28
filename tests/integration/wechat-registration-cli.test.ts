@@ -1,18 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { mkdtemp, rm, stat, mkdir, writeFile, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { WeChatRegistry } from '../../packages/service/src/channels/wechat/registry.js';
 import { WeChatStateStore } from '../../packages/service/src/channels/wechat/state-store.js';
 
 const exec = promisify(execFile);
-function cli(dir: string, args: string[], fixture?: { bot?: string; user?: string; fail?: boolean; expired?: boolean }) {
+function cli(dir: string, args: string[], fixture?: { bot?: string; user?: string; fail?: boolean; expired?: boolean; preboot?: boolean }) {
   return exec(process.execPath, ['bin/disclaude.js', 'wechat', ...args, '--state-dir', dir], {
     env: { ...process.env, LOG_LEVEL: 'silent', LOG_TO_FILE: 'false', WECHAT_FIXTURE_BOT: fixture?.bot,
       WECHAT_FIXTURE_USER: fixture?.user,
-      NODE_OPTIONS: fixture ? `--import ${JSON.stringify(resolve('tests/fixtures/wechat-login-gateway.mjs'))}` : '',
+      NODE_OPTIONS: fixture ? `--import ${JSON.stringify(resolve(fixture.preboot ? 'tests/fixtures/wechat-preboot-lock.mjs' : 'tests/fixtures/wechat-login-gateway.mjs'))}` : '',
       WECHAT_FIXTURE_FAILURE: fixture?.fail ? '1' : undefined,
       WECHAT_FIXTURE_SESSION_EXPIRED: fixture?.expired ? '1' : undefined }, timeout: 10000,
   });
@@ -20,6 +20,28 @@ function cli(dir: string, args: string[], fixture?: { bot?: string; user?: strin
 function lastJson(stdout: string) { return JSON.parse(stdout.trim().split('\n').at(-1)!); }
 
 describe('dynamic registration CLI', () => {
+  it('inspects without registry access and recovers an exact simulated pre-boot snapshot once', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'wechat-lock-cli-'));
+    try {
+      const lockDir = join(dir, '.registry-lock'), file = join(lockDir, 'listener.lock'), snapshotFile = join(dir, 'snapshot.json');
+      await mkdir(lockDir, { mode: 0o700 }); await writeFile(file, '', { mode: 0o600 });
+      const current = await cli(dir, ['lock-inspect']);
+      expect(JSON.parse(current.stdout)).toMatchObject({ ok: true, state: 'corrupt-current-boot' });
+      await writeFile(snapshotFile, current.stdout, { mode: 0o600 });
+      await expect(cli(dir, ['lock-recover', '--snapshot', snapshotFile])).rejects.toThrow('pre-boot');
+      expect(await readFile(file, 'utf8')).toBe('');
+      const preview = await cli(dir, ['lock-inspect'], { preboot: true });
+      expect(JSON.parse(preview.stdout).state).toBe('corrupt-before-boot'); await writeFile(snapshotFile, preview.stdout);
+      const recovered = JSON.parse((await cli(dir, ['lock-recover', '--snapshot', snapshotFile], { preboot: true })).stdout);
+      expect(recovered).toMatchObject({ ok: true, alreadyRecovered: false }); expect(await readFile(recovered.archivePath, 'utf8')).toBe('');
+      const release = await new WeChatStateStore(lockDir).lock();
+      try {
+        const owner = await readFile(file);
+        expect(JSON.parse((await cli(dir, ['lock-recover', '--snapshot', snapshotFile], { preboot: true })).stdout)).toMatchObject({ ok: true, alreadyRecovered: true });
+        expect(await readFile(file)).toEqual(owner);
+      } finally { await release(); }
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
   it('scans two new accounts without names, lists public IDs, and applies account management', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'wechat-registration-cli-'));
     try {
