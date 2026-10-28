@@ -172,6 +172,51 @@ const turnEvents = (agent: ChatAgent, state: string) => {
     .filter(event => event?.event === 'agent_turn' && event.state === state);
 };
 
+describe('disposed query reconnect ownership', () => {
+  it.each(['before-decision', 'backoff', 'notice'] as const)('does not reconnect when disposed at %s', async phase => {
+    vi.useFakeTimers();
+    const gate = () => { let release!: () => void; const promise = new Promise<void>(resolve => { release = resolve; }); return { promise, release }; };
+    const decision = gate(), entered = gate(), delivery = gate();
+    const callbacks = createMockCallbacks();
+    const agent = new ChatAgent({ chatId: 'disposed-reconnect', callbacks, apiKey: 'key', model: 'model' });
+    const internal = agent as any;
+    const start = vi.spyOn(internal, 'startAgentLoop').mockImplementation(() => {});
+    internal.isSessionActive = true;
+    internal.queryHandle = { close: vi.fn(), cancel: vi.fn() };
+    internal.restartManager.shouldRestart.mockImplementation(() => {
+      decision.release(); return { allowed: true, restartCount: 1, waitMs: phase === 'backoff' ? 5000 : 0 };
+    });
+    callbacks.sendMessage.mockImplementation(async (_chat, message) => {
+      if ((phase === 'before-decision' && message === 'Partial evidence') ||
+          (phase === 'notice' && message.includes('会话正在重新连接'))) { entered.release(); await delivery.promise; }
+    });
+    const iterator = (async function* () {
+      if (phase === 'before-decision') { yield { parsed: { type: 'text', content: 'Partial evidence' } }; }
+      throw new Error('injected unexpected native stream failure');
+    })();
+    const loop = internal.processIterator(iterator);
+    try {
+      if (phase === 'backoff') { await decision.promise; }
+      else { await entered.promise; }
+      ChatAgent.prototype.dispose.call(agent);
+      delivery.release(); await vi.advanceTimersByTimeAsync(5000); await loop;
+      expect(start).not.toHaveBeenCalled();
+      if (phase === 'before-decision') { expect(internal.restartManager.shouldRestart).not.toHaveBeenCalled(); }
+    } finally {
+      delivery.release(); ChatAgent.prototype.dispose.call(agent);
+      await vi.runOnlyPendingTimersAsync(); await loop; vi.useRealTimers();
+    }
+  });
+
+  it('refuses a late internal start callback after disposal', async () => {
+    const agent = new ChatAgent({ chatId: 'late-disposed-start', callbacks: createMockCallbacks(), apiKey: 'key', model: 'model' });
+    ChatAgent.prototype.dispose.call(agent);
+    await (agent as any).startAgentLoop();
+    expect((agent as any).createQueryStream).not.toHaveBeenCalled();
+    ChatAgent.prototype.dispose.call(agent);
+  });
+});
+
 describe('ChatAgent (service)', () => {
   let chatAgent: InstanceType<typeof ChatAgent>;
   let callbacks: ReturnType<typeof createMockCallbacks>;
