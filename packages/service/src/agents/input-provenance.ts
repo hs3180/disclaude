@@ -8,6 +8,7 @@ export interface VerifiedFeishuInput {
   readonly inputMessageId: string;
   /** Real platform ID; media inputs may have a different internal message ID. */
   readonly sourceMessageId: string;
+  readonly chatType?: 'p2p' | 'group' | 'topic';
   readonly threadRootId?: string;
 }
 
@@ -26,9 +27,11 @@ export function registerFeishuInputSource(
       !message.messageId || !sourceMessageId || incomingSources.has(message)) { return; }
   const source = Object.freeze({});
   const threadRootId = message.metadata?.threadRootId;
+  const chatType = message.metadata?.chatType;
   verifiedSources.set(source, Object.freeze({
     channel: 'feishu', chatId: message.chatId, actorId: message.userId,
     inputMessageId: message.messageId, sourceMessageId,
+    ...(chatType === 'p2p' || chatType === 'group' || chatType === 'topic' ? { chatType } : {}),
     ...(typeof threadRootId === 'string' && threadRootId ? { threadRootId } : {}),
   }));
   incomingSources.set(message, source);

@@ -55,6 +55,9 @@ vi.mock('./chat-session-pool.js', () => ({
   ChatSessionPool: vi.fn(),
 }));
 
+vi.mock('./agents/agent-task-service.js', () => ({ AgentTaskService: vi.fn() }));
+vi.mock('./agents/factory.js', () => ({ AgentFactory: vi.fn() }));
+
 vi.mock('./messaging/adapters/feishu-message-builder.js', () => ({
   createFeishuMessageBuilderOptions: vi.fn(),
 }));

@@ -19,8 +19,20 @@ new work after restart. Completed results do not establish Goal acceptance.
 cancellation and awaits actual settlement. Parent-tool cancellation stops only
 the referenced child operation. Cross-round async questions are disabled for
 these finite workers; a blocking question can still be handled while its query
-is live. The component does not itself register tools in the default pool or
-enable providers lacking originating tool context; that wiring remains separate.
+is live.
+
+The default service registers `run_agent_task` on Feishu Codex app-server chats.
+Other transports and REST chats do not receive it. A system push in a Feishu
+chat still cannot manufacture the required user provenance. When a host command
+policy is installed, subtask admission checks its `steer` permission for the
+actual user/chat/topic, in addition to the source and Project checks.
+
+The child uses the chat/topic preset captured for that originating input. It
+requests non-queuing capacity admission: if the LLM or native slots are occupied,
+it reports failure without waiting behind a parent that needs its result. Normal
+user messages retain their existing queueing behavior. Service shutdown drains
+owned tasks before closing delivery channels; Project changes remain refused
+while a subtask owns work or delivery. No Goal loop or board is required.
 
 `AgentTaskRunner` is a service-side building block for explicitly requested
 subtasks. It works without a Goal loop or task board. The owning service supplies
