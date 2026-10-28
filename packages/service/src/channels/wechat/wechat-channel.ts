@@ -122,8 +122,8 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
       }
 
       const typingClient = this.client;
-      this.typing = new WeChatTypingController((peer, status, signal) => typingClient.sendTyping({
-        to: peer, status, signal, contextToken: this.contexts.get(peer),
+      this.typing = new WeChatTypingController((peer, status) => typingClient.sendTyping({
+        to: peer, status, contextToken: this.contexts.get(peer),
       }), (peer, event, owners) => logger.debug({ channelId: this.id, peerHash: createHash('sha256').update(peer).digest('hex').slice(0, 12), event, owners }, 'WeChat typing lifecycle'));
 
       // Start message listener (Issue #1556 Phase 3.1)

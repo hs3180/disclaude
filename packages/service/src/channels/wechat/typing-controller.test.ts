@@ -37,7 +37,7 @@ describe('account/peer typing leases (#5471)', () => {
     const send = vi.fn().mockImplementationOnce(() => new Promise<boolean>(resolve => { finish = resolve; })).mockResolvedValue(true);
     const controller = new WeChatTypingController(send); const release = controller.begin('peer');
     await vi.advanceTimersByTimeAsync(30_000); expect(send).toHaveBeenCalledTimes(1);
-    release(); expect(send.mock.calls[0][2].aborted).toBe(true);
+    release(); expect(send).toHaveBeenCalledTimes(1);
     finish(true); await tick(); expect(send.mock.calls.map(call => call[1])).toEqual([1, 2]);
     await controller.close();
   });
@@ -62,11 +62,13 @@ describe('account/peer typing leases (#5471)', () => {
     expect(accountB.mock.calls.map(call => call[1])).toEqual([1, 1]);
     aTwo(); bOne(); await Promise.all([a.close(), b.close()]);
   });
-  it('aborts pending refresh, best-effort cancels once on close, and cannot be restarted by old leases', async () => {
-    vi.useFakeTimers(); const send = vi.fn((_peer: string, status: number, signal: AbortSignal) => status === 1
-      ? new Promise<boolean>(resolve => signal.addEventListener('abort', () => resolve(false), { once: true })) : Promise.resolve(true));
+  it('awaits pending HTTP before ordered cancellation and cannot be restarted by old leases', async () => {
+    vi.useFakeTimers(); let finish!: (sent: boolean) => void;
+    const send = vi.fn().mockImplementationOnce(() => new Promise<boolean>(resolve => { finish = resolve; })).mockResolvedValue(true);
     const controller = new WeChatTypingController(send); const release = controller.begin('peer');
-    await controller.close(); release(); controller.begin('peer')();
+    let closed = false; const closing = controller.close().then(() => { closed = true; });
+    await tick(); expect(closed).toBe(false); expect(send).toHaveBeenCalledTimes(1);
+    finish(true); await closing; release(); controller.begin('peer')();
     await vi.advanceTimersByTimeAsync(60_000);
     expect(send.mock.calls.map(call => call[1])).toEqual([1, 2]);
   });
