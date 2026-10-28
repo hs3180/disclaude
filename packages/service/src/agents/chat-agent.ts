@@ -240,6 +240,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   private lastActivityAtPrivate = 0;
   private lastActivityTypePrivate = 'created';
   private readonly backgroundTaskIds = new Set<string>();
+  private backgroundContinuationPending = false;
+  private workSettlementError?: Error;
+  private readonly workSettlementWaiters = new Set<{
+    generation: number; resolve: () => void; reject: (error: Error) => void;
+  }>();
   private hasBackgroundTaskSnapshot = false;
   private releaseBackgroundIndicator?: () => void;
   private activityThreadRootId?: string;
@@ -748,8 +753,39 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   get hasPendingWork(): boolean {
     return !this.disposed && (this.isBusy || (this.isSessionActive && (
       this.pendingTurnMessageIds.length > 0 || this.activeTurnMessageId !== undefined ||
-      this.backgroundTaskIds.size > 0
+      this.backgroundTaskIds.size > 0 || this.backgroundContinuationPending
     )));
+  }
+
+  /** Await callbacks and any explicitly reported native background continuation.
+   * A completion bookend alone does not prove its resumed parent has finished.
+   * Reset/stop/dispose or an ended query rejects rather than claiming success.
+   */
+  waitForWorkSettlement(): Promise<void> {
+    if (this.disposed) { return Promise.reject(new Error('Agent disposed before work settled')); }
+    if (!this.hasPendingWork) {
+      return this.workSettlementError ? Promise.reject(this.workSettlementError) : Promise.resolve();
+    }
+    return new Promise((resolve, reject) => {
+      this.workSettlementWaiters.add({ generation: this.sessionGeneration, resolve, reject });
+    });
+  }
+
+  private notifyWorkSettlement(error?: Error, queryEnded = false): void {
+    if (error) { this.workSettlementError ??= error; }
+    for (const waiter of this.workSettlementWaiters) {
+      const failure = this.workSettlementError ?? (waiter.generation !== this.sessionGeneration
+        ? new Error('Agent session replaced before work settled') : undefined);
+      if (!queryEnded && waiter.generation === this.sessionGeneration && this.hasPendingWork) { continue; }
+      this.workSettlementWaiters.delete(waiter);
+      if (failure) { waiter.reject(failure); } else { waiter.resolve(); }
+    }
+  }
+
+  private clearBackgroundWork(error: Error): void {
+    this.clearBackgroundTasks();
+    this.backgroundContinuationPending = false;
+    this.notifyWorkSettlement(error, true);
   }
 
   get activeBackgroundTaskCount(): number { return this.backgroundTaskIds.size; }
@@ -776,6 +812,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       if (state === 'running') { this.backgroundTaskIds.add(id); }
       else { this.backgroundTaskIds.delete(id); }
     }
+    if (this.backgroundTaskIds.size > 0) { this.backgroundContinuationPending = true; }
     this.updateBackgroundIndicator();
   }
 
@@ -1738,7 +1775,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const queryOptions = this.configureQueryOptions?.(sdkOptions) ?? sdkOptions;
     // Invalidate old activity callbacks before creating the next query.
     const activityGeneration = ++this.sessionGeneration;
-    this.clearBackgroundTasks();
+    this.clearBackgroundWork(new Error('Agent session replaced before work settled'));
+    this.workSettlementError = undefined;
     this.hasBackgroundTaskSnapshot = false;
     this.noteActivity('session-start');
     const existingActivityObserver = queryOptions.onActivity;
@@ -2295,7 +2333,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         // Issue #2926: Check abort signal at the start of each iteration.
         // When /stop or /reset is received, we break immediately instead of
         // continuing to process buffered SDK messages.
-        if (this.abortController?.signal.aborted) {
+        if (this.sessionGeneration !== myGeneration || this.abortController?.signal.aborted) {
           this.logger.info(
             { chatId, messageCount, type: parsed.type },
             'Aborting processIterator: stop/reset signal received'
@@ -3231,10 +3269,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             : missingToolReplyError;
           this.resolveTurn(currentTurnMessageId, turnError);
 
+          const turnSucceeded = !isEmptyTurn && !missingToolReply && !upstreamApiError && !midstreamInterrupted &&
+            !parsed.terminatedReason && !turnHadError && !turnDeliveryFailed && !turnResultTruncated;
           if (this.callbacks.onTurnResult) {
             await this.callbacks.onTurnResult({
-              success: !isEmptyTurn && !missingToolReply && !upstreamApiError && !midstreamInterrupted &&
-                !parsed.terminatedReason && !turnHadError && !turnDeliveryFailed && !turnResultTruncated,
+              success: turnSucceeded,
               text: turnResultText,
               truncated: turnResultTruncated,
             });
@@ -3251,7 +3290,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // for the tail paths below (onDone above already ran; error paths
           // after a result are not expected but read the frozen value).
           turnAnchorConsumed = false;
-          this.activeTurnMessageId = undefined;
+          if (this.sessionGeneration === myGeneration) {
+            this.activeTurnMessageId = undefined;
+            const backgroundError = this.backgroundContinuationPending && !turnSucceeded
+              ? turnError ?? new Error('Native background continuation did not complete successfully') : undefined;
+            if (this.backgroundTaskIds.size === 0) { this.backgroundContinuationPending = false; }
+            this.notifyWorkSettlement(backgroundError);
+          }
 
           // Issue #3124: In once-mode, close channel after result to end the iterator.
           // This enables blocking one-shot execution via processMessage + taskComplete.
@@ -3337,7 +3382,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           );
         }
       }
-      if (this.sessionGeneration === myGeneration) { this.finishBackgroundIndicator(); }
+      if (this.sessionGeneration === myGeneration) {
+        this.finishBackgroundIndicator();
+        this.notifyWorkSettlement(iteratorError ?? (this.hasPendingWork
+          ? new Error('Agent query ended before work settled') : undefined), true);
+      }
     }
 
     // A user stop or backend interruption is terminal, not an unknown failure.
@@ -3671,7 +3720,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Mark session as inactive BEFORE closing to signal explicit close
     this.isSessionActive = false;
     this.isProcessingMessage = false;
-    this.clearBackgroundTasks();
+    this.clearBackgroundWork(new Error('Agent reset before work settled'));
     this.activityThreadRootId = undefined;
 
     // Close channel and query
@@ -3805,7 +3854,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
     this.queryHandle.close();
     this.queryHandle = undefined;
-    this.clearBackgroundTasks();
+    this.clearBackgroundWork(new Error('Agent stopped before work settled'));
 
     // Note: We do NOT set isSessionActive to false here.
     // processIterator settles the cancelled turn and ends this native query.
@@ -3923,7 +3972,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Issue #4391 (part 2 review): mark disposed synchronously first, so a
     // replay timer firing mid-dispose (or right after) sees the flag.
     this.disposed = true;
-    this.clearBackgroundTasks();
+    this.clearBackgroundWork(new Error('Agent disposed before work settled'));
     // Issue #3745: Synchronously close queryHandle and channel to prevent
     // exit listener leaks. The previous fire-and-forget pattern (dispose →
     // shutdown() without await) meant shutdown()'s `await Promise.resolve()`
@@ -3960,7 +4009,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Mark session as inactive
     this.isSessionActive = false;
     this.isProcessingMessage = false;
-    this.clearBackgroundTasks();
+    this.clearBackgroundWork(new Error('Agent shut down before work settled'));
 
     // Issue #2926: Abort any running agent loop
     if (this.abortController) {
