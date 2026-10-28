@@ -11,6 +11,19 @@ vi.mock('node:fs/promises', async (importOriginal) => ({ ...(await importOrigina
 afterEach(() => vi.restoreAllMocks());
 
 describe('WeChat account storage', () => {
+  it('rejects malformed recovery state and refuses oversized writes without replacing the old session', async () => {
+    const dir = await fs.mkdtemp(join(tmpdir(), 'wechat-recovery-state-'));
+    const store = new WeChatStateStore(dir);
+    try {
+      const saved = { botId: 'bot', cursor: 'accepted', seenMessageIds: [], contexts: {} };
+      await store.saveSession(saved);
+      await expect(store.saveSession({ ...saved, contexts: { peer: 'x'.repeat(4 * 1024 * 1024) } })).rejects.toThrow('storage limit');
+      expect(await store.loadSession('bot')).toEqual(saved);
+      await fs.writeFile(join(dir, 'session.json'), JSON.stringify({ ...saved, mediaInbox: [{ update: 'private-malformed-media' }] }));
+      await expect(store.loadSession('bot')).rejects.toThrow('Invalid WeChat media recovery state');
+    } finally { await fs.rm(dir, { recursive: true, force: true }); }
+  });
+
   it('persists private credentials, replay state and reply context; excludes competing processes', async () => {
     const dir = await fs.mkdtemp(join(tmpdir(), 'wechat-state-'));
     const store = new WeChatStateStore(dir);
