@@ -64,6 +64,7 @@ export class AgentPoolMessageHandler implements IAgentMessageHandler {
 
   private async processTurn(agent: ChatAgent, params: UserMessageParams, waitForCompletion: boolean): Promise<void> {
     const { agentSession, ...message } = params;
+    let turnFailed = false;
     try {
       await agent.processMessage(message);
       if (waitForCompletion || agentSession?.releaseAfterTurn) {
@@ -74,10 +75,19 @@ export class AgentPoolMessageHandler implements IAgentMessageHandler {
         }
         await done;
       }
+    } catch (error) {
+      turnFailed = true;
+      throw error;
     } finally {
       // A caller's timeout never settles this promise or releases a running turn.
       if (agentSession?.releaseAfterTurn) {
-        this.agentPool.releaseChatAgent?.(params.chatId, agentSession.id, agent);
+        try {
+          await agent.waitForWorkSettlement();
+        } catch (error) {
+          if (!turnFailed) { throw error; }
+        } finally {
+          this.agentPool.releaseChatAgent?.(params.chatId, agentSession.id, agent);
+        }
       }
     }
   }

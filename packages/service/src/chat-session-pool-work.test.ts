@@ -62,6 +62,10 @@ describe('idle reclamation across real ChatAgent work boundaries', () => {
               yield { type: 'text', content: 'second-final', role: 'assistant' };
               yield { type: 'result', content: '', metadata: { stopReason: 'end_turn' } };
             }
+            if (scenario === 'background' || scenario === 'legacy-background') {
+              yield { type: 'text', role: 'assistant', content: 'background-summary' };
+              yield { type: 'result', content: '', metadata: { stopReason: 'end_turn' } };
+            }
             await parked.promise;
           })(),
         });
