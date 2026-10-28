@@ -447,3 +447,4 @@ export type {
 // Explicit, durable goal records; execution/control is wired separately.
 export { GoalStore, GoalRevisionConflictError } from './goals/goal-store.js';
 export type { GoalRecord, GoalContent, GoalStatus, CreateGoal } from './goals/goal-store.js';
+export { TaskAdmissionStore, type TaskAdmissionIntent } from './coordination/task-admission-store.js';
