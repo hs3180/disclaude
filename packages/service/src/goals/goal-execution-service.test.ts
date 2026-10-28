@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 
 const repo = fileURLToPath(new URL('../../../../', import.meta.url));
-it.each(['complete', 'stop-delivery', 'close', 'revoked', 'denied', 'missing-project-pause', 'two-goals'])(
+it.each(['complete', 'stop-delivery', 'close', 'revoked', 'denied', 'missing-project-pause', 'two-goals', 'scoped-tools', 'scope-edit', 'scope-project'])(
   'runs the user-channel Goal service through %s', scenario => {
     const root = mkdtempSync(join(tmpdir(), 'disclaude-goal-service-'));
     try {
@@ -30,7 +30,7 @@ it.each(['complete', 'stop-delivery', 'close', 'revoked', 'denied', 'missing-pro
         const manager = new ProjectManager({ workspaceDir: root }); manager.use('fixture-chat', project);
         const gate = () => { let release; const promise = new Promise(resolve => { release = resolve; }); return { promise, release }; };
         const admitted = gate(), delivering = gate(), delivery = gate(), notified = gate();
-        const queries = [], policies = [], replies = [], sends = []; let closes = 0, lastStart;
+        const queries = [], policies = [], replies = [], sends = [], scopes = []; let closes = 0, lastStart, toolClosed = 0;
         let allowed = scenario !== 'denied'; const runtime = { model: 'fixed-offline' };
         getProvider('claude').queryStream = (input, options) => {
           const parked = gate(); const round = queries.length + 1; queries.push(options);
@@ -40,6 +40,19 @@ it.each(['complete', 'stop-delivery', 'close', 'revoked', 'denied', 'missing-pro
               assert.equal(options.model, ['stop-delivery', 'two-goals'].includes(scenario) && round === 2 ? 'changed-offline' : 'fixed-offline');
               appendFileSync(join(project, 'work.log'), 'write ' + round + '\\n');
               const tool = prepareTools(options.tools).find(tool => tool.name === 'goal_report');
+              if(['scoped-tools','scope-edit','scope-project'].includes(scenario)){
+                const probe=prepareTools(options.tools).find(tool=>tool.name==='goal_scope_probe');assert.ok(probe);
+                const value=await probe.execute({}, {signal:new AbortController().signal});
+                assert.equal(value.actor,'fixture-user');assert.equal(value.root,project);
+                allowed=false;await assert.rejects(scopes[0].authorize(),/authorized/);allowed=true;
+                if(scenario==='scope-edit'){
+                  const latest=await store.get(scopes[0].goal.id);await store.update(latest.id,latest.revision,{progress:'Latest user feedback'});
+                  await assert.rejects(scopes[0].authorize(),/changed/);
+                }
+                if(scenario==='scope-project'){
+                  manager.use('fixture-chat',other);await assert.rejects(scopes[0].authorize(),/Project/);
+                }
+              }
               const done = scenario !== 'complete' || round === 3;
               await tool.execute({ outcome: done ? 'completed' : 'continue', progress: 'round ' + round,
                 artifacts: ['work.log'], checks: [{ criterion: 0, satisfied: done, evidence: done ? ['work.log'] : [] }] },
@@ -59,6 +72,15 @@ it.each(['complete', 'stop-delivery', 'close', 'revoked', 'denied', 'missing-pro
           if (text.startsWith('Goal ')) notified.release(); return 'fixture-receipt';
         }, sendCard: async () => {}, sendFile: async () => {} };
         const options = { store, projectManager: manager, runtimeOptions: () => runtime, callbacks: () => callbacks,
+          ...(['scoped-tools','scope-edit','scope-project'].includes(scenario)?{createTurnTools:scope=>{
+            scopes.push(scope);assert.equal(scope.source.actorId,'fixture-user');assert.equal(scope.source.chatId,'fixture-chat');
+            assert.equal(scope.source.threadRootId,'fixture-topic');assert.equal(scope.runtimeOptions().model,'fixed-offline');
+            assert.equal(scope.callbacks,callbacks);
+            return {tools:[{name:'goal_scope_probe',description:'Host scope fixture',inputSchema:{type:'object',additionalProperties:false},
+              outputSchema:{type:'object',properties:{actor:{type:'string'},root:{type:'string'}},required:['actor','root'],additionalProperties:false},
+              execute:async()=>{await scope.authorize();return {actor:scope.source.actorId,root:scope.source.projectRoot};}}],
+              close:()=>{toolClosed++;return Promise.resolve();}};
+          }}:{}),
           isCommandAllowed: command => { policies.push(command); return allowed; } };
         const service = new GoalExecutionService(options);
         const common = { projectManager: manager,
@@ -121,11 +143,12 @@ it.each(['complete', 'stop-delivery', 'close', 'revoked', 'denied', 'missing-pro
             } else {
               await notified.promise; await new Promise(resolve => setImmediate(resolve));
               assert.equal(service.isRunning(id), false);
-              assert.equal((await store.get(id)).status, scenario === 'complete' ? 'completed' : 'active');
+              assert.equal((await store.get(id)).status, ['complete','scoped-tools'].includes(scenario) ? 'completed' : 'active');
               assert.equal(queries.length, scenario === 'complete' ? 3 : 1);
             }
           }
           assert.equal(closes, queries.length); assert.ok(policies.every(command => command.chatType === 'topic'));
+          if(scopes.length){assert.equal(scopes.length,1);assert.equal(toolClosed,1);await assert.rejects(scopes[0].authorize(),/active|changed/);}
           assert.ok(sends.every(send => send.chat === 'fixture-chat' && send.topic === 'fixture-topic'));
           console.log('goal-execution-service: passed');
         } finally { delivery.release(); await service.close(); }

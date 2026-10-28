@@ -3,7 +3,18 @@ import { GoalController, type ControlCommand, type GoalExecutionRequest, type Go
 import type { Logger } from 'pino';
 import type { AgentCreateOptions } from '../agents/factory.js';
 import type { ChatAgentCallbacks } from '../agents/types.js';
-import { NativeGoalExecutor, type NativeGoalSource } from '../agents/native-goal-executor.js';
+import { NativeGoalExecutor, type NativeGoalSource, type NativeGoalTurnTools } from '../agents/native-goal-executor.js';
+
+export interface GoalTurnToolScope {
+  goal: Readonly<GoalRecord>;
+  source: Readonly<GoalExecutionRequest>;
+  runtimeOptions(): AgentCreateOptions;
+  callbacks: ChatAgentCallbacks;
+  /** Fresh binding, revision, state, Project and user policy check. This is a
+   * host capability from an explicit Goal start, not fabricated user provenance.
+   */
+  authorize(): Promise<void>;
+}
 
 export interface GoalExecutionServiceOptions {
   store: GoalStore;
@@ -11,6 +22,7 @@ export interface GoalExecutionServiceOptions {
   isCommandAllowed(command: ControlCommand<'goal'>): boolean;
   runtimeOptions(source: Readonly<GoalExecutionRequest>): AgentCreateOptions;
   callbacks(source: Readonly<GoalExecutionRequest>): ChatAgentCallbacks;
+  createTurnTools?(scope: GoalTurnToolScope): NativeGoalTurnTools;
   logger?: Logger;
 }
 type Binding = {
@@ -35,9 +47,23 @@ export class GoalExecutionService {
   private closing = false;
   private closeFlight?: Promise<void>;
   constructor(private readonly options: GoalExecutionServiceOptions) {
+    const { createTurnTools } = options;
     this.executor = new NativeGoalExecutor({
       runtimeOptions: (goal, source) => this.binding(goal.id, source).runtime,
       callbacks: (source, goal) => this.binding(goal.id, source).callbacks,
+      ...(createTurnTools ? { createTurnTools: (goal: Readonly<GoalRecord>, source: Readonly<NativeGoalSource>) => {
+        const binding = this.binding(goal.id, source);
+        return createTurnTools({ goal: Object.freeze(structuredClone(goal)), source: binding.source,
+          callbacks: binding.callbacks, runtimeOptions: () => ({ ...binding.runtime,
+            ...(binding.runtime.settings ? { settings: structuredClone(binding.runtime.settings) } : {}),
+            ...(binding.runtime.env ? { env: { ...binding.runtime.env } } : {}) }),
+          authorize: async () => {
+            if (this.closing || this.bindings.get(goal.id) !== binding) { throw new Error('Goal turn binding is no longer active'); }
+            const current = await options.store.get(goal.id);
+            if (!current || current.status !== 'active' || current.revision !== goal.revision) { throw new Error('Goal turn changed; do not admit new work from its old snapshot'); }
+            await this.authorize(current, binding.source);
+          } });
+      } } : {}),
     });
     this.controller = new GoalController(options.store, {
       authorize: (goal, source) => this.authorize(goal, source),
