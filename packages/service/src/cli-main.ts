@@ -621,8 +621,12 @@ export async function main(): Promise<void> {
         .filter(channel => !chatId || channel.ownsChatId(chatId))
         .map(channel => ({ id: channel.id, name: channel.name, status: channel.status, healthy: channel.isHealthy(), capabilities: channel.getCapabilities() })));
       const feishuChannel = channelManager.get('feishu') as
-        | { getDeliveryHealth?: () => import('./health-types.js').DeliveryHealth }
+        | { getDeliveryHealth?: () => import('./health-types.js').DeliveryHealth;
+            getConnectionHealth?: () => { state: string; healthy: boolean } }
         | undefined;
+      if (feishuChannel?.getConnectionHealth) {
+        httpApiServer.setFeishuConnectionHealthProvider(() => feishuChannel.getConnectionHealth?.() ?? { state: 'stopped', healthy: false });
+      }
       httpApiServer.setDeliveryHealthProvider(
         () =>
           feishuChannel?.getDeliveryHealth?.() ?? {

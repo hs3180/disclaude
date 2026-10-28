@@ -1022,6 +1022,11 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     }
   }
 
+  /** Ingress readiness never inferred from outbound delivery counters. */
+  getConnectionHealth(): { state: string; healthy: boolean } {
+    return { state: this.wsConnectionManager?.state ?? 'stopped', healthy: this.checkHealth() };
+  }
+
   /** Snapshot of recent Feishu result-delivery attempts for monitoring. */
   getDeliveryHealth(): DeliveryHealth {
     return { ...this.deliveryHealth };
