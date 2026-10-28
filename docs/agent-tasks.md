@@ -22,7 +22,9 @@ Success describes execution, not acceptance of a Goal or approval of an artifact
 No automatic retries, runtime/token budget or elapsed-time watchdog is added.
 
 Calling `stop()` requests cleanup of that execution only; await its existing
-completion handle. `close()` rejects new starts, stops all owned tasks and waits
+completion handle. A rejected logical turn on cancellation is not a delivery
+receipt: the runner also waits for the query iterator and admitted asynchronous
+callbacks (including RPC input delivery) to exit. `close()` rejects new starts, stops all owned tasks and waits
 for their existing handles. Cancellation does not roll back external effects,
 so inspect any partial result before an explicit retry.
 

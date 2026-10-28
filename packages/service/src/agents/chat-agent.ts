@@ -240,6 +240,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   private lastActivityAtPrivate = 0;
   private lastActivityTypePrivate = 'created';
   private readonly backgroundTaskIds = new Set<string>();
+  private readonly queryExecutions = new Set<Promise<void>>();
   private backgroundContinuationPending = false;
   private workSettlementError?: Error;
   private readonly workSettlementWaiters = new Set<{
@@ -761,6 +762,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     return new Promise((resolve, reject) => {
       this.workSettlementWaiters.add({ generation: this.sessionGeneration, resolve, reject });
     });
+  }
+
+  /** After requesting disposal, await iterator exit and its in-flight callbacks.
+   * A cancelled logical completion is not proof that those effects settled.
+   */
+  async waitForQueryExit(): Promise<void> {
+    while (this.queryExecutions.size) { await Promise.allSettled([...this.queryExecutions]); }
   }
 
   private notifyWorkSettlement(error?: Error, queryEnded = false): void {
@@ -1806,7 +1814,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     });
 
     // Process SDK messages in background
-    this.processIterator(iterator).catch(async (err) => {
+    const queryExecution = this.processIterator(iterator).catch(async (err) => {
       if (this.sessionGeneration !== activityGeneration || this.disposed ||
           this.stoppedQueryGenerations.has(activityGeneration)) { return; }
       const diagnosticId = crypto.randomUUID();
@@ -1862,6 +1870,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         this.logger.error({ ...failure, event: 'agent_turn', state: 'failed', user_visible: delivered }, 'Agent loop terminal failure');
       }
     });
+    this.queryExecutions.add(queryExecution);
+    const release = (): void => { this.queryExecutions.delete(queryExecution); };
+    void queryExecution.then(release, release);
   }
 
   /**
