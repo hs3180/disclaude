@@ -6100,6 +6100,46 @@ describe('ChatAgent (service)', () => {
       expect((agent as any).restartManager.recordSuccess).not.toHaveBeenCalled();
     });
 
+    it.each([true, false])('separates failed input delivery from execution and prevents replay (native completed=%s)', async nativeCompleted => {
+      const localCallbacks = { ...createMockCallbacks(), onTurnResult: vi.fn().mockResolvedValue(undefined) };
+      const agent = new ChatAgent({ chatId: 'input-failure', agentBackend: 'codex', callbacks: localCallbacks, apiKey: 'test', model: 'test' });
+      (agent as any).isAgentTeamsEnabled = () => false;
+      let emit!: () => void;
+      vi.spyOn((agent as any).emptyTurnRetryPolicy, 'markRetried');
+      const query = vi.fn(() => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: (async function* () {
+        await new Promise<void>(resolve => { emit = resolve; });
+        if (nativeCompleted) {
+          yield { parsed: { type: 'tool_use', content: 'write-once' }, raw: {} };
+          yield { parsed: { type: 'tool_result', content: 'saved' }, raw: {} };
+          yield { parsed: { type: 'text', content: '报告已经发送。', metadata: { phase: 'final_answer' } }, raw: {} };
+        }
+        yield { parsed: { type: 'result', content: '', terminatedReason: 'turn_failed',
+          terminationDetail: 'Async question was not delivered', metadata: { inputDeliveryFailure: { nativeCompleted } } }, raw: {} };
+      })() }));
+      (agent as any).createQueryStream = query;
+      try {
+        await agent.processMessage({ chatId: 'input-failure', payload: 'Produce report', messageId: 'original-input', chatType: 'group', threadRootId: 'original-topic' });
+        const outcome = expect(agent.turnCompleteFor('original-input')).rejects.toMatchObject({ name: 'ProviderTurnFailedError' });
+        emit(); await outcome;
+        const sent = localCallbacks.sendMessage.mock.calls.map(call => call[1]);
+        const notices = sent.filter(text => text.includes('异步提问未能确认送达'));
+        expect(notices).toHaveLength(1);
+        expect(notices[0]).toContain('交互尚未完成'); expect(notices[0]).toContain('不会自动重放');
+        expect(notices[0]).toContain('input-delivery-failed');
+        expect(notices[0].includes('模型已结束本轮执行')).toBe(nativeCompleted);
+        expect(notices[0]).not.toMatch(/未生成可交付结果|凭据|超时配置/);
+        if (nativeCompleted) { expect(sent).toContain('报告已经发送。'); }
+        expect(sent.join('\n')).not.toContain('中断前的部分回复');
+        expect(sent.join('\n')).not.toContain('会话可能已失效');
+        expect(query).toHaveBeenCalledOnce();
+        expect((agent as any).emptyTurnRetryPolicy.markRetried).not.toHaveBeenCalled();
+        expect((agent as any).restartManager.recordSuccess).not.toHaveBeenCalled();
+        expect((agent as any).restartManager.recordFailure).toHaveBeenCalledExactlyOnceWith('input-failure', 'input-delivery');
+        expect(localCallbacks.onTurnResult).toHaveBeenCalledWith(expect.objectContaining({ success: false }));
+        for (const call of localCallbacks.sendMessage.mock.calls.filter(call => call[1] === '报告已经发送。' || call[1].includes('异步提问未能确认送达'))) { expect(call[2]).toBe('original-topic'); }
+      } finally { emit?.(); agent.reset(); ChatAgent.prototype.dispose.call(agent); }
+    });
+
     it('gives output-limit turn failures a progress-aware receipt instead of service advice (#5452)', async () => {
       const localCallbacks = createMockCallbacks();
       const agent = new ChatAgent({

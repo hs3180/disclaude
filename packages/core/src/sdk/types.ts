@@ -171,6 +171,8 @@ export interface AgentMessageMetadata {
   upstreamApiError?: boolean;
   /** The provider forbids automatic resubmission of this logical query. */
   automaticReplayBlocked?: string;
+  /** A local async input delivery failure, distinct from the native execution outcome. */
+  inputDeliveryFailure?: { nativeCompleted: boolean };
   /** Machine-owned evidence is preferred to the legacy stderr signature. */
   upstreamApiErrorSource?: 'stream' | 'transcript' | 'stderr';
   upstreamApiErrorStatus?: number;

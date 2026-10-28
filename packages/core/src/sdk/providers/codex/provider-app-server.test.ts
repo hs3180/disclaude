@@ -225,6 +225,8 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
  else if(m.method==='turn/start'){
   send({id:m.id,result:{turn:{id:'async-turn'}}});
   send({method:'item/completed',params:{threadId:'async-thread',turnId:'async-turn',item:{id:'async-question',type:'agentMessage',text:'Any constraint?',delivery:'async',questions:[{title:'Any constraint?'}]}}});
+  send({method:'item/completed',params:{threadId:'async-thread',turnId:'async-turn',item:{id:'artifact',type:'commandExecution',command:'write-once',aggregatedOutput:'saved',status:'completed'}}});
+  send({method:'item/completed',params:{threadId:'async-thread',turnId:'async-turn',item:{id:'final',type:'agentMessage',phase:'final_answer',text:'Artifact is ready.'}}});
   send({method:'turn/completed',params:{threadId:'async-thread',turn:{id:'async-turn',status:'completed'}}});
  }
 });`);
@@ -236,8 +238,10 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     try {
       for await (const message of stream.iterator) { messages.push(message); }
       expect(onUserInput).toHaveBeenCalledOnce();
+      expect(messages.filter(m => m.type === 'text').map(m => m.content)).toContain('Artifact is ready.');
+      expect(messages.filter(m => m.type === 'tool_result')).toHaveLength(1);
       expect(messages.filter(m => m.type === 'result')).toEqual([
-        expect.objectContaining({ metadata: expect.objectContaining({ terminatedReason: 'turn_failed' }) }),
+        expect.objectContaining({ metadata: expect.objectContaining({ terminatedReason: 'turn_failed', inputDeliveryFailure: { nativeCompleted: true }, automaticReplayBlocked: 'async-input-delivery-failed' }) }),
       ]);
       expect(messages.map(m => m.content).join('\n')).toContain('Async question');
       expect(messages.map(m => m.content).join('\n')).not.toContain('private transport detail');
