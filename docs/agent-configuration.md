@@ -140,3 +140,21 @@ projection are described in [configuration secrets](configuration-secrets.md).
 Workspace `.runtime-env` keeps its existing lifecycle.
 
 Channel credential sources and migration: [channel-credentials.md](channel-credentials.md).
+
+
+### Claude foreground Bash timeouts
+
+Claude subprocesses receive native `BASH_DEFAULT_TIMEOUT_MS=600000` (10 minutes) and `BASH_MAX_TIMEOUT_MS=1800000` (30 minutes) when unset. These apply to individual foreground Bash calls; native tool results return to the same running query. They do not limit a Goal or terminate a turn because it is quiet. Longer jobs can use the native background-task mechanism.
+
+Override the values through the bound LLM's existing `env` mapping (or the service environment). Native user/project settings retain their normal precedence:
+
+```yaml
+llms:
+  assistant:
+    model: sonnet
+    env:
+      BASH_DEFAULT_TIMEOUT_MS: "600000"
+      BASH_MAX_TIMEOUT_MS: "1800000"
+```
+
+Set either value to an empty string to leave that knob to the CLI's own default. `"0"` does not disable Claude's native command timeout. In the pinned SDK 0.3.263 CLI, the fallback values are 120000/600000 ms, so the Disclaude defaults provide a longer foreground window. This configuration is not evidence that the historical indefinite-wait incident is fixed; native background jobs and actual task/notification lifecycles need separate verification.
