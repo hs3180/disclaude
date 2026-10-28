@@ -1,6 +1,6 @@
 import { realpathSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
-import type { AgentInputContext, TaskCompletionReport, TaskResultOutbox, ToolContext, ToolDefinition } from '@disclaude/core';
+import type { AgentInputContext, AgentQueryOptions, TaskCompletionReport, TaskResultOutbox, ToolContext, ToolDefinition } from '@disclaude/core';
 import type { AgentTaskService } from './agent-task-service.js';
 import { AGENT_TASK_TOOL_SPEC } from './agent-task-tool.js';
 import type { BackgroundAgentTaskHandle, BackgroundAgentTasks } from './background-agent-tasks.js';
@@ -23,6 +23,10 @@ const idInput = { type: 'object', additionalProperties: false, properties: {
 export class BackgroundTaskTools {
   private readonly active = new Map<string, { scope: Scope; handle: BackgroundAgentTaskHandle }>();
   constructor(private readonly options: BackgroundTaskToolsOptions) {}
+  configureQueryOptions(options: AgentQueryOptions): AgentQueryOptions {
+    if (options.codexRuntime?.transport !== 'app-server' || !options.cwd) { return options; }
+    return { ...options, tools: [...(options.tools ?? []), ...this.createTools(options.cwd)] };
+  }
   private capture(context: ToolContext, directory: string) {
     context.signal.throwIfAborted();
     if (!context.inputContext) { throw new Error('Background task input context is unavailable'); }
@@ -53,7 +57,7 @@ export class BackgroundTaskTools {
         return { id: handle.id, state: 'accepted' };
       },
     }, {
-      name: 'get_agent_task', description: 'Inspect an admitted task in this user/chat/Project/topic. A saved result and parent notification state are separate; unknown results require reconciliation, not another execution.',
+      name: 'get_agent_task', description: 'Inspect an admitted task in this user/chat/Project/topic. A saved result and parent notification state are separate. Notification delivered confirms parent admission, not parent execution or user-facing delivery. Unknown results require reconciliation, not another execution.',
       inputSchema: idInput,
       outputSchema: { type: 'object', additionalProperties: false, properties: {
         id: { type: 'string' }, state: { type: 'string', enum: ['running', 'saved', 'unknown'] },

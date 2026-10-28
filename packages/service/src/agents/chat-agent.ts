@@ -552,6 +552,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     return this.turnCompletions.get(messageId)?.promise;
   }
 
+  /** A completion entry can also represent refused input. This confirms only
+   * actual channel/native admission, never successful execution or delivery.
+   */
+  hasAdmittedInput(messageId: string): boolean {
+    return this.turnCompletions.get(messageId)?.admitted === true;
+  }
+
   /**
    * Issue #5399: the session's admission budget — inputs accepted but not yet
    * finished, counted by input identity (one unsettled completion each).

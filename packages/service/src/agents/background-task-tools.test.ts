@@ -40,7 +40,13 @@ it.each(['complete', 'parent-ended', 'stop', 'denied', 'cancel-admission'])(
           wakeParent: async () => { wakes++; return 'host-admission'; } });
         const originalStart = tasks.start.bind(tasks);
         tasks.start = async (...args) => { lastHandle = await originalStart(...args); return lastHandle; };
-        const tools = prepareTools(new BackgroundTaskTools({ authorization, tasks, outbox }).createTools(root));
+        const definitions = new BackgroundTaskTools({ authorization, tasks, outbox });
+        for (const options of [{ cwd: root }, { codexRuntime: { transport: 'app-server' } }, { cwd: root, codexRuntime: { transport: 'exec' } }]) {
+          assert.equal(definitions.configureQueryOptions(options), options);
+        }
+        const configured = definitions.configureQueryOptions({ cwd: root, codexRuntime: { transport: 'app-server' }, tools: [authorization.createTool(root)] });
+        const tools = prepareTools(configured.tools);
+        assert.deepEqual(tools.map(tool => tool.name), ['run_agent_task', 'start_agent_task', 'get_agent_task', 'stop_agent_task']);
         const start = tools.find(tool => tool.name === 'start_agent_task'), get = tools.find(tool => tool.name === 'get_agent_task'), stop = tools.find(tool => tool.name === 'stop_agent_task');
         const source = (user = 'actor', topic = 'topic', message = 'source-file') => {
           const incoming = { messageId: message, chatId: 'chat', userId: user, content: 'task', messageType: 'file', metadata: { threadRootId: topic, chatType: 'topic' } };

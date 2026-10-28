@@ -125,10 +125,14 @@ export class BackgroundAgentTasks {
     return { id: task.id, completion, stop };
   }
   isBusy(chatId: string): boolean { return [...this.operations.values()].some(entry => entry.chatId === chatId && entry.busy); }
-  stopForParent(chatId: string, threadRootId?: string): void {
+  stopForParent(chatId: string, threadRootId?: string): boolean {
+    let stopped = false;
     for (const entry of this.operations.values()) {
-      if (entry.busy && entry.chatId === chatId && entry.threadRootId === threadRootId) { entry.stopped = true; entry.stopNative?.(); }
+      if (entry.busy && entry.chatId === chatId && entry.threadRootId === threadRootId) {
+        stopped = true; entry.stopped = true; entry.stopNative?.();
+      }
     }
+    return stopped;
   }
   close(): Promise<void> {
     this.closing = true;

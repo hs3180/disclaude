@@ -56,6 +56,8 @@ vi.mock('./chat-session-pool.js', () => ({
 }));
 
 vi.mock('./agents/agent-task-service.js', () => ({ AgentTaskService: vi.fn() }));
+vi.mock('./agents/background-agent-tasks.js', () => ({ BackgroundAgentTasks: vi.fn() }));
+vi.mock('./agents/background-task-tools.js', () => ({ BackgroundTaskTools: vi.fn() }));
 vi.mock('./agents/factory.js', () => ({ AgentFactory: vi.fn() }));
 
 vi.mock('./messaging/adapters/feishu-message-builder.js', () => ({

@@ -45,6 +45,25 @@ the same scope can inspect a saved result.
 Starting returns host admission, not completion. Cancellation before admission
 can prevent launch; after the tool returns, its parent turn ending does not
 cancel the background child. Explicit task stop remains separate and does not
-claim physical settlement. The model tools do not register themselves in the
-default service or manufacture provenance for system reports; default parent
-admission and continuation policy must be supplied by the host.
+claim physical settlement.
+
+The default service registers these tools beside `run_agent_task` only for
+Feishu Codex app-server queries. It reuses current command policy, verified
+source input and Project checks. REST/system inputs do not gain user provenance.
+A child uses the runtime captured at admission; its original parent chat/topic
+uses that parent's current selected runtime for the later report.
+
+Results are saved under the workspace's `.disclaude/tasks/results`. The parent
+reporter awaits `processMessage` and checks `hasAdmittedInput`; an existing
+completion can also represent refused input. The ordinary fire-and-forget
+system router is not an admission receipt. Reporting does not wait for parent
+execution or claim platform delivery. Reports contain no manufactured user
+identity or source capability, so cannot independently authorize another
+source-gated subtask.
+
+Explicit parent stop/reset requests cancellation of its children; other topics
+keep their work. Project busy checks include background ownership, and shutdown
+drains children before closing the pool/channels. Unfinished jobs are not
+automatically replayed after restart. Reconcile the service interruption journal
+and saved task IDs first. Live model/platform and complete Goal/board/review
+continuation remain separate acceptance from local composition regressions.
