@@ -4,7 +4,8 @@ import * as fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import nock from 'nock';
-import { downloadWeChatMedia, uploadEncryptedMedia } from './media.js';
+import { downloadWeChatMedia, uploadEncryptedMedia, WECHAT_MEDIA_MAX_BYTES } from './media.js';
+import { channelError } from '../../channel-error.js';
 
 afterEach(() => { vi.restoreAllMocks(); nock.cleanAll(); });
 
@@ -70,6 +71,65 @@ describe('WeChat encrypted CDN protocol', () => {
     expect(uploaded.media.encrypt_query_param).toBe('download-reference');
     expect(uploaded.size).toBe(plaintext.length);
     expect(cdn.isDone()).toBe(true);
+  });
+
+  it('preserves a fast failure at the incident byte count without exposing URL, keys or raw cause', async () => {
+    const fileData = Buffer.alloc(15_481_288); // Synthetic transport bytes; no real video generation.
+    let key!: string;
+    const requestUpload = vi.fn((body: Record<string, unknown>) => { key = body.aeskey as string; return Promise.resolve({ upload_param: 'private-upload-ref' }); });
+    const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new TypeError('private-signed-url', {
+      cause: Object.assign(new Error('private-network-detail'), { code: 'ECONNRESET', token: 'private-token' }),
+    }));
+    const error = await uploadEncryptedMedia({ fileData, to: 'private-peer', kind: 'video', requestUpload }).catch(error => error);
+    expect(error).toMatchObject({ name: 'WeChatMediaUploadError', cause: { name: 'TypeError', code: 'ECONNRESET' }, detail: {
+      stage: 'upload', reason: 'network', bytes: fileData.length, encryptedBytes: 15_481_296, attempt: 1, messageSent: false,
+    } });
+    const publicFailure = channelError(error);
+    expect(publicFailure.body.ok).toBe(false);
+    expect(publicFailure.body.message).toContain('ECONNRESET');
+    expect(publicFailure.body.message).toContain(error.detail.diagnosticId);
+    expect(`${error.stack} ${JSON.stringify(error)} ${JSON.stringify(publicFailure)}`).not.toMatch(/private-|signature=|token=/);
+    expect(JSON.stringify(error)).not.toContain(key);
+    expect(requestUpload).toHaveBeenCalledOnce(); expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['TimeoutError', undefined, 'timeout'], ['AbortError', undefined, 'cancelled'],
+    ['TypeError', 'CERT_HAS_EXPIRED', 'network'], ['TypeError', 'UND_ERR_CONNECT_TIMEOUT', 'timeout'],
+  ])('distinguishes upload %s/%s failures (%s)', async (name, code, reason) => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(Object.assign(new Error('private-failure'), { name, cause: { code } }));
+    await expect(uploadEncryptedMedia({ fileData: Buffer.from('fixture'), to: 'peer', kind: 'file',
+      requestUpload: () => Promise.resolve({ upload_param: 'private-upload-ref' }),
+    })).rejects.toMatchObject({ detail: { stage: 'upload', reason, messageSent: false }, cause: { name, ...(code ? { code } : {}) } });
+  });
+
+  it.each([403, 503])('retains upload HTTP %s without reading its response body', async status => {
+    const response = new Response('private-response-body', { status });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(response);
+    const error = await uploadEncryptedMedia({ fileData: Buffer.from('fixture'), to: 'peer', kind: 'file',
+      requestUpload: () => Promise.resolve({ upload_param: 'private-ref' }),
+    }).catch(error => error);
+    expect(error.detail).toMatchObject({ stage: 'upload', reason: 'http', httpStatus: status, messageSent: false });
+    expect(response.bodyUsed).toBe(true);
+    expect(JSON.stringify(error)).not.toContain('private-response-body');
+  });
+
+  it('distinguishes negotiation, URL validation, receipt and size failures without sending a message', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch');
+    const requestUpload = vi.fn().mockRejectedValueOnce(Object.assign(new Error('private-negotiation'), { code: -14, detail: { httpStatus: 401, token: 'private-token' } }));
+    const params = { fileData: Buffer.from('fixture'), to: 'peer', kind: 'file' as const, requestUpload };
+    await expect(uploadEncryptedMedia(params)).rejects.toMatchObject({ authExpired: true, detail: { stage: 'negotiate', reason: 'negotiate', httpStatus: 401, apiCode: -14 } });
+    requestUpload.mockResolvedValueOnce({});
+    await expect(uploadEncryptedMedia(params)).rejects.toMatchObject({ detail: { stage: 'reference', reason: 'reference' } });
+    requestUpload.mockResolvedValueOnce({ upload_full_url: 'http://127.0.0.1/private?secret=private-value' });
+    await expect(uploadEncryptedMedia(params)).rejects.toMatchObject({ detail: { stage: 'reference', reason: 'reference' } });
+    expect(fetch).not.toHaveBeenCalled();
+    fetch.mockResolvedValueOnce(new Response('private-response-body'));
+    requestUpload.mockResolvedValueOnce({ upload_param: 'private-ref' });
+    await expect(uploadEncryptedMedia(params)).rejects.toMatchObject({ detail: { stage: 'receipt', reason: 'receipt' } });
+    requestUpload.mockClear(); fetch.mockClear();
+    await expect(uploadEncryptedMedia({ ...params, fileData: Buffer.alloc(WECHAT_MEDIA_MAX_BYTES + 1) })).rejects.toMatchObject({ detail: { stage: 'validate', reason: 'size', encryptedBytes: 0 } });
+    expect(requestUpload).not.toHaveBeenCalled(); expect(fetch).not.toHaveBeenCalled();
   });
 
   it('decrypts both key encodings and sanitizes inbound file names', async () => {

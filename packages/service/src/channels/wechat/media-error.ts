@@ -11,23 +11,30 @@ const messages: Record<Reason, string> = {
 };
 const codes = new Set(['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'EPIPE',
   'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_SOCKET',
+  'ERR_TLS_CERT_ALTNAME_INVALID', 'CERT_HAS_EXPIRED', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'DEPTH_ZERO_SELF_SIGNED_CERT',
   'ABORT_ERR', 'ENOSPC', 'EACCES', 'EPERM', 'ENOENT', 'EIO']);
+
+/** Shared upload/download diagnostic boundary; no raw error or message retained. */
+export function safeMediaCause(error?: unknown): Readonly<{ name: string; code?: string }> | undefined {
+  let source = error;
+  let name = 'Error', code: string | undefined;
+  for (let depth = 0; depth < 3 && source && typeof source === 'object'; depth++) {
+    const current = source as { name?: unknown; code?: unknown; cause?: unknown };
+    const { name: causeName, code: causeCode, cause: next } = current;
+    if (depth === 0 && typeof causeName === 'string' && ['Error', 'TypeError', 'AbortError', 'TimeoutError'].includes(causeName)) { name = causeName; }
+    if (typeof causeCode === 'string' && codes.has(causeCode)) { code = causeCode; }
+    source = next;
+  }
+  return error === undefined ? undefined : Object.freeze({ name, ...(code ? { code } : {}) });
+}
+
 
 /** Never retain raw errors: they can contain signed URLs, decryption keys or local paths. */
 export class WeChatMediaError extends Error {
   readonly detail;
   readonly retryable: boolean;
   constructor(detail: { stage: Stage; reason: Reason; elapsedMs: number; bytes?: number; httpStatus?: number }, error?: unknown) {
-    let source = error;
-    let name = 'Error', code: string | undefined;
-    for (let depth = 0; depth < 3 && source && typeof source === 'object'; depth++) {
-      const current = source as { name?: unknown; code?: unknown; cause?: unknown };
-      const { name: causeName, code: causeCode, cause: next } = current;
-      if (depth === 0 && typeof causeName === 'string' && ['Error', 'TypeError', 'AbortError', 'TimeoutError'].includes(causeName)) { name = causeName; }
-      if (typeof causeCode === 'string' && codes.has(causeCode)) { code = causeCode; }
-      source = next;
-    }
-    const cause = error === undefined ? undefined : Object.freeze({ name, ...(code ? { code } : {}) });
+    const cause = safeMediaCause(error);
     const httpStatus = typeof detail.httpStatus === 'number' && Number.isInteger(detail.httpStatus) && detail.httpStatus >= 100 && detail.httpStatus <= 599 ? detail.httpStatus : undefined;
     super(messages[detail.reason] + (httpStatus ? ` [${httpStatus}]` : ''), { cause });
     this.name = 'WeChatMediaError';
