@@ -87,6 +87,7 @@ export type { ChatAgentCallbacks, ChatAgentConfig, MessageData } from './types.j
  * {@link extractSendHttpStatus}).
  */
 const MAX_CONSECUTIVE_SEND_FAILURES = 3;
+const SEND_CIRCUIT_COOLDOWN_MS = 30_000;
 
 /**
  * Issue #4626: best-effort HTTP status extraction from a channel send error.
@@ -101,9 +102,9 @@ function extractSendHttpStatus(err: unknown): number | undefined {
   if (!err || typeof err !== 'object') {
     return undefined;
   }
-  const e = err as { response?: { status?: unknown }; status?: unknown };
-  const status = e.response?.status ?? e.status;
-  return typeof status === 'number' ? status : undefined;
+  const e = err as { response?: { status?: unknown }; status?: unknown; detail?: { httpStatus?: unknown }; authExpired?: boolean };
+  const status = e.response?.status ?? e.status ?? e.detail?.httpStatus ?? (e.authExpired === true ? 401 : undefined);
+  return typeof status === 'number' && Number.isInteger(status) && status >= 100 && status < 600 ? status : undefined;
 }
 
 /** Feishu business error 230025 means content size, not an invalid target. */
@@ -274,9 +275,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // propagate out of the for-await loop in processIterator → "Iterator error"
   // → "Agent loop error" → session teardown, killing healthy in-flight work
   // (a scheduled audit ran 38 days silently dead on one typo'd chatId).
-  // Both fields are session-scoped: reset on every startAgentLoop().
+  // Delivery policy resets on every startAgentLoop(); an epoch rejects stale sends.
   private consecutiveSendFailures = 0;
   private sendCircuitOpen = false;
+  private sendCircuitRetryAt = 0;
+  private sendCircuitProbeInFlight = false;
+  private sendCircuitEpoch = 0;
   private activeLifecycleContext?: NonNullable<StreamingUserMessage['correlation']>;
   private pendingLifecycleContexts: Array<NonNullable<StreamingUserMessage['correlation']>> = [];
   private didDeliverUserVisibleThisTurn = false;
@@ -1729,6 +1733,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // (one wasted attempt per session, bounded by construction).
     this.consecutiveSendFailures = 0;
     this.sendCircuitOpen = false;
+    this.sendCircuitRetryAt = 0;
+    this.sendCircuitProbeInFlight = false;
+    this.sendCircuitEpoch++;
 
     // Issue #4587 (part 1, review fix): fresh session — anchors queued for the
     // OLD session's channel are dead (that channel is closed above). Safe
@@ -1830,13 +1837,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * never throws:
    *
    * - success resets the consecutive-failure counter;
-   * - a 4xx response (target rejected the message — invalid receive_id /
+   * - a 4xx response except 408/429 (target rejected the message — invalid receive_id /
    *   chatId typo / no permission) opens the delivery circuit IMMEDIATELY:
    *   retrying or replaying cannot fix a bad target, so further sends to this
    *   chat are skipped for the rest of the session while the agent keeps
    *   working (history/logs still capture the output);
    * - 5xx / unknown (network) failures are counted; MAX_CONSECUTIVE_SEND_
-   *   FAILURES in a row opens the circuit.
+   *   FAILURES in a row opens the circuit. After a 30s cooldown, one current
+   *   message may probe recovery; concurrent probes are suppressed. HTTP
+   *   408/429 are transient too. Skipped/uncertain old payloads are not replayed.
    *
    * When the circuit opens, an error-level log with `sendCircuitOpen: true`
    * is emitted (alertable via log search) and the debug group — the one
@@ -1856,6 +1865,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       sourceMessageId: 'unknown',
     };
     const attempt = this.consecutiveSendFailures + 1;
+    const circuitEpoch = this.sendCircuitEpoch;
+    const probe = this.sendCircuitOpen && !this.sendCircuitProbeInFlight && Date.now() >= this.sendCircuitRetryAt;
     const recordDeliveryEvent = (event: 'delivery_attempt' | 'delivery_final', fields: Record<string, unknown>): void => {
       // Keep event publication off the hot path: legacy callers and tests rely
       // on delivery failures being isolated without extra scheduling points.
@@ -1866,9 +1877,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     recordDeliveryEvent('delivery_attempt', {
       state: 'started',
       fallback: threadRoot ? 'thread_reply' : 'direct',
-      circuitState: this.sendCircuitOpen ? 'open' : 'closed',
+      circuitState: probe ? 'half-open' : this.sendCircuitOpen ? 'open' : 'closed',
     });
-    if (this.sendCircuitOpen) {
+    if (this.sendCircuitOpen && !probe) {
       this.logger.debug(
         { chatId, contentLength: content.length },
         'Send skipped: delivery circuit open for this session (Issue #4626)'
@@ -1876,29 +1887,47 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       recordDeliveryEvent('delivery_final', { state: 'delivery_failed', circuitState: 'open' });
       return false;
     }
+    if (probe) { this.sendCircuitProbeInFlight = true; }
     try {
       const sentMessageId = await this.callbacks.sendMessage(chatId, content, threadRoot);
       const messageId = typeof sentMessageId === 'string' ? sentMessageId : undefined;
       receipt?.(messageId);
-      this.consecutiveSendFailures = 0;
+      if (circuitEpoch === this.sendCircuitEpoch) {
+        this.consecutiveSendFailures = 0;
+        this.sendCircuitOpen = false;
+        this.sendCircuitRetryAt = 0;
+        this.sendCircuitProbeInFlight = false;
+        if (probe) { this.sendCircuitEpoch++; }
+        this.didDeliverUserVisibleThisTurn = true;
+      }
       recordDeliveryEvent('delivery_final', {
         state: 'final',
         messageId,
-        circuitState: 'closed',
+        circuitState: this.sendCircuitOpen ? 'open' : 'closed',
         user_visible: true,
       });
-      this.didDeliverUserVisibleThisTurn = true;
       return true;
     } catch (err) {
-      this.consecutiveSendFailures++;
       const httpStatus = extractSendHttpStatus(err);
       const isPermanentTargetError =
         httpStatus !== undefined &&
         httpStatus >= 400 &&
         httpStatus < 500 &&
+        httpStatus !== 408 && httpStatus !== 429 &&
         !isOversizedFeishuMessageError(err);
+      // An old send/probe may settle after a new circuit or session exists.
+      // Its receipt is real, but it cannot change that newer delivery policy.
+      if (circuitEpoch !== this.sendCircuitEpoch) {
+        recordDeliveryEvent('delivery_final', { state: 'delivery_failed', errorCategory: isPermanentTargetError ? 'target' : 'transport',
+          circuitState: this.sendCircuitOpen ? 'open' : 'closed' });
+        return false;
+      }
+      this.consecutiveSendFailures++;
+      this.sendCircuitProbeInFlight = false;
       if (isPermanentTargetError || this.consecutiveSendFailures >= MAX_CONSECUTIVE_SEND_FAILURES) {
         this.sendCircuitOpen = true;
+        this.sendCircuitRetryAt = isPermanentTargetError ? Number.POSITIVE_INFINITY : Date.now() + SEND_CIRCUIT_COOLDOWN_MS;
+        this.sendCircuitEpoch++;
         // Publish after the current delivery microtask so consumers cannot
         // observe the circuit marker before the result event has settled.
         this.logger.error(
@@ -1910,9 +1939,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             isPermanentTargetError,
             sendCircuitOpen: true,
           },
-          'User-visible delivery circuit OPENED — agent output can no longer reach this chat ' +
-            '(invalid target or repeated channel failures). The agent session stays alive; ' +
-            'fix the chatId / channel config, then /reset. (Issue #4626)'
+          `User-visible delivery circuit OPENED — agent output can no longer reach this chat (invalid target or repeated channel failures). The agent session stays alive; ${
+              isPermanentTargetError ? 'fix the chatId / channel config, then /reset. ' : 'A current message may probe after the cooldown. '
+            }(Issues #4626 / #5470)`
         );
         this.notifyDebugGroupOfDeliveryFailure(chatId, err, httpStatus, isPermanentTargetError);
       } else {

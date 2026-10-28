@@ -2072,6 +2072,98 @@ describe('ChatAgent (service)', () => {
       expect((agent as any).sendCircuitOpen).toBe(true);
     });
 
+    async function recoveryFixture(error: Error = new Error('ECONNRESET')) {
+      const send = vi.fn<() => Promise<string | void>>().mockRejectedValue(error);
+      const { agent, localCallbacks } = makeAgent([
+        { type: 'text', content: 'lost-a' }, { type: 'text', content: 'lost-b' }, { type: 'text', content: 'lost-c' },
+        { type: 'result', content: '✅ Complete', subtype: 'success' },
+      ], send);
+      const original = (agent as any).createQueryStream;
+      (agent as any).createQueryStream = () => {
+        const scripted = original();
+        let finish: (() => void) | undefined;
+        let closed = false;
+        return {
+          handle: { close: () => { closed = true; finish?.(); }, cancel: vi.fn() },
+          iterator: (async function* () { yield* scripted.iterator; if (!closed) { await new Promise<void>(resolve => { finish = resolve; }); } })(),
+        };
+      };
+      await agent.processMessage({ chatId: 'oc_sendfail', payload: 'work', messageId: 'trip-circuit' });
+      await vi.waitFor(() => expect((agent as any).restartManager.recordSuccess).toHaveBeenCalled());
+      const deliver = (content: string) => (agent as any).deliverUserVisible('oc_sendfail', content) as Promise<boolean>;
+      return { agent, send, localCallbacks, deliver };
+    }
+
+    it.each([undefined, 408, 429, 503])('recovers transient status %s with one current half-open probe, without replaying old messages', async status => {
+      const realNow = Date.now.bind(Date); let offset = 0;
+      const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset);
+      const f = await recoveryFixture(Object.assign(new Error('temporary'), status ? { status } : {}));
+      try {
+        expect(f.send).toHaveBeenCalledTimes(3);
+        f.send.mockResolvedValue('current-message');
+        expect(await f.deliver('before cooldown')).toBe(false);
+        offset += 30_001;
+        let release!: (id: string) => void;
+        f.send.mockImplementationOnce(() => new Promise<string>(resolve => { release = resolve; }));
+        const probe = f.deliver('current probe');
+        expect(await f.deliver('concurrent probe')).toBe(false);
+        expect(f.send).toHaveBeenCalledTimes(4);
+        release('probe-receipt'); expect(await probe).toBe(true);
+        expect(await f.deliver('next output')).toBe(true);
+        expect(f.localCallbacks.sendMessage.mock.calls.map(call => call[1])).toEqual(['lost-a', 'lost-b', 'lost-c', 'current probe', 'next output']);
+      } finally { f.agent.dispose(); clock.mockRestore(); }
+    });
+
+    it('starts another cooldown after a failed probe and does not unlock another agent', async () => {
+      const realNow = Date.now.bind(Date); let offset = 0;
+      const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset);
+      const a = await recoveryFixture(), b = await recoveryFixture();
+      try {
+        offset += 30_001;
+        expect(await a.deliver('failed probe')).toBe(false);
+        a.send.mockResolvedValue('a-recovered');
+        expect(await a.deliver('too soon')).toBe(false);
+        offset += 30_001;
+        expect(await a.deliver('recovered')).toBe(true);
+        expect(await b.deliver('b-still-broken')).toBe(false);
+        expect(a.send).toHaveBeenCalledTimes(5);
+        expect(b.send).toHaveBeenCalledTimes(4);
+      } finally { a.agent.dispose(); b.agent.dispose(); clock.mockRestore(); }
+    });
+
+    it.each([400, 401, 403, 'expired'])('keeps permanent/auth failure %s closed to automatic probes', async status => {
+      const realNow = Date.now.bind(Date); let offset = 0;
+      const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset);
+      const f = await recoveryFixture(Object.assign(new Error('rejected'), status === 'expired' ? { authExpired: true } : { detail: { httpStatus: status } }));
+      try {
+        expect(f.send).toHaveBeenCalledOnce();
+        offset += 86_400_000;
+        f.send.mockResolvedValue('not authorized to probe');
+        expect(await f.deliver('later output')).toBe(false);
+        expect(f.send).toHaveBeenCalledOnce();
+      } finally { f.agent.dispose(); clock.mockRestore(); }
+    });
+
+    it('does not let an old successful probe clear a new session circuit', async () => {
+      const realNow = Date.now.bind(Date); let offset = 0;
+      const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset);
+      const f = await recoveryFixture();
+      try {
+        offset += 30_001;
+        let release!: (id: string) => void;
+        f.send.mockImplementationOnce(() => new Promise<string>(resolve => { release = resolve; }));
+        const oldProbe = f.deliver('old probe');
+        f.agent.reset();
+        f.send.mockRejectedValue(feishu400());
+        await f.agent.processMessage({ chatId: 'oc_sendfail', payload: 'new session', messageId: 'new-session' });
+        await vi.waitFor(() => expect(f.send).toHaveBeenCalledTimes(5));
+        release('old-receipt'); expect(await oldProbe).toBe(true);
+        offset += 30_001;
+        expect(await f.deliver('still invalid target')).toBe(false);
+        expect(f.send).toHaveBeenCalledTimes(5);
+      } finally { f.agent.dispose(); clock.mockRestore(); }
+    });
+
     it('a failing error-notice after an iterator error does not cascade into the outer Agent-loop handler (incident kill #2)', async () => {
       let call = 0;
       // Streamed text (send #1) succeeds; every later send — the ❌ Session
