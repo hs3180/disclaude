@@ -214,10 +214,10 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     } finally { confirmDelivery?.(); release?.(); stream.handle.close(); await collecting; provider.dispose(); }
   });
 
-  it('reports a rejected async-question delivery as failure rather than a successful turn', async () => {
+  it.each(['completed', 'failed', 'interrupted'])('retains async delivery failure and native execution facts (%s)', async nativeStatus => {
     const { provider, dir } = providerFixture('exit 0');
     writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
-const send=m=>console.log(JSON.stringify(m));
+const fs=require('node:fs');const send=m=>console.log(JSON.stringify(m));
 require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
  const m=JSON.parse(line);
  if(m.method==='initialize')send({id:m.id,result:{}});
@@ -225,10 +225,15 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
  else if(m.method==='turn/start'){
   send({id:m.id,result:{turn:{id:'async-turn'}}});
   send({method:'item/completed',params:{threadId:'async-thread',turnId:'async-turn',item:{id:'async-question',type:'agentMessage',text:'Any constraint?',delivery:'async',questions:[{title:'Any constraint?'}]}}});
-  send({method:'turn/completed',params:{threadId:'async-thread',turn:{id:'async-turn',status:'completed'}}});
+  send({method:'item/completed',params:{threadId:'async-thread',turnId:'async-turn',item:{id:'artifact',type:'commandExecution',command:'write-once',aggregatedOutput:'saved',status:'completed'}}});
+  send({method:'item/completed',params:{threadId:'async-thread',turnId:'async-turn',item:{id:'final',type:'agentMessage',phase:'final_answer',text:'Artifact is ready.'}}});
+  const gate=setInterval(()=>{if(!fs.existsSync(${JSON.stringify(join(dir, 'delivery-attempted'))}))return;clearInterval(gate);send({method:'turn/completed',params:{threadId:'async-thread',turn:{id:'async-turn',status:${JSON.stringify(nativeStatus)},...( ${JSON.stringify(nativeStatus)} === 'failed' ? {error:{message:'native execution failed'}} : {})}}});},5);
  }
 });`);
-    const onUserInput = vi.fn().mockRejectedValue(new Error('private transport detail'));
+    const onUserInput = vi.fn().mockImplementation(() => {
+      writeFileSync(join(dir, 'delivery-attempted'), 'attempted');
+      return Promise.reject(new Error('private transport detail'));
+    });
     const stream = provider.queryStream((async function* (): AsyncGenerator<UserInput> {
       yield { role: 'user', content: 'Original task', inputContext: { actorId: 'owner', chatId: 'chat', sourceMessageId: 'message' } };
     })(), { sessionKey: 'async-failed', settingSources: [], onUserInput, onAsyncUserInputAnswer: vi.fn() } as AgentQueryOptions);
@@ -236,10 +241,13 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     try {
       for await (const message of stream.iterator) { messages.push(message); }
       expect(onUserInput).toHaveBeenCalledOnce();
+      expect(messages.filter(m => m.type === 'text').map(m => m.content)).toContain('Artifact is ready.');
+      expect(messages.filter(m => m.type === 'tool_result')).toHaveLength(1);
       expect(messages.filter(m => m.type === 'result')).toEqual([
-        expect.objectContaining({ metadata: expect.objectContaining({ terminatedReason: 'turn_failed' }) }),
+        expect.objectContaining({ metadata: expect.objectContaining({ terminatedReason: 'turn_failed', inputDeliveryFailure: { nativeCompleted: nativeStatus === 'completed' }, automaticReplayBlocked: 'async-input-delivery-failed' }) }),
       ]);
       expect(messages.map(m => m.content).join('\n')).toContain('Async question');
+      if (nativeStatus === 'failed') { expect(messages.find(m => m.type === 'result')?.metadata?.terminationDetail).toContain('native execution failed'); }
       expect(messages.map(m => m.content).join('\n')).not.toContain('private transport detail');
     } finally { provider.dispose(); }
   });

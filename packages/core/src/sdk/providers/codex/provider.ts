@@ -1598,7 +1598,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           const status = event.turn?.status;
           const failed = status === 'failed' || !!asyncDeliveryFailure;
           const interrupted = status === 'interrupted' || status === 'cancelled';
-          const detail = asyncDeliveryFailure?.message ?? event.turn?.error?.message ?? 'unknown error';
+          const detail = [asyncDeliveryFailure?.message, event.turn?.error?.message].filter(Boolean).join('; ') || 'unknown error';
           // #5468: classify capacity even after progress — the post-progress
           // consumer is same-thread continuation, not the pre-work replay.
           const overload = failed && !asyncDeliveryFailure
@@ -1639,7 +1639,9 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               type: 'result',
               content: failed ? `❌ Codex turn failed: ${detail}` : interrupted ? '⏹️ Codex turn interrupted' : '✅ Complete',
               role: 'assistant',
-              ...(failed ? { metadata: { terminatedReason: 'turn_failed' as const, terminationDetail: `codex app-server turn failed: ${detail}; ${JSON.stringify({ threadId, turnId: finishingTurn })}`, messageId: finishingTurn } }
+              ...(failed ? { metadata: { terminatedReason: 'turn_failed' as const, terminationDetail: `codex app-server turn failed: ${detail}; ${JSON.stringify({ threadId, turnId: finishingTurn })}`, messageId: finishingTurn,
+                ...(asyncDeliveryFailure ? { inputDeliveryFailure: { nativeCompleted: status === 'completed' },
+                  automaticReplayBlocked: 'async-input-delivery-failed' } : {}) } }
                 : interrupted ? { metadata: { terminatedReason: 'interrupted' as const } } : {}),
             });
           }
