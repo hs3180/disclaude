@@ -977,7 +977,8 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     return fixture.provider;
   }
 
-  function start(provider: CodexAgentProvider, sessionKey: string, llmSessionLimit?: AgentQueryOptions['llmSessionLimit']) {
+  function start(provider: CodexAgentProvider, sessionKey: string, llmSessionLimit?: AgentQueryOptions['llmSessionLimit'],
+    capacityAdmission?: AgentQueryOptions['capacityAdmission']) {
     let release!: () => void;
     let send!: (input: UserInput | undefined) => void;
     const pending = new Promise<void>(resolve => { release = resolve; });
@@ -987,7 +988,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
       const next = await followup;
       if (next) { yield next; }
       await pending;
-    })(), { sessionKey, settingSources: [], llmSessionLimit } as AgentQueryOptions);
+    })(), { sessionKey, settingSources: [], llmSessionLimit, capacityAdmission } as AgentQueryOptions);
     const messages: AgentMessage[] = [];
     const collecting = (async () => {
       for await (const message of result.iterator) {messages.push(message);}
@@ -1004,6 +1005,31 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     await stream.handle.steer?.('finish');
     await vi.waitFor(() => expect(stream.messages.filter(m => m.content === '✅ Complete')).toHaveLength(completed + 1));
   };
+
+  it.each(['run', 'session', 'llm'] as const)('refuses dependent work at the %s limit and keeps its parent live', async kind => {
+    const provider = controlledProvider();
+    provider.setGovernanceLimits({ maxActiveSessions: kind === 'session' ? 1 : 3, maxConcurrentRuns: kind === 'run' ? 1 : 3 });
+    const limit = kind === 'llm' ? { name: 'dependent-native-llm', maxConcurrentSessions: 1 } : undefined;
+    const parent = start(provider, `parent-dependent-${kind}`, limit);
+    let child: Stream | undefined;
+    try {
+      await started(parent);
+      if (kind === 'llm') {
+        expect(() => { child = start(provider, `child-dependent-${kind}`, limit, 'reject'); }).toThrow(/busy/i);
+      } else {
+        child = start(provider, `child-dependent-${kind}`, undefined, 'reject');
+        await vi.waitFor(() => expect(child!.messages.some(message => message.type === 'error' && /busy/i.test(message.content ?? ''))).toBe(true));
+        await child.collecting;
+      }
+      expect(provider.getGovernanceStats()).toMatchObject({ activeSessions: 1, runningRuns: 1, queuedRuns: 0 });
+      expect(parent.messages.some(message => message.type === 'error')).toBe(false);
+      await complete(parent);
+      await vi.waitFor(() => expect(provider.getGovernanceStats().runningRuns).toBe(0));
+    } finally {
+      child?.handle.close(); child?.release(); parent.handle.close(); parent.release();
+      await Promise.all([parent.collecting, child?.collecting]); provider.dispose();
+    }
+  });
 
   it('releases completed connections without evicting idle streams and resumes their threads', async () => {
     const provider = controlledProvider();

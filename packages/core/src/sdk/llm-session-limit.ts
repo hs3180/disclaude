@@ -15,6 +15,7 @@ export function reserveLlmSession(
   limit: AgentQueryOptions['llmSessionLimit'],
   preflight?: () => void,
   onAdmitted?: (release: () => void) => void,
+  admission: AgentQueryOptions['capacityAdmission'] = 'queue',
 ) {
   if (!limit) { return undefined; }
   const { name, maxConcurrentSessions } = limit;
@@ -25,6 +26,9 @@ export function reserveLlmSession(
   const mustWait = budget.waiters.length > 0 || budget.active >= maxConcurrentSessions;
   // Known auth/configuration failures must not receive an accepted queue notice.
   if (mustWait) { preflight?.(); }
+  if (mustWait && admission === 'reject') {
+    throw new LlmSessionLimitError(`LLM ${name} capacity is busy; dependent work was not queued`);
+  }
   budgets.set(name, budget);
   if (mustWait && budget.waiters.length >= MAX_WAITING_LLM_SESSIONS) {
     throw new LlmSessionLimitError(
@@ -83,7 +87,8 @@ export function reserveLlmSession(
 export function withLlmSessionLimit(
   start: () => StreamQueryResult,
   limit: AgentQueryOptions['llmSessionLimit'],
-  preflight?: () => void
+  preflight?: () => void,
+  admission: AgentQueryOptions['capacityAdmission'] = 'queue',
 ): StreamQueryResult {
   let result: StreamQueryResult | undefined;
   let closed = false, failed = false, failure: unknown;
@@ -91,7 +96,7 @@ export function withLlmSessionLimit(
     if (closed) { return; }
     try { result = start(); }
     catch (error) { failed = true; failure = error; release(); }
-  });
+  }, admission);
   if (!reservation) { return start(); }
   if (failed) { throw failure; }
   const { ready } = reservation;
