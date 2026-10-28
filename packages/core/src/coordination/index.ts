@@ -12,3 +12,7 @@ export type { TaskClaimSnapshot, TaskClaimLease } from './task-claim-store.js';
 export { TaskResultOutbox, type TaskCompletionReport, type TaskResultRecord } from './task-result-outbox.js';
 export { readProjectArtifact, type ProjectArtifactIdentity } from './project-artifact.js';
 export { TaskAdmissionStore, type TaskAdmissionIntent } from './task-admission-store.js';
+
+// Task-bound public question/answer delivery state (#5584).
+export { TaskQuestionStore } from './task-question-store.js';
+export type { TaskQuestion, TaskQuestionAnswer, TaskQuestionRecord } from './task-question-store.js';
