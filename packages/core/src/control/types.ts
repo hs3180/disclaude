@@ -9,6 +9,7 @@ import type { Logger } from '../utils/logger.js';
 import type { TriggerMode } from '../config/types.js';
 import type { ProjectManager } from '../project/project-manager.js';
 import type { ChatFailureRecord } from '../feedback/failure-registry.js';
+import type { GoalStore } from '../goals/goal-store.js';
 
 /**
  * Debug 组信息
@@ -23,6 +24,8 @@ export interface DebugGroup {
  * 控制命令处理器上下文
  */
 export interface ControlHandlerContext {
+  /** Only configured by a user-message channel, never by the model-facing REST control endpoint. */
+  goalStore?: GoalStore;
   /** Optional host access policy; help uses exactly the same decision as dispatch. */
   isCommandAllowed?: (command: ControlCommand) => boolean;
   getHelpCapabilities?: () => ChannelCapabilities;

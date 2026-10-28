@@ -138,6 +138,7 @@ export type ControlCommandType =
   | 'project'
   | 'agent'
   | 'steer'
+  | 'goal'
   // One-click GitHub issue reporting of the chat's last failure (Issue #5400)
   | 'issue';
 
@@ -159,6 +160,8 @@ export interface CommandDataMap {
   /** /agent — inspect or select a named runtime preset */
   agent: { subcommand: string; preset?: string };
   steer: { prompt?: string };
+  /** Explicit Goal record commands; execution is a separate capability. */
+  goal: { args?: string[] };
 }
 
 /**

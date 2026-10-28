@@ -34,6 +34,7 @@ import {
   channelCredentialErrors,
   resolveChannelCredential,
   ChatFailureRegistry,
+  GoalStore,
 } from '@disclaude/core';
 import crypto from 'node:crypto';
 import { DisclaudeService } from './service.js';
@@ -435,6 +436,7 @@ export async function main(): Promise<void> {
   // Shared context for both ChannelLifecycleManager and routerCallbacksFactory.
   // Issue #3801: Extract to avoid duplication and ensure consistent dependency injection.
   const channelSetupContext = {
+    goalStore: new GoalStore(path.join(workspaceDir, '.disclaude', 'goals')),
     agentPool,
     controlHandler,
     controlHandlerContext,

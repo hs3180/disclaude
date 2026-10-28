@@ -27,6 +27,7 @@ import type {
   ChannelApiHandlers,
   FeishuApiHandlers,
   MessageRouter as InputMessageRouter,
+  GoalStore,
 } from '@disclaude/core';
 import type { ChatAgentCallbacks } from './agents/types.js';
 import type { ChatAgent } from './agents/chat-agent.js';
@@ -71,6 +72,8 @@ export interface IDisclaudeServiceForSetup {
  * Provides shared dependencies needed for channel setup.
  */
 export interface ChannelSetupContext {
+  /** Private record store, exposed only by explicitly wired user-message channels. */
+  goalStore?: GoalStore;
   /** Agent pool for creating chat agents */
   agentPool: {
     /**
