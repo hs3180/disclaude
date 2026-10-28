@@ -3,7 +3,8 @@ import * as fs from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import type { IncomingMessage } from '@disclaude/core';
 import type { WeChatImageItem, WeChatFileItem, WeChatUploadedMedia } from './types.js';
-import { WeChatMediaError } from './media-error.js';
+import { WeChatMediaError, safeMediaCause } from './media-error.js';
+import { WeChatMediaUploadError } from './media-upload-error.js';
 
 /** Adapter policy, not a claim about the gateway's maximum. */
 export const WECHAT_MEDIA_MAX_BYTES = 20 * 1024 * 1024;
@@ -30,26 +31,44 @@ export async function uploadEncryptedMedia(params: {
   kind: 'image' | 'file' | 'video';
   requestUpload: (body: Record<string, unknown>) => Promise<{ upload_param?: string; upload_full_url?: string }>;
 }): Promise<WeChatUploadedMedia> {
-  if (params.fileData.length > WECHAT_MEDIA_MAX_BYTES) { throw new Error('File too large: WeChat adapter limit is 20 MiB'); }
-  const key = randomBytes(16);
-  const cipher = createCipheriv('aes-128-ecb', key, null);
-  const encrypted = Buffer.concat([cipher.update(params.fileData), cipher.final()]);
-  const filekey = randomBytes(16).toString('hex');
-  const spec = await params.requestUpload({
-    filekey, to_user_id: params.to, media_type: params.kind === 'image' ? 1 : params.kind === 'video' ? 2 : 3,
-    rawsize: params.fileData.length, rawfilemd5: createHash('md5').update(params.fileData).digest('hex'),
-    filesize: encrypted.length, no_need_thumb: true, aeskey: key.toString('hex'),
-  });
-  if (!spec.upload_full_url && !spec.upload_param) { throw new Error('WeChat upload response missing upload URL'); }
-  const url = cdnUrl(spec.upload_full_url || `${CDN_BASE}/upload?encrypted_query_param=${encodeURIComponent(spec.upload_param ?? '')}&filekey=${filekey}`);
-  let response: Response;
-  try { response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: new Uint8Array(encrypted), signal: mediaSignal(), redirect: 'error' }); }
-  catch { throw new Error('WeChat CDN upload failed or timed out; message was not sent'); }
-  const downloadParam = response.headers.get('x-encrypted-param');
-  await response.body?.cancel();
-  if (!response.ok) { throw new Error(`WeChat CDN upload failed [${response.status}]; message was not sent`); }
-  if (!downloadParam) { throw new Error('WeChat CDN upload missing download reference; message was not sent'); }
-  return { media: { encrypt_query_param: downloadParam, aes_key: Buffer.from(key.toString('hex')).toString('base64'), encrypt_type: 1 }, size: params.fileData.length, encryptedSize: encrypted.length };
+  const started = Date.now();
+  let stage: ConstructorParameters<typeof WeChatMediaUploadError>[0]['stage'] = 'validate';
+  let encryptedBytes = 0;
+  const failure = (reason: ConstructorParameters<typeof WeChatMediaUploadError>[0]['reason'], httpStatus?: number, error?: unknown) =>
+    new WeChatMediaUploadError({ stage, reason, bytes: params.fileData.length, encryptedBytes, elapsedMs: Date.now() - started, httpStatus }, error);
+  try {
+    if (params.fileData.length > WECHAT_MEDIA_MAX_BYTES) { throw failure('size'); }
+    stage = 'encrypt';
+    const key = randomBytes(16);
+    const cipher = createCipheriv('aes-128-ecb', key, null);
+    const encrypted = Buffer.concat([cipher.update(params.fileData), cipher.final()]);
+    const filekey = randomBytes(16).toString('hex');
+    encryptedBytes = encrypted.length;
+    stage = 'negotiate';
+    const spec = await params.requestUpload({
+      filekey, to_user_id: params.to, media_type: params.kind === 'image' ? 1 : params.kind === 'video' ? 2 : 3,
+      rawsize: params.fileData.length, rawfilemd5: createHash('md5').update(params.fileData).digest('hex'),
+      filesize: encrypted.length, no_need_thumb: true, aeskey: key.toString('hex'),
+    });
+    stage = 'reference';
+    if (!spec.upload_full_url && !spec.upload_param) { throw failure('reference'); }
+    const url = cdnUrl(spec.upload_full_url || `${CDN_BASE}/upload?encrypted_query_param=${encodeURIComponent(spec.upload_param ?? '')}&filekey=${filekey}`);
+    stage = 'upload';
+    const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: new Uint8Array(encrypted), signal: mediaSignal(), redirect: 'error' });
+    const downloadParam = response.headers.get('x-encrypted-param');
+    await response.body?.cancel().catch(() => {});
+    if (!response.ok) { throw failure('http', response.status); }
+    stage = 'receipt';
+    if (!downloadParam) { throw failure('receipt'); }
+    return { media: { encrypt_query_param: downloadParam, aes_key: Buffer.from(key.toString('hex')).toString('base64'), encrypt_type: 1 }, size: params.fileData.length, encryptedSize: encrypted.length };
+  } catch (error) {
+    if (error instanceof WeChatMediaUploadError) { throw error; }
+    const cause = safeMediaCause(error);
+    const reason = stage === 'reference' ? 'reference' : stage === 'negotiate' ? 'negotiate'
+      : stage !== 'upload' ? 'local' : cause?.name === 'TimeoutError' || cause?.code?.includes('TIMEOUT') || cause?.code === 'ETIMEDOUT' ? 'timeout'
+        : cause?.name === 'AbortError' ? 'cancelled' : 'network';
+    throw failure(reason, undefined, error);
+  }
 }
 
 function aesKey(encoded: string): Buffer {
