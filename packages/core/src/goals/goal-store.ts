@@ -5,6 +5,24 @@ import { randomUUID } from 'node:crypto';
 
 export type GoalStatus = 'draft' | 'active' | 'paused' | 'blocked' | 'completed' | 'abandoned';
 export type GoalControlAction = 'activate' | 'pause' | 'resume' | 'stop';
+export interface GoalAcceptanceCheck {
+  /** Zero-based index in the exact requirements revision being assessed. */
+  criterion: number;
+  satisfied: boolean;
+  /** References to artifacts in this report, not unrecorded claims. */
+  evidence: string[];
+}
+export interface GoalTurnReport {
+  outcome: 'continue' | 'blocked' | 'completed';
+  progress: string;
+  artifacts: string[];
+  checks: GoalAcceptanceCheck[];
+}
+export interface GoalAssessment {
+  reviewedRevision: number;
+  outcome: GoalTurnReport['outcome'];
+  checks: GoalAcceptanceCheck[];
+}
 export interface GoalContent {
   objective: string;
   acceptance: string[];
@@ -18,6 +36,7 @@ export interface GoalRecord extends GoalContent {
   chatId: string;
   projectRoot?: string;
   status: GoalStatus;
+  lastAssessment?: GoalAssessment;
   createdAt: string;
   updatedAt: string;
 }
@@ -46,8 +65,26 @@ function validateContent(value: Partial<GoalContent>): void {
     || (value.progress !== undefined && !text(value.progress, 16_000, true))
     || (value.artifacts !== undefined && !list(value.artifacts, 2_000, true))) { throw new Error('Invalid goal content'); }
 }
+function validateAssessment(value: unknown, revision: number, acceptanceCount: number, artifacts: string[]): void {
+  keys(value, ['reviewedRevision', 'outcome', 'checks']);
+  if (!Number.isSafeInteger(value.reviewedRevision) || (value.reviewedRevision as number) < 1 ||
+      (value.reviewedRevision as number) >= revision || !['continue', 'blocked', 'completed'].includes(value.outcome as string) ||
+      !Array.isArray(value.checks) || value.checks.length > acceptanceCount) { throw new Error('Invalid goal assessment'); }
+  const indices = new Set<number>();
+  for (const check of value.checks) {
+    keys(check, ['criterion', 'satisfied', 'evidence']);
+    if (!Number.isSafeInteger(check.criterion) || (check.criterion as number) < 0 ||
+        (check.criterion as number) >= acceptanceCount || indices.has(check.criterion as number) ||
+        typeof check.satisfied !== 'boolean' || !list(check.evidence, 2_000, !check.satisfied) ||
+        !check.evidence.every(item => artifacts.includes(item))) { throw new Error('Invalid goal acceptance evidence'); }
+    indices.add(check.criterion as number);
+  }
+  if (value.outcome === 'completed' && (indices.size !== acceptanceCount ||
+      value.checks.some(check => check.satisfied !== true))) { throw new Error('Goal completion requires evidence for every acceptance condition'); }
+}
+
 function validateRecord(value: unknown, id: string): asserts value is GoalRecord {
-  keys(value, ['version', 'id', 'revision', 'chatId', 'projectRoot', 'status', 'createdAt', 'updatedAt', 'objective', 'acceptance', 'progress', 'artifacts']);
+  keys(value, ['version', 'id', 'revision', 'chatId', 'projectRoot', 'status', 'createdAt', 'updatedAt', 'objective', 'acceptance', 'progress', 'artifacts', 'lastAssessment']);
   if (value.version !== 1 || value.id !== id || !Number.isSafeInteger(value.revision) || (value.revision as number) < 1
     || !text(value.chatId, 512) || (value.projectRoot !== undefined && (!text(value.projectRoot, 4_096) || !isAbsolute(value.projectRoot)))
     || !['draft', 'active', 'paused', 'blocked', 'completed', 'abandoned'].includes(value.status as string)
@@ -55,6 +92,11 @@ function validateRecord(value: unknown, id: string): asserts value is GoalRecord
     || !text(value.updatedAt, 64) || !Number.isFinite(Date.parse(value.updatedAt))
     || !text(value.objective, 16_000) || !list(value.acceptance, 4_000)
     || !text(value.progress, 16_000, true) || !list(value.artifacts, 2_000, true)) { throw new Error('Invalid goal record'); }
+  if (value.lastAssessment !== undefined) {
+    validateAssessment(value.lastAssessment, value.revision as number, value.acceptance.length, value.artifacts);
+    const assessment = value.lastAssessment as unknown as GoalAssessment;
+    if ((assessment.outcome === 'completed') !== (value.status === 'completed')) { throw new Error('Invalid goal completion state'); }
+  }
 }
 
 /**
@@ -122,8 +164,32 @@ export class GoalStore {
     if (Object.values(patch).some(value => value === undefined)) { throw new Error('Invalid goal update'); }
     validateContent(patch);
     const snapshot = structuredClone(patch);
-    return await this.change(id, expectedRevision, previous => ({ ...previous, ...snapshot }));
+    return await this.change(id, expectedRevision, previous => {
+      const revised = { ...previous, ...snapshot };
+      // Content edits invalidate a prior assessment, including its artifact references.
+      delete revised.lastAssessment;
+      return revised;
+    });
   }
+  /** Persist the settled turn's assessment against exactly the active revision.
+   * The execution adapter must validate authority and actual work settlement.
+   * Evidence references are recorded assertions, not verification of their contents.
+   */
+  async recordTurn(id: string, expectedRevision: number, report: GoalTurnReport): Promise<GoalRecord> {
+    keys(report, ['outcome', 'progress', 'artifacts', 'checks']);
+    validateContent({ progress: report.progress, artifacts: report.artifacts });
+    if (!text(report.progress, 16_000) || !list(report.artifacts, 2_000, true)) { throw new Error('Invalid goal turn report'); }
+    const snapshot = structuredClone(report);
+    return await this.change(id, expectedRevision, previous => {
+      if (previous.status !== 'active') { throw new Error('Goal is not active'); }
+      const assessment: GoalAssessment = { reviewedRevision: expectedRevision, outcome: snapshot.outcome, checks: snapshot.checks };
+      validateAssessment(assessment, previous.revision + 1, previous.acceptance.length, snapshot.artifacts);
+      const status: Record<GoalTurnReport['outcome'], GoalStatus> = { continue: 'active', blocked: 'blocked', completed: 'completed' };
+      return { ...previous, status: status[snapshot.outcome], progress: snapshot.progress,
+        artifacts: snapshot.artifacts, lastAssessment: assessment };
+    });
+  }
+
   /**
    * Persist an explicit user command. The authenticated entry point must check
    * user/chat authority before calling and separately reconcile/cancel native
