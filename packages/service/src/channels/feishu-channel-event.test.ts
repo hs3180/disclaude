@@ -144,6 +144,7 @@ describe('native welcome event dispatch through the actual SDK parser', () => {
     const channel = new FeishuChannel({ appId: 'test-app', appSecret: 'test-secret' });
     await channel.start();
     const handler = vi.mocked(MessageHandler).mock.results.at(-1)?.value;
+    handler.drainTaskQuestions.mockClear();
     let release!: () => void;
     handler.drainTaskQuestions.mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
     const stopping = channel.stop();

@@ -383,6 +383,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   protected async doStart(): Promise<void> {
+    await this.feishuMessageHandler.drainTaskQuestions();
     // Initialize message logger
     await messageLogger.init();
 
