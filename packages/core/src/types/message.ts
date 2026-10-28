@@ -60,6 +60,8 @@ export interface Message {
  */
 export interface UserMessage extends Message {
   source: 'user';
+  /** Opaque host provenance, preserved by reference; never infer trust from its JSON value. */
+  runtimeSource?: unknown;
   /** Sender's open_id for @ mentions */
   senderOpenId?: string;
   /** Platform message ID (e.g., Feishu message_id) */
