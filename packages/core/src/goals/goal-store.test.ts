@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { GoalStore, GoalRevisionConflictError } from './goal-store.js';
+import { GoalStore, GoalRevisionConflictError, type GoalRecord } from './goal-store.js';
+import { GoalLoop } from './goal-loop.js';
 
 vi.mock('node:fs/promises', async importOriginal => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
@@ -121,5 +122,107 @@ describe('explicit durable goal records (#5212/F1)', () => {
     expect(await store.listIds()).toEqual([]);
     expect(await store.get('00000000-0000-4000-8000-000000000000')).toBeUndefined();
     await expect(fs.stat(directory)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+});
+
+describe('durable explicit goal controls (#5212/F3 storage)', () => {
+  it('keeps pause across restart and requires an explicit resume while preserving updated requirements', async () => {
+    const { directory, store } = await fixture(); const draft = await store.create(goal);
+    const active = await store.control(draft.id, draft.revision, 'activate');
+    const revised = await store.update(active.id, active.revision, { acceptance: ['User revised the requirement'], artifacts: ['report-v2'] });
+    const paused = await store.control(revised.id, revised.revision, 'pause');
+    const restarted = new GoalStore(directory);
+    expect(await restarted.get(paused.id)).toEqual(paused);
+    expect(paused).toMatchObject({ status: 'paused', revision: 4, acceptance: ['User revised the requirement'], artifacts: ['report-v2'], chatId: goal.chatId, projectRoot: goal.projectRoot });
+    const resumed = await restarted.control(paused.id, paused.revision, 'resume');
+    expect(resumed).toMatchObject({ status: 'active', revision: 5, id: draft.id, createdAt: draft.createdAt, acceptance: paused.acceptance });
+    const stopped = await restarted.control(resumed.id, resumed.revision, 'stop');
+    expect((await new GoalStore(directory).get(stopped.id))?.status).toBe('abandoned');
+    await expect(restarted.control(stopped.id, stopped.revision, 'resume')).rejects.toThrow('terminal');
+    await expect(restarted.update(stopped.id, stopped.revision, { progress: 'late worker result' })).rejects.toThrow('terminal');
+  });
+  it('rejects stale completion/progress and stale resume commands after pause or stop', async () => {
+    const { store } = await fixture(); const draft = await store.create(goal);
+    const active = await store.control(draft.id, draft.revision, 'activate');
+    const paused = await store.control(active.id, active.revision, 'pause');
+    await expect(store.update(active.id, active.revision, { progress: 'old completion' })).rejects.toBeInstanceOf(GoalRevisionConflictError);
+    const edited = await store.update(paused.id, paused.revision, { objective: 'New user direction' });
+    await expect(store.control(paused.id, paused.revision, 'resume')).rejects.toBeInstanceOf(GoalRevisionConflictError);
+    const stopped = await store.control(edited.id, edited.revision, 'stop');
+    await expect(store.control(edited.id, edited.revision, 'resume')).rejects.toBeInstanceOf(GoalRevisionConflictError);
+    expect(await store.get(stopped.id)).toEqual(stopped);
+  });
+  it('shares one revision queue for content edits and controls even through parent aliases', async () => {
+    const { root, directory, store } = await fixture(); const draft = await store.create(goal);
+    const active = await store.control(draft.id, draft.revision, 'activate');
+    const alias = join(root, 'alias'); await fs.symlink(root, alias);
+    const outcomes = await Promise.allSettled([
+      store.control(active.id, active.revision, 'pause'),
+      new GoalStore(join(alias, 'goals')).update(active.id, active.revision, { progress: 'concurrent result' }),
+    ]);
+    expect(outcomes.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+    expect(outcomes.find(r => r.status === 'rejected')).toMatchObject({ reason: expect.any(GoalRevisionConflictError) });
+    const persisted = await new GoalStore(directory).get(active.id);
+    expect(persisted?.revision).toBe(active.revision + 1);
+    expect(persisted).toEqual((outcomes.find(r => r.status === 'fulfilled') as PromiseFulfilledResult<GoalRecord>).value);
+  });
+  it('preserves the prior state when persisting pause fails, then allows a deliberate retry', async () => {
+    const { directory, store } = await fixture(); const draft = await store.create(goal);
+    const active = await store.control(draft.id, draft.revision, 'activate');
+    vi.mocked(fs.rename).mockRejectedValueOnce(Object.assign(new Error('fixture'), { code: 'ENOSPC' }));
+    await expect(store.control(active.id, active.revision, 'pause')).rejects.toMatchObject({ code: 'ENOSPC' });
+    expect(await store.get(active.id)).toEqual(active);
+    expect(await fs.readdir(directory)).toEqual([`${active.id}.json`]);
+    expect((await store.control(active.id, active.revision, 'pause')).status).toBe('paused');
+  });
+  it('never treats a command as task completion or silently activates a draft through resume', async () => {
+    const { directory, store } = await fixture(); const draft = await store.create(goal);
+    for (const action of ['resume', 'pause', 'complete', '__proto__']) {
+      await expect(store.control(draft.id, draft.revision, action as never)).rejects.toThrow();
+      expect(await store.get(draft.id)).toEqual(draft);
+    }
+    const blocked = { ...draft, status: 'blocked' };
+    await fs.writeFile(join(directory, `${draft.id}.json`), JSON.stringify(blocked));
+    expect((await store.control(draft.id, draft.revision, 'resume')).status).toBe('active');
+    const completed = { ...draft, status: 'completed' };
+    await fs.writeFile(join(directory, `${draft.id}.json`), JSON.stringify(completed));
+    await expect(store.control(draft.id, draft.revision, 'activate')).rejects.toThrow('terminal');
+    expect(await store.get(draft.id)).toEqual(completed);
+  });
+  it('stops a draft without running it and validates the revision before changing state', async () => {
+    const { store } = await fixture(); const draft = await store.create(goal);
+    for (const revision of [0, -1, NaN, 1.5]) {
+      await expect(store.control(draft.id, revision, 'activate')).rejects.toThrow('revision');
+    }
+    expect((await store.control(draft.id, draft.revision, 'stop')).status).toBe('abandoned');
+  });
+  it('does not let an in-flight result undo pause, and a recreated driver stays idle until explicit resume', async () => {
+    const { directory, store } = await fixture(); const draft = await store.create(goal);
+    const active = await store.control(draft.id, draft.revision, 'activate');
+    let entered!: () => void; const started = new Promise<void>(resolve => { entered = resolve; });
+    let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+    const runTurn = vi.fn(async (snapshot: Readonly<GoalRecord>) => {
+      entered(); await gate;
+      await expect(store.update(snapshot.id, snapshot.revision, { progress: 'late result' })).rejects.toBeInstanceOf(GoalRevisionConflictError);
+    });
+    const loop = new GoalLoop<GoalRecord>({ read: id => store.get(id), runTurn });
+    const handle = loop.start(active.id); await started;
+    const paused = await store.control(active.id, active.revision, 'pause'); release();
+    expect(await handle.completion).toEqual({ reason: 'inactive', status: 'paused' });
+    expect(runTurn).toHaveBeenCalledTimes(1);
+    const restarted = new GoalStore(directory);
+    let secondEntered!: () => void; const secondStarted = new Promise<void>(resolve => { secondEntered = resolve; });
+    let secondRelease!: () => void; const secondGate = new Promise<void>(resolve => { secondRelease = resolve; });
+    const secondTurn = vi.fn(async () => { secondEntered(); await secondGate; });
+    const recreated = new GoalLoop<GoalRecord>({ read: id => restarted.get(id), runTurn: secondTurn });
+    expect(await recreated.start(active.id).completion).toEqual({ reason: 'inactive', status: 'paused' });
+    expect(secondTurn).not.toHaveBeenCalled();
+    const resumed = await restarted.control(paused.id, paused.revision, 'resume');
+    const resumedHandle = recreated.start(active.id); await secondStarted;
+    await restarted.control(resumed.id, resumed.revision, 'stop'); resumedHandle.stop();
+    expect(recreated.start(active.id)).toBe(resumedHandle);
+    secondRelease(); expect(await resumedHandle.completion).toEqual({ reason: 'stopped' });
+    expect(await recreated.start(active.id).completion).toEqual({ reason: 'inactive', status: 'abandoned' });
+    expect(secondTurn).toHaveBeenCalledTimes(1);
   });
 });
