@@ -169,3 +169,5 @@ export { type DeliveryHealth } from './health-types.js';
 
 // Messaging module (Issue #513, Issue #515)
 export * from './messaging/index.js';
+
+export { GoalExecutionService, type GoalExecutionServiceOptions } from './goals/goal-execution-service.js';

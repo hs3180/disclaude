@@ -59,7 +59,7 @@ export const handleGoal: CommandHandler<'goal'> = async (command, context) => {
         return { success: false, message: usage };
       }
       if (!context.goalExecution) { return { success: false, message: '当前入口尚未启用 Goal 原生执行器，未启动或改变执行状态。' }; }
-      const { sourceMessageId, threadRootId } = command;
+      const { sourceMessageId, threadRootId, chatType } = command;
       if (typeof sourceMessageId !== 'string' || !sourceMessageId.trim()) {
         return { success: false, message: '缺少原始消息上下文，请在聊天中直接发送 Goal 控制命令。' };
       }
@@ -70,7 +70,7 @@ export const handleGoal: CommandHandler<'goal'> = async (command, context) => {
         return { success: false, message: '绑定的项目目录暂不可用，未启动执行。请先恢复目录；仍可查看、暂停或停止 Goal。' };
       }
       const request = { goalId: id, expectedRevision: revision, chatId, projectRoot,
-        actorId, sourceMessageId, ...(threadRootId ? { threadRootId } : {}) };
+        actorId, sourceMessageId, ...(chatType ? { chatType } : {}), ...(threadRootId ? { threadRootId } : {}) };
       let record: GoalRecord;
       if (action === 'start' || action === 'resume') {
         ({ record } = await context.goalExecution.start(request, action === 'start' ? 'activate' : 'resume'));
@@ -90,8 +90,10 @@ export const handleGoal: CommandHandler<'goal'> = async (command, context) => {
     if (action === 'show') {
       if (args.length !== 2) { return { success: false, message: usage }; }
       const record = await store.get(id);
-      return record && belongs(record) ? { success: true, message: format(record) }
-        : { success: false, message: '当前聊天和项目中找不到此 Goal。' };
+      if (!record || !belongs(record)) { return { success: false, message: '当前聊天和项目中找不到此 Goal。' }; }
+      const idle = record.status === 'active' && context.goalExecution?.isRunning && !context.goalExecution.isRunning(id);
+      return { success: true, message: format(record) + (idle
+        ? '\n\n当前没有所属的执行，未自动重放旧操作。请先核对已有结果，再显式暂停、恢复。' : '') };
     }
     const revision = action === 'edit' ? Number(args[2]) : undefined;
     const parts = args.slice(action === 'create' ? 1 : 3).join(' ').split('|').map(part => part.trim());

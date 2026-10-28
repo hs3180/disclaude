@@ -131,7 +131,7 @@ describe('explicit Goal lifecycle command entry', () => {
       expect(response.success).toBe(true); expect((await store.get(id))?.status).toBe(status);
     }
     expect(execution.start).toHaveBeenNthCalledWith(1, { goalId: id, expectedRevision: 1, actorId: 'actual-user',
-      chatId: 'chat', projectRoot: root, sourceMessageId: 'actual-source' }, 'activate');
+      chatId: 'chat', projectRoot: root, sourceMessageId: 'actual-source', chatType: 'group' }, 'activate');
     expect(execution.start).toHaveBeenNthCalledWith(2, expect.objectContaining({ expectedRevision: 3 }), 'resume');
     expect(execution.control).toHaveBeenNthCalledWith(1, expect.objectContaining({ expectedRevision: 2 }), 'pause');
     expect(execution.control).toHaveBeenNthCalledWith(2, expect.objectContaining({ expectedRevision: 4 }), 'stop');

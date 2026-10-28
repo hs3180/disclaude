@@ -19,6 +19,7 @@ export interface GoalCommandExecutionRequest {
   projectRoot: string;
   actorId: string;
   sourceMessageId: string;
+  chatType?: 'p2p' | 'group' | 'topic';
   threadRootId?: string;
 }
 
@@ -39,6 +40,7 @@ export interface ControlHandlerContext {
   goalStore?: GoalStore;
   /** Trusted user-channel execution capability. Absent hosts cannot activate goals. */
   goalExecution?: {
+    isRunning?(goalId: string): boolean;
     start(request: GoalCommandExecutionRequest, action: 'activate' | 'resume'): Promise<{ record: GoalRecord }>;
     control(request: GoalCommandExecutionRequest, action: 'pause' | 'stop'): Promise<{ record: GoalRecord; settlement?: Promise<unknown> }>;
   };
