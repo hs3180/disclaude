@@ -20,6 +20,18 @@ function query(iterator?: AsyncGenerator<AgentMessage>): StreamQueryResult {
 }
 
 describe('LLM session admission', () => {
+  it('refuses a non-queuing child while its parent owns the named LLM slot', () => {
+    const limit = { name: 'nested-parent', maxConcurrentSessions: 1 };
+    const parent = withLlmSessionLimit(() => query(), limit);
+    const childStart = vi.fn(() => query());
+    let accidental: StreamQueryResult | undefined;
+    try {
+      expect(() => { accidental = withLlmSessionLimit(childStart, limit, undefined, 'reject'); }).toThrow(/busy/i);
+      expect(childStart).not.toHaveBeenCalled();
+    } finally { accidental?.handle.close(); parent.handle.close(); }
+    const next = withLlmSessionLimit(childStart, limit, undefined, 'reject');
+    expect(childStart).toHaveBeenCalledTimes(1); next.handle.close();
+  });
   it('shares one budget across agents and lets other named LLMs progress', () => {
     const limit = { name: 'shared', maxConcurrentSessions: 1 };
     const first = withLlmSessionLimit(() => query(), limit);

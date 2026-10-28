@@ -304,6 +304,8 @@ export interface SystemPromptPreset {
 
 /** 查询选项（Provider 无关） */
 export interface AgentQueryOptions {
+  /** Dependent work must not queue behind a parent that is awaiting it. */
+  capacityAdmission?: 'queue' | 'reject';
   /** Host-only liveness observation, including events filtered from user output. */
   onActivity?: (type: string) => void;
   /** Host interaction callback; never serialized into model input or tool traces. */
