@@ -6,7 +6,7 @@
  * Issue #1617: Phase 2 - SDK providers test coverage.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { browserAgentEnv } from '../../../utils/browser-env.js';
 import { adaptOptions, adaptInput } from './options-adapter.js';
 
@@ -15,7 +15,24 @@ vi.mock('../../../config/loader.js', async importOriginal => ({
   loadConfigFile: () => ({ _fromFile: false }),
 }));
 
+afterEach(() => vi.unstubAllEnvs());
+
 describe('adaptOptions', () => {
+  it('provides Claude native per-command defaults without an execution/Goal budget', () => {
+    const env = { OTHER_VAR: 'kept' };
+    const result = adaptOptions({ settingSources: [], env });
+    expect(result.env).toMatchObject({ BASH_DEFAULT_TIMEOUT_MS: '600000', BASH_MAX_TIMEOUT_MS: '1800000', OTHER_VAR: 'kept' });
+    expect(env).toEqual({ OTHER_VAR: 'kept' });
+    expect(result).not.toHaveProperty('maxTurns'); expect(result).not.toHaveProperty('maxBudgetUsd');
+  });
+  it.each(['2500', '', '0'])('preserves an explicit native timeout value %j', value => {
+    const result = adaptOptions({ settingSources: [], env: { BASH_DEFAULT_TIMEOUT_MS: value, BASH_MAX_TIMEOUT_MS: value } });
+    expect(result.env).toMatchObject({ BASH_DEFAULT_TIMEOUT_MS: value, BASH_MAX_TIMEOUT_MS: value });
+  });
+  it('uses inherited native timeout values when the caller supplies no environment', () => {
+    vi.stubEnv('BASH_DEFAULT_TIMEOUT_MS', '3500'); vi.stubEnv('BASH_MAX_TIMEOUT_MS', '7000');
+    expect(adaptOptions({ settingSources: [] }).env).toMatchObject({ BASH_DEFAULT_TIMEOUT_MS: '3500', BASH_MAX_TIMEOUT_MS: '7000' });
+  });
   it('should return empty options for minimal input', () => {
     const result = adaptOptions({
       settingSources: ['user', 'project', 'local'],
@@ -79,7 +96,7 @@ describe('adaptOptions', () => {
       BU_CDP_WS: 'ws://stale.invalid', PATH: '/ipc/bin:/usr/bin',
     };
     const result = adaptOptions({ settingSources: [], env });
-    expect(result.env).toEqual(browserAgentEnv(env));
+    expect(result.env).toEqual({ ...browserAgentEnv(env), BASH_DEFAULT_TIMEOUT_MS: '600000', BASH_MAX_TIMEOUT_MS: '1800000' });
     expect(result.env).not.toHaveProperty('BU_CDP_URL');
     expect(result.env).not.toHaveProperty('BU_CDP_WS');
   });
@@ -97,7 +114,7 @@ describe('adaptOptions', () => {
 
     expect(result.apiKey).toBe('sk-123');
     expect(result.apiBaseUrl).toBe('https://api.example.com');
-    expect(result.env).toEqual(browserAgentEnv(env));
+    expect(result.env).toEqual({ ...browserAgentEnv(env), BASH_DEFAULT_TIMEOUT_MS: '600000', BASH_MAX_TIMEOUT_MS: '1800000' });
   });
 
   it('should pass through env without extracting when no API key', () => {
