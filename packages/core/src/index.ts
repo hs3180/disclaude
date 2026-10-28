@@ -136,7 +136,7 @@ export type {
 } from './sdk/index.js';
 
 export type { AgentInputRequest, AgentInputParams, AgentInputQuestion, AgentInputAnswers, AgentInputContext } from './sdk/user-input.js';
-export { validateAgentInputAnswers } from './sdk/user-input.js';
+export { AgentInputDeliveryError, validateAgentInputAnswers } from './sdk/user-input.js';
 export { LiveInputRejectedError } from './sdk/index.js';
 
 // Agent Infrastructure (Issue #1040, Issue #1501: Simplified to ChatAgent-only)

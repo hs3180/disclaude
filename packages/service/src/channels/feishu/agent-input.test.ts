@@ -28,6 +28,62 @@ function fixture(secret = false) {
 }
 
 describe('Feishu native agent input', () => {
+  it.each([false, true])('keeps API codes without retaining SDK secrets (private=%s)', async secret => {
+    const f = fixture(secret);
+    const raw = Object.assign(new Error('Bearer private-error-message'), {
+      code: 'ERR_BAD_REQUEST', config: { headers: { Authorization: 'private-header' }, data: 'private-card-body' },
+      response: { status: 400, data: { code: 230001, msg: 'private-question' } },
+    });
+    (secret ? f.create : f.reply).mockRejectedValueOnce(raw);
+    const error = await f.controller.request(f.request, f.context).catch(error => error);
+    expect(error).toMatchObject({ code: 'AGENT_INPUT_DELIVERY_FAILED', diagnostic: {
+      channel: 'feishu', operation: secret ? 'private-card' : 'public-card', stage: 'send', outcome: 'rejected',
+      httpStatus: 400, apiCode: 230001, transportCode: 'ERR_BAD_REQUEST',
+    } });
+    expect(error.message).toContain('230001');
+    expect(error.cause).toBeUndefined();
+    expect(`${error.stack} ${JSON.stringify(error)}`).not.toMatch(/private-error-message|private-header|private-card-body|private-question/);
+    expect(f.respond).not.toHaveBeenCalled();
+    expect(secret ? f.reply : f.create).not.toHaveBeenCalled();
+  });
+
+  it('distinguishes platform rejection, missing receipt and uncertain transport without retrying', async () => {
+    const rejected = fixture();
+    rejected.reply.mockResolvedValue({ code: 230001, msg: 'private-response' });
+    await expect(rejected.controller.request(rejected.request, rejected.context)).rejects.toMatchObject({
+      diagnostic: { stage: 'receipt', outcome: 'rejected', apiCode: 230001 },
+    });
+    const missing = fixture();
+    missing.reply.mockResolvedValue({ code: 0 });
+    await expect(missing.controller.request(missing.request, missing.context)).rejects.toMatchObject({
+      diagnostic: { stage: 'receipt', outcome: 'unknown' },
+    });
+    const timeout = fixture();
+    timeout.reply.mockRejectedValue(Object.assign(new Error('private-network-detail'), { code: 'ETIMEDOUT' }));
+    await expect(timeout.controller.request(timeout.request, timeout.context)).rejects.toMatchObject({
+      diagnostic: { stage: 'send', outcome: 'unknown', transportCode: 'ETIMEDOUT' },
+    });
+    for (const f of [rejected, missing, timeout]) { expect(f.reply).toHaveBeenCalledOnce(); }
+  });
+
+  it('does not mask a delivered-card target mismatch with a failed status update', async () => {
+    const f = fixture();
+    f.reply.mockResolvedValue({ code: 0, data: { message_id: 'card', chat_id: 'other-group' } });
+    f.patch.mockRejectedValue(new Error('private-update-detail'));
+    await expect(f.controller.request(f.request, f.context)).rejects.toMatchObject({
+      diagnostic: { stage: 'target-check', outcome: 'delivered' },
+    });
+    expect(f.reply).toHaveBeenCalledOnce();
+  });
+
+  it('drops malformed numeric fields and unrecognized transport codes', async () => {
+    const f = fixture();
+    f.reply.mockRejectedValue({ code: 'PRIVATE_TOKEN', response: { status: 'private-status', data: { code: NaN } } });
+    const error = await f.controller.request(f.request, f.context).catch(error => error);
+    expect(error.diagnostic).toMatchObject({ outcome: 'unknown', httpStatus: undefined, apiCode: undefined, transportCode: undefined });
+    expect(error.message).not.toMatch(/PRIVATE_TOKEN|private-status|NaN/);
+  });
+
   it('delivers a rootless attachment question directly without replying to its tracking ID', async () => {
     const f = fixture();
     f.create.mockResolvedValue({ code: 0, data: { message_id: 'public-card', chat_id: 'group' } });

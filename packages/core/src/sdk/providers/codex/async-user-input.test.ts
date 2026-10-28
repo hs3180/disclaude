@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AgentInputRequest } from '../../user-input.js';
+import { AgentInputDeliveryError, type AgentInputRequest } from '../../user-input.js';
 import { CodexAsyncUserInput } from './async-user-input.js';
 
 const event = { threadId: 'thread-1', turnId: 'turn-1', item: { id: 'question-item', type: 'agentMessage',
@@ -7,6 +7,24 @@ const event = { threadId: 'thread-1', turnId: 'turn-1', item: { id: 'question-it
 afterEach(() => vi.useRealTimers());
 
 describe('Codex asynchronous question notifications', () => {
+  it('preserves only a channel-sanitized cause across async delivery mapping', async () => {
+    const cause = new AgentInputDeliveryError({ channel: 'feishu', operation: 'public-card', stage: 'send',
+      outcome: 'rejected', httpStatus: 400, apiCode: 230001, transportCode: 'ERR_BAD_REQUEST' });
+    const deliver = vi.fn().mockRejectedValue(cause);
+    const onError = vi.fn();
+    const handler = new CodexAsyncUserInput(deliver, vi.fn());
+    try {
+      handler.receive(event, { onError });
+      await expect(handler.waitForDelivery(event.threadId, event.turnId)).rejects.toMatchObject({
+        code: 'CODEX_ASYNC_INPUT_DELIVERY_FAILED', cause,
+        message: expect.stringContaining('230001'),
+      });
+      expect(onError).toHaveBeenCalledOnce();
+      expect(onError.mock.calls[0][0].message).toContain('"stage":"send"');
+      expect(deliver).toHaveBeenCalledOnce();
+    } finally { handler.close(); }
+  });
+
   it('awaits actual delivery, exposes rejection, and never retries duplicate rejected items', async () => {
     let rejectSend!: () => void;
     const deliver = vi.fn(() => new Promise<void>((_, reject) => { rejectSend = () => reject(new Error('private sender detail')); }));
