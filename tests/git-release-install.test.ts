@@ -51,6 +51,10 @@ test('generates a standalone manifest and excludes untracked resources', () => {
     })
   );
   write('README.md', '# Release README');
+  write('.gitignore', 'packages/*/dist/\n**/*.tsbuildinfo\n');
+  write('tsconfig.json', JSON.stringify({
+    files: [], references: ['core', 'service', 'channel-cli'].map((name) => ({ path: `packages/${name}` })),
+  }));
   write('CHANGELOG.md', '# Release changelog');
   write('bin/disclaude.js', "const route = 'node_modules/@disclaude/service/dist/cli.js';");
   write('scripts/launchd.mjs', "import './chromium-config.mjs';");
@@ -70,6 +74,10 @@ test('generates a standalone manifest and excludes untracked resources', () => {
   write('jupyter/datalayer/runtime.py', '# optional remote runtime');
   write('jupyter/datalayer/README.md', '# Remote overlay from a full source checkout');
   for (const name of ['core', 'service', 'channel-cli']) {
+    write(`packages/${name}/tsconfig.json`, JSON.stringify({
+      compilerOptions: { composite: true, target: 'ES2022', module: 'ES2022', moduleResolution: 'Bundler', rootDir: 'src', outDir: 'dist' },
+      include: ['src/**/*.ts'],
+    }));
     write(
       `packages/${name}/package.json`,
       JSON.stringify({
@@ -83,9 +91,13 @@ test('generates a standalone manifest and excludes untracked resources', () => {
       `packages/${name}/dist/index.js`,
       name === 'core' ? 'export const x = 1;' : "export { x } from '@disclaude/core'; import '@disclaude/core/secret-environment';"
     );
+    write(`packages/${name}/src/index.ts`, '// @ts-nocheck\n' + (name === 'core'
+      ? 'export const x = 1;'
+      : "export { x } from '@disclaude/core'; import '@disclaude/core/secret-environment';"));
     write(`packages/${name}/dist/index.test.js`, 'should not ship');
   }
   write('packages/core/dist/config/secret-environment.js', 'export const names = new Set();');
+  write('packages/core/src/config/secret-environment.ts', 'export const names = new Set();');
   const git = (args: string[]) => execFileSync('git', args, { cwd: root });
   git(['init', '-q']);
   git(['add', '.']);
@@ -140,6 +152,24 @@ test('generates a standalone manifest and excludes untracked resources', () => {
     JSON.parse(readFileSync(join(output, 'release-source.json'), 'utf8')).sourceFingerprint,
     sourceFingerprint(root)
   );
+  const provenance = JSON.parse(readFileSync(join(output, 'release-source.json'), 'utf8'));
+  assert.equal(provenance.build.command, 'tsc --build --force');
+  assert.match(provenance.build.runtimeFingerprint, /^[a-f0-9]{64}$/);
+
+  // Reproduce #5517: advance committed source while leaving old dist and build
+  // state in place. The shipped runtime must execute the new implementation.
+  write('packages/core/src/index.ts', 'export const x = 2;');
+  git(['add', 'packages/core/src/index.ts']);
+  git(['-c', 'user.name=Release Test', '-c', 'user.email=release-test@example.invalid',
+    '-c', 'commit.gpgsign=false', 'commit', '-qm', 'new implementation without rebuilding']);
+  assert.match(readFileSync(join(root, 'packages/core/dist/index.js'), 'utf8'), /x = 1/);
+  const refreshed = join(root, 'refreshed');
+  generateRelease(root, refreshed);
+  const actual = execFileSync(process.execPath, ['--input-type=module', '-e',
+    `import { x } from ${JSON.stringify(join(refreshed, 'packages/core/dist/index.js'))}; console.log(x);`], { encoding: 'utf8' });
+  assert.equal(actual.trim(), '2');
+  const refreshedProvenance = JSON.parse(readFileSync(join(refreshed, 'release-source.json'), 'utf8'));
+  assert.notEqual(refreshedProvenance.build.runtimeFingerprint, provenance.build.runtimeFingerprint);
   assert.throws(() => generateRelease(root, output), /new or empty/);
   write('skills/diagnose-logs/SKILL.md', 'accidental default plugin');
   assert.throws(() => generateRelease(root, join(root, 'contaminated')), /outside the default/);

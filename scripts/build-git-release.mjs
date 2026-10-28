@@ -15,6 +15,20 @@ import {
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
+import { prunePackageArtifacts } from './prune-build-artifacts.mjs';
+
+function runtimeFingerprint(directory) {
+  const hash = createHash('sha256');
+  function visit(path) {
+    for (const entry of readdirSync(path, { withFileTypes: true }).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)) {
+      const file = join(path, entry.name);
+      if (entry.isDirectory()) visit(file);
+      else hash.update(relative(directory, file).split('\\').join('/') + '\0').update(readFileSync(file)).update('\0');
+    }
+  }
+  visit(directory);
+  return hash.digest('hex');
+}
 
 export function sourceFingerprint(root) {
   const files = execFileSync(
@@ -113,8 +127,17 @@ export function generateRelease(root, output) {
     '',
     'Build from a committed source tree'
   );
-  mkdirSync(output, { recursive: true });
   const names = ['core', 'service', 'channel-cli'];
+  const fingerprint = sourceFingerprint(root);
+  // A clean source checkout says nothing about ignored dist/ contents. Re-emit
+  // every project before copying, even when incremental build state says current.
+  for (const name of names) prunePackageArtifacts(join(root, 'packages', name));
+  execFileSync(process.execPath, [fileURLToPath(import.meta.resolve('typescript/bin/tsc')), '--build', '--force'], {
+    cwd: root,
+    stdio: 'pipe',
+  });
+  assert.equal(sourceFingerprint(root), fingerprint, 'Source changed during release build');
+  mkdirSync(output, { recursive: true });
   const targets = Object.fromEntries(
     names.map((name) => [`@disclaude/${name}`, join(output, 'packages', name, 'dist/index.js')])
   );
@@ -272,9 +295,14 @@ export function generateRelease(root, output) {
     JSON.stringify(
       {
         sourceCommit,
-        sourceFingerprint: sourceFingerprint(root),
+        sourceFingerprint: fingerprint,
         version: pkg.version,
         generator: 'scripts/build-git-release.mjs',
+        build: {
+          command: 'tsc --build --force',
+          typescriptVersion: ts.version,
+          runtimeFingerprint: runtimeFingerprint(join(output, 'packages')),
+        },
       },
       null,
       2
