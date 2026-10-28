@@ -73,9 +73,13 @@ export class FeishuAgentInput {
     try {
       const secret = request.questions.some(q => q.isSecret);
       const content = JSON.stringify(this.card(token, p));
+      const replyRoot = context.replyRootId !== undefined ? context.replyRootId : context.threadRootId ?? context.sourceMessageId;
+      const sendPublic = (msg_type: 'interactive' | 'text', value: string) => replyRoot === null
+        ? this.client.im.message.create({ params: { receive_id_type: 'chat_id' }, data: { receive_id: context.chatId, msg_type, content: value } })
+        : this.client.im.message.reply({ path: { message_id: replyRoot }, data: { msg_type, content: value, reply_in_thread: true } });
       const result = secret
         ? await this.client.im.message.create({ params: { receive_id_type: 'open_id' }, data: { receive_id: context.actorId, msg_type: 'interactive', content } })
-        : await this.client.im.message.reply({ path: { message_id: context.threadRootId ?? context.sourceMessageId }, data: { msg_type: 'interactive', content, reply_in_thread: true } });
+        : await sendPublic('interactive', content);
       if (result.code !== 0 || !result.data?.message_id || !result.data.chat_id) { throw new Error('Input card was not delivered'); }
       p.card = result.data.message_id;
       p.chat = result.data.chat_id;
@@ -83,8 +87,7 @@ export class FeishuAgentInput {
       if (request.signal.aborted) { p.state = 'expired'; await this.update(token, p); }
       // Secret questions and values are never included in a public notice.
       if (secret && !request.signal.aborted) {
-        await this.client.im.message.reply({ path: { message_id: context.sourceMessageId },
-          data: { msg_type: 'text', content: JSON.stringify({ text: '任务需要私密输入，请在与机器人的私聊中填写并提交。' }), reply_in_thread: true } }).catch(() => {});
+        await sendPublic('text', JSON.stringify({ text: '任务需要私密输入，请在与机器人的私聊中填写并提交。' })).catch(() => {});
       }
     } catch { p.state = 'failed'; await this.update(token, p).catch(() => {}); throw new Error('Input card could not be delivered'); }
   }

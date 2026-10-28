@@ -300,6 +300,33 @@ describe('ChatAgent (service)', () => {
       } finally { finish?.(); agent.reset(); ChatAgent.prototype.dispose.call(agent); }
     });
 
+    it.each([null, 'om-explicit-root'])('preserves an explicit native-input anchor through a delayed answer (%s)', async replyRootId => {
+      const cb = { ...createMockCallbacks(), requestAgentInput: vi.fn().mockResolvedValue(undefined) };
+      const agent = new ChatAgent({ chatId: 'anchor-chat', callbacks: cb, apiKey: 'test', model: 'test' });
+      let finish!: () => void;
+      const query = vi.fn((_input, _options) => ({ handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () { await new Promise<void>(resolve => { finish = resolve; }); })() }));
+      (agent as any).createQueryStream = query;
+      const request = { kind: 'async-message', requestId: 'question', threadId: 'native-thread', turnId: 'native-turn', itemId: 'question',
+        isBlocking: false, signal: new AbortController().signal, questions: [], respond: vi.fn() } as import('@disclaude/core').AgentInputRequest;
+      try {
+        await agent.processMessage({ chatId: 'anchor-chat', payload: 'Attachment task', messageId: 'internal-file',
+          senderOpenId: 'original-actor', threadRootId: 'stale-topic', replyRootId });
+        const { channel } = agent as any;
+        const context = channel.push.mock.calls[0][0].inputContext;
+        expect(context.replyRootId).toBe(replyRootId);
+        expect(context.threadRootId).toBe(replyRootId ?? undefined);
+        const options = query.mock.calls[0][1] as import('@disclaude/core').AgentQueryOptions;
+        await options.onUserInput!(request, context);
+        expect(cb.requestAgentInput).toHaveBeenCalledExactlyOnceWith(request, context);
+        await options.onAsyncUserInputAnswer!(request, 'Answer', context);
+        const [answer] = channel.push.mock.calls.at(-1);
+        expect(answer.inputContext.replyRootId).toBe(replyRootId);
+        expect(answer.inputContext.threadRootId).toBe(replyRootId ?? undefined);
+        expect((agent as any).pendingTurnAnchors.at(-1)).toBe(replyRootId);
+      } finally { finish?.(); agent.reset(); ChatAgent.prototype.dispose.call(agent); }
+    });
+
     it('rejects asynchronous questions for a one-shot task before claiming card delivery', async () => {
       const localCallbacks = { ...createMockCallbacks(), requestAgentInput: vi.fn().mockResolvedValue(undefined) };
       const agent = new ChatAgent({ chatId: 'once-chat', callbacks: localCallbacks, apiKey: 'test', model: 'test' });

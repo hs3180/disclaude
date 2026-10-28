@@ -19,7 +19,7 @@ function fixture(secret = false) {
   const controller = new FeishuAgentInput(client);
   const context = { actorId: 'alice', chatId: 'group', sourceMessageId: 'source', threadRootId: 'topic-root' };
   const callback = () => {
-    const card = JSON.parse((secret ? create : reply).mock.calls[0][0].data.content);
+    const card = JSON.parse((secret ? create : reply.mock.calls.length ? reply : create).mock.calls[0][0].data.content);
     const form = card.body.elements.find((e: { tag: string }) => e.tag === 'form');
     return { operator: { open_id: 'alice' }, context: { open_chat_id: secret ? 'private' : 'group', open_message_id: secret ? 'private-card' : 'public-card' },
       action: { name: form.elements.at(-1).name, form_value: secret ? { text_0: 'private-test-secret' } : { choice_0: '0', text_1: 'No extensions' } } };
@@ -28,6 +28,28 @@ function fixture(secret = false) {
 }
 
 describe('Feishu native agent input', () => {
+  it('delivers a rootless attachment question directly without replying to its tracking ID', async () => {
+    const f = fixture();
+    f.create.mockResolvedValue({ code: 0, data: { message_id: 'public-card', chat_id: 'group' } });
+    await f.controller.request(f.request, { ...f.context, sourceMessageId: 'internal-file', replyRootId: null });
+    expect(f.reply).not.toHaveBeenCalled();
+    expect(f.create).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      params: { receive_id_type: 'chat_id' }, data: expect.objectContaining({ receive_id: 'group', msg_type: 'interactive' }),
+    }));
+    await f.controller.submit(f.callback());
+    expect(f.respond).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps rootless secret questions private and sends only a neutral notice to the chat', async () => {
+    const f = fixture(true);
+    await f.controller.request(f.request, { ...f.context, sourceMessageId: 'internal-file', replyRootId: null });
+    expect(f.reply).not.toHaveBeenCalled();
+    expect(f.create.mock.calls[0][0]).toMatchObject({ params: { receive_id_type: 'open_id' }, data: { receive_id: 'alice' } });
+    expect(f.create.mock.calls[1][0]).toMatchObject({ params: { receive_id_type: 'chat_id' }, data: { receive_id: 'group', msg_type: 'text' } });
+    expect(f.create.mock.calls[1][0].data.content).not.toContain('Access token');
+    expect(f.create.mock.calls[1][0].data.content).toContain('私密输入');
+  });
+
   it('requires explicit complete submission from the original actor, card and chat', async () => {
     const f = fixture();
     await f.controller.request(f.request, f.context);

@@ -1336,7 +1336,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       ...(!includeStableContext && this.deliveredMessageContext
         ? { continuationContext: this.deliveredMessageContext.content } : {}),
       ...(senderOpenId ? { inputContext: { actorId: senderOpenId, chatId, sourceMessageId: messageId,
-        threadRootId: threadRootId ?? this.conversationOrchestrator.getThreadRoot(chatId) } } : {}),
+        ...(replyRootId !== undefined ? { replyRootId } : {}),
+        threadRootId: replyRootId === null ? undefined : replyRootId ?? threadRootId ?? this.conversationOrchestrator.getThreadRoot(chatId) } } : {}),
       message: {
         role: 'user',
         content: enhancedContent,
@@ -1675,7 +1676,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         ])).digest('hex')}`;
         if (this.turnCompletions.get(messageId)?.admitted) { return; }
         await this.processMessage({ chatId, payload: text, messageId, senderOpenId: context.actorId,
-          threadRootId: context.threadRootId ?? context.sourceMessageId, chatType: this.chatType });
+          ...(context.replyRootId !== undefined ? { replyRootId: context.replyRootId } : {}),
+          threadRootId: context.replyRootId === null ? undefined : context.replyRootId ?? context.threadRootId ?? context.sourceMessageId, chatType: this.chatType });
         if (this.sessionGeneration !== inputGeneration || this.turnCompletions.get(messageId)?.admitted !== true) {
           throw new Error('Async answer was not admitted to its originating conversation');
         }

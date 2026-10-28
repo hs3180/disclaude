@@ -29,6 +29,8 @@ export interface AgentInputContext {
   actorId: string;
   sourceMessageId: string;
   threadRootId?: string;
+  /** Platform reply anchor; null explicitly means direct chat delivery. */
+  replyRootId?: string | null;
 }
 
 const object = (value: unknown): Record<string, unknown> => {
