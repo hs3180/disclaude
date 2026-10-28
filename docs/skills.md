@@ -6,7 +6,7 @@ to act; a CLI Skill documents a deterministic command the agent can invoke.
 
 ## Discovery and precedence
 
-`SkillsRegistry` lives in `@disclaude/core` and is shared across harnesses.
+`SkillsRegistry` lives in `@disclaude/core` for harnesses using a prompt index.
 Callers provide builtin, user, and project roots; the registry does not infer a
 project from the process working directory or read harness-specific home
 directories. Each root contains `skills/<name>/SKILL.md`.
@@ -17,12 +17,36 @@ revision, a compact manifest, and separate diagnostics. Only the manifest
 belongs in model-facing prompts. Resource references are relative to their
 source root; adapters retain that mapping when loading them.
 
-The shared project layout is `.disclaude/skills/<name>/SKILL.md`. Codex exec
-and app-server also accept the existing top-level `skills/<name>/SKILL.md`;
-both are project-precedence sources, so duplicate names are rejected.
+The shared project layout is `.disclaude/skills/<name>/SKILL.md`. The registry
+also accepts the existing top-level `skills/<name>/SKILL.md`; both are
+project-precedence sources, so duplicate names are rejected.
 `.claude/skills` remains Claude-specific and is not scanned by the shared
 registry. Put cross-harness skills in `.disclaude/skills` and keep
 Claude-only skills in `.claude/skills`.
+
+## Native directory loading
+
+Claude loads the existing builtins directory with the Agent SDK's
+`plugins: [{ type: 'local', path }]` option. Codex app-server registers existing
+skill roots with `skills/extraRoots/set` before starting or resuming a thread.
+The native loader reads the original `SKILL.md`, scripts and references in
+place, including from Project subdirectories. It retains Codex's native
+project/user discovery and precedence; extra roots are native user-scope roots,
+rather than the shared registry's synthetic builtin/project priorities.
+Codex recognizes the existing `.claude-plugin/plugin.json` and exposes builtins
+as `disclaude-builtins:<skill-name>`. A plain project skill remains a separate
+name; it does not override that qualified builtin. No extra Codex manifest is
+needed for this skill directory.
+
+This needs no marketplace, plugin installation/cache copy, user configuration
+write or generated payload. Each new app-server process receives the current
+builtins, existing Project skill roots and valid installed diagnostics root.
+Successful native registration removes the provider's repeated skill manifest from
+turn prompts. Unsupported older CLIs receive an explicit upgrade diagnostic
+(native loading was verified with CLI 0.164.0). Registration timeouts or other
+errors fail before thread/turn start. There is no prompt-manifest fallback.
+Codex exec, DSH and Pi keep their existing discovery paths. This change covers
+skills; it does not emulate Claude plugin hooks, MCP servers or agent modules.
 
 ## Optional diagnostics plugin
 
@@ -50,8 +74,9 @@ Omitting `--project-dir` selects the current directory, not the configured
 service workspace. The CLI does not start or restart services.
 
 After installing, start a new agent session in that Project. Claude loads the
-installed directory through its local-plugin API; Codex exec/app-server indexes
-it through `SkillsRegistry`; DSH and Pi receive the same compact skill manifest and
+installed directory through its local-plugin API; Codex app-server registers
+its original directory with the native loader; Codex exec indexes it through
+`SkillsRegistry`; DSH and Pi receive the same compact skill manifest and
 can read the linked instructions using its profile's file/shell tools. A custom
 DSH profile must provide a tool capable of reading local Markdown. Pi uses its
 native `Read` tool; a custom injected Pi runtime must also provide a file reader. References
