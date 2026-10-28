@@ -26,6 +26,8 @@ export interface NativeGoalTurnTools {
    * its own Goal/service lifetime owner rather than this turn's cleanup.
    */
   close(): Promise<void>;
+  /** Validate a proposal after every owned native/tool resource has settled. */
+  assess?(report: Readonly<NativeGoalReport>): Promise<void>;
 }
 
 /** Native turn port for the Goal controller. Authorization belongs to its host.
@@ -78,6 +80,7 @@ export class NativeGoalExecutor {
       cancel?.();
     };
     signal.addEventListener('abort', stop, { once: true });
+    let assessment: NativeGoalReport | undefined;
     try {
       const task = runner.start({ chatId: owner.chatId, senderOpenId: owner.actorId, sourceMessageId: owner.sourceMessageId,
         workingDirectory: owner.projectRoot, ...(owner.chatType ? { chatType: owner.chatType } : {}), ...(owner.threadRootId ? { threadRootId: owner.threadRootId } : {}),
@@ -95,13 +98,15 @@ export class NativeGoalExecutor {
       signal.throwIfAborted();
       if (stopFailed) { throw new Error('Goal tool cancellation was not confirmed; reconcile its owned work'); }
       if (result.outcome !== 'succeeded' || result.truncated) { throw new Error(result.error ?? 'Native Goal turn did not settle successfully'); }
-      const report = collector.getReport();
-      if (!report) { throw new Error('Native Goal turn settled without an assessment; work was not repeated'); }
-      return report;
+      assessment = collector.getReport();
+      if (!assessment) { throw new Error('Native Goal turn settled without an assessment; work was not repeated'); }
     } finally {
       collector.close(); signal.removeEventListener('abort', stop);
       try { await turnTools?.close(); } finally { await runner.close(); }
     }
+    signal.throwIfAborted();
+    await turnTools?.assess?.(structuredClone(assessment));
+    return assessment;
   }
   close(): Promise<void> {
     this.closing = true;

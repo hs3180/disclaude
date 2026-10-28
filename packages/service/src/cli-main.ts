@@ -48,7 +48,7 @@ import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
 import { createChannelCallbacksFactory } from './utils/channel-handlers.js';
 import { ServiceTurnRecoveryStore } from './service-turn-recovery.js';
 import { GoalExecutionService } from './goals/goal-execution-service.js';
-import { createGoalTaskTurnTools } from './goals/goal-task-tools.js';
+import { createGoalBoardTurnTools } from './goals/goal-board-tools.js';
 import { AgentFactory } from './agents/factory.js';
 import { messageLogger } from './utils/message-logger.js';
 import { DEFAULT_WECHAT_STATE_DIR } from './channels/wechat/state-store.js';
@@ -476,7 +476,7 @@ export async function main(): Promise<void> {
   };
   const goalExecution = new GoalExecutionService({
     store: channelSetupContext.goalStore, projectManager, logger,
-    createTurnTools: createGoalTaskTurnTools,
+    createTurnTools: scope => createGoalBoardTurnTools(scope, path.join(channelSetupContext.goalStore.directory, 'tasks')),
     isCommandAllowed: command => service.getChannelManager().resolveChannelForChatId(command.chatId)?.id === 'feishu' &&
       (!controlHandlerContext.isCommandAllowed || controlHandlerContext.isCommandAllowed(command)),
     callbacks: source => routerCallbacksFactory(source.chatId, source.threadRootId),
