@@ -513,7 +513,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           }
 
           // 根因记录:system-message flood 检测(GLM + Agent Teams failure mode)。
-          // 空的 system 消息连续累积超过阈值 → 判定为 teammate 循环空转,发出诊断 warn。
+          // 空 system 消息超过阈值仅记录现象;工具等待、后台心跳与上游重试都可能产生,不能据此推定根因。
           // 注意:这是诊断性检测(warn only),不终止流(范围不含 D3 终止防护)。
           if (adapted.role === 'system' && !adapted.content) {
             consecutiveEmptySystemCount++;
@@ -531,10 +531,10 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
                   lastSystemSubtype,
                 },
                 `System-message flood detected: ${SYSTEM_FLOOD_THRESHOLD}+ consecutive empty `
-                + 'system messages. This typically indicates a teammate (Agent tool) stuck in a '
-                + 'loop — commonly caused by upstream rate-limiting (e.g. GLM account 1302) when '
-                + 'Agent Teams fans out concurrent requests faster than the model quota allows. '
-                + 'The SDK stream will not end until the upstream limit recovers. See Issue #3706.'
+                + 'system messages. Possible causes include foreground tools waiting indefinitely, '
+                + 'background-task heartbeats, teammate loops, or upstream retries. Check active '
+                + 'tool_progress/processes and concrete provider errors before attributing this '
+                + 'to rate limits. This warning leaves the stream running. See Issues #5515/#3706.'
               );
             }
           } else if (
