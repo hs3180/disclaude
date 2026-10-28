@@ -14,7 +14,7 @@ export interface NativeGoalSource {
 export interface NativeGoalExecutorOptions {
   /** Trusted host selection; the model cannot select another runtime or source. */
   runtimeOptions?(goal: Readonly<GoalRecord>, source: Readonly<NativeGoalSource>): AgentCreateOptions;
-  callbacks(source: Readonly<NativeGoalSource>): ChatAgentCallbacks;
+  callbacks(source: Readonly<NativeGoalSource>, goal: Readonly<GoalRecord>): ChatAgentCallbacks;
 }
 
 /** Native turn port for the Goal controller. Authorization belongs to its host.
@@ -71,7 +71,7 @@ export class NativeGoalExecutor {
           JSON.stringify({ id: goal.id, revision: goal.revision, objective: goal.objective,
             acceptance: goal.acceptance, progress: goal.progress, artifacts: goal.artifacts }),
         ].join('\n'),
-      }, this.options.callbacks(owner));
+      }, this.options.callbacks(owner, structuredClone(goal)));
       cancel = task.stop;
       if (signal.aborted) { stop(); }
       const result = await task.completion;
