@@ -1697,6 +1697,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             stopSignal.then(() => ({ done: true, value: undefined } as IteratorResult<UserInput>)),
           ]);
           if (next.done || stopped) {break;}
+          const toolInputContext = next.value.inputContext ? Object.freeze({ ...next.value.inputContext }) : undefined;
           let retryWaitedMs = 0;
           // #5514: charge recovery waits/unsuccessful requests cumulatively,
           // while proven productive runs do not spend later recovery eligibility.
@@ -1740,7 +1741,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               }
               turnCanRetry = false;
               noteCapacityProgress();
-              return dynamicToolRegistry.call(request);
+              return dynamicToolRegistry.call(request, toolInputContext);
             } : undefined;
             try {
               // App-server connections live for one attempt, not for the input

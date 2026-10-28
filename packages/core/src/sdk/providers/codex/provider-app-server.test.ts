@@ -352,11 +352,13 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   send({method:'turn/completed',params:{threadId:'continued-thread',turn:{id:turnId,status:'completed'}}});
  }
 });`);
-    const handler = vi.fn((params: Record<string, unknown>) => Promise.resolve({ accepted: true, marker: params.marker }));
+    const handler = vi.fn<ToolDefinition['execute']>((params) => Promise.resolve({ accepted: true, marker: params.marker }));
     const tools: ToolDefinition[] = [{ name: 'emit_marker', description: 'Record a turn marker', inputSchema: { type: 'object', properties: { marker: { type: 'string' } }, required: ['marker'] }, outputSchema: { type: 'object' }, execute: handler }];
     const result = provider.queryStream((async function* (): AsyncGenerator<UserInput> {
-      yield { role: 'user', content: 'Record the first marker', continuationContext: 'Stable channel guidance' };
-      yield { role: 'user', content: 'Record the second marker', continuationContext: 'Stable channel guidance' };
+      yield { role: 'user', content: 'Record the first marker', continuationContext: 'Stable channel guidance',
+        inputContext: { chatId: 'actual-chat', actorId: 'first-actor', sourceMessageId: 'first-source', threadRootId: 'first-topic' } };
+      yield { role: 'user', content: 'Record the second marker', continuationContext: 'Stable channel guidance',
+        inputContext: { chatId: 'actual-chat', actorId: 'second-actor', sourceMessageId: 'second-source', replyRootId: null } };
     })(), {
       sessionKey: 'dynamic-tool-resume', settingSources: [], tools,
     } as AgentQueryOptions);
@@ -373,6 +375,12 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       ]);
       expect(threadRequests[1].params).not.toHaveProperty('dynamicTools');
       expect(handler.mock.calls.map(call => call[0].marker)).toEqual(['first', 'second']);
+      expect(handler.mock.calls.map(call => call[1].inputContext)).toEqual([
+        { chatId: 'actual-chat', actorId: 'first-actor', sourceMessageId: 'first-source', threadRootId: 'first-topic' },
+        { chatId: 'actual-chat', actorId: 'second-actor', sourceMessageId: 'second-source', replyRootId: null },
+      ]);
+      expect(JSON.stringify(turnInputs)).not.toContain('first-actor');
+      expect(JSON.stringify(turnInputs)).not.toContain('second-source');
       expect(messages.filter(message => message.type === 'text').map(message => message.content)).toEqual([
         'first host tool completed', 'second host tool completed',
       ]);

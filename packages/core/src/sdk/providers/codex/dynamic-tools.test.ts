@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ToolDefinition } from '../../tools.js';
+import type { ToolContext, ToolDefinition } from '../../tools.js';
 import { createCodexDynamicToolRegistry } from './dynamic-tools.js';
 
 function tool(
@@ -87,6 +87,27 @@ describe('Codex host tool adapter', () => {
       });
     }
     expect(definition.execute).not.toHaveBeenCalled();
+  });
+
+  it('freezes the host input binding and never trusts source fields on a native request', async () => {
+    let finish!: () => void;
+    const waiting = new Promise<void>(resolve => { finish = resolve; });
+    let received: ToolContext | undefined;
+    const execute = vi.fn<ToolDefinition['execute']>(async (_input, context) => {
+      received = context; await waiting; return { documentId: 'doc-1' };
+    });
+    const registry = createCodexDynamicToolRegistry([tool(execute)]);
+    const source = { chatId: 'actual-chat', actorId: 'actual-actor', sourceMessageId: 'actual-source', replyRootId: null };
+    const forged = { ...request(), inputContext: { ...source, actorId: 'forged-actor' } };
+    const pending = registry.call(forged, source);
+    source.actorId = 'changed-after-dispatch';
+    expect(received?.inputContext).toEqual({ chatId: 'actual-chat', actorId: 'actual-actor', sourceMessageId: 'actual-source', replyRootId: null });
+    expect(Object.isFrozen(received?.inputContext)).toBe(true);
+    expect(JSON.stringify(registry.specs)).not.toContain('actual-actor');
+    expect(registry.signature).not.toContain('actual-source');
+    finish(); await expect(pending).resolves.toMatchObject({ success: true });
+    await registry.call(forged);
+    expect(received).not.toHaveProperty('inputContext');
   });
 
   it('waits for running host work but rejects its result after cancellation', async () => {

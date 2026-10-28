@@ -1,5 +1,6 @@
 import Ajv, { type ValidateFunction } from 'ajv';
 import { renderToolResult } from './tool-result.js';
+import type { AgentInputContext } from './user-input.js';
 
 /** A host-owned business tool. Registration and result rendering belong to the Harness adapter. */
 export interface ToolDefinition {
@@ -17,6 +18,10 @@ export type ToolProgressCallback = (progress: ToolProgressPayload) => void;
 
 export interface ToolContext {
   readonly signal: AbortSignal;
+  /** Originating input supplied by the host pipeline, never model arguments.
+   * Optional for transports without this binding. Metadata is not authorization.
+   */
+  readonly inputContext?: Readonly<AgentInputContext>;
   /** Best-effort progress when supported by the selected Harness. */
   readonly onProgress?: ToolProgressCallback;
 }
