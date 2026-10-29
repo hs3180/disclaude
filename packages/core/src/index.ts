@@ -445,4 +445,5 @@ export type {
 // Explicit, durable goal records; execution/control is wired separately.
 export { GoalStore, GoalRevisionConflictError } from './goals/goal-store.js';
 export { TaskResultOutbox, type TaskCompletionReport, type TaskResultRecord } from './coordination/task-result-outbox.js';
+export { readProjectArtifact, type ProjectArtifactIdentity } from './coordination/project-artifact.js';
 export type { GoalRecord, GoalContent, GoalStatus, CreateGoal, GoalControlAction } from './goals/goal-store.js';
