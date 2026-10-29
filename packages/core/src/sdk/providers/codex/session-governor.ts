@@ -150,7 +150,8 @@ export class CodexSessionGovernor {
   }
 
   /** Issue #4987: FIFO admission; abort removes the waiter without taking a slot. */
-  acquireSession(sessionKey: string, hooks: { evict: () => void }, signal: AbortSignal): Promise<SessionRegistration> {
+  acquireSession(sessionKey: string, hooks: { evict: () => void }, signal: AbortSignal,
+    admission: 'queue' | 'reject' = 'queue'): Promise<SessionRegistration> {
     return new Promise((resolve, reject) => {
       const abort = (): void => {
         const index = this.sessionWaiters.indexOf(admit);
@@ -169,6 +170,10 @@ export class CodexSessionGovernor {
         return true;
       };
       if (signal.aborted) {abort(); return;}
+      if (admission === 'reject' && (this.sessionWaiters.length > 0 || this.sessions.get(sessionKey)?.busy ||
+          [...this.sessions.values()].filter(session => session.busy).length >= this.maxActiveSessions)) {
+        reject(new Error('Codex session capacity is busy; dependent work was not queued')); return;
+      }
       signal.addEventListener('abort', abort, { once: true });
       this.sessionWaiters.push(admit);
       this.pumpSessions();
@@ -240,7 +245,10 @@ export class CodexSessionGovernor {
    * Acquire a run slot; waits (FIFO) while `maxConcurrentRuns` children are
    * executing. Resolves with how many runs were ahead at acquisition time.
    */
-  acquireRun(): Promise<RunLease> {
+  acquireRun(admission: 'queue' | 'reject' = 'queue'): Promise<RunLease> {
+    if (admission === 'reject' && (this.runWaiters.length > 0 || this.runningRuns >= this.maxConcurrentRuns)) {
+      return Promise.reject(new Error('Codex run capacity is busy; dependent work was not queued'));
+    }
     if (this.runningRuns < this.maxConcurrentRuns) {
       return Promise.resolve(this.makeLease(0));
     }

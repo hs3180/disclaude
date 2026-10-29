@@ -26,6 +26,39 @@ function makeClock() {
 
 const NOOP = (): void => {};
 
+describe('non-queuing dependent work', () => {
+  it('rejects a child run without joining the queue or consuming a slot', async () => {
+    const governor = new CodexSessionGovernor({ maxConcurrentRuns: 1 });
+    const parent = await governor.acquireRun();
+    let state = 'pending';
+    const child = governor.acquireRun('reject').then(lease => { state = 'admitted'; lease.release(); }, error => {
+      state = 'rejected'; expect(error.message).toMatch(/busy/i);
+    });
+    await Promise.resolve();
+    const observed = state;
+    const { queuedRuns: queued } = governor.getStats();
+    parent.release(); await child;
+    expect(observed).toBe('rejected'); expect(queued).toBe(0);
+    expect(governor.getStats().runningRuns).toBe(0);
+    const available = await governor.acquireRun('reject'); available.release();
+  });
+
+  it('rejects a child session while preserving the busy parent owner', async () => {
+    const governor = new CodexSessionGovernor({ maxActiveSessions: 1 });
+    const {signal} = new AbortController();
+    const parent = await governor.acquireSession('parent', { evict: NOOP }, signal);
+    let state = 'pending';
+    const child = governor.acquireSession('child', { evict: NOOP }, signal, 'reject').then(session => {
+      state = 'admitted'; session.unregister();
+    }, error => { state = 'rejected'; expect(error.message).toMatch(/busy/i); });
+    await Promise.resolve(); const observed = state;
+    expect(governor.getStats().activeSessions).toBe(1);
+    parent.unregister(); await child;
+    expect(observed).toBe('rejected'); expect(governor.getStats().activeSessions).toBe(0);
+    const available = await governor.acquireSession('available', { evict: NOOP }, signal, 'reject'); available.unregister();
+  });
+});
+
 describe('CodexSessionGovernor session cap (Issue #4634)', () => {
   it('defaults to 3 sessions / 2 runs', () => {
     const g = new CodexSessionGovernor();

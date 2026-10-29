@@ -17,6 +17,8 @@ export * from './types/index.js';
 // Goal execution scheduling primitive; persistence/native admission remain adapters.
 export { GoalLoop } from './goals/goal-loop.js';
 export type { GoalLoopSnapshot, GoalLoopPort, GoalLoopHandle, GoalLoopOutcome } from './goals/goal-loop.js';
+export { TaskClaimStore, TaskClaimConflictError } from './coordination/task-claim-store.js';
+export type { TaskClaimSnapshot, TaskClaimLease } from './coordination/task-claim-store.js';
 
 // Constants
 export * from './constants/index.js';

@@ -462,6 +462,7 @@ export abstract class BaseAgent implements Disposable {
         const info = this.sdkProvider.getInfo(this.selectedConfig);
         if (!info.available) { throw new Error(info.unavailableReason ?? 'Selected agent backend is unavailable'); }
       },
+      options.capacityAdmission,
     );
 
     const self = this;
