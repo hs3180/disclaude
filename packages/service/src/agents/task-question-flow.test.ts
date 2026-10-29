@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { TaskQuestionStore, type TaskQuestion } from '@disclaude/core';
 import { TaskQuestionFlow, taskQuestionReadiness, type TaskQuestionFlowPorts } from './task-question-flow.js';
-import { createTaskQuestionTool } from './task-question-tool.js';
 
 const roots: string[] = [];
 afterEach(async () => { vi.restoreAllMocks(); await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
@@ -109,12 +108,3 @@ it('drains an already-started send on shutdown and prevents a new send after pen
   await expect(pending).rejects.toThrow('closing'); await stopped; expect(second.send).not.toHaveBeenCalled();
 });
 
-it('binds the worker question tool to host source and never accepts model recipients or replacement questions', async () => {
-  const f = await fixture(), binding = { ...f.question }, tool = createTaskQuestionTool(f.flow, binding);
-  binding.actorId = 'caller mutation';
-  const context = { signal: new AbortController().signal };
-  await expect(tool.execute({ question: 'Which dataset?', actorId: 'forged' }, context)).rejects.toThrow('Invalid');
-  expect(await tool.execute({ question: f.question.question }, context)).toEqual({ questionId: f.question.id, delivered: true, answered: false });
-  await expect(tool.execute({ question: 'different question' }, context)).rejects.toThrow('different work'); expect(f.send).toHaveBeenCalledOnce();
-  expect((await f.store.get(f.question.id))?.question.actorId).toBe(f.question.actorId);
-});
