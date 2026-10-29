@@ -1,0 +1,59 @@
+[
+  {
+    "name": "任务 ID",
+    "type": "text"
+  },
+  {
+    "name": "Goal ID",
+    "type": "text"
+  },
+  {
+    "name": "任务",
+    "type": "text"
+  },
+  {
+    "name": "验收要求",
+    "type": "text"
+  },
+  {
+    "name": "状态",
+    "type": "select",
+    "multiple": false,
+    "options": [
+      {
+        "name": "待办"
+      },
+      {
+        "name": "执行中"
+      },
+      {
+        "name": "等待人"
+      },
+      {
+        "name": "待 review"
+      },
+      {
+        "name": "返工"
+      },
+      {
+        "name": "完成"
+      }
+    ]
+  },
+  {
+    "name": "负责人",
+    "type": "text"
+  },
+  {
+    "name": "产物",
+    "type": "text"
+  },
+  {
+    "name": "Review 依据",
+    "type": "text"
+  },
+  {
+    "name": "等待问题",
+    "type": "text"
+  }
+]

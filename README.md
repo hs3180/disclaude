@@ -43,6 +43,7 @@ changes ship under a new version.
 | [Browser control](docs/browser-coordination.md) | Serialized CLI calls, ownership, and recovery |
 | [Jupyter repair CLI](jupyter/datalayer/README.md#cli-deployment) | Generate/deploy the upstream repair and inspect restart requirements |
 | [Skills](docs/skills.md) | Discovery, precedence, and CLI contract |
+| [Task board](docs/task-board.md) | A standalone Feishu Base workflow and minimal field template |
 | [Logging](docs/logging.md) | File output, rotation, and collection |
 | [GitHub installation](docs/releases/git-install.md) | Install, upgrade, and roll back a release tag |
 | [Docker Compose deployment](docs/docker-compose-deployment.md) | Deploy from the full source checkout |
