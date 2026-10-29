@@ -708,6 +708,36 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     provider.dispose();
   });
 
+  it('requests no experimental capability and sends no skill registration without skill roots', async () => {
+    const { provider, dir } = providerFixture('exit 0');
+    writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
+const fs=require('node:fs');
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);fs.appendFileSync(process.env.CODEX_HOME+'/methods',JSON.stringify(m)+'\\n');
+ const send=r=>console.log(JSON.stringify(r));
+ if(m.method==='initialize')send({id:m.id,result:{}});
+ else if(m.method==='thread/start')send({id:m.id,result:{thread:{id:'no-skills-thread'}}});
+ else if(m.method==='turn/start'){send({id:m.id,result:{turn:{id:'no-skills-turn'}}});
+  send({method:'item/completed',params:{threadId:'no-skills-thread',turnId:'no-skills-turn',item:{id:'reply',type:'agentMessage',text:'done'}}});
+  send({method:'turn/completed',params:{threadId:'no-skills-thread',turn:{id:'no-skills-turn',status:'completed'}}});}
+});
+`);
+    const project = join(dir, 'project');
+    mkdirSync(project);
+    const stream = provider.queryStream((async function* (): AsyncGenerator<UserInput> {
+      yield { role: 'user', content: 'no skills here' };
+    })(), { sessionKey: 'no-skills', settingSources: [], projectRoot: project, cwd: project } as AgentQueryOptions);
+    try {
+      for await (const _message of stream.iterator) { /* drain */ }
+      const calls = readFileSync(join(dir, 'home', 'methods'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      // Without any skill directory there is nothing to register; the transport
+      // must not opt into the experimental capability on its own.
+      expect(calls.find(call => call.method === 'initialize').params.capabilities).toBeNull();
+      expect(calls.some(call => call.method === 'skills/extraRoots/set')).toBe(false);
+      expect(calls.some(call => call.method?.startsWith?.('thread/'))).toBe(true);
+    } finally { stream.handle.close(); provider.dispose(); }
+  });
+
   it('reclaims tool children over 100 turns while resuming one thread', async () => {
     const { provider, dir } = providerFixture('exit 0');
     const binary = join(dir, 'bin', 'codex');

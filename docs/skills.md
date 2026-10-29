@@ -43,10 +43,41 @@ write or generated payload. Each new app-server process receives the current
 builtins, existing Project skill roots and valid installed diagnostics root.
 Successful native registration removes the provider's repeated skill manifest from
 turn prompts. Unsupported older CLIs receive an explicit upgrade diagnostic
-(native loading was verified with CLI 0.164.0). Registration timeouts or other
+(native loading was verified with CLI 0.140.0-0.164.0; 0.130.0 fails earlier,
+before the protocol, because it rejects the `--stdio` argument itself).
+Registration timeouts or other
 errors fail before thread/turn start. There is no prompt-manifest fallback.
 Codex exec, DSH and Pi keep their existing discovery paths. This change covers
 skills; it does not emulate Claude plugin hooks, MCP servers or agent modules.
+
+### Registration sequence and real-CLI verification
+
+Registration is protocol-level, once per app-server process, and strictly
+ordered before any thread work: `initialize` (declaring the `experimentalApi`
+capability because roots exist) → `initialized` → `skills/extraRoots/set` with
+the current roots → only then `thread/start` or `thread/resume`.
+`CodexAppServerLifecycle.ensureThread` awaits that registration flight, so no
+thread can race ahead of it, and a restarted process re-registers before
+resuming its thread. Failure is fail-fast and total: a CLI answering `-32601`
+gets the explicit upgrade diagnostic, and refusals or timeouts surface before
+any thread/turn starts (`provider-app-server.test.ts` pins this ordering and
+every failure mode with a scripted CLI, including restart re-registration and
+the no-roots case where no experimental capability is requested).
+
+To verify against a real CLI (no model call or turn is submitted):
+
+```bash
+DISCLAUDE_CODEX_E2E_SKILLS_BIN=$(which codex) \
+  pnpm vitest --run packages/core/src/sdk/providers/codex/app-server-skills.e2e.test.ts
+```
+
+`DISCLAUDE_CODEX_E2E_SKILLS_BIN` points at a CLI expected to accept
+registration; `DISCLAUDE_CODEX_E2E_LEGACY_SKILLS_BIN` optionally points at one
+expected to answer `-32601`. Both tests skip unless their variable is set.
+Observed 2026-10-29: 0.151.0 and 0.164.0 accept `skills/extraRoots/set`
+(both notify `skills/changed`) and a thread then starts; 0.140.0 also answers
+the method when probed directly, but the transport's browser-disable flags
+already require a newer CLI; 0.130.0 never reaches the protocol.
 
 ## Optional diagnostics plugin
 

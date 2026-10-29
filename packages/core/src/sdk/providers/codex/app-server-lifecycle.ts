@@ -158,7 +158,7 @@ export class CodexAppServerLifecycle {
         } catch (error) {
           if (error instanceof CodexAppServerRpcError && error.code === -32601) {
             throw new Error('Codex CLI does not support native skill directory loading (skills/extraRoots/set). ' +
-              'Update Codex CLI; directory loading was verified with 0.164.0. No prompt manifest or model turn was submitted.', { cause: error });
+              'Update Codex CLI; directory loading was verified with 0.140.0-0.164.0. No prompt manifest or model turn was submitted.', { cause: error });
           }
           throw error;
         }
