@@ -8,6 +8,23 @@ import type { TaskBoardPort } from './task-board-projection.js';
 
 const exec = promisify(execFile);
 export interface LarkTaskBoardCoordinates { baseToken: string; tableId: string; recordId: string }
+/** lark-cli reads an empty Base text cell back as null while a written empty
+ * string must stay distinguishable from never-written state, so only nulls the
+ * column schema proves are plain text normalize to the empty string.
+ */
+const textColumns = (...sources: unknown[]): Set<string> => {
+  const names = new Set<string>();
+  for (const source of sources) {
+    const columns = (source as Record<string, unknown> | null | undefined)?.columns;
+    if (columns === undefined) { continue; }
+    if (!columns || typeof columns !== 'object' || Array.isArray(columns)) { throw new Error('Invalid Lark task board column schema'); }
+    for (const [name, entry] of Object.entries(columns as Record<string, unknown>)) {
+      if (entry && typeof entry === 'object' && !Array.isArray(entry) &&
+        (entry as Record<string, unknown>).field_type === 'text') { names.add(name); }
+    }
+  }
+  return names;
+};
 /** Optional existing lark-cli, fixed original record and user identity. No
  * embedded credentials, table creation, authentication switch or shell command.
  */
@@ -40,6 +57,20 @@ export function createLarkTaskBoardPort(target: LarkTaskBoardCoordinates, fields
           if (!record || typeof record !== 'object' || Array.isArray(record) ||
               (record as Record<string, unknown>).record_id !== fixed.recordId) { throw new Error('Lark task record identity changed'); }
           const { record_id: recordId, ...cells } = record as Record<string, unknown>;
+          // The ndjson artifact ships a same-named .manifest.json sidecar with its
+          // column schema; a CLI that prints the schema on stdout is honored too.
+          let sidecar: unknown;
+          try {
+            const schema = await fs.open(join(cwd, 'record.ndjson.manifest.json'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+            try {
+              const schemaStat = await schema.stat();
+              if (!schemaStat.isFile() || schemaStat.size > 512 * 1024) { throw new Error('Invalid Lark task board schema artifact'); }
+              try { sidecar = JSON.parse(await schema.readFile('utf8')); }
+              catch { throw new Error('Invalid Lark task board column schema'); }
+            } finally { await schema.close(); }
+          } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { throw error; } }
+          const proved = textColumns(manifest, sidecar);
+          for (const field of Object.keys(cells)) { if (cells[field] === null && proved.has(field)) { cells[field] = ''; } }
           return { recordId: recordId as string, fields: cells };
         } finally { await handle.close(); }
       } finally { await fs.rm(cwd, { recursive: true, force: true }); }
