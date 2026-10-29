@@ -17,6 +17,8 @@ export * from './types/index.js';
 // Goal execution scheduling primitive; persistence/native admission remain adapters.
 export { GoalLoop } from './goals/goal-loop.js';
 export type { GoalLoopSnapshot, GoalLoopPort, GoalLoopHandle, GoalLoopOutcome } from './goals/goal-loop.js';
+export { TaskClaimStore, TaskClaimConflictError } from './coordination/task-claim-store.js';
+export type { TaskClaimSnapshot, TaskClaimLease } from './coordination/task-claim-store.js';
 
 // Constants
 export * from './constants/index.js';
@@ -445,5 +447,6 @@ export type {
 // Explicit, durable goal records; execution/control is wired separately.
 export { GoalStore, GoalRevisionConflictError } from './goals/goal-store.js';
 export { TaskResultOutbox, type TaskCompletionReport, type TaskResultRecord } from './coordination/task-result-outbox.js';
+export { readProjectArtifact, type ProjectArtifactIdentity } from './coordination/project-artifact.js';
 export { TaskAdmissionStore, type TaskAdmissionIntent } from './coordination/task-admission-store.js';
 export type { GoalRecord, GoalContent, GoalStatus, CreateGoal, GoalControlAction } from './goals/goal-store.js';

@@ -977,7 +977,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           // Backpressure UX (#4634): announce the wait BEFORE it happens —
           // never silence. (Also announce when merely joining the queue.)
           const pre = governorSink.getStats();
-          if (pre.runningRuns >= pre.maxConcurrentRuns || pre.queuedRuns > 0) {
+          if (options.capacityAdmission !== 'reject' && (pre.runningRuns >= pre.maxConcurrentRuns || pre.queuedRuns > 0)) {
             pushSynthetic({
               type: 'status',
               content:
@@ -986,7 +986,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               role: 'assistant',
             });
           }
-          const lease = await governorSink.acquireRun();
+          const lease = await governorSink.acquireRun(options.capacityAdmission);
           if (stalled || aborted || terminated) {
             // Cancelled/finished while queued — don't spawn a zombie run.
             lease.release();
@@ -1367,7 +1367,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     if (threadId && registeredToolSignature === undefined && dynamicToolRegistry.specs.length > 0) {
       throw new Error('Codex app-server cannot add host tools to an existing thread; reset the conversation to register them.');
     }
-    let llmReservation = reserveLlmSession(options.llmSessionLimit);
+    let llmReservation = reserveLlmSession(options.llmSessionLimit, undefined, undefined, options.capacityAdmission);
     this.appServerStops.get(sessionKey)?.();
     let done = false;
     let stopped = false;
@@ -1697,6 +1697,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             stopSignal.then(() => ({ done: true, value: undefined } as IteratorResult<UserInput>)),
           ]);
           if (next.done || stopped) {break;}
+          const toolInputContext = next.value.inputContext ? Object.freeze({ ...next.value.inputContext }) : undefined;
           let retryWaitedMs = 0;
           // #5514: charge recovery waits/unsuccessful requests cumulatively,
           // while proven productive runs do not spend later recovery eligibility.
@@ -1718,12 +1719,12 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             capacityAcceptedAt = undefined;
             rpcStage = undefined;
             earlyEvents.length = 0;
-            llmReservation ??= reserveLlmSession(options.llmSessionLimit);
+            llmReservation ??= reserveLlmSession(options.llmSessionLimit, undefined, undefined, options.capacityAdmission);
             if (llmReservation && !await Promise.race([
               llmReservation.ready, stopSignal.then(() => false),
             ])) { break; }
             if (stopped) { break; }
-            const acquisition = this.governor.acquireRun();
+            const acquisition = this.governor.acquireRun(options.capacityAdmission);
             const lease = await Promise.race([acquisition, stopSignal.then(() => undefined)]);
             if (!lease) {
               void acquisition.then((lateLease) => lateLease.release());
@@ -1740,7 +1741,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               }
               turnCanRetry = false;
               noteCapacityProgress();
-              return dynamicToolRegistry.call(request);
+              return dynamicToolRegistry.call(request, toolInputContext);
             } : undefined;
             try {
               // App-server connections live for one attempt, not for the input
@@ -1750,7 +1751,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
                   wasEvicted = true;
                   stopHandle('codex app-server session evicted');
                 },
-              }, admissionAbort.signal);
+              }, admissionAbort.signal, options.capacityAdmission);
               if (stopped) {break;}
               activeCorrelation = next.value.correlation;
               lastEventAt = Date.now();

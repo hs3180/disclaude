@@ -57,6 +57,7 @@ vi.mock('@disclaude/core', async (importOriginal) => {
   };
   return {
     createLogger: actual.createLogger,
+    MessageRouter: actual.MessageRouter,
     Config: {
       getSessionRestoreConfig: vi.fn(() => ({
         historyDays: 1,
@@ -151,10 +152,13 @@ vi.mock('../services/debug-group-service.js', () => ({
 }));
 
 import { ChatAgent } from './chat-agent.js';
-import { createChannelCallbacksFactory } from '../utils/channel-handlers.js';
-import { TurnSupersededError, type IChannel, type OutgoingMessage } from '@disclaude/core';
+import { createChannelCallbacksFactory, createDefaultMessageHandler } from '../utils/channel-handlers.js';
+import { registerFeishuInputSource, readVerifiedInputSource } from './input-provenance.js';
+import type { WiredContext } from '../channel-lifecycle-manager.js';
+import { MessageRouter, TurnSupersededError, type IChannel, type OutgoingMessage, type IncomingMessage } from '@disclaude/core';
 import type { Logger } from 'pino';
 import { ServiceTurnRecoveryStore } from '../service-turn-recovery.js';
+import { AgentPoolMessageHandler } from '../messaging/agent-pool-handler.js';
 
 const createMockCallbacks = () => ({
   sendMessage: vi.fn().mockResolvedValue(undefined),
@@ -369,6 +373,32 @@ describe('ChatAgent (service)', () => {
         expect(answer.inputContext.replyRootId).toBe(replyRootId);
         expect(answer.inputContext.threadRootId).toBe(replyRootId ?? undefined);
         expect((agent as any).pendingTurnAnchors.at(-1)).toBe(replyRootId);
+      } finally { finish?.(); agent.reset(); ChatAgent.prototype.dispose.call(agent); }
+    });
+
+    it.each([true, false])('preserves source identity through channel routing into native input (router=%s)', async routed => {
+      let finish!: () => void;
+      const agent = chatAgent;
+      (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () { await new Promise<void>(resolve => { finish = resolve; }); })() });
+      const agentPool = { getOrCreateChatAgent: () => agent };
+      const router = new MessageRouter({ handler: new AgentPoolMessageHandler({ agentPool,
+        callbacksFactory: () => callbacks, logger: (agent as any).logger }) });
+      const channel = { sendMessage: vi.fn() } as unknown as IChannel;
+      const context = { inputMessageRouter: routed ? router : undefined,
+        agentPool, callbacks: () => callbacks,
+        logger: (agent as any).logger } as unknown as WiredContext;
+      const handle = createDefaultMessageHandler(channel, context, { channelName: 'Feishu' });
+      const incoming: IncomingMessage = { messageId: 'om-media-file', chatId: 'oc_test_chat', userId: 'ou-original',
+        content: 'Review this file', messageType: 'file', metadata: { threadRootId: 'om-topic' } };
+      registerFeishuInputSource(incoming, 'om-media', 'user');
+      try {
+        await handle(incoming);
+        await vi.waitFor(() => expect((agent as any).channel.push).toHaveBeenCalledOnce());
+        const [[input]] = (agent as any).channel.push.mock.calls;
+        expect(readVerifiedInputSource(input.inputContext)).toMatchObject({ chatId: 'oc_test_chat', actorId: 'ou-original',
+          inputMessageId: 'om-media-file', sourceMessageId: 'om-media', threadRootId: 'om-topic' });
+        expect(input.message.content).not.toContain('verifiedFeishuInput');
       } finally { finish?.(); agent.reset(); ChatAgent.prototype.dispose.call(agent); }
     });
 

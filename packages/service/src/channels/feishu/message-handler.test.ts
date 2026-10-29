@@ -118,6 +118,7 @@ vi.mock('../../utils/message-logger.js', () => ({
 // Import SUT after mocks
 // ---------------------------------------------------------------------------
 import { MessageHandler } from './message-handler.js';
+import { bindVerifiedInputContext, getIncomingInputSource, readVerifiedInputSource } from '../../agents/input-provenance.js';
 import { TriggerModeManager } from './passive-mode.js';
 import { MentionDetector } from './mention-detector.js';
 
@@ -605,6 +606,7 @@ describe('MessageHandler', () => {
         },
       }));
       expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      expect(getIncomingInputSource(firstCallArg(mockState.emitMessage))).toBeUndefined();
     });
   });
 
@@ -987,6 +989,16 @@ describe('MessageHandler', () => {
   });
 
   // -----------------------------------------------------------------------
+  it('attests the source of an accepted raw text event before emission', async () => {
+    const { handler } = createHandler();
+    await handler.handleMessageReceive(textEvent('Source-bound work'));
+    const incoming = firstCallArg(mockState.emitMessage);
+    const context = bindVerifiedInputContext({ chatId: incoming.chatId, actorId: incoming.userId,
+      sourceMessageId: incoming.messageId }, getIncomingInputSource(incoming));
+    expect(readVerifiedInputSource(context)).toMatchObject({ actorId: 'user_001', sourceMessageId: 'msg_001' });
+    expect(getIncomingInputSource(JSON.parse(JSON.stringify(incoming)))).toBeUndefined();
+  });
+
   // File/image message handling
   // -----------------------------------------------------------------------
   describe('handleMessageReceive — file/image messages', () => {
@@ -1021,6 +1033,9 @@ describe('MessageHandler', () => {
       const msg = firstCallArg(mockState.emitMessage);
       expect(msg.messageType).toBe('file');
       expect(msg.content).toContain('下载失败');
+      const context = bindVerifiedInputContext({ chatId: msg.chatId, actorId: msg.userId,
+        sourceMessageId: msg.messageId }, getIncomingInputSource(msg));
+      expect(readVerifiedInputSource(context)).toMatchObject({ inputMessageId: 'msg_file-file', sourceMessageId: 'msg_file' });
     });
 
     it('registers incoming files using current SDK authentication without a startup token', async () => {
