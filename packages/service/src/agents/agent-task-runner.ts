@@ -4,7 +4,6 @@ import { isAbsolute } from 'node:path';
 import { buildSessionKey, sanitizeDiagnosticText } from '@disclaude/core';
 import { AgentFactory, type AgentCreateOptions } from './factory.js';
 import type { ChatAgentCallbacks } from './types.js';
-import { ownAsyncCallbacks } from './async-callback-ownership.js';
 
 export interface AgentTaskRequest {
   task: string;
@@ -66,7 +65,7 @@ export class AgentTaskRunner {
     let lastResult: Parameters<NonNullable<ChatAgentCallbacks['onTurnResult']>>[0] | undefined;
     let resultFailed = false;
     let resultTruncated = false;
-    const ownedCallbacks = ownAsyncCallbacks<ChatAgentCallbacks>({
+    const agent = AgentFactory.createAgent(input.chatId, {
       ...callbacks,
       onTurnResult: async result => {
         lastResult = { ...result };
@@ -74,8 +73,7 @@ export class AgentTaskRunner {
         resultTruncated ||= result.truncated;
         await callbacks.onTurnResult?.(result);
       },
-    });
-    const agent = AgentFactory.createAgent(input.chatId, ownedCallbacks.callbacks, {
+    }, {
       ...this.agentOptions,
       skipHistory: true,
       sdkSessionKey: buildSessionKey(input.chatId, `task:${id}`),
@@ -111,17 +109,14 @@ export class AgentTaskRunner {
       }
       // A failed parent result does not release still-owned background work.
       try { await agent.waitForWorkSettlement(); } catch (error) { executionError ??= error; }
-      let disposalError: unknown;
-      try { agent.dispose(); } catch (error) { disposalError = error; executionError ??= error; }
-      // Dispose rejects turn waiters promptly, but the iterator and RPC-side
-      // callbacks can still own channel requests. Join both before releasing.
-      await agent.waitForQueryExit();
-      await ownedCallbacks.settle();
       if (!lastResult || resultFailed) { executionError ??= new Error('Agent task has no successful complete result'); }
-      const outcome: AgentTaskResult = { id, outcome: disposalError ? 'failed' : stopped ? 'stopped' : executionError ? 'failed' : 'succeeded',
+      let outcome: AgentTaskResult = { id, outcome: stopped ? 'stopped' : executionError ? 'failed' : 'succeeded',
         text: lastResult?.text ?? '', truncated: resultTruncated,
-        ...(executionError || stopError ? { error: failureText(disposalError ?? stopError ?? executionError) } : {}),
+        ...(executionError || stopError ? { error: failureText(stopError ?? executionError) } : {}),
       };
+      try { agent.dispose(); } catch (error) {
+        outcome = { ...outcome, outcome: 'failed', error: failureText(error) };
+      }
       settled = true;
       this.runs.delete(id);
       return outcome;
