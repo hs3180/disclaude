@@ -83,6 +83,13 @@ describe('Type Guards', () => {
 
 describe('MessageRouter', () => {
   describe('route() with UserMessage', () => {
+    it('preserves an opaque host source by reference', async () => {
+      const handler = createMockHandler();
+      const runtimeSource = Object.freeze({});
+      await new MessageRouter({ handler }).route(createUserMessage({ runtimeSource }));
+      expect(vi.mocked(handler.handleUserMessage).mock.calls[0][0].runtimeSource).toBe(runtimeSource);
+    });
+
     it('should route UserMessage to handleUserMessage', async () => {
       const handler = createMockHandler();
       const router = new MessageRouter({ handler });

@@ -36,6 +36,7 @@
  */
 
 import { addCompletionReaction } from './completion-reaction.js';
+import { bindVerifiedInputContext } from './input-provenance.js';
 import { compactNarrationPayloads } from './narration-compaction.js';
 import {
   BaseAgent,
@@ -1364,9 +1365,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       correlation: lifecycleContext,
       ...(!includeStableContext && this.deliveredMessageContext
         ? { continuationContext: this.deliveredMessageContext.content } : {}),
-      ...(senderOpenId ? { inputContext: { actorId: senderOpenId, chatId, sourceMessageId: messageId,
+      ...(senderOpenId ? { inputContext: bindVerifiedInputContext({ actorId: senderOpenId, chatId, sourceMessageId: messageId,
         ...(replyRootId !== undefined ? { replyRootId } : {}),
-        threadRootId: replyRootId === null ? undefined : replyRootId ?? threadRootId ?? this.conversationOrchestrator.getThreadRoot(chatId) } } : {}),
+        threadRootId: replyRootId === null ? undefined : replyRootId ?? threadRootId ?? this.conversationOrchestrator.getThreadRoot(chatId) }, params.runtimeSource) } : {}),
       message: {
         role: 'user',
         content: enhancedContent,

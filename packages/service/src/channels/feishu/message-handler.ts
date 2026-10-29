@@ -38,6 +38,7 @@ import {
   type GitHubIssueClient,
 } from '@disclaude/core';
 import { InteractionManager } from '../../platforms/feishu/interaction-manager.js';
+import { registerFeishuInputSource } from '../../agents/input-provenance.js';
 import { extractFullCardContent } from '../../platforms/feishu/card-builders/card-text-extractor.js';
 import { messageLogger } from '../../utils/message-logger.js';
 import type { TriggerModeManager } from './passive-mode.js';
@@ -1213,7 +1214,7 @@ export class MessageHandler {
         }
       }
 
-      await this.callbacks.emitMessage({
+      const incoming: IncomingMessage = {
         messageId: `${message_id}-${message_type === 'audio' ? 'audio' : 'file'}`,
         chatId: chat_id,
         userId: extractOpenId(sender),
@@ -1223,7 +1224,9 @@ export class MessageHandler {
         threadId,
         attachments: localPath ? [{ fileName: fileName || fileKey, filePath: localPath }] : undefined,
         metadata: Object.keys(fileMetadata).length > 0 ? fileMetadata : undefined,
-      });
+      };
+      registerFeishuInputSource(incoming, message_id, sender?.sender_type);
+      await this.callbacks.emitMessage(incoming);
       return;
     }
 
@@ -1481,8 +1484,8 @@ export class MessageHandler {
       ? [quotedMessageResult.attachment]
       : undefined;
 
-    // Emit as incoming message
-    await this.callbacks.emitMessage({
+    // Attest only accepted raw user events; card-action/system inputs use other paths.
+    const incoming: IncomingMessage = {
       messageId: message_id,
       chatId: chat_id,
       userId: extractOpenId(sender),
@@ -1492,7 +1495,9 @@ export class MessageHandler {
       threadId,
       metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
       attachments: quotedAttachments,
-    });
+    };
+    registerFeishuInputSource(incoming, message_id, sender?.sender_type);
+    await this.callbacks.emitMessage(incoming);
     } catch (error) {
       messageLogger.releaseMessage(message_id);
       throw error;

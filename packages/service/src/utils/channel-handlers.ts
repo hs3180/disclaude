@@ -26,6 +26,7 @@ import {
 import type { ChatAgentCallbacks } from '../agents/types.js';
 import type { Logger } from 'pino';
 import type { WiredContext } from '../channel-lifecycle-manager.js';
+import { getIncomingInputSource } from '../agents/input-provenance.js';
 
 const routingLogger = coreCreateLogger('ChannelMessageRouter');
 
@@ -224,6 +225,8 @@ export function createDefaultMessageHandler(
 ): (message: IncomingMessage) => Promise<void> {
   return async (message: IncomingMessage) => {
     const { chatId, content, messageId, userId, metadata, messageType } = message;
+    const source = getIncomingInputSource(message);
+    const provenance = source === undefined ? {} : { runtimeSource: source };
     context.logger.info(
       { chatId, messageId, messageType, contentLength: content.length, hasAttachments: !!message.attachments },
       `Processing message from ${options.channelName}`
@@ -243,6 +246,7 @@ export function createDefaultMessageHandler(
       const userMessage: UserMessage = {
         id: messageId,
         source: 'user',
+        ...provenance,
         payload: content,
         chatId,
         messageId,
@@ -289,7 +293,7 @@ export function createDefaultMessageHandler(
     const fileRefs = options.extractAttachments?.(message);
 
     try {
-      void agent.processMessage({ chatId, payload: content, messageId, senderOpenId, attachments: fileRefs, chatHistoryContext, pendingQuestionEligible, chatType, threadContext, threadRootId });
+      void agent.processMessage({ chatId, payload: content, messageId, senderOpenId, attachments: fileRefs, chatHistoryContext, pendingQuestionEligible, chatType, threadContext, threadRootId, ...provenance });
     } catch (error) {
       context.logger.error({ err: error, chatId, messageId }, 'Failed to process message');
       const errorMsg = error instanceof Error ? error.message : String(error);
