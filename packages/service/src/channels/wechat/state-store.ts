@@ -8,6 +8,14 @@ import { validMediaInbox } from './media-inbox-state.js';
 export const DEFAULT_WECHAT_STATE_DIR = join(homedir(), '.disclaude', 'wechat');
 export const DEFAULT_WECHAT_BASE_URL = 'https://ilinkai.weixin.qq.com';
 
+/** A readable PID is an owner record, not proof that its process is alive. */
+export function wechatLockPid(record: string): number | undefined {
+  try {
+    const value = JSON.parse(record) as { pid?: unknown } | null;
+    return value && Number.isInteger(value.pid) && (value.pid as number) > 0 ? value.pid as number : undefined;
+  } catch { return undefined; }
+}
+
 export interface WeChatCredentials {
   token: string;
   botId: string;
@@ -135,10 +143,9 @@ export class WeChatStateStore {
           if ((readError as NodeJS.ErrnoException).code === 'ENOENT') { continue; }
           throw new Error('Invalid WeChat listener lock');
         }
-        let owner: { pid?: unknown };
-        try { owner = JSON.parse(record); } catch { throw new Error('Invalid WeChat listener lock'); }
-        if (!owner || !Number.isInteger(owner.pid) || (owner.pid as number) <= 0) { throw new Error('Invalid WeChat listener lock'); }
-        try { process.kill(owner.pid as number, 0); }
+        const pid = wechatLockPid(record);
+        if (pid === undefined) { throw new Error('Invalid WeChat listener lock'); }
+        try { process.kill(pid, 0); }
         catch (probeError) {
           if ((probeError as NodeJS.ErrnoException).code === 'ESRCH') { await fs.rm(file, { force: true }); continue; }
         }

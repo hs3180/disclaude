@@ -155,6 +155,27 @@ disclaude wechat status --check
 
 Migration tightens the legacy file permissions and privately writes the new account directory. It does not print/copy credentials into YAML or chat. Keep the old file until rollback is no longer needed; stop the candidate before resuming a legacy listener. Rolling back to 0.6.5 does not provide the new setup/diagnostics or encrypted-media fixes.
 
+## Registry lock recovery
+
+Use `disclaude wechat lock-inspect --state-dir /path/to/registry > lock-snapshot.json`
+to read file identity/timestamps/hash without starting a listener, creating a
+registry or exposing lock contents/credentials. Then run
+`disclaude wechat lock-recover --state-dir /path/to/registry --snapshot lock-snapshot.json`.
+
+Recovery accepts only unchanged, owned, single-link regular files whose creation
+and modification metadata predate this OS boot. It quarantines malformed records
+under a private `.registry-lock-quarantine` directory, preserves their inode and
+bytes, and syncs the directories. Repairs serialize; retrying the same snapshot
+reconciles the existing archive and leaves a subsequent owner alone. No account,
+credentials, cursor or deduplication state is reset. A running degraded service
+can retry its registry after recovery; no listener or business input is replayed
+by this command.
+
+Readable PID records use the normal owner/dead-PID locking path. Current-boot
+corruption, changed snapshots, symlinks, unsafe ownership and unknown archives
+are refused. There is no age-based expiry or force bypass. Simulated-boot tests
+do not constitute an actual machine reboot or real-account acceptance.
+
 ## Acceptance record
 
 Keep these results separate:

@@ -7,11 +7,15 @@ import QRCode from 'qrcode';
 import { setTimeout as delay } from 'node:timers/promises';
 import { WeChatIdentityMismatchError, WeChatRegistry, type WeChatRegistration } from './registry.js';
 import { DEFAULT_WECHAT_BASE_URL, WeChatStateStore, type WeChatCredentials } from './state-store.js';
+import { inspectRegistryLock, recoverRegistryLock } from './registry-lock-recovery.js';
 
-const help = `Usage: disclaude wechat <login|status|enable ID|disable ID|remove ID> [options]
+const help = `Usage: disclaude wechat <login|status|enable ID|disable ID|remove ID|lock-inspect|lock-recover> [options]
 Personal WeChat via Tencent iLink (QR login; no public callback server).
   login             Scan to register another account; existing accounts keep serving
   status            List registered IDs; use channel capabilities for live connection health
+  lock-inspect      Read registry lock metadata only; save its JSON for recovery
+  lock-recover      Quarantine unchanged pre-boot corruption using --snapshot FILE
+  --snapshot FILE   JSON from lock-inspect; no lock contents or credentials required
   --state-dir PATH   Registry root (default: ~/.disclaude/wechat)
   --id ID            Existing registered identity for status or login --force
   --qr-file PATH     Write a private QR PNG for remote delivery
@@ -80,11 +84,24 @@ async function verifyRestoredLogin(registry: WeChatRegistry, account: WeChatRegi
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: {
     'state-dir': { type: 'string' }, id: { type: 'string' }, 'qr-file': { type: 'string' }, force: { type: 'boolean' },
-    'import-legacy': { type: 'boolean' }, check: { type: 'boolean' }, 'timeout-ms': { type: 'string' }, help: { type: 'boolean' },
+    'import-legacy': { type: 'boolean' }, check: { type: 'boolean' }, 'timeout-ms': { type: 'string' }, help: { type: 'boolean' }, snapshot: { type: 'string' },
   } });
   const [command] = positionals;
   if (values.help || !command) { console.log(help); return; }
   const registry = new WeChatRegistry(values['state-dir'] ? resolve(values['state-dir']) : undefined);
+  if (command === 'lock-inspect' || command === 'lock-recover') {
+    if (positionals.length !== 1) { throw new Error('Use wechat --help for registry lock recovery'); }
+    if (command === 'lock-inspect') { console.log(JSON.stringify({ ok: true, ...await inspectRegistryLock(registry.dir) })); }
+    else {
+      if (!values.snapshot) { throw new Error('lock-recover requires --snapshot FILE from lock-inspect'); }
+      const stat = await fs.stat(values.snapshot);
+      if (!stat.isFile() || stat.size > 16_384) { throw new Error('Invalid lock inspection snapshot'); }
+      let snapshot: unknown;
+      try { snapshot = JSON.parse(await fs.readFile(values.snapshot, 'utf8')); } catch { throw new Error('Cannot read lock inspection snapshot'); }
+      console.log(JSON.stringify({ ok: true, ...await recoverRegistryLock(registry.dir, snapshot) }));
+    }
+    return;
+  }
   if (['enable', 'disable', 'remove'].includes(command)) {
     const [, id] = positionals;
     if (!id || positionals.length !== 2) { throw new Error('Expected a registered ID from wechat status'); }
