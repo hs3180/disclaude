@@ -1004,7 +1004,7 @@ describe('MessageHandler', () => {
     mockState.emitControl.mockResolvedValueOnce({ success: true });
     const { handler } = createHandler();
     handler.setControlHandler(true);
-    await handler.handleMessageReceive(textEvent('/goal list'));
+    await handler.handleMessageReceive(textEvent('/goal 完成季度研究报告 | 引用原始证据'));
     expect(mockState.emitControl).toHaveBeenCalledWith(expect.objectContaining({ type: 'goal',
       actorId: 'user_001', sourceMessageId: 'msg_001', chatId: 'chat_001' }));
     expect(mockState.emitMessage).not.toHaveBeenCalled();
