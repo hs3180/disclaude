@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 import nock from 'nock';
 import { WeChatChannel } from '../../packages/service/src/channels/wechat/wechat-channel.js';
 import { WeChatStateStore } from '../../packages/service/src/channels/wechat/state-store.js';
+import { WECHAT_WELCOME_TEXT } from '../../packages/service/src/channels/wechat/welcome.js';
 import { WECHAT_WIRED_DESCRIPTOR } from '../../packages/service/src/channels/wired-descriptors.js';
 import { HttpApiServer } from '../../packages/service/src/http-api-server.js';
 
@@ -39,6 +40,9 @@ describe('WeChat channel protocol integration', () => {
     nock('https://novac2c.cdn.weixin.qq.com').get('/c2c/download').query({ encrypted_query_param: 'file-ref' }).reply(200, encrypt(file));
     nock('https://ilinkai.weixin.qq.com').persist().post('/ilink/bot/getconfig').reply(200, { ret: 0, typing_ticket: 'ticket' });
     nock('https://ilinkai.weixin.qq.com').persist().post('/ilink/bot/sendtyping').reply(200, { ret: 0 });
+    const welcome = nock('https://ilinkai.weixin.qq.com').post('/ilink/bot/sendmessage', body =>
+      body.msg.to_user_id === peer && body.msg.context_token === 'private-context' && body.msg.item_list[0].text_item.text === WECHAT_WELCOME_TEXT)
+      .reply(200, { ret: 0, message_id: 'welcome-ack' });
     nock('https://ilinkai.weixin.qq.com').persist().post('/ilink/bot/getupdates').reply(async () => {
       polls++;
       if (polls === 2) { replay(); }
@@ -67,6 +71,8 @@ describe('WeChat channel protocol integration', () => {
       await received; await replayed;
       await vi.waitFor(() => expect(channel.getMessageListener()?.isListening()).toBe(false));
       await channel.stop();
+      expect(welcome.isDone()).toBe(true);
+      expect((await store.loadWelcome('bot')).peers[peer]).toMatchObject({ phase: 'accepted', messageId: 'welcome-ack' });
       expect(sent.isDone()).toBe(true);
       expect(route).toHaveBeenCalledTimes(1);
       expect(await store.loadSession('bot')).toMatchObject({ cursor: 'accepted-cursor', seenMessageIds: [update.message_id], contexts: { [peer]: 'private-context' } });

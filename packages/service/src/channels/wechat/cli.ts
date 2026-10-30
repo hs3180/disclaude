@@ -196,6 +196,7 @@ async function main(): Promise<void> {
       console.log(JSON.stringify({ stage: 'verifying-connection' }));
       const probe = await probeSavedLogin(registry, account);
       console.log(JSON.stringify({ ok: true, registered: true, id: account.id, channelId: registry.channelId(account), ...probe,
+        onboarding: 'After this account is active, send a first WeChat message; the welcome requires that peer\'s valid reply context.',
         ...(probe.verified ? {} : { next: `disclaude wechat login --id ${account.id} --force` }) }));
     };
     if (values['import-legacy']) {

@@ -66,6 +66,10 @@ The service can start with no registered accounts. Run `disclaude wechat login` 
 
 ## One service with Feishu, REST and registered WeChat accounts
 
+When a user first sends a message with a valid reply context, the bot sends a brief plain-text welcome and still processes that first task normally. Login output asks the user to send the first message; registration alone does not claim a welcome was delivered. Ask “怎么用” in the chat for help.
+
+Saved accounts keep per-bot/per-peer onboarding attempts in private `welcome.json`, independently of cursor/media state. Normal restart, reconnect and repeated updates do not resend the welcome. An unknown delivery outcome is retained for inspection rather than blindly retried; an unreadable welcome file disables only automatic onboarding and leaves task reception available. Programmatic token-only channels without a state directory retain this deduplication only for their current process.
+
 These channels can share one service process and configuration. Each channel connects independently. This differs from the isolated two-process candidate deployment described in the original acceptance record.
 
 ```yaml
