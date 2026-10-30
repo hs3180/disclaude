@@ -448,4 +448,5 @@ export type {
 export { GoalStore, GoalRevisionConflictError } from './goals/goal-store.js';
 export { TaskResultOutbox, type TaskCompletionReport, type TaskResultRecord } from './coordination/task-result-outbox.js';
 export { readProjectArtifact, type ProjectArtifactIdentity } from './coordination/project-artifact.js';
+export { TaskAdmissionStore, type TaskAdmissionIntent } from './coordination/task-admission-store.js';
 export type { GoalRecord, GoalContent, GoalStatus, CreateGoal, GoalControlAction } from './goals/goal-store.js';
