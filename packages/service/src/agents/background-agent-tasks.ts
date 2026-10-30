@@ -4,7 +4,6 @@ import { isAbsolute, relative, sep } from 'node:path';
 import { TaskResultOutbox, sanitizeDiagnosticText, type TaskCompletionReport, type TaskResultRecord } from '@disclaude/core';
 import { AgentTaskRunner, type AgentTaskRequest } from './agent-task-runner.js';
 import type { AgentCreateOptions } from './factory.js';
-import { createTaskReportTool } from './task-report-tool.js';
 import type { ChatAgentCallbacks } from './types.js';
 
 export interface BackgroundAgentTaskRequest extends AgentTaskRequest { projectRoot: string }
@@ -75,32 +74,37 @@ export class BackgroundAgentTasks {
   private async admit(input: Readonly<BackgroundAgentTaskRequest>, entry: Entry): Promise<BackgroundAgentTaskHandle> {
     await this.options.authorize(input);
     if (this.closing || entry.stopped) { throw new Error('Background task stopped before admission'); }
-    const selected = this.options.runtimeOptions(input), collector = createTaskReportTool();
+    const selected = this.options.runtimeOptions(input);
+    // No injected model face: the child reports through its native turn
+    // result only. A structured report channel, when needed, is provided
+    // by the disclaude CLI + built-in skill pattern (#5603/#5611), never
+    // by adding tools to the child's query options here.
     const runner = new AgentTaskRunner({ ...selected,
       ...(selected.settings ? { settings: structuredClone(selected.settings) } : {}), ...(selected.env ? { env: { ...selected.env } } : {}),
       configureQueryOptions: options => {
         const configured = selected.configureQueryOptions?.(options) ?? options;
-        return { ...configured, capacityAdmission: 'queue', onAsyncUserInputAnswer: undefined,
-          tools: [...(configured.tools ?? []), collector.tool] };
+        return { ...configured, capacityAdmission: 'queue', onAsyncUserInputAnswer: undefined };
       },
     });
     let task: ReturnType<AgentTaskRunner['start']>;
     try {
-      task = runner.start({ ...input, task: `${input.task}\n结束前调用 agent_task_report 记录摘要和已知产物；宿主另行确认原生执行结果。` }, this.options.callbacks(input));
-    } catch (error) { collector.close(); await runner.close(); throw error; }
+      task = runner.start({ ...input }, this.options.callbacks(input));
+    } catch (error) { await runner.close(); throw error; }
     entry.id = task.id;
     entry.stopNative = task.stop;
     const completion = (async (): Promise<TaskResultRecord> => {
       try {
-        const native = await task.completion, proposed = collector.read(); collector.close();
-        const detail = [native.outcome !== 'succeeded' ? native.error : undefined, proposed?.summary || native.text].filter(Boolean).join('\n');
+        const native = await task.completion;
+        const detail = [native.outcome !== 'succeeded' ? native.error : undefined, native.text].filter(Boolean).join('\n');
         const summary = sanitizeDiagnosticText(`[${native.outcome}${native.truncated ? '; output truncated' : ''}] ${
           detail || 'Native task returned without a summary'}`).slice(0, 16000);
         const report: TaskCompletionReport = { id: task.id, chatId: input.chatId, actorId: input.senderOpenId,
           sourceMessageId: input.sourceMessageId, projectRoot: input.projectRoot,
           ...(input.threadRootId ? { threadRootId: input.threadRootId } : {}),
           outcome: native.truncated && native.outcome === 'succeeded' ? 'failed' : native.outcome,
-          summary, artifacts: proposed?.artifacts ?? [] };
+          summary, // Structured artifacts arrive via the CLI report channel when it lands;
+          // the native result carries no artifact list today.
+          artifacts: [] };
         const saved = await this.options.outbox.publish(report);
         if (this.closing || entry.stopped) { return saved; }
         try { await this.options.authorize(input); } catch { return saved; }
@@ -112,7 +116,7 @@ export class BackgroundAgentTasks {
           throw error;
         }
       } finally {
-        collector.close(); await runner.close(); entry.busy = false; entry.admission = undefined; entry.stopNative = undefined;
+        await runner.close(); entry.busy = false; entry.admission = undefined; entry.stopNative = undefined;
       }
     })();
     this.track(completion);

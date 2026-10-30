@@ -13,7 +13,10 @@ entry is enabled by the component alone. The same originating source and
 operation ID share execution; a changed task, directory or reply route is refused.
 
 Children may queue for capacity while their parent can finish independently.
-Their `agent_task_report` tool captures a summary and known artifact references;
+The child's native turn result is its report: outcome and summary come from the
+native result itself (no injected model face; a structured CLI report channel
+may follow the #5603/#5611 pattern), and the artifact list stays empty until
+that channel exists.
 the host's actual settled native result determines success/failure/stopped.
 Truncated output cannot become success. The result is persisted in
 `TaskResultOutbox` before wakeup, and permission is checked again. A revoked

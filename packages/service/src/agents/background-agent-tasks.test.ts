@@ -42,7 +42,7 @@ it.each(['succeeded', 'failed', 'stream-error', 'stop', 'close', 'unknown-ack', 
             if (scenario === 'close-auth' && nativeFinished) { authEntered.release(); await authRelease.promise; }
             if (!allowed) throw new Error('permission revoked');
           }, wakeParent: async report => {
-            wakes++; assert.equal(report.projectRoot, root); assert.equal(report.artifacts[0], 'child/artifact.txt');
+            wakes++; assert.equal(report.projectRoot, root); assert.deepEqual(report.artifacts, []); assert.ok(report.summary.length > 0);
             assert.equal((await outbox.get(report.id)).delivery, 'sending');
             await parent.processMessage({ chatId: report.chatId, payload: 'report ' + report.id, messageId: 'report-' + report.id,
               threadRootId: report.threadRootId, senderOpenId: report.actorId });
@@ -58,8 +58,8 @@ it.each(['succeeded', 'failed', 'stream-error', 'stop', 'close', 'unknown-ack', 
               if (next.done) return;
               assert.equal(options.cwd, childDir); assert.equal(options.capacityAdmission, 'queue'); effects++;
               appendFileSync(join(childDir, 'artifact.txt'), 'one effect\\n');
-              const tool = prepareTools(options.tools).find(tool => tool.name === 'agent_task_report');
-              await tool.execute({ summary: 'artifact recorded', artifacts: ['child/artifact.txt'] }, { signal: new AbortController().signal });
+              // Design rule (REWORK): no injected model face — the child query must not carry a report tool.
+              assert.equal(prepareTools(options.tools).some(tool => tool.name === 'agent_task_report'), false);
               entered.release(); await work.promise; nativeFinished = true;
               if (scenario === 'stream-error') throw new Error('injected native stream failure after one effect');
               if (scenario === 'failed') yield { type: 'result', role: 'system', content: '', terminatedReason: 'turn_failed', terminationDetail: 'injected native failure after one effect' };
