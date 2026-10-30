@@ -1,6 +1,7 @@
 import {
   CodexAppServerTransport,
   CodexAppServerRequestTimeoutError,
+  CodexAppServerRpcError,
   type CodexAppServerDynamicToolSpec,
   type CodexAppServerExit,
   type CodexAppServerTransportOptions,
@@ -12,6 +13,7 @@ import { CodexAsyncUserInput } from './async-user-input.js';
 export type CodexAppServerSessionState = 'idle' | 'active' | 'waiting-user' | 'uncertain';
 
 interface CodexAppServerLifecycleOptions extends CodexAppServerTransportOptions {
+  extraSkillRoots?: readonly string[];
   /** Query-owned questions survive normal per-turn transport teardown. */
   asyncInputs?: CodexAsyncUserInput;
   onAsyncAnswer?: (request: AgentInputRequest, text: string) => Promise<void>;
@@ -90,8 +92,10 @@ export class CodexAppServerLifecycle {
   private readonly ownsAsyncInputs: boolean;
   private closing = false;
   private readonly reasoningEffortsByModel = new Map<string, Set<string>>();
+  private readonly extraSkillRoots: readonly string[];
 
   constructor(options: CodexAppServerLifecycleOptions = {}) {
+    this.extraSkillRoots = [...(options.extraSkillRoots ?? [])];
     this.interruptTimeoutMs = options.requestTimeoutMs ?? 10000;
     const onUserInput = options.onUserInput ? async (request: AgentInputRequest): Promise<void> => {
       this.pendingInputs.add(request);
@@ -110,6 +114,7 @@ export class CodexAppServerLifecycle {
     }, options.userInputTimeoutMs);
     this.transport = new CodexAppServerTransport({
       ...options, onUserInput,
+      experimentalApi: options.experimentalApi || this.extraSkillRoots.length > 0,
       onNotification: (method, params) => {
         this.receive(method, params);
         const handled = method === 'item/completed' && this.asyncInputs.receive(params, {
@@ -145,9 +150,21 @@ export class CodexAppServerLifecycle {
     if (this.initialized) {
       return;
     }
-    this.initializeFlight ??= this.transport.initialize().then(() => {
+    this.initializeFlight ??= (async () => {
+      await this.transport.initialize();
+      if (this.extraSkillRoots.length) {
+        try {
+          await this.transport.request('skills/extraRoots/set', { extraRoots: this.extraSkillRoots });
+        } catch (error) {
+          if (error instanceof CodexAppServerRpcError && error.code === -32601) {
+            throw new Error('Codex CLI does not support native skill directory loading (skills/extraRoots/set). ' +
+              'Update Codex CLI; directory loading was verified with 0.140.0-0.164.0. No prompt manifest or model turn was submitted.', { cause: error });
+          }
+          throw error;
+        }
+      }
       this.initialized = true;
-    });
+    })();
     await this.initializeFlight;
   }
 

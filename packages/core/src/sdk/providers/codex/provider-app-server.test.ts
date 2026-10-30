@@ -45,6 +45,75 @@ afterEach(() => {
 });
 
 describe('CodexAgentProvider app-server transport', () => {
+  it.each(['native', 'legacy', 'rejected', 'timeout', 'lost-ack'] as const)('loads existing skill directories before native start/resume (%s)', async mode => {
+    const { provider, dir } = providerFixture('exit 0', 'app-server', {}, { requestTimeoutMs: 5_000 });
+    const project = join(dir, 'project'), nested = join(project, 'nested');
+    for (const [root, name] of [[dir, 'builtin-probe'], [project, 'project-probe'], [join(project, '.disclaude'), 'managed-probe']]) {
+      mkdirSync(join(root, 'skills', name), { recursive: true });
+      writeFileSync(join(root, 'skills', name, 'SKILL.md'), `---\nname: ${name}\ndescription: Native path probe.\n---\nRead references/marker.txt.\n`);
+    }
+    mkdirSync(nested);
+    writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
+const fs=require('node:fs');const send=m=>console.log(JSON.stringify(m));
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);fs.appendFileSync(process.env.CODEX_HOME+'/methods',JSON.stringify(m)+'\\n');
+ if(m.method==='initialize')send({id:m.id,result:{}});
+ else if(m.method==='skills/extraRoots/set'){
+  const mode=${JSON.stringify(mode)};
+  if(mode==='lost-ack')process.exit(7);
+  else if(mode==='timeout'){}
+  else if(mode==='legacy'||mode==='rejected')send({id:m.id,error:{code:mode==='legacy'?-32601:-32603,message:'injected registration refusal'}});
+  else send({id:m.id,result:{}});
+ } else if(m.method==='thread/start'||m.method==='thread/resume')send({id:m.id,result:{thread:{id:'native-skill-thread'}}});
+ else if(m.method==='turn/start'){
+  send({id:m.id,result:{turn:{id:'native-skill-turn'}}});
+  send({method:'item/completed',params:{threadId:'native-skill-thread',turnId:'native-skill-turn',item:{id:'reply',type:'agentMessage',text:'Skill-aware turn finished'}}});
+  send({method:'turn/completed',params:{threadId:'native-skill-thread',turn:{id:'native-skill-turn',status:'completed'}}});
+ }
+});`);
+    const success = mode === 'native';
+    const stream = provider.queryStream((async function* (): AsyncGenerator<UserInput> {
+      yield { role: 'user', content: 'first input' };
+      if (success) { yield { role: 'user', content: 'second input' }; }
+    })(), { sessionKey: 'native-skills', settingSources: [], projectRoot: project, cwd: nested });
+    const messages: AgentMessage[] = [];
+    try {
+      for await (const message of stream.iterator) { messages.push(message); }
+      const calls = readFileSync(join(dir, 'home/methods'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      expect(calls.find(call => call.method === 'initialize').params.capabilities).toEqual({ experimentalApi: true });
+      const registrations = calls.filter(call => call.method === 'skills/extraRoots/set');
+      expect(registrations).toHaveLength(success ? 2 : 1);
+      for (const call of registrations) { expect(call.params.extraRoots).toEqual([join(project, 'skills'), join(project, '.disclaude', 'skills'), join(dir, 'skills')]); }
+      const threads = calls.filter(call => call.method.startsWith('thread/'));
+      const starts = calls.filter(call => call.method === 'turn/start');
+      if (success) {
+        expect(threads.map(call => call.method)).toEqual(['thread/start', 'thread/resume']);
+        expect(calls.map(call => call.method)).toEqual(['initialize', 'initialized', 'skills/extraRoots/set', 'thread/start', 'turn/start',
+          'initialize', 'initialized', 'skills/extraRoots/set', 'thread/resume', 'turn/start']);
+        expect(starts).toHaveLength(2);
+        for (const call of starts) {
+          const prompt = call.params.input[0].text;
+          expect(prompt).not.toContain('Disclaude skills:'); expect(prompt).not.toContain('SKILL.md');
+        }
+        expect(messages.filter(message => message.type === 'result')).toHaveLength(2);
+        expect(messages.some(message => message.metadata?.terminatedReason)).toBe(false);
+      } else {
+        expect(threads).toHaveLength(0); expect(starts).toHaveLength(0);
+        expect(messages.some(message => message.type === 'error')).toBe(true);
+        expect(messages.some(message => message.type === 'result')).toBe(false);
+        if (mode === 'legacy') {
+          expect(messages.find(message => message.type === 'error')?.content).toContain('Update Codex CLI');
+        }
+        if (mode === 'timeout') {
+          expect(messages.find(message => message.type === 'error')?.metadata?.error).toMatchObject({
+            kind: 'CodexAppServerRequestTimeoutError', method: 'skills/extraRoots/set', timeoutMs: 5_000,
+          });
+        }
+      }
+      expect(calls.some(call => /plugin\/(install|reconcile)|config\/.*write/.test(call.method))).toBe(false);
+    } finally { stream.handle.close(); provider.dispose(); }
+  }, 20_000);
+
   it.each([-32600, -32601, -32602, -32603, 'lost-ack', 'mismatched-ack'] as const)('maps live-input RPC outcomes through the provider-neutral contract (%s)', async code => {
     const { provider, dir } = providerFixture('exit 0');
     writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
@@ -610,7 +679,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     } finally { provider.dispose(); }
   });
 
-  it('uses the same registry manifest as exec for app-server turns', async () => {
+  it('loads shared project directories natively without a repeated prompt manifest', async () => {
     const { provider, dir } = providerFixture('exit 0');
     const workspace = mkdtempSync(join(tmpdir(), 'codex-app-skills-'));
     dirs.push(workspace);
@@ -629,6 +698,7 @@ const fs = require('node:fs');
 require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
   const request = JSON.parse(line); if (!request.id) return;
   let result = {}; if (request.method === 'thread/start') result = {thread:{id:'skills-thread'}};
+  if (request.method === 'skills/extraRoots/set') fs.writeFileSync(process.env.CODEX_HOME + '/skill-roots', JSON.stringify(request.params.extraRoots));
   if (request.method === 'turn/start') { fs.writeFileSync(process.env.CODEX_HOME + '/turn-input', request.params.input[0].text); result={turn:{id:'skills-turn'}}; }
   console.log(JSON.stringify({id:request.id,result}));
   if (request.method === 'turn/start') console.log(JSON.stringify({method:'turn/completed',params:{threadId:'skills-thread',turn:{id:'skills-turn',status:'completed'}}}));
@@ -638,18 +708,42 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     } as AgentQueryOptions);
     for await (const _message of stream.iterator) { /* drain */ }
     const prompt = readFileSync(join(dir, 'home', 'turn-input'), 'utf8');
-    expect(prompt).toContain('Disclaude skills:');
-    expect(prompt).toContain('skills/demo/SKILL.md');
-    expect(prompt).toContain('skills/shared-local/SKILL.md');
-    expect(prompt).toContain('Shared local skill');
-    expect(prompt).not.toContain('claude-local');
-    expect(prompt).not.toContain('Claude local skill');
-    // #5467: unwired sessions get the bare request plus the session note
-    // (no "User request:" delimiter) after the skills manifest.
-    expect(prompt).toContain('\n\nhello');
-    expect(prompt).toContain(asyncNote);
+    expect(JSON.parse(readFileSync(join(dir, 'home', 'skill-roots'), 'utf8'))).toEqual([
+      join(workspace, 'skills'), join(workspace, '.disclaude', 'skills'),
+    ]);
+    expect(prompt).toBe(`hello${asyncNote}`);
     expect(prompt).not.toContain(workspace);
     provider.dispose();
+  });
+
+  it('requests no experimental capability and sends no skill registration without skill roots', async () => {
+    const { provider, dir } = providerFixture('exit 0');
+    writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
+const fs=require('node:fs');
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);fs.appendFileSync(process.env.CODEX_HOME+'/methods',JSON.stringify(m)+'\\n');
+ const send=r=>console.log(JSON.stringify(r));
+ if(m.method==='initialize')send({id:m.id,result:{}});
+ else if(m.method==='thread/start')send({id:m.id,result:{thread:{id:'no-skills-thread'}}});
+ else if(m.method==='turn/start'){send({id:m.id,result:{turn:{id:'no-skills-turn'}}});
+  send({method:'item/completed',params:{threadId:'no-skills-thread',turnId:'no-skills-turn',item:{id:'reply',type:'agentMessage',text:'done'}}});
+  send({method:'turn/completed',params:{threadId:'no-skills-thread',turn:{id:'no-skills-turn',status:'completed'}}});}
+});
+`);
+    const project = join(dir, 'project');
+    mkdirSync(project);
+    const stream = provider.queryStream((async function* (): AsyncGenerator<UserInput> {
+      yield { role: 'user', content: 'no skills here' };
+    })(), { sessionKey: 'no-skills', settingSources: [], projectRoot: project, cwd: project } as AgentQueryOptions);
+    try {
+      for await (const _message of stream.iterator) { /* drain */ }
+      const calls = readFileSync(join(dir, 'home', 'methods'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      // Without any skill directory there is nothing to register; the transport
+      // must not opt into the experimental capability on its own.
+      expect(calls.find(call => call.method === 'initialize').params.capabilities).toBeNull();
+      expect(calls.some(call => call.method === 'skills/extraRoots/set')).toBe(false);
+      expect(calls.some(call => call.method?.startsWith?.('thread/'))).toBe(true);
+    } finally { stream.handle.close(); provider.dispose(); }
   });
 
   it('reclaims tool children over 100 turns while resuming one thread', async () => {

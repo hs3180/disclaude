@@ -40,6 +40,8 @@ export interface CodexAppServerTransportOptions {
   onUserInput?: (request: AgentInputRequest) => Promise<void>;
   onDynamicToolCall?: (request: CodexAppServerDynamicToolCallRequest) => Promise<CodexAppServerDynamicToolCallResult>;
   userInputTimeoutMs?: number;
+  /** Native skill-directory registration also uses the experimental protocol. */
+  experimentalApi?: boolean;
 }
 
 export interface CodexAppServerDynamicToolSpec {
@@ -86,8 +88,8 @@ export class CodexAppServerRequestTimeoutError extends Error {
 /**
  * Experimental persistent stdio transport for the Codex app-server protocol.
  * CodexAgentProvider selects it only when explicitly configured; `codex exec`
- * remains the compatibility default. Dynamic host-tool calls use the
- * app-server's experimental API and are enabled only when a handler is set.
+ * remains the compatibility default. Native skill-directory registration and
+ * dynamic host-tool calls opt into the app-server's experimental API.
  */
 export class CodexAppServerTransport {
   private readonly logger;
@@ -161,7 +163,7 @@ export class CodexAppServerTransport {
   async initialize(clientName = 'disclaude', clientVersion = '0.5.0'): Promise<unknown> {
     const result = await this.request('initialize', {
       clientInfo: { name: clientName, title: 'Disclaude', version: clientVersion },
-      capabilities: this.options.onUserInput || this.options.onDynamicToolCall ? { experimentalApi: true } : null,
+      capabilities: this.options.experimentalApi || this.options.onUserInput || this.options.onDynamicToolCall ? { experimentalApi: true } : null,
     });
     this.notify('initialized');
     await this.reportResources('initialized');

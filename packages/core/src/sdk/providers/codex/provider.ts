@@ -97,7 +97,7 @@ import {
   type CodexThreadEvent,
 } from './exec-adapter.js';
 import type { SkillsRegistry } from '../../../skills/index.js';
-import { codexSkillsRegistry } from './skill-sources.js';
+import { codexNativeSkillRoots, codexSkillsRegistry } from './skill-sources.js';
 import { CODEX_OVERLOAD_MAX_RETRIES, CODEX_OVERLOAD_MAX_WAIT_MS, codexOverloadRetryDelay, readCodexOverloadFailure,
   waitForCodexOverloadRetry, codexCapacityRecoveryDelay, readCodexCapacityRecoveryPolicy,
   isCodexCapacityFailure, alignCodexCapacityWait, recordCodexCapacityCooldown,
@@ -581,10 +581,10 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       );
     }
 
-    const skillsManifest = this.skillsManifestFor(options.projectRoot ?? options.cwd, options.cwd ?? process.cwd());
     if ((native ? native.transport ?? 'exec' : this.transportMode) === 'app-server') {
-      return this.queryAppServer(input, options, sandboxDecision.sandbox, binary, skillsManifest, codexModel, requestedEffort);
+      return this.queryAppServer(input, options, sandboxDecision.sandbox, binary, codexModel, requestedEffort);
     }
+    const skillsManifest = this.skillsManifestFor(options.projectRoot ?? options.cwd, options.cwd ?? process.cwd());
     if (options.tools?.length) {
       throw new Error('Codex host tools require agents.<name>.codex.transport: app-server; codex exec cannot dispatch host tools.');
     }
@@ -1348,7 +1348,6 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     options: AgentQueryOptions,
     sandbox: CodexSandboxLevel,
     binary: string,
-    skillsManifest: string,
     codexModel: string | undefined,
     reasoningEffort: CodexReasoningEffort | undefined,
   ): StreamQueryResult {
@@ -1800,7 +1799,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
                   }
                 }
                 await options.onAsyncUserInputAnswer(request, text, context);
-              }, options.env);
+              }, options.env, codexNativeSkillRoots(options.projectRoot ?? options.cwd, this.builtinRoot));
               const requestedThreadId = threadId;
               rpcStage = 'ensure-thread';
               threadId = await lifecycle.ensureThread(sessionKey, {
@@ -1842,8 +1841,8 @@ export class CodexAgentProvider implements IAgentSDKProvider {
                 // prompt is the layer we control. Blocking questions are
                 // unaffected (they ride onUserInput only).
                 !options.onUserInput || !options.onAsyncUserInputAnswer || !next.value.inputContext
-                  ? `${skillsManifest ? `${skillsManifest}\n\n` : ''}${userInput}\n\n[Session note] This conversation cannot receive asynchronous question forms. When you need clarification, ask the user directly in your reply text instead of using an async question tool.`
-                  : skillsManifest ? `${skillsManifest}\n\nUser request:\n${userInput}` : userInput,
+                  ? `${userInput}\n\n[Session note] This conversation cannot receive asynchronous question forms. When you need clarification, ask the user directly in your reply text instead of using an async question tool.`
+                  : userInput,
                 {
                 sandbox,
                 networkAccess: options.codexRuntime ? options.codexRuntime.networkAccess ?? true : this.networkAccess,
@@ -2056,11 +2055,13 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     asyncInputs?: CodexAsyncUserInput,
     onAsyncAnswer?: (request: AgentInputRequest, text: string) => Promise<void>,
     environment?: Record<string, string | undefined>,
+    extraSkillRoots?: readonly string[],
   ): CodexAppServerLifecycle {
     const lifecycle = new CodexAppServerLifecycle({
       binary,
       sessionKey,
       correlation,
+      extraSkillRoots,
       ...(this.appServerRequestTimeoutMs ? { requestTimeoutMs: this.appServerRequestTimeoutMs } : {}),
       onUserInput,
       onDynamicToolCall,

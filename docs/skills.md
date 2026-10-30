@@ -6,7 +6,7 @@ to act; a CLI Skill documents a deterministic command the agent can invoke.
 
 ## Discovery and precedence
 
-`SkillsRegistry` lives in `@disclaude/core` and is shared across harnesses.
+`SkillsRegistry` lives in `@disclaude/core` for harnesses using a prompt index.
 Callers provide builtin, user, and project roots; the registry does not infer a
 project from the process working directory or read harness-specific home
 directories. Each root contains `skills/<name>/SKILL.md`.
@@ -17,12 +17,67 @@ revision, a compact manifest, and separate diagnostics. Only the manifest
 belongs in model-facing prompts. Resource references are relative to their
 source root; adapters retain that mapping when loading them.
 
-The shared project layout is `.disclaude/skills/<name>/SKILL.md`. Codex exec
-and app-server also accept the existing top-level `skills/<name>/SKILL.md`;
-both are project-precedence sources, so duplicate names are rejected.
+The shared project layout is `.disclaude/skills/<name>/SKILL.md`. The registry
+also accepts the existing top-level `skills/<name>/SKILL.md`; both are
+project-precedence sources, so duplicate names are rejected.
 `.claude/skills` remains Claude-specific and is not scanned by the shared
 registry. Put cross-harness skills in `.disclaude/skills` and keep
 Claude-only skills in `.claude/skills`.
+
+## Native directory loading
+
+Claude loads the existing builtins directory with the Agent SDK's
+`plugins: [{ type: 'local', path }]` option. Codex app-server registers existing
+skill roots with `skills/extraRoots/set` before starting or resuming a thread.
+The native loader reads the original `SKILL.md`, scripts and references in
+place, including from Project subdirectories. It retains Codex's native
+project/user discovery and precedence; extra roots are native user-scope roots,
+rather than the shared registry's synthetic builtin/project priorities.
+Codex recognizes the existing `.claude-plugin/plugin.json` and exposes builtins
+as `disclaude-builtins:<skill-name>`. A plain project skill remains a separate
+name; it does not override that qualified builtin. No extra Codex manifest is
+needed for this skill directory.
+
+This needs no marketplace, plugin installation/cache copy, user configuration
+write or generated payload. Each new app-server process receives the current
+builtins, existing Project skill roots and valid installed diagnostics root.
+Successful native registration removes the provider's repeated skill manifest from
+turn prompts. Unsupported older CLIs receive an explicit upgrade diagnostic
+(native loading was verified with CLI 0.140.0-0.164.0; 0.130.0 fails earlier,
+before the protocol, because it rejects the `--stdio` argument itself).
+Registration timeouts or other
+errors fail before thread/turn start. There is no prompt-manifest fallback.
+Codex exec, DSH and Pi keep their existing discovery paths. This change covers
+skills; it does not emulate Claude plugin hooks, MCP servers or agent modules.
+
+### Registration sequence and real-CLI verification
+
+Registration is protocol-level, once per app-server process, and strictly
+ordered before any thread work: `initialize` (declaring the `experimentalApi`
+capability because roots exist) → `initialized` → `skills/extraRoots/set` with
+the current roots → only then `thread/start` or `thread/resume`.
+`CodexAppServerLifecycle.ensureThread` awaits that registration flight, so no
+thread can race ahead of it, and a restarted process re-registers before
+resuming its thread. Failure is fail-fast and total: a CLI answering `-32601`
+gets the explicit upgrade diagnostic, and refusals or timeouts surface before
+any thread/turn starts (`provider-app-server.test.ts` pins this ordering and
+every failure mode with a scripted CLI, including restart re-registration and
+the no-roots case where no experimental capability is requested).
+
+To verify against a real CLI (no model call or turn is submitted):
+
+```bash
+DISCLAUDE_CODEX_E2E_SKILLS_BIN=$(which codex) \
+  pnpm vitest --run packages/core/src/sdk/providers/codex/app-server-skills.e2e.test.ts
+```
+
+`DISCLAUDE_CODEX_E2E_SKILLS_BIN` points at a CLI expected to accept
+registration; `DISCLAUDE_CODEX_E2E_LEGACY_SKILLS_BIN` optionally points at one
+expected to answer `-32601`. Both tests skip unless their variable is set.
+Observed 2026-10-29: 0.151.0 and 0.164.0 accept `skills/extraRoots/set`
+(both notify `skills/changed`) and a thread then starts; 0.140.0 also answers
+the method when probed directly, but the transport's browser-disable flags
+already require a newer CLI; 0.130.0 never reaches the protocol.
 
 ## Optional diagnostics plugin
 
@@ -50,8 +105,9 @@ Omitting `--project-dir` selects the current directory, not the configured
 service workspace. The CLI does not start or restart services.
 
 After installing, start a new agent session in that Project. Claude loads the
-installed directory through its local-plugin API; Codex exec/app-server indexes
-it through `SkillsRegistry`; DSH and Pi receive the same compact skill manifest and
+installed directory through its local-plugin API; Codex app-server registers
+its original directory with the native loader; Codex exec indexes it through
+`SkillsRegistry`; DSH and Pi receive the same compact skill manifest and
 can read the linked instructions using its profile's file/shell tools. A custom
 DSH profile must provide a tool capable of reading local Markdown. Pi uses its
 native `Read` tool; a custom injected Pi runtime must also provide a file reader. References
