@@ -95,6 +95,15 @@ it('retains an unknown persisted intent instead of granting a second dispatch af
   expect((await f.store.begin(f.question.id, 'delivery')).dispatch).toBe(false); expect((await f.store.get(f.question.id))?.delivery).toBe('sending');
 });
 
+it('returns only a known-unsent exact intent and fences stale deferral against newer state', async () => {
+  const f = await fixture(), first = await f.store.begin(f.question.id, 'delivery');
+  expect((await f.store.deferUnsent(f.question.id, 'delivery', first.record.revision)).delivery).toBe('prepared');
+  const second = await f.store.begin(f.question.id, 'delivery'); expect(second.dispatch).toBe(true);
+  await expect(f.store.deferUnsent(f.question.id, 'delivery', first.record.revision)).rejects.toThrow('changed');
+  await f.store.confirmDelivery(f.question.id, f.receipt);
+  await expect(f.store.deferUnsent(f.question.id, 'delivery', second.record.revision)).rejects.toThrow('changed');
+});
+
 it('shares a canonical queue through parent aliases and keeps explicit plain-chat reply routing', async () => {
   const f = await fixture(), alias = join(f.root, 'alias'); await fs.symlink(f.root, alias);
   const second = new TaskQuestionStore(join(alias, 'questions'));
