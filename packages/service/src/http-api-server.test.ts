@@ -1227,4 +1227,35 @@ describe('HttpApiServer', () => {
       expect(lifecycleServer.isRunning).toBe(false);
     });
   });
+
+  describe('GET /api/history/query (Issue #5603)', () => {
+    it('requires the provider, validates params and forwards the query', async () => {
+      const handler = vi.fn().mockResolvedValue({ chatId: 'chat-1', days: [], totalMessages: 0, truncatedByLimit: false });
+      server.setHistoryQueryHandler(handler);
+      // Missing chat parameter is rejected before touching the provider.
+      expect((await dispatch(server, { method: 'GET', url: '/api/history/query' })).statusCode).toBe(400);
+      expect(handler).not.toHaveBeenCalled();
+      const response = await dispatch(server, { method: 'GET', url: '/api/history/query?chat=chat-1&days=3&limit=10&junk=x' });
+      expect(response.statusCode).toBe(200);
+      expect(handler).toHaveBeenCalledExactlyOnceWith({ chatId: 'chat-1', days: 3, limit: 10 });
+      expect(JSON.parse(response.body)).toEqual({ ok: true, chatId: 'chat-1', days: [], totalMessages: 0, truncatedByLimit: false });
+      // Non-numeric or non-positive days/limit are dropped rather than failing.
+      await dispatch(server, { method: 'GET', url: '/api/history/query?chat=chat-1&days=-2&limit=abc' });
+      expect(handler).toHaveBeenLastCalledWith({ chatId: 'chat-1' });
+      // No provider wired → 503, matching the channel-capabilities contract.
+      server = new HttpApiServer({ port: 0, host: '127.0.0.1' });
+      expect((await dispatch(server, { method: 'GET', url: '/api/history/query?chat=chat-1' })).statusCode).toBe(503);
+    });
+    it('is token-gated despite being a GET route (conversation content, not a health check)', async () => {
+      server = new HttpApiServer({ port: 0, apiToken: 'agent-token' });
+      const handler = vi.fn().mockResolvedValue({ chatId: 'chat-1', days: [], totalMessages: 0, truncatedByLimit: false });
+      server.setHistoryQueryHandler(handler);
+      expect((await dispatch(server, { method: 'GET', url: '/api/history/query?chat=chat-1' })).statusCode).toBe(401);
+      expect(handler).not.toHaveBeenCalled();
+      const response = await dispatch(server, { method: 'GET', url: '/api/history/query?chat=chat-1', headers: { authorization: 'Bearer agent-token' } });
+      expect(response.statusCode).toBe(200);
+      // A plain GET health route on the same server stays token-exempt.
+      expect((await dispatch(server, { method: 'GET', url: '/api/ping' })).statusCode).toBe(200);
+    });
+  });
 });

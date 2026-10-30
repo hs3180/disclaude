@@ -124,6 +124,8 @@ export { ChatSessionPool, type ChatSessionPoolOptions } from './chat-session-poo
 // Agents (Issue #2717: consolidated into service)
 export { AgentFactory, toChatAgentCallbacks, type AgentCreateOptions } from './agents/factory.js';
 export { AgentTaskRunner, type AgentTaskRequest, type AgentTaskResult, type AgentTaskHandle } from './agents/agent-task-runner.js';
+// Issue #5603: shared read-only history backend for the CLI subcommand and REST route.
+export { queryChatHistory, type HistoryQueryOptions, type HistoryQueryResult, type HistoryMessage, type HistoryDay } from './history/history-query.js';
 export { ChatAgent } from './agents/chat-agent.js';
 export type { ChatAgentCallbacks, ChatAgentConfig } from './agents/types.js';
 

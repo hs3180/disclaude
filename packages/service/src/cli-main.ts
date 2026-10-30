@@ -45,6 +45,7 @@ import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
 import { createChannelCallbacksFactory } from './utils/channel-handlers.js';
 import { ServiceTurnRecoveryStore } from './service-turn-recovery.js';
 import { messageLogger } from './utils/message-logger.js';
+import { queryChatHistory } from './history/history-query.js';
 import { DEFAULT_WECHAT_STATE_DIR } from './channels/wechat/state-store.js';
 import { WeChatRegistry } from './channels/wechat/registry.js';
 import { WeChatRegistrationRuntime } from './channels/wechat/runtime.js';
@@ -59,12 +60,14 @@ const logger = createLogger('DisclaudeServiceCLI');
  * Parse command line arguments.
  */
 interface CliOptions {
-  command: 'start' | 'help';
+  command: 'start' | 'help' | 'history';
   configPath?: string;
   /** Issue #3857 Phase 2: HTTP API port for external tool access */
   apiPort?: number;
   /** Issue #3857 Phase 2: API token for authenticating write routes */
   apiToken?: string;
+  /** Issue #5603: arguments of `disclaude history query`. */
+  historyQuery?: { chatId: string; days?: number; limit?: number; format: 'json' | 'text' };
 }
 
 /** Generate a fresh in-memory credential for each startup unless explicitly configured. */
@@ -91,6 +94,25 @@ export function parseArgs(args: string[]): CliOptions {
 
     if (arg === 'start') {
       options.command = 'start';
+    } else if (arg === 'history') {
+      // Issue #5603: read-only history queries run without starting the service.
+      options.command = 'history';
+    } else if (options.command === 'history' && arg === 'query') {
+      options.historyQuery = options.historyQuery ?? { chatId: '', format: 'json' };
+    } else if (options.command === 'history' && options.historyQuery !== undefined && arg === '--chat') {
+      const value = args[++i];
+      if (value && !value.startsWith('-')) { options.historyQuery.chatId = value; }
+    } else if (options.command === 'history' && options.historyQuery !== undefined && arg === '--days') {
+      const value = args[++i];
+      const days = value ? Number.parseInt(value, 10) : NaN;
+      if (Number.isInteger(days) && days > 0) { options.historyQuery.days = days; }
+    } else if (options.command === 'history' && options.historyQuery !== undefined && arg === '--limit') {
+      const value = args[++i];
+      const limit = value ? Number.parseInt(value, 10) : NaN;
+      if (Number.isInteger(limit) && limit > 0) { options.historyQuery.limit = limit; }
+    } else if (options.command === 'history' && options.historyQuery !== undefined && arg === '--format') {
+      const value = args[++i];
+      if (value === 'json' || value === 'text') { options.historyQuery.format = value; }
     } else if (arg === '--config' || arg === '-c') {
       const value = args[i + 1];
       if (value && !value.startsWith('-')) {
@@ -129,15 +151,23 @@ disclaude - application service
 
 Usage:
   disclaude start [options]
+  disclaude history query --chat <chatId> [--days N] [--limit N] [--format json|text]
 
 Commands:
-  start    Start disclaude
+  start           Start disclaude
+  history query   Read locally available chat history (read-only, structured JSON; Issue #5603)
 
 Options:
   --config, -c PATH       Path to configuration file
   --api-port PORT         Enable HTTP API server (0 = OS-assigned port)
   --api-token TOKEN       Override the random per-startup token for write routes
   --help                  Show this help message
+
+History query options:
+  --chat chatId           Chat whose history to read (required)
+  --days N                Days to look back (default: sessionRestore.historyDays, 7)
+  --limit N               Return only the newest N messages across days
+  --format json|text      Output format (default: json)
 
 Configuration:
   All settings (port, host, etc.) are read from the config file.
@@ -147,6 +177,7 @@ Configuration:
 Examples:
   disclaude start
   disclaude start --config /path/to/disclaude.config.yaml
+  disclaude history query --chat oc_123 --days 3 --limit 50
 `);
 }
 
@@ -183,6 +214,49 @@ export function validateWorkspaceDir(workspaceDir: string): WorkspaceValidationR
 }
 
 /**
+ * Issue #5603: run `disclaude history query` without starting the service.
+ *
+ * Read-only and process-local: no logger init, no PID lock, no agent stack.
+ * Output is structured JSON by default so agents (including built-in skills)
+ * can consume it directly; `--format text` renders the same result for humans.
+ */
+async function runHistoryCommand(options: CliOptions): Promise<void> {
+  if (!options.historyQuery) {
+    console.error('Usage: disclaude history query --chat <chatId> [--days N] [--limit N] [--format json|text]');
+    process.exit(1);
+  }
+  if (options.configPath) {
+    const config = loadConfigFile(options.configPath);
+    if (!config._fromFile) {
+      console.error(`Error: Could not load configuration file: ${options.configPath}`);
+      process.exit(1);
+    }
+    setLoadedConfig(config);
+  }
+  const query = options.historyQuery;
+  if (!query.chatId) {
+    console.error('Error: history query requires --chat <chatId>');
+    process.exit(1);
+  }
+  const result = await queryChatHistory({ chatId: query.chatId, days: query.days, limit: query.limit });
+  if (query.format === 'text') {
+    for (const day of result.days) {
+      console.log(`--- ${day.date} ---`);
+      for (const message of day.messages) {
+        const who = message.direction === 'incoming' ? '👤' : '🤖';
+        console.log(`${who} [${message.timestamp}] (${message.messageId})`);
+        console.log(message.content);
+      }
+    }
+    if (result.truncatedByLimit) { console.log('_(…older messages truncated by --limit; raise it or read the day files)_'); }
+    return;
+  }
+  // Single-line `{"ok":true,...}` on stdout so the unified CLI entry can route
+  // it apart from startup log lines (same contract as the channel CLI).
+  console.log(JSON.stringify({ ok: true, ...result }));
+}
+
+/**
  * Main entry point.
  */
 export async function main(): Promise<void> {
@@ -191,6 +265,11 @@ export async function main(): Promise<void> {
 
   if (options.command === 'help' || args.length === 0) {
     printUsage();
+    process.exit(0);
+  }
+
+  if (options.command === 'history') {
+    await runHistoryCommand(options);
     process.exit(0);
   }
 
@@ -687,6 +766,10 @@ export async function main(): Promise<void> {
       // Issue #4279: wire REST GET /api/temp-chats to the channel's
       // listTempChats capability (REST parity with the REST API method).
       httpApiServer.setListTempChatsHandler(() => service.listTempChats());
+
+      // Issue #5603: wire REST GET /api/history/query to the shared read-only
+      // history backend (same module as `disclaude history query`).
+      httpApiServer.setHistoryQueryHandler(options => queryChatHistory(options));
 
       // Issue #4279: wire REST /api/upload-image to the channel's uploadImage
       // capability (REST parity with the REST API method).
