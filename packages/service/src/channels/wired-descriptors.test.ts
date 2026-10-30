@@ -615,6 +615,29 @@ describe('WiredChannelDescriptors', () => {
       expect(store.listIds).toHaveBeenCalledTimes(1);
     });
 
+    it('exposes Goal execution only to the Feishu user-channel control handler', async () => {
+      const channel = createMockFeishuChannel();
+      const id = '00000000-0000-4000-8000-000000000000';
+      const record = { id, revision: 1, status: 'draft', chatId: 'chat', projectRoot: '/fixture-project',
+        objective: 'Deliver', acceptance: ['Verify'], artifacts: [], progress: '' };
+      const store = { create: vi.fn().mockResolvedValue(record) } as unknown as NonNullable<ChannelSetupContext['goalStore']>;
+      const start = vi.fn().mockResolvedValue({ record: { ...record, revision: 2, status: 'active' } });
+      const goalExecution = { start, control: vi.fn() };
+      const hostContext = { projectManager: { resolveCwd: () => ({}), getWorkspaceDir: () => '/fixture-project' } } as any;
+      const globalHandler = createControlHandler(hostContext);
+      const context = createFeishuSetupContext({ goalStore: store, goalExecution,
+        controlHandler: globalHandler, controlHandlerContext: hostContext });
+      await FEISHU_WIRED_DESCRIPTOR.setup!(channel, {}, context);
+      const [[userHandler]] = channel.onControl.mock.calls;
+      const command = { type: 'goal' as const, chatId: 'chat', actorId: 'actual-user', sourceMessageId: 'om-real',
+        data: { args: ['Deliver', '|', 'Verify'] } };
+      expect((await globalHandler(command)).success).toBe(false);
+      expect(start).not.toHaveBeenCalled();
+      expect((await userHandler(command)).success).toBe(true);
+      expect(start).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ goalId: id, expectedRevision: 1, sourceMessageId: 'om-real', actorId: 'actual-user' }), 'activate');
+      expect(hostContext).not.toHaveProperty('goalExecution');
+    });
+
     it('should push instruction to agent via InputMessageRouter', async () => {
       const channel = createMockFeishuChannel();
       const context = createFeishuSetupContext();

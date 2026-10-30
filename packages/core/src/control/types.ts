@@ -9,7 +9,18 @@ import type { Logger } from '../utils/logger.js';
 import type { TriggerMode } from '../config/types.js';
 import type { ProjectManager } from '../project/project-manager.js';
 import type { ChatFailureRecord } from '../feedback/failure-registry.js';
-import type { GoalStore } from '../goals/goal-store.js';
+import type { GoalStore, GoalRecord } from '../goals/goal-store.js';
+
+/** Explicit channel request; the execution capability still owns current authorization. */
+export interface GoalCommandExecutionRequest {
+  goalId: string;
+  expectedRevision: number;
+  chatId: string;
+  projectRoot: string;
+  actorId: string;
+  sourceMessageId: string;
+  threadRootId?: string;
+}
 
 /**
  * Debug 组信息
@@ -26,6 +37,13 @@ export interface DebugGroup {
 export interface ControlHandlerContext {
   /** Only configured by a user-message channel, never by the model-facing REST control endpoint. */
   goalStore?: GoalStore;
+  /** Trusted user-channel execution capability. Absent hosts cannot activate goals. */
+  goalExecution?: {
+    start(request: GoalCommandExecutionRequest, action: 'activate' | 'resume'): Promise<{ record: GoalRecord }>;
+    control(request: GoalCommandExecutionRequest, action: 'pause' | 'stop'): Promise<{ record: GoalRecord; settlement?: Promise<unknown> }>;
+    /** Best-effort stop of the chat's running Goal without a revision token; `/stop` uses this (#5212). */
+    stopForChat?(chatId: string, threadRootId?: string): boolean;
+  };
   /** Optional host access policy; help uses exactly the same decision as dispatch. */
   isCommandAllowed?: (command: ControlCommand) => boolean;
   getHelpCapabilities?: () => ChannelCapabilities;

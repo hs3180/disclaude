@@ -205,6 +205,8 @@ export interface ControlCommand<T extends ControlCommandType = ControlCommandTyp
   /** Inbound channel context, supplied by the channel rather than command arguments. */
   chatType?: ChatType;
   actorId?: string;
+  /** Original inbound platform message, supplied by the channel rather than command arguments. */
+  sourceMessageId?: string;
 }
 
 /**
