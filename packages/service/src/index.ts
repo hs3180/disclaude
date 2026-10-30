@@ -126,6 +126,7 @@ export { AgentFactory, toChatAgentCallbacks, type AgentCreateOptions } from './a
 export { AgentTaskRunner, type AgentTaskRequest, type AgentTaskResult, type AgentTaskHandle } from './agents/agent-task-runner.js';
 // Issue #5603: shared read-only history backend for the CLI subcommand and REST route.
 export { queryChatHistory, type HistoryQueryOptions, type HistoryQueryResult, type HistoryMessage, type HistoryDay } from './history/history-query.js';
+export { BackgroundAgentTasks, type BackgroundAgentTaskHandle, type BackgroundAgentTaskOptions, type BackgroundAgentTaskRequest } from './agents/background-agent-tasks.js';
 export { ChatAgent } from './agents/chat-agent.js';
 export type { ChatAgentCallbacks, ChatAgentConfig } from './agents/types.js';
 
