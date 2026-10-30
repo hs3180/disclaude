@@ -14,11 +14,13 @@
 // Types (extended types for application-level use)
 export * from './types/index.js';
 
-// Goal execution scheduling primitive; persistence/native admission remain adapters.
-export { GoalLoop } from './goals/goal-loop.js';
-export type { GoalLoopSnapshot, GoalLoopPort, GoalLoopHandle, GoalLoopOutcome } from './goals/goal-loop.js';
-export { TaskClaimStore, TaskClaimConflictError } from './coordination/task-claim-store.js';
-export type { TaskClaimSnapshot, TaskClaimLease } from './coordination/task-claim-store.js';
+// Domain barrels. New exports go in the matching <domain>/index.ts, NOT here:
+// the root re-exports each domain wholesale, so feature PRs stop colliding on
+// one shared hand-enumerated list. Add a new line here only for a brand-new
+// domain. Renamed/prefixed re-exports (see the Sdk-prefixed SDK types below)
+// stay explicit at the root.
+export * from './goals/index.js';
+export * from './coordination/index.js';
 
 // Constants
 export * from './constants/index.js';
@@ -444,9 +446,5 @@ export type {
   SkillsRegistryResolution,
 } from './skills/index.js';
 
-// Explicit, durable goal records; execution/control is wired separately.
-export { GoalStore, GoalRevisionConflictError } from './goals/goal-store.js';
-export { TaskResultOutbox, type TaskCompletionReport, type TaskResultRecord } from './coordination/task-result-outbox.js';
-export { readProjectArtifact, type ProjectArtifactIdentity } from './coordination/project-artifact.js';
-export { TaskAdmissionStore, type TaskAdmissionIntent } from './coordination/task-admission-store.js';
-export type { GoalRecord, GoalContent, GoalStatus, CreateGoal, GoalControlAction, GoalTurnReport, GoalAssessment, GoalAcceptanceCheck } from './goals/goal-store.js';
+// Goal and coordination exports moved to ./goals/index.ts and
+// ./coordination/index.ts (see "Domain barrels" note above).
