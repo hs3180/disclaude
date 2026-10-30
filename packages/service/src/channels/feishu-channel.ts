@@ -36,6 +36,7 @@ import {
   WelcomeService,
   createFeishuClient,
 } from '../platforms/feishu/index.js';
+import type { TaskQuestionFlowPorts } from '../agents/task-question-flow.js';
 import {
   TriggerModeManager,
   MentionDetector,
@@ -302,6 +303,16 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     return this.feishuMessageHandler.requestAgentInput(request, context);
   }
 
+  configureTaskQuestions(ports: Omit<TaskQuestionFlowPorts, 'send' | 'reconcileCard'>): void {
+    this.feishuMessageHandler.configureTaskQuestions(this.appId, ports);
+  }
+  requestTaskQuestion(question: import('@disclaude/core').TaskQuestion): Promise<import('@disclaude/core').TaskQuestionRecord> {
+    return this.feishuMessageHandler.requestTaskQuestion(question);
+  }
+  reconcileTaskQuestionWake(id: string): Promise<import('@disclaude/core').TaskQuestionRecord> {
+    return this.feishuMessageHandler.reconcileTaskQuestionWake(id);
+  }
+
   /** Issue #5400: send the /issue confirmation card for the chat's last failure. */
   requestIssueReport(record: import('@disclaude/core').ChatFailureRecord, target: { chatId: string; threadRootId?: string; actorId?: string }):
     Promise<{ ok: true } | { ok: false; error: string }> {
@@ -372,6 +383,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   protected async doStart(): Promise<void> {
+    await this.feishuMessageHandler.drainTaskQuestions();
     // Initialize message logger
     await messageLogger.init();
 
@@ -512,6 +524,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   protected async doStop(): Promise<void> {
+    await this.feishuMessageHandler.drainTaskQuestions();
     // Stop WebSocket connection manager (closes WSClient + cleans up resources)
     if (this.wsConnectionManager) {
       await this.wsConnectionManager.stop();
