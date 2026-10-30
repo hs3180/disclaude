@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { GoalStore, GoalRevisionConflictError, type GoalRecord } from './goal-store.js';
+import { GoalStore, GoalRevisionConflictError, type GoalRecord, type GoalTurnReport } from './goal-store.js';
 import { GoalLoop } from './goal-loop.js';
 
 vi.mock('node:fs/promises', async importOriginal => {
@@ -224,5 +224,124 @@ describe('durable explicit goal controls (#5212/F3 storage)', () => {
     secondRelease(); expect(await resumedHandle.completion).toEqual({ reason: 'stopped' });
     expect(await recreated.start(active.id).completion).toEqual({ reason: 'inactive', status: 'abandoned' });
     expect(secondTurn).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe('revision-bound settled turn assessments (#5212/F2)', () => {
+  const report: GoalTurnReport = { outcome: 'completed', progress: 'All requested checks passed', artifacts: ['report.md', 'verification.log'],
+    checks: [{ criterion: 0, satisfied: true, evidence: ['report.md'] }, { criterion: 1, satisfied: true, evidence: ['verification.log'] }] };
+  async function activeFixture() {
+    const result = await fixture(); const draft = await result.store.create(goal);
+    return { ...result, active: await result.store.control(draft.id, draft.revision, 'activate') };
+  }
+  it('lets the driver continue with new progress and finish only after every criterion has evidence', async () => {
+    const { directory, store, active } = await activeFixture();
+    const runTurn = vi.fn(async (snapshot: Readonly<GoalRecord>) => {
+      if (runTurn.mock.calls.length === 1) {
+        await store.recordTurn(snapshot.id, snapshot.revision, { ...report, outcome: 'continue', checks: report.checks.slice(0, 1) });
+      } else {
+        expect(snapshot.progress).toBe(report.progress);
+        expect(snapshot.lastAssessment?.outcome).toBe('continue');
+        await store.recordTurn(snapshot.id, snapshot.revision, report);
+      }
+    });
+    const handle = new GoalLoop({ read: id => store.get(id), runTurn }).start(active.id);
+    expect(await handle.completion).toEqual({ reason: 'inactive', status: 'completed' });
+    expect(runTurn).toHaveBeenCalledTimes(2);
+    expect(await new GoalStore(directory).get(active.id)).toMatchObject({ status: 'completed', revision: 4,
+      lastAssessment: { reviewedRevision: 3, outcome: 'completed', checks: report.checks } });
+    await expect(store.update(active.id, 4, { progress: 'overwrite' })).rejects.toThrow('terminal');
+  });
+  it('persists a blocked outcome and waits for explicit resume rather than retrying', async () => {
+    const { directory, store, active } = await activeFixture();
+    const runTurn = vi.fn(async (snapshot: Readonly<GoalRecord>) => {
+      await store.recordTurn(snapshot.id, snapshot.revision, { outcome: 'blocked', progress: 'Need the user to choose the data source', artifacts: [], checks: [] });
+    });
+    expect(await new GoalLoop({ read: id => store.get(id), runTurn }).start(active.id).completion).toEqual({ reason: 'inactive', status: 'blocked' });
+    expect(runTurn).toHaveBeenCalledOnce();
+    const restarted = new GoalStore(directory); const blocked = (await restarted.get(active.id))!;
+    expect((await restarted.control(active.id, blocked.revision, 'resume')).status).toBe('active');
+  });
+  it.each(['pause', 'stop'] as const)('does not let a late report overwrite explicit %s', async action => {
+    const { store, active } = await activeFixture();
+    const changed = await store.control(active.id, active.revision, action);
+    await expect(store.recordTurn(active.id, active.revision, report)).rejects.toBeInstanceOf(GoalRevisionConflictError);
+    await expect(store.recordTurn(active.id, changed.revision, report)).rejects.toThrow();
+    expect(await store.get(active.id)).toEqual(changed);
+  });
+  it('rejects a report based on requirements that the user has since revised', async () => {
+    const { store, active } = await activeFixture();
+    const revised = await store.update(active.id, active.revision, { acceptance: ['Use the new dataset'] });
+    await expect(store.recordTurn(active.id, active.revision, report)).rejects.toBeInstanceOf(GoalRevisionConflictError);
+    expect(await store.get(active.id)).toEqual(revised);
+  });
+  it('does not let a report start a draft or restart a completed goal', async () => {
+    const { store } = await fixture(); const draft = await store.create(goal);
+    await expect(store.recordTurn(draft.id, draft.revision, report)).rejects.toThrow('not active');
+    const active = await store.control(draft.id, draft.revision, 'activate');
+    const completed = await store.recordTurn(active.id, active.revision, report);
+    await expect(store.recordTurn(completed.id, completed.revision, report)).rejects.toThrow('terminal');
+  });
+  it('requires complete, unique, in-range checks with recorded evidence before completion', async () => {
+    const { store, active } = await activeFixture();
+    const invalid = [
+      { ...report, checks: [] }, { ...report, checks: report.checks.slice(0, 1) },
+      { ...report, checks: [report.checks[0], report.checks[0]] },
+      { ...report, checks: [{ criterion: 2, satisfied: true, evidence: ['report.md'] }] },
+      { ...report, checks: [{ criterion: -1, satisfied: true, evidence: ['report.md'] }] },
+      { ...report, checks: [{ criterion: 0.5, satisfied: true, evidence: ['report.md'] }] },
+      { ...report, checks: report.checks.map(check => ({ ...check, satisfied: false })) },
+      { ...report, checks: report.checks.map(check => ({ ...check, evidence: [] })) },
+      { ...report, checks: report.checks.map(check => ({ ...check, evidence: ['unrecorded.log'] })) },
+      { ...report, checks: [{ criterion: 0, satisfied: 'true', evidence: ['report.md'] }] },
+      { ...report, checks: [{ ...report.checks[0], extra: 'untrusted' }] },
+      { ...report, progress: '' }, { ...report, status: 'completed' }, { ...report, outcome: '__proto__' },
+    ];
+    for (const input of invalid) {
+      await expect(store.recordTurn(active.id, active.revision, input as GoalTurnReport)).rejects.toThrow();
+      expect(await store.get(active.id)).toEqual(active);
+    }
+  });
+  it('clears stale assessment references when any content changes', async () => {
+    const { store, active } = await activeFixture();
+    const assessed = await store.recordTurn(active.id, active.revision, { ...report, outcome: 'continue' });
+    const edited = await store.update(active.id, assessed.revision, { artifacts: ['replacement.md'] });
+    expect(edited).not.toHaveProperty('lastAssessment');
+    expect(await store.get(active.id)).toEqual(edited);
+  });
+  it('snapshots report inputs and does not expose mutable stored assessment arrays', async () => {
+    const { store, active } = await activeFixture(); const input = structuredClone(report);
+    const writing = store.recordTurn(active.id, active.revision, input);
+    input.checks[0].evidence[0] = 'changed'; input.artifacts.length = 0;
+    const completed = await writing;
+    completed.lastAssessment!.checks[0].evidence[0] = 'changed returned value';
+    expect((await store.get(active.id))?.lastAssessment?.checks).toEqual(report.checks);
+  });
+  it('allows only one assessment to win a revision across store instances', async () => {
+    const { directory, store, active } = await activeFixture();
+    const results = await Promise.allSettled([store.recordTurn(active.id, active.revision, report),
+      new GoalStore(directory).recordTurn(active.id, active.revision, { ...report, outcome: 'continue' })]);
+    expect(results.filter(item => item.status === 'fulfilled')).toHaveLength(1);
+    expect(results.find(item => item.status === 'rejected')).toMatchObject({ reason: expect.any(GoalRevisionConflictError) });
+  });
+  it('preserves active state after report publication fails and permits a deliberate retry', async () => {
+    const { store, active } = await activeFixture();
+    vi.mocked(fs.rename).mockRejectedValueOnce(Object.assign(new Error('fixture'), { code: 'ENOSPC' }));
+    await expect(store.recordTurn(active.id, active.revision, report)).rejects.toMatchObject({ code: 'ENOSPC' });
+    expect(await store.get(active.id)).toEqual(active);
+    expect((await store.recordTurn(active.id, active.revision, report)).status).toBe('completed');
+  });
+  it('preserves malformed persisted assessment data without accepting or replacing it', async () => {
+    const { directory, store, active } = await activeFixture();
+    const file = join(directory, `${active.id}.json`);
+    for (const lastAssessment of [{ reviewedRevision: 2, outcome: 'completed', checks: [] },
+      { reviewedRevision: 1, outcome: 'completed', checks: [] },
+      { reviewedRevision: 1, outcome: 'continue', checks: [{ criterion: 99, satisfied: false, evidence: [] }] }]) {
+      const content = JSON.stringify({ ...active, lastAssessment }); await fs.writeFile(file, content);
+      await expect(store.get(active.id)).rejects.toThrow('Cannot read goal record');
+      await expect(store.recordTurn(active.id, active.revision, report)).rejects.toThrow('Cannot read goal record');
+      expect(await fs.readFile(file, 'utf8')).toBe(content);
+    }
   });
 });
