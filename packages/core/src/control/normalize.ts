@@ -22,6 +22,8 @@ export function normalizeCommandData<T extends ControlCommandType>(
   if (!rawData) {return undefined;}
 
   switch (type) {
+    case 'goal':
+      return { args: Array.isArray(rawData.args) ? rawData.args as string[] : [] };
     case 'help': {
       const args = Array.isArray(rawData.args) ? rawData.args as string[] : [];
       const mode = (rawData.mode as string | undefined) ?? args[0];

@@ -7,7 +7,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { tryHandleSlashCommand } from './command-router.js';
-import { createControlCommand, createControlHandler, ProjectManager, type ControlResponse } from '@disclaude/core';
+import { createControlCommand, createControlHandler, GoalStore, ProjectManager, type ControlResponse } from '@disclaude/core';
 
 // Spy on createControlCommand so we can assert on the rawData the router builds
 // (input.args), while delegating to the real impl so the other tests keep their
@@ -35,6 +35,28 @@ const mentions = [{
 }];
 
 describe('tryHandleSlashCommand', () => {
+  it('routes explicit Goal drafts through actual user context and keeps replies in the source topic', async () => {
+    const workspaceDir = mkdtempSync(join(tmpdir(), 'command-goal-'));
+    try {
+      const store = new GoalStore(join(workspaceDir, 'goals'));
+      const deps = { hasControlHandler: true, emitControl: createControlHandler({
+        goalStore: store, projectManager: new ProjectManager({ workspaceDir }),
+        agentPool: { reset: vi.fn(), stop: vi.fn() },
+        debugGroups: { getDebugGroup: () => null, setDebugGroup: vi.fn(), clearDebugGroup: vi.fn() },
+      }), sendMessage: vi.fn().mockResolvedValue(undefined) };
+      const source = { chatId: 'oc_x', threadRootId: 'om_root', actorId: 'ou_actual', chatType: 'topic' as const, mentions };
+      expect(await tryHandleSlashCommand({ ...source, textWithoutMentions: 'This task mentions a goal' }, deps)).toBe(false);
+      expect(await store.listIds()).toEqual([]);
+      expect(await tryHandleSlashCommand({ ...source, textWithoutMentions: '/goal create 研究报告 | 引用证据 | 记录待验收项 @_user_1' }, deps)).toBe(true);
+      const [id] = await store.listIds();
+      expect(await store.get(id)).toMatchObject({ status: 'draft', chatId: 'oc_x', projectRoot: workspaceDir, objective: '研究报告', acceptance: ['引用证据', '记录待验收项'] });
+      expect(deps.sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ chatId: 'oc_x', threadId: 'om_root', text: expect.stringContaining('尚未启动') }));
+      expect(await tryHandleSlashCommand({ ...source, textWithoutMentions: `/goal show ${id}` }, deps)).toBe(true);
+      expect(deps.sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ threadId: 'om_root', text: expect.stringContaining(id) }));
+      expect(await tryHandleSlashCommand({ ...source, actorId: undefined, textWithoutMentions: '/goal create 不受信来源 | 不得创建' }, deps)).toBe(true);
+      expect(await store.listIds()).toEqual([id]);
+    } finally { rmSync(workspaceDir, { recursive: true, force: true }); }
+  });
   it.each([
     '/project use my project@home @_user_1',
     '/project use my project@home ${@_user_1}',

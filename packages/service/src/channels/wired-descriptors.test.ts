@@ -19,7 +19,7 @@ import type {
   ChannelSetupContext,
   WiredContext,
 } from '../channel-lifecycle-manager.js';
-import type { IChannel, ControlHandler, ChannelCapabilities, FeishuApiHandlers, ChannelApiHandlers } from '@disclaude/core';
+import { createControlHandler, type IChannel, type ControlHandler, type ChannelCapabilities, type FeishuApiHandlers, type ChannelApiHandlers } from '@disclaude/core';
 
 // Mock logger
 const mockLogger = {
@@ -599,6 +599,20 @@ describe('WiredChannelDescriptors', () => {
       expect(help.success).toBe(true);
       expect(help.message).not.toMatch(/\/reset|\/agent|附件|\/trigger/);
       expect(policy).toHaveBeenCalledWith(expect.objectContaining({ actorId: 'actor', chatId: 'chat' }));
+    });
+
+    it('enables Goal records only for the user-channel handler, not model-facing REST controls', async () => {
+      const channel = createMockFeishuChannel();
+      const store = { listIds: vi.fn().mockResolvedValue([]) } as unknown as NonNullable<ChannelSetupContext['goalStore']>;
+      const hostContext = { projectManager: { resolveCwd: () => ({}), getWorkspaceDir: () => '/fixture-project' } } as any;
+      const globalHandler = createControlHandler(hostContext);
+      const context = createFeishuSetupContext({ goalStore: store, controlHandler: globalHandler, controlHandlerContext: hostContext });
+      await FEISHU_WIRED_DESCRIPTOR.setup!(channel, {}, context);
+      const [[userHandler]] = channel.onControl.mock.calls;
+      const command = { type: 'goal' as const, chatId: 'chat', actorId: 'actual-user', data: { args: ['list'] } };
+      expect((await userHandler(command)).success).toBe(true);
+      expect((await globalHandler(command)).message).toContain('当前不可用');
+      expect(store.listIds).toHaveBeenCalledTimes(1);
     });
 
     it('should push instruction to agent via InputMessageRouter', async () => {
