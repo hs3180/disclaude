@@ -2,11 +2,12 @@ import { GoalRevisionConflictError, type GoalRecord } from '../../goals/goal-sto
 import type { CommandHandler } from '../types.js';
 
 const usage = [
+  '`/goal <目标> | <验收要求1> | <验收要求2>` 直接启动执行（需启用原生执行器；未写验收要求时以目标本身为验收）',
   '`/goal list [页码]` 查看本聊天当前项目的目标',
   '`/goal show <ID>` 查看目标、版本及验收要求',
-  '`/goal create <目标> | <验收要求1> | <验收要求2>` 保存草稿',
+  '`/goal create <目标> | <验收要求1> | <验收要求2>` 仅保存草稿',
   '`/goal edit <ID> <版本> <目标> | <验收要求1> | <验收要求2>` 修订目标和验收要求',
-  '`/goal start|pause|resume|stop <ID> <版本>` 显式控制执行（需启用原生执行器）',
+  '停止执行请直接使用 `/stop`',
 ].join('\n');
 const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const labels = { draft: '草稿（尚未启动）', active: '已激活', paused: '已暂停', blocked: '有阻塞', completed: '已完成', abandoned: '已停止' };
@@ -53,39 +54,30 @@ export const handleGoal: CommandHandler<'goal'> = async (command, context) => {
         ].join('\n\n');
       return { success: !unreadable, message: message + (unreadable ? '\n\n部分 Goal 记录暂不可读取，请联系维护者核查。' : '') };
     }
-    if (['start', 'pause', 'resume', 'stop'].includes(action)) {
-      const revision = Number(args[2]);
-      if (args.length !== 3 || !id || !idPattern.test(id) || !Number.isSafeInteger(revision) || revision < 1) {
-        return { success: false, message: usage };
+    if (action !== 'list' && action !== 'show' && action !== 'create' && action !== 'edit') {
+      // Single-entry launch (review #5603 direction): `/goal <prompt>` saves the
+      // record and activates it in one step; stopping reuses /stop.
+      const parts = args.join(' ').split('|').map(part => part.trim());
+      if (parts.length > 101 || parts.some(part => !part)) { return { success: false, message: usage }; }
+      if (!context.goalExecution) {
+        return { success: false, message: '当前入口尚未启用 Goal 原生执行器，未启动执行；可用 /goal create 保存草稿。' };
       }
-      if (!context.goalExecution) { return { success: false, message: '当前入口尚未启用 Goal 原生执行器，未启动或改变执行状态。' }; }
       const { sourceMessageId, threadRootId } = command;
       if (typeof sourceMessageId !== 'string' || !sourceMessageId.trim()) {
-        return { success: false, message: '缺少原始消息上下文，请在聊天中直接发送 Goal 控制命令。' };
+        return { success: false, message: '缺少原始消息上下文，请在聊天中直接发送 Goal 命令。' };
       }
-      const previous = await store.get(id);
-      if (!previous || !belongs(previous)) { return { success: false, message: '当前聊天和项目中找不到此 Goal。' }; }
-      if (previous.revision !== revision) { throw new GoalRevisionConflictError(); }
-      if ((action === 'start' || action === 'resume') && resolution.reason === 'bound-missing') {
-        return { success: false, message: '绑定的项目目录暂不可用，未启动执行。请先恢复目录；仍可查看、暂停或停止 Goal。' };
+      if (resolution.reason === 'bound-missing') {
+        return { success: false, message: '绑定的项目目录暂不可用，未启动执行。请先恢复目录；草稿查看与修订不受影响。' };
       }
-      const request = { goalId: id, expectedRevision: revision, chatId, projectRoot,
+      const [objective, ...rest] = parts;
+      const draft = await store.create({ chatId, projectRoot, objective,
+        acceptance: rest.length > 0 ? rest : [objective] });
+      const request = { goalId: draft.id, expectedRevision: draft.revision, chatId, projectRoot,
         actorId, sourceMessageId, ...(threadRootId ? { threadRootId } : {}) };
-      let record: GoalRecord;
-      if (action === 'start' || action === 'resume') {
-        ({ record } = await context.goalExecution.start(request, action === 'start' ? 'activate' : 'resume'));
-      } else {
-        const result = await context.goalExecution.control(request, action as 'pause' | 'stop');
-        ({ record } = result);
-        void result.settlement?.catch(() => context.logger?.warn({ goalId: id }, 'Goal cancellation settlement could not be confirmed'));
-      }
-      if (record.id !== id || !belongs(record)) { throw new Error('Unexpected Goal scope'); }
-      const notice = action === 'start' ? '已启动 Goal。' : action === 'resume' ? '已恢复 Goal。'
-        : action === 'pause' ? '已记录暂停；如有正在执行的工作，等待其结算后才能恢复。'
-          : '已记录停止；如有正在执行的工作，仍需等待取消结算。';
-      return { success: true, message: `${notice}\n\n${format(record)}` };
+      const { record } = await context.goalExecution.start(request, 'activate');
+      if (record.id !== draft.id || !belongs(record)) { throw new Error('Unexpected Goal scope'); }
+      return { success: true, message: `已启动 Goal；停止请使用 /stop。\n\n${format(record)}` };
     }
-    if (action !== 'create' && action !== 'show' && action !== 'edit') { return { success: false, message: usage }; }
     if (action !== 'create' && (!id || !idPattern.test(id))) { return { success: false, message: usage }; }
     if (action === 'show') {
       if (args.length !== 2) { return { success: false, message: usage }; }

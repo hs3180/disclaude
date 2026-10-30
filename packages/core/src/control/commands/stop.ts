@@ -14,11 +14,15 @@ export const handleStop: CommandHandler = (
   const stopped = command.threadRootId && context.agentPool.stopThread
     ? context.agentPool.stopThread(command.chatId, command.threadRootId)
     : context.agentPool.stop(command.chatId);
+  // #5212: /stop is also the single way to stop a running Goal launched by /goal <prompt>.
+  const goalStopped = context.goalExecution?.stopForChat?.(command.chatId, command.threadRootId) ?? false;
 
-  if (stopped) {
+  if (stopped || goalStopped) {
     return {
       success: true,
-      message: '⏹️ **已发送停止信号**\n\n正在终止当前执行；会话保持活跃，退出后可继续发送消息。',
+      message: goalStopped
+        ? '⏹️ **已发送停止信号**\n\n正在终止当前执行并停止本聊天运行中的 Goal；会话保持活跃，退出后可继续发送消息。'
+        : '⏹️ **已发送停止信号**\n\n正在终止当前执行；会话保持活跃，退出后可继续发送消息。',
     };
   } else {
     return {

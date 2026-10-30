@@ -41,6 +41,8 @@ export interface ControlHandlerContext {
   goalExecution?: {
     start(request: GoalCommandExecutionRequest, action: 'activate' | 'resume'): Promise<{ record: GoalRecord }>;
     control(request: GoalCommandExecutionRequest, action: 'pause' | 'stop'): Promise<{ record: GoalRecord; settlement?: Promise<unknown> }>;
+    /** Best-effort stop of the chat's running Goal without a revision token; `/stop` uses this (#5212). */
+    stopForChat?(chatId: string, threadRootId?: string): boolean;
   };
   /** Optional host access policy; help uses exactly the same decision as dispatch. */
   isCommandAllowed?: (command: ControlCommand) => boolean;

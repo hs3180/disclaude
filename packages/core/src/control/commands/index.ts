@@ -34,7 +34,7 @@ export const commandRegistry: CommandDefinition[] = [
     showInHelp: (c, command) => c.agentPool.canSteer?.(command.chatId, command.threadRootId) === true },
   { type: 'issue', handler: handleIssue as CommandDefinition['handler'], description: '一键上报本会话最近一次失败为 GitHub issue', usage: '/issue',
     isAvailable: c => !!c.failureRegistry },
-  { type: 'goal', handler: handleGoal as CommandDefinition['handler'], description: '保存、查看和修订本聊天当前项目的目标草稿', usage: '/goal [list|show|create|edit]',
+  { type: 'goal', handler: handleGoal as CommandDefinition['handler'], description: '一键启动或维护本聊天当前项目的目标', usage: '/goal [list|show|create|edit|<目标> | <验收…>]',
     isAvailable: c => !!c.goalStore && !!c.projectManager },
 ];
 

@@ -127,6 +127,42 @@ describe('handleStop', () => {
     expect(result.success).toBe(true);
     expect(context.agentPool.stop).toHaveBeenCalledWith('test-chat-id');
   });
+
+  it('should stop the running Goal launched by /goal <prompt> (#5212)', () => {
+    const stopForChat = vi.fn(() => true);
+    const context = createMockContext({
+      agentPool: { reset: vi.fn(), stop: vi.fn(() => false) },
+      goalExecution: { start: vi.fn(), control: vi.fn(), stopForChat },
+    });
+
+    const result = handleStop({ type: 'stop', chatId: 'test-chat-id' }, context);
+
+    if (result instanceof Promise) {
+      throw new Error('Expected synchronous result');
+    }
+
+    expect(result.success).toBe(true);
+    expect(result.message).toContain('已发送停止信号');
+    expect(result.message).toContain('Goal');
+    expect(stopForChat).toHaveBeenCalledWith('test-chat-id', undefined);
+  });
+
+  it('should not report a Goal stop when no Goal is running (#5212)', () => {
+    const stopForChat = vi.fn(() => false);
+    const context = createMockContext({
+      agentPool: { reset: vi.fn(), stop: vi.fn(() => false) },
+      goalExecution: { start: vi.fn(), control: vi.fn(), stopForChat },
+    });
+
+    const result = handleStop({ type: 'stop', chatId: 'test-chat-id' }, context);
+
+    if (result instanceof Promise) {
+      throw new Error('Expected synchronous result');
+    }
+
+    expect(result.message).toContain('没有正在进行的响应');
+    expect(result.message).not.toContain('Goal');
+  });
 });
 
 describe('getHandler for stop command', () => {
