@@ -173,6 +173,28 @@ describe('parseArgs', () => {
     const result = parseArgs(['start', '--config', '/first.yaml', '--config', '/second.yaml']);
     expect(result.configPath).toBe('/second.yaml');
   });
+
+  it('should parse history query with all options (Issue #5603)', () => {
+    const result = parseArgs(['history', 'query', '--chat', 'oc_123', '--days', '3', '--limit', '50', '--format', 'text']);
+    expect(result.command).toBe('history');
+    expect(result.historyQuery).toEqual({ chatId: 'oc_123', days: 3, limit: 50, format: 'text' });
+  });
+
+  it('should default history query to json output with no bounds', () => {
+    const result = parseArgs(['history', 'query', '--chat', 'oc_123']);
+    expect(result.historyQuery).toEqual({ chatId: 'oc_123', format: 'json' });
+  });
+
+  it('should flag history without a query subcommand', () => {
+    const result = parseArgs(['history']);
+    expect(result.command).toBe('history');
+    expect(result.historyQuery).toBeUndefined();
+  });
+
+  it('should ignore invalid history numeric and format values', () => {
+    const result = parseArgs(['history', 'query', '--chat', 'c', '--days', 'abc', '--limit', '-1', '--format', 'yaml']);
+    expect(result.historyQuery).toEqual({ chatId: 'c', format: 'json' });
+  });
 });
 
 // ============================================================================

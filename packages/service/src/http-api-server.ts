@@ -257,6 +257,11 @@ interface Route {
   pattern: RegExp;
   paramNames: string[];
   handler: RouteHandler;
+  /**
+   * Issue #5603: require the Bearer token even on GET. Reserved for read
+   * routes whose payload is conversation content — health checks stay exempt.
+   */
+  authRequired?: boolean;
 }
 
 /**
@@ -289,6 +294,9 @@ export class HttpApiServer {
 
   private sendInteractiveHandler?: SendInteractiveHandler;
   private listTempChatsHandler?: ListTempChatsHandler;
+
+  /** Issue #5603: structured read-only chat history provider. */
+  private historyQueryHandler?: (options: { chatId: string; days?: number; limit?: number }) => Promise<unknown>;
   private uploadImageHandler?: UploadImageHandler;
   private markChatRespondedHandler?: MarkChatRespondedHandler;
   private selfSentRegistrar?: SelfSentRegistrar;
@@ -573,7 +581,7 @@ export class HttpApiServer {
   /**
    * Register a route.
    */
-  private addRoute(method: string, pattern: string, handler: RouteHandler): void {
+  private addRoute(method: string, pattern: string, handler: RouteHandler, authRequired?: boolean): void {
     // Convert pattern like "/api/status" or "/api/chat/:chatId" to regex
     const paramNames: string[] = [];
     const regexStr = pattern.replace(/:(\w+)/g, (_, name) => {
@@ -582,7 +590,7 @@ export class HttpApiServer {
     });
     const regex = new RegExp(`^${regexStr}$`);
 
-    this.routes.push({ method, pattern: regex, paramNames, handler });
+    this.routes.push({ method, pattern: regex, paramNames, handler, ...(authRequired ? { authRequired } : {}) });
   }
 
   /**
@@ -617,6 +625,40 @@ export class HttpApiServer {
     this.addRoute('POST', '/api/push', this.handlePush.bind(this));
     // Issue #4031: SSE endpoint for topic group message notifications
     this.addRoute('GET', '/api/topic-stream', this.handleTopicStream.bind(this));
+    // Issue #5603: read-only structured chat history for agents (CLI parity).
+    // GET but authRequired: the payload is conversation content, not a health check.
+    this.addRoute('GET', '/api/history/query', this.handleHistoryQuery.bind(this), true);
+  }
+
+  /** Issue #5603: structured read-only chat history provider. */
+  setHistoryQueryHandler(handler: (options: { chatId: string; days?: number; limit?: number }) => Promise<unknown>): void {
+    this.historyQueryHandler = handler;
+  }
+
+  private async handleHistoryQuery(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.historyQueryHandler) {
+      this.sendJson(res, 503, { ok: false, message: 'history query handler not configured' });
+      return;
+    }
+    const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
+    const chatId = url.searchParams.get('chat')?.trim();
+    if (!chatId) {
+      this.sendJson(res, 400, { ok: false, message: 'chat query parameter is required' });
+      return;
+    }
+    const days = Number.parseInt(url.searchParams.get('days') ?? '', 10);
+    const limit = Number.parseInt(url.searchParams.get('limit') ?? '', 10);
+    try {
+      const result = await this.historyQueryHandler({
+        chatId,
+        ...(Number.isInteger(days) && days > 0 ? { days } : {}),
+        ...(Number.isInteger(limit) && limit > 0 ? { limit } : {}),
+      });
+      this.sendJson(res, 200, { ok: true, ...result as object });
+    } catch (err) {
+      logger.error({ err }, 'history query handler error');
+      this.sendJson(res, 500, { ok: false, message: err instanceof Error ? err.message : 'history query failed' });
+    }
   }
 
   private async handleChannelCapabilities(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -648,8 +690,10 @@ export class HttpApiServer {
       }
 
       // API Token authentication for write routes (Issue #3857 Phase 2)
-      // GET routes (health check) are unauthenticated; all other routes require Bearer token
-      if (req.method !== 'GET' && this.config.apiToken) {
+      // GET routes (health check) are unauthenticated; all other routes require
+      // Bearer token. Issue #5603: routes flagged authRequired carry sensitive
+      // read payloads (chat history) and are token-gated despite being GET.
+      if (this.config.apiToken && (req.method !== 'GET' || route.authRequired)) {
         const authHeader = req.headers.authorization;
         const expected = `Bearer ${this.config.apiToken}`;
         const authBuf = Buffer.from(authHeader ?? '');
