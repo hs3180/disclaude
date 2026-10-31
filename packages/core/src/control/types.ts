@@ -19,6 +19,7 @@ export interface GoalCommandExecutionRequest {
   projectRoot: string;
   actorId: string;
   sourceMessageId: string;
+  chatType?: 'p2p' | 'group' | 'topic';
   threadRootId?: string;
 }
 

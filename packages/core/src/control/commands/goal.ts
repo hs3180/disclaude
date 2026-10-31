@@ -28,7 +28,7 @@ export const handleGoal: CommandHandler<'goal'> = async (command, context) => {
   if (!context.goalExecution) {
     return { success: false, message: '当前入口尚未启用 Goal 原生执行器，未启动执行。' };
   }
-  const { sourceMessageId, threadRootId } = command;
+  const { sourceMessageId, threadRootId, chatType } = command;
   if (typeof sourceMessageId !== 'string' || !sourceMessageId.trim()) {
     return { success: false, message: '缺少原始消息上下文，请在聊天中直接发送 Goal 命令。' };
   }
@@ -42,7 +42,7 @@ export const handleGoal: CommandHandler<'goal'> = async (command, context) => {
     const draft = await store.create({ chatId, projectRoot, objective,
       acceptance: rest.length > 0 ? rest : [objective] });
     const request = { goalId: draft.id, expectedRevision: draft.revision, chatId, projectRoot,
-      actorId, sourceMessageId, ...(threadRootId ? { threadRootId } : {}) };
+      actorId, sourceMessageId, ...(chatType ? { chatType } : {}), ...(threadRootId ? { threadRootId } : {}) };
     const { record } = await context.goalExecution.start(request, 'activate');
     if (record.id !== draft.id || record.chatId !== chatId || record.projectRoot !== projectRoot) {
       throw new Error('Unexpected Goal scope');
