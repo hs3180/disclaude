@@ -9,6 +9,7 @@ export interface NativeGoalSource {
   projectRoot: string;
   actorId: string;
   sourceMessageId: string;
+  chatType?: 'p2p' | 'group' | 'topic';
   threadRootId?: string;
 }
 export interface NativeGoalExecutorOptions {
@@ -63,7 +64,7 @@ export class NativeGoalExecutor {
     signal.addEventListener('abort', stop, { once: true });
     try {
       const task = runner.start({ chatId: owner.chatId, senderOpenId: owner.actorId, sourceMessageId: owner.sourceMessageId,
-        workingDirectory: owner.projectRoot, ...(owner.threadRootId ? { threadRootId: owner.threadRootId } : {}),
+        workingDirectory: owner.projectRoot, ...(owner.chatType ? { chatType: owner.chatType } : {}), ...(owner.threadRootId ? { threadRootId: owner.threadRootId } : {}),
         task: ['按此 Goal 的最新要求推进一轮，完成实际工作并核对产物。',
           '退出前调用 goal_report 提交进展、产物和逐项验收证据；criterion 从 0 开始。',
           '有后续工作用 continue；需要用户决策用 blocked；全部条件都有证据才用 completed。',

@@ -170,3 +170,6 @@ export { type DeliveryHealth } from './health-types.js';
 
 // Messaging module (Issue #513, Issue #515)
 export * from './messaging/index.js';
+
+// Goal runtime host (#5212): one service-owned execution capability
+export { GoalExecutionService, type GoalExecutionServiceOptions } from './goals/goal-execution-service.js';
