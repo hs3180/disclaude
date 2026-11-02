@@ -46,6 +46,7 @@ function showHelp() {
       'Commands:',
       '  start [options]    Start disclaude',
       '  history query      Read locally available chat history (read-only, Issue #5603)',
+      '  board-report write Report task artifacts/review proposals (agents; JSON payload on stdin)',
       '  channel <command>  Send channel messages through the service',
       '  wechat <command>   Log in to personal WeChat or diagnose saved login',
       '  browser <cmd>      Inspect coordinated browser control',
@@ -92,6 +93,12 @@ const ROUTES = {
     keepCommand: true,
     jsonOutput: !['help', '--help', '-h'].includes(args[1])
       && !(args.includes('--format') && args[args.indexOf('--format') + 1] === 'text'),
+  },
+  // Agent work/review proposals without injected collector tools (#5560).
+  'board-report': {
+    file: resolve(ROOT, 'node_modules/@disclaude/service/dist/cli.js'),
+    keepCommand: true,
+    jsonOutput: !['help', '--help', '-h'].includes(args[1]),
   },
   channel: {
     file: resolve(ROOT, 'node_modules/@disclaude/channel-cli/dist/cli.js'),
