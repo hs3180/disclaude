@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { TaskClaimLease, TaskClaimSnapshot, TaskClaimStore } from '@disclaude/core';
+import type { TaskAdmissionStore, TaskClaimLease, TaskClaimSnapshot, TaskClaimStore } from '@disclaude/core';
 
 export interface ClaimedExecution<T> {
   readonly id: string;
@@ -15,7 +15,7 @@ export interface ClaimedTaskPorts<T> {
    */
   ensureProjection(claim: Readonly<TaskClaimSnapshot>): Promise<void>;
   /** Called at most once. Throwing leaves execution uncertain, never replayed. */
-  start(owner: string): ClaimedExecution<T>;
+  start(owner: string, signal?: AbortSignal): ClaimedExecution<T> | Promise<ClaimedExecution<T>>;
 }
 
 /** Host-only prepared attempt; IDs/credentials are generated before any I/O.
@@ -36,8 +36,43 @@ export function prepareClaimedTask<T>(
     !Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || expectedRevision >= Number.MAX_SAFE_INTEGER) {
     throw new Error('Invalid canonical task claim or revision');
   }
-  const owner = randomUUID();
-  const lease: TaskClaimLease = { key, revision: expectedRevision + 1, owner, claimId: randomUUID() };
+  return ownClaimedTask(store, { key, revision: expectedRevision + 1, owner: randomUUID(), claimId: randomUUID() }, ports);
+}
+
+/** The durable variant saves its private lease before claim/projection I/O.
+ * A recovered dispatch can only look up the ACTUAL original native handle or
+ * settled result. Absence is uncertainty, never permission to start again.
+ */
+export async function prepareDurableClaimedTask<T>(options: {
+  admissions: TaskAdmissionStore; claims: Pick<TaskClaimStore, 'claim' | 'release'>;
+  operationKey: string; fingerprint: string; claimKey: string; expectedClaimRevision: number;
+  ports: ClaimedTaskPorts<T> & { recover(nativeId: string): Promise<ClaimedExecution<T> | undefined> };
+}): Promise<ReturnType<typeof prepareClaimedTask<T>>> {
+  const { admissions, ports } = options;
+  await ports.authorize();
+  const intent = await admissions.prepare(options.operationKey, options.fingerprint, options.claimKey, options.expectedClaimRevision);
+  const attempt = ownClaimedTask(options.claims, intent.claim, { ...ports, start: async (owner, signal) => {
+    const dispatch = await admissions.beginDispatch(options.operationKey);
+    signal?.throwIfAborted(); await ports.authorize(); signal?.throwIfAborted();
+    if (dispatch.dispatch) { return await ports.start(owner, signal); }
+    const id = dispatch.record.nativeId;
+    const recovered = id ? await ports.recover(id) : undefined;
+    if (!recovered || recovered.id !== id) { throw new Error('Original native admission needs reconciliation; work was not repeated'); }
+    return recovered;
+  } });
+  return { owner: attempt.owner, release: attempt.release, start: async signal => {
+    const native = await attempt.start(signal);
+    // The inner attempt owns this actual handle before persisting its receipt.
+    // Even a write failure retains physical cancellation/release settlement.
+    await admissions.confirmDispatch(options.operationKey, native.id);
+    return native;
+  } };
+}
+
+function ownClaimedTask<T>(
+  store: Pick<TaskClaimStore, 'claim' | 'release'>, savedLease: TaskClaimLease, ports: ClaimedTaskPorts<T>,
+): ReturnType<typeof prepareClaimedTask<T>> {
+  const lease = structuredClone(savedLease), { key, owner } = lease, expectedRevision = lease.revision - 1;
   let flight: Promise<ClaimedExecution<T>> | undefined;
   let execution: ClaimedExecution<T> | undefined;
   let startAttempted = false;
@@ -60,7 +95,7 @@ export function prepareClaimedTask<T>(
         await ports.ensureProjection(Object.freeze({ key, revision: lease.revision, owner }));
         await check(signal);
         startAttempted = true;
-        const started = ports.start(owner);
+        const started = await ports.start(owner, signal);
         if (!started || typeof started.id !== 'string' || !started.id || !started.completion || typeof started.stop !== 'function') {
           throw new Error('Native start returned no owned execution; reconcile the uncertain attempt');
         }
