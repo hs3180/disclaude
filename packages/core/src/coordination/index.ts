@@ -13,6 +13,11 @@ export { TaskResultOutbox, type TaskCompletionReport, type TaskResultRecord } fr
 export { readProjectArtifact, type ProjectArtifactIdentity } from './project-artifact.js';
 export { TaskAdmissionStore, type TaskAdmissionIntent } from './task-admission-store.js';
 
+// Durable task submission/review history with byte-verified approvals.
+export { TaskReviewStore, TaskReviewConflictError } from './task-review-store.js';
+export type { ReviewEvidence, TaskReviewDecision, TaskReviewRecord, TaskSubmission,
+  SubmitTaskArtifacts, ReviewTaskSubmission } from './task-review-store.js';
+
 // Task-bound public question/answer delivery state (#5584).
 export { TaskQuestionStore } from './task-question-store.js';
 export type { TaskQuestion, TaskQuestionAnswer, TaskQuestionRecord } from './task-question-store.js';
