@@ -68,8 +68,8 @@ vi.mock('./goals/goal-execution-service.js', () => ({
   GoalExecutionService: vi.fn(),
 }));
 
-vi.mock('./agents/factory.js', () => ({
-  AgentFactory: vi.fn(),
+vi.mock('./goals/goal-board-tools.js', () => ({
+  createGoalBoardTurnTools: vi.fn(),
 }));
 
 vi.mock('./messaging/adapters/feishu-message-builder.js', () => ({

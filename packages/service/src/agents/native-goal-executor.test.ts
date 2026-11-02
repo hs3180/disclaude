@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 
 const repo = fileURLToPath(new URL('../../../../', import.meta.url));
-it.each(['success', 'missing-report', 'native-failure', 'background', 'delivery', 'delivery-failure', 'cancel', 'close', 'foreign-scope', 'missing-directory', 'tool-bundle', 'tool-close', 'tool-stop', 'tool-stop-failure'])(
+it.each(['success', 'missing-report', 'native-failure', 'background', 'delivery', 'delivery-failure', 'cancel', 'close', 'foreign-scope', 'missing-directory', 'tool-bundle', 'tool-close', 'tool-stop', 'tool-stop-failure', 'assess-pass', 'assess-refusal'])(
   'executes an assessed native Goal turn through %s', scenario => {
     const root = mkdtempSync(join(tmpdir(), 'disclaude-native-goal-'));
     try {
@@ -27,7 +27,7 @@ it.each(['success', 'missing-report', 'native-failure', 'background', 'delivery'
         const project = join(root, 'project'); mkdirSync(project);
         const gate = () => { let release; const promise = new Promise(resolve => { release = resolve; }); return { promise, release }; };
         const admitted = gate(), parent = gate(), background = gate(), resumed = gate(), work = gate(), delivering = gate(), delivery = gate();
-        const calls = [], sends = []; let closed = 0, hookCalls = 0, toolCreated = 0, toolClosed = 0, toolStopped = 0;
+        const calls = [], sends = []; let closed = 0, hookCalls = 0, toolCreated = 0, toolClosed = 0, toolStopped = 0, assessed = 0;
         getProvider('claude').queryStream = (input, options) => {
           const parked = gate(); calls.push(options);
           return { handle: { close: () => { closed++; parked.release(); work.release(); background.release(); resumed.release(); }, cancel: () => {} },
@@ -64,12 +64,15 @@ it.each(['success', 'missing-report', 'native-failure', 'background', 'delivery'
               await parked.promise;
             })() };
         };
-        const executor = new NativeGoalExecutor({ ...(scenario.startsWith('tool-') ? {createTurnTools: (snapshot, owner) => {
+        const executor = new NativeGoalExecutor({ ...(['tool-','assess-'].some(prefix => scenario.startsWith(prefix)) ? {createTurnTools: (snapshot, owner) => {
           toolCreated++; assert.equal(snapshot.revision,2); assert.equal(owner.actorId,'actual-actor');
-          return {tools:[{name:'host_goal_probe',description:'Host fixture probe',inputSchema:{type:'object',additionalProperties:false},
+          return {tools: scenario.startsWith('tool-') ? [{name:'host_goal_probe',description:'Host fixture probe',inputSchema:{type:'object',additionalProperties:false},
             outputSchema:{type:'object',properties:{bound:{type:'boolean'}},required:['bound'],additionalProperties:false},
-            execute:()=>Promise.resolve({bound:true})}], stop:()=>{toolStopped++;if(scenario==='tool-stop-failure')throw new Error('private cancellation detail');},
-            close:async()=>{toolClosed++;if(scenario==='tool-close')await delivery.promise;}};
+            execute:()=>Promise.resolve({bound:true})}] : [], stop:()=>{toolStopped++;if(scenario==='tool-stop-failure')throw new Error('private cancellation detail');},
+            close:async()=>{toolClosed++;if(scenario==='tool-close')await delivery.promise;},
+            // Assess joins after every owned resource settled: close already ran.
+            assess: async report => { assessed++; assert.equal(report.outcome,'completed'); assert.equal(toolClosed,1); assert.equal(closed,1);
+              if(scenario==='assess-refusal') throw new Error('assess refused completion'); }};
         }} : {}), runtimeOptions: () => ({ model: 'selected-offline',
           configureQueryOptions: options => { hookCalls++; return options; } }),
           callbacks: (source, snapshot) => {
@@ -110,13 +113,15 @@ it.each(['success', 'missing-report', 'native-failure', 'background', 'delivery'
             assert.ok((await executor.runTurn(goal, source, controller.signal).catch(error => error)).message.includes('closing'));
           }
           const outcome = await result;
-          if (['success', 'background', 'delivery','tool-bundle','tool-close'].includes(scenario)) assert.equal(outcome.report.outcome, 'completed');
+          if (['success', 'background', 'delivery','tool-bundle','tool-close','assess-pass'].includes(scenario)) assert.equal(outcome.report.outcome, 'completed');
           else assert.ok(outcome.error);
           if (scenario === 'missing-report') assert.ok(outcome.error.message.includes('without an assessment'));
+          if (scenario === 'assess-refusal') assert.ok(outcome.error.message.includes('assess refused completion'));
           assert.equal(executor.isBusy('actual-chat'), false);
           assert.equal(calls.length, ['foreign-scope', 'missing-directory'].includes(scenario) ? 0 : 1);
           assert.equal(closed, calls.length); assert.equal(hookCalls, calls.length);
           if(scenario.startsWith('tool-')){assert.equal(toolCreated,1);assert.equal(toolClosed,1);assert.equal(toolStopped,scenario.startsWith('tool-stop')?1:0);}
+          if(scenario.startsWith('assess-')){assert.equal(toolCreated,1);assert.equal(toolClosed,1);assert.equal(toolStopped,0);assert.equal(assessed,1);}
           if (calls.length) assert.equal(readFileSync(join(project, 'artifact.txt'), 'utf8'), 'owned-write');
           assert.ok(sends.every(send => send.chat === 'actual-chat' && send.topic === 'actual-topic'));
           console.log('native-goal-executor: passed');
