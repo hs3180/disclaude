@@ -46,6 +46,8 @@ import type { MentionDetector } from './mention-detector.js';
 import { evaluateMessageFilters } from './message-filters.js';
 import { FeishuPrivateInput } from './private-input.js';
 import { FeishuAgentInput } from './agent-input.js';
+import { FeishuTaskQuestionCards } from './task-question-cards.js';
+import type { TaskQuestionFlowPorts } from '../../agents/task-question-flow.js';
 import { FeishuIssueReport } from './issue-report.js';
 import { FeishuPrivateWorkflows, type PrivateWorkflowRequest } from './private-workflows.js';
 import { tryHandleSlashCommand, tryHandleGuidance } from './command-router.js';
@@ -210,6 +212,8 @@ export class MessageHandler {
   private tenantAccessToken: string;
   private readonly privateInput?: FeishuPrivateInput;
   private agentInput?: FeishuAgentInput;
+  private taskQuestionCards?: FeishuTaskQuestionCards;
+  private taskQuestionHost?: { appId: string; ports: Omit<TaskQuestionFlowPorts, 'send' | 'reconcileCard'> };
   private issueReport?: FeishuIssueReport;
   private readonly issueClient?: () => GitHubIssueClient | undefined;
   private welcomeService?: WelcomeService;
@@ -219,6 +223,24 @@ export class MessageHandler {
   async requestAgentInput(request: import('@disclaude/core').AgentInputRequest, context: import('@disclaude/core').AgentInputContext): Promise<void> {
     if (!this.agentInput) { throw new Error('Feishu input channel is unavailable'); }
     await this.agentInput.request(request, context);
+  }
+
+  configureTaskQuestions(appId: string, ports: Omit<TaskQuestionFlowPorts, 'send' | 'reconcileCard'>): void {
+    if (this.taskQuestionHost) { throw new Error('Task question runtime is already configured'); }
+    this.taskQuestionHost = { appId, ports };
+    if (this.client) { this.taskQuestionCards = new FeishuTaskQuestionCards(this.client, appId, ports); }
+  }
+  requestTaskQuestion(question: import('@disclaude/core').TaskQuestion): Promise<import('@disclaude/core').TaskQuestionRecord> {
+    if (!this.isRunning() || !this.taskQuestionCards) { return Promise.reject(new Error('Feishu task questions are unavailable')); }
+    return this.taskQuestionCards.ask(question);
+  }
+  reconcileTaskQuestionWake(id: string): Promise<import('@disclaude/core').TaskQuestionRecord> {
+    if (!this.isRunning() || !this.taskQuestionCards) { return Promise.reject(new Error('Feishu task questions are unavailable')); }
+    return this.taskQuestionCards.reconcileWake(id);
+  }
+  async drainTaskQuestions(): Promise<void> {
+    const cards = this.taskQuestionCards;
+    if (cards) { await cards.close(); if (this.taskQuestionCards === cards) { this.taskQuestionCards = undefined; } }
   }
 
   /** Issue #5400: send the /issue confirmation card for the chat's last failure. */
@@ -274,9 +296,11 @@ export class MessageHandler {
    * Initialize the handler with client.
    */
   initialize(client: lark.Client): void {
+    if (this.taskQuestionCards) { throw new Error('Drain task questions before replacing the Feishu client'); }
     this.client = client;
     this.agentInput?.close();
     this.agentInput = new FeishuAgentInput(client);
+    if (this.taskQuestionHost) { this.taskQuestionCards = new FeishuTaskQuestionCards(client, this.taskQuestionHost.appId, this.taskQuestionHost.ports); }
     this.issueReport?.close();
     this.issueReport = new FeishuIssueReport(client, this.issueClient ?? (() => undefined));
     this.controlHandler = this.getHasControlHandler();
@@ -464,6 +488,7 @@ export class MessageHandler {
    * Clear the client (on stop).
    */
   clearClient(): void {
+    if (this.taskQuestionCards) { throw new Error('Drain task questions before clearing the Feishu client'); }
     this.agentInput?.close();
     this.agentInput = undefined;
     this.issueReport?.close();
@@ -1514,6 +1539,10 @@ export class MessageHandler {
 
     // Parse actual Feishu event structure
     const rawData = data as Record<string, unknown>;
+    if (FeishuTaskQuestionCards.isCallback(rawData)) {
+      return this.taskQuestionCards?.handleAuthenticatedCallback(rawData)
+        ?? { toast: { type: 'info', content: '任务反馈暂不可用；原问题和已保存的回答会保留。' } };
+    }
     if (FeishuAgentInput.isCallback(rawData)) {
       void this.agentInput?.submit(rawData).catch(() => logger.warn('Agent input callback could not be handled'));
       return;

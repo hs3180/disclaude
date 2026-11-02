@@ -13,6 +13,7 @@ export interface AgentTaskRequest {
   chatId: string;
   sourceMessageId: string;
   senderOpenId: string;
+  chatType?: 'p2p' | 'group' | 'topic';
   threadRootId?: string;
   replyRootId?: string | null;
 }
@@ -55,6 +56,7 @@ export class AgentTaskRunner {
       || !isAbsolute(request.workingDirectory)
       || !requiredText(request.chatId, 512) || !requiredText(request.sourceMessageId, 512)
       || !requiredText(request.senderOpenId, 512)
+      || (request.chatType !== undefined && !['p2p', 'group', 'topic'].includes(request.chatType))
       || (request.threadRootId !== undefined && !requiredText(request.threadRootId, 512))
       || (request.replyRootId !== undefined && request.replyRootId !== null && !requiredText(request.replyRootId, 512))) {
       throw new Error('Invalid agent task or trusted source context');
@@ -100,6 +102,7 @@ export class AgentTaskRunner {
         if (stopped) { throw new Error('Agent task stopped before admission'); }
         await agent.processMessage({ chatId: input.chatId, payload: input.task,
           messageId: input.sourceMessageId, senderOpenId: input.senderOpenId,
+          ...(input.chatType ? { chatType: input.chatType } : {}),
           ...(input.threadRootId ? { threadRootId: input.threadRootId } : {}),
           ...(input.replyRootId !== undefined ? { replyRootId: input.replyRootId } : {}),
         });

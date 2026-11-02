@@ -35,6 +35,8 @@ import {
   resolveChannelCredential,
   ChatFailureRegistry,
   GoalStore,
+  resolveAgentPreset,
+  getProvider,
 } from '@disclaude/core';
 import crypto from 'node:crypto';
 import { DisclaudeService } from './service.js';
@@ -45,8 +47,11 @@ import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
 import { createChannelCallbacksFactory } from './utils/channel-handlers.js';
 import { ServiceTurnRecoveryStore } from './service-turn-recovery.js';
+import { GoalExecutionService } from './goals/goal-execution-service.js';
+import { AgentFactory } from './agents/factory.js';
 import { messageLogger } from './utils/message-logger.js';
 import { queryChatHistory } from './history/history-query.js';
+import { writeTaskReport } from './goals/task-report-inbox.js';
 import { DEFAULT_WECHAT_STATE_DIR } from './channels/wechat/state-store.js';
 import { WeChatRegistry } from './channels/wechat/registry.js';
 import { WeChatRegistrationRuntime } from './channels/wechat/runtime.js';
@@ -61,7 +66,7 @@ const logger = createLogger('DisclaudeServiceCLI');
  * Parse command line arguments.
  */
 interface CliOptions {
-  command: 'start' | 'help' | 'history';
+  command: 'start' | 'help' | 'history' | 'board-report';
   configPath?: string;
   /** Issue #3857 Phase 2: HTTP API port for external tool access */
   apiPort?: number;
@@ -69,6 +74,8 @@ interface CliOptions {
   apiToken?: string;
   /** Issue #5603: arguments of `disclaude history query`. */
   historyQuery?: { chatId: string; days?: number; limit?: number; format: 'json' | 'text' };
+  /** Agent work proposals reported without injected tools: `disclaude board-report write`. */
+  taskReport?: { write?: boolean; inbox?: string; kind?: string };
 }
 
 /** Generate a fresh in-memory credential for each startup unless explicitly configured. */
@@ -98,6 +105,18 @@ export function parseArgs(args: string[]): CliOptions {
     } else if (arg === 'history') {
       // Issue #5603: read-only history queries run without starting the service.
       options.command = 'history';
+    } else if (arg === 'board-report') {
+      // Agent work/review proposals reach the host through the CLI, not
+      // injected collector tools (#5560 review direction).
+      options.command = 'board-report';
+    } else if (options.command === 'board-report' && arg === 'write') {
+      options.taskReport = options.taskReport ?? {}; options.taskReport.write = true;
+    } else if (options.command === 'board-report' && options.taskReport?.write && arg === '--inbox') {
+      const value = args[++i];
+      if (value && !value.startsWith('-')) { options.taskReport.inbox = value; }
+    } else if (options.command === 'board-report' && options.taskReport?.write && arg === '--kind') {
+      const value = args[++i];
+      if (value === 'artifacts' || value === 'review') { options.taskReport.kind = value; }
     } else if (options.command === 'history' && arg === 'query') {
       options.historyQuery = options.historyQuery ?? { chatId: '', format: 'json' };
     } else if (options.command === 'history' && options.historyQuery !== undefined && arg === '--chat') {
@@ -215,6 +234,50 @@ export function validateWorkspaceDir(workspaceDir: string): WorkspaceValidationR
 }
 
 /**
+ * Agent work proposals (task artifacts, independent review verdicts) are
+ * delivered through this CLI write, not an injected collector tool: the
+ * reporting agent keeps its ordinary shell, the receipt is only a proposal,
+ * and the owning host pins identity, settlement and persistence. Payload JSON
+ * arrives on stdin so quoting can never corrupt it.
+ */
+async function runTaskReportCommand(options: CliOptions, readInput: () => Promise<string> = readStdinPayload): Promise<void> {
+  const report = options.taskReport;
+  if (!report?.write || !report.inbox || !report.kind) {
+    console.error('Usage: disclaude board-report write --inbox <absolute-inbox-path> --kind artifacts|review  < payload.json');
+    process.exit(1);
+  }
+  if (!report.inbox.startsWith('/')) {
+    console.error('Error: board-report --inbox must be an absolute path');
+    process.exit(1);
+  }
+  let payloadText: string;
+  try { payloadText = await readInput(); }
+  catch (error) {
+    console.error(`Error: ${error instanceof Error ? error.message : 'board-report input failed'}`);
+    process.exit(1);
+  }
+  let payload: unknown;
+  try { payload = JSON.parse(payloadText); } catch {
+    console.error('Error: board-report payload must be a single JSON object on stdin');
+    process.exit(1);
+  }
+  try {
+    const receipt = await writeTaskReport(report.inbox, report.kind as 'artifacts' | 'review', payload);
+    console.log(JSON.stringify({ ok: true, receipt }));
+  } catch (error) {
+    console.error(`Error: ${error instanceof Error ? error.message : 'board-report failed'}`);
+    process.exit(1);
+  }
+}
+async function readStdinPayload(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) { chunks.push(chunk as Buffer); }
+  const payload = Buffer.concat(chunks).toString('utf8');
+  if (Buffer.byteLength(payload) > 128 * 1024) { throw new Error('board-report payload exceeds the receipt format'); }
+  return payload;
+}
+
+/**
  * Issue #5603: run `disclaude history query` without starting the service.
  *
  * Read-only and process-local: no logger init, no PID lock, no agent stack.
@@ -271,6 +334,11 @@ export async function main(): Promise<void> {
 
   if (options.command === 'history') {
     await runHistoryCommand(options);
+    process.exit(0);
+  }
+
+  if (options.command === 'board-report') {
+    await runTaskReportCommand(options);
     process.exit(0);
   }
 
@@ -475,7 +543,7 @@ export async function main(): Promise<void> {
     agentPool: {
       reset: (chatId: string, skipContext?: boolean) => agentPool.reset(chatId, skipContext),
       resetProjectSessions: (chatId: string) => agentPool.resetProjectSessions(chatId),
-      isProjectBusy: (chatId: string) => agentPool.isProjectBusy(chatId),
+      isProjectBusy: (chatId: string) => agentPool.isProjectBusy(chatId) || (goalExecution?.isBusy(chatId) ?? false),
       stop: (chatId: string) => agentPool.stop(chatId),
       // Issue #4587 (part 3): thread-scoped reset/stop for commands typed
       // inside a topic-group thread — the pool's part-2 slots, previously
@@ -516,6 +584,7 @@ export async function main(): Promise<void> {
   // Issue #3801: Extract to avoid duplication and ensure consistent dependency injection.
   const channelSetupContext = {
     goalStore: new GoalStore(path.join(workspaceDir, '.disclaude', 'goals')),
+    goalExecution: undefined as ControlHandlerContext['goalExecution'],
     agentPool,
     controlHandler,
     controlHandlerContext,
@@ -547,6 +616,28 @@ export async function main(): Promise<void> {
     // Fallback for channels without a registered descriptor
     return createChannelCallbacksFactory(channel, logger)(chatId, threadRootId);
   };
+  // #5212: the only Goal runtime host. Feishu-only human commands reach it;
+  // the model-facing REST control endpoint never receives this capability.
+  const goalExecution = new GoalExecutionService({
+    store: channelSetupContext.goalStore, projectManager, logger,
+    isCommandAllowed: command => service.getChannelManager().resolveChannelForChatId(command.chatId)?.id === 'feishu' &&
+      (!controlHandlerContext.isCommandAllowed || controlHandlerContext.isCommandAllowed(command)),
+    callbacks: source => routerCallbacksFactory(source.chatId, source.threadRootId),
+    runtimeOptions: source => {
+      const presets = Config.getAgentPresets();
+      const selected = agentPool.getActiveAgentPreset(source.chatId, source.threadRootId);
+      const resolved = presets ? resolveAgentPreset(presets, selected?.name) : undefined;
+      if (resolved && !resolved.ok) { throw new Error('Selected Goal runtime is unavailable'); }
+      const preset = resolved?.ok ? structuredClone(resolved.preset) : undefined;
+      const options = { ...(preset ?? Config.getAgentConfig()), ...(preset ? { settings: preset } : {}),
+        turnRecovery, failureRecorder: (failure: import('@disclaude/core').ChatFailureRecord) => failureRegistry.record(failure),
+        messageBuilderOptions: createFeishuMessageBuilderOptions() };
+      const info = getProvider(options.agentBackend, options.settings).getInfo(AgentFactory.resolveConfig(options));
+      if (!info.available) { throw new Error('Selected Goal runtime is unavailable'); }
+      return options;
+    },
+  });
+  channelSetupContext.goalExecution = goalExecution;
   service.initInputMessageRouter(agentPool, routerCallbacksFactory);
 
   // Create ChannelLifecycleManager (Issue #1594 Phase 3)
@@ -586,6 +677,7 @@ export async function main(): Promise<void> {
     logger.info('Shutting down disclaude service...');
 
     try {
+      await goalExecution?.close();
       await agentPool.shutdownForServiceRestart({ drainTimeoutMs: 10_000, noticeTimeoutMs: 2_000 });
       await httpApiServer?.stop();
       await wechatRuntime?.stop();
