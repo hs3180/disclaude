@@ -77,6 +77,7 @@ vi.mock('./feishu/index.js', () => ({
     handleCardAction = vi.fn();
     initialize = vi.fn();
     clearClient = vi.fn();
+    drainTaskQuestions = vi.fn().mockResolvedValue(undefined);
   }),
   messageLogger: {
     init: vi.fn().mockResolvedValue(undefined),
