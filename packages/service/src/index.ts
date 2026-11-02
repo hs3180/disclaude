@@ -127,6 +127,8 @@ export { AgentTaskRunner, type AgentTaskRequest, type AgentTaskResult, type Agen
 // Issue #5603: shared read-only history backend for the CLI subcommand and REST route.
 export { queryChatHistory, type HistoryQueryOptions, type HistoryQueryResult, type HistoryMessage, type HistoryDay } from './history/history-query.js';
 export { BackgroundAgentTasks, type BackgroundAgentTaskHandle, type BackgroundAgentTaskOptions, type BackgroundAgentTaskRequest } from './agents/background-agent-tasks.js';
+export { NativeGoalExecutor, type NativeGoalSource, type NativeGoalExecutorOptions } from './agents/native-goal-executor.js';
+export type { NativeGoalReport } from './agents/goal-report-tool.js';
 export { ChatAgent } from './agents/chat-agent.js';
 export type { ChatAgentCallbacks, ChatAgentConfig } from './agents/types.js';
 
@@ -169,3 +171,6 @@ export { type DeliveryHealth } from './health-types.js';
 
 // Messaging module (Issue #513, Issue #515)
 export * from './messaging/index.js';
+
+// Goal runtime host (#5212): one service-owned execution capability
+export { GoalExecutionService, type GoalExecutionServiceOptions } from './goals/goal-execution-service.js';

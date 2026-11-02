@@ -42,7 +42,7 @@ describe('single-entry Goal launch via /goal <prompt> (#5212)', () => {
     expect(await store.get(id)).toMatchObject({ status: 'active', revision: 2, chatId: 'chat',
       objective: description[0], acceptance: [description[2], description[4]] });
     expect(execution.start).toHaveBeenCalledWith({ goalId: id, expectedRevision: 1, actorId: 'actual-user',
-      chatId: 'chat', projectRoot: root, sourceMessageId: 'actual-source' }, 'activate');
+      chatId: 'chat', projectRoot: root, sourceMessageId: 'actual-source', chatType: 'group' }, 'activate');
     expect(response.message).toContain(id);
   });
   it('treats a single-segment prompt as its own acceptance criterion', async () => {
