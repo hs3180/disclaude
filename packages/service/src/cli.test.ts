@@ -45,7 +45,16 @@ vi.mock('@disclaude/core', () => ({
   createControlHandler: vi.fn(),
   ProcessLock: vi.fn(),
   ProjectManager: vi.fn(),
+  resolveAgentPreset: vi.fn(),
+  getProvider: vi.fn(),
+  TaskResultOutbox: vi.fn(),
 }));
+
+// cli-main constructs background task ownership beside the agent pool; the
+// real agent chain (factory → chat-agent → SDK) is out of scope here.
+vi.mock('./agents/background-agent-tasks.js', () => ({ BackgroundAgentTasks: vi.fn() }));
+vi.mock('./agents/background-task-parent.js', () => ({ createTaskParentReporter: vi.fn() }));
+vi.mock('./agents/factory.js', () => ({ AgentFactory: vi.fn() }));
 
 vi.mock('./service.js', () => ({
   DisclaudeService: vi.fn(),

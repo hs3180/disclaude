@@ -37,3 +37,30 @@ operation index and unfinished workers are not automatically restored; the host
 must reconcile its service interruption journal and previously issued task IDs
 after restart. This component does not supply the default tool registration,
 inbox deduplication, current-policy UI or final platform acceptance for F5.
+
+## Default service wiring
+
+The default service owns one `BackgroundAgentTasks` instance beside the agent
+pool. Admission is Feishu-only and reuses current command policy, verified
+source input and Project checks: the authorize port re-resolves the chat's
+current Project binding and rejects when it no longer matches the admitted
+root, or the acting source lost permission. REST/system inputs do not gain
+user provenance. A child uses the runtime captured at admission; its original
+parent chat/topic uses that parent's current selected runtime for the later
+report.
+
+Results are saved under the workspace's `.disclaude/tasks/results`. The parent
+reporter awaits `processMessage` and checks `hasAdmittedInput`; an existing
+completion can also represent refused input, so the ordinary fire-and-forget
+system router is not an admission receipt. Reporting does not wait for parent
+execution or claim platform delivery. Reports contain no manufactured user
+identity or source capability, so they cannot independently authorize another
+source-gated subtask.
+
+Explicit parent stop/reset requests cancellation of its children; other topics
+keep their work. Project busy checks include background ownership, and shutdown
+drains children before closing the pool/channels. Unfinished jobs are not
+automatically replayed after restart; reconcile the service interruption
+journal and saved task IDs first. There is deliberately no injected model tool
+face: the model-facing entry follows the disclaude CLI + built-in skill
+pattern (#5603/#5611) and lands separately.
