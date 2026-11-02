@@ -64,6 +64,14 @@ vi.mock('./chat-session-pool.js', () => ({
   ChatSessionPool: vi.fn(),
 }));
 
+vi.mock('./goals/goal-execution-service.js', () => ({
+  GoalExecutionService: vi.fn(),
+}));
+
+vi.mock('./agents/factory.js', () => ({
+  AgentFactory: vi.fn(),
+}));
+
 vi.mock('./messaging/adapters/feishu-message-builder.js', () => ({
   createFeishuMessageBuilderOptions: vi.fn(),
 }));
@@ -203,6 +211,20 @@ describe('parseArgs', () => {
   it('should ignore invalid history numeric and format values', () => {
     const result = parseArgs(['history', 'query', '--chat', 'c', '--days', 'abc', '--limit', '-1', '--format', 'yaml']);
     expect(result.historyQuery).toEqual({ chatId: 'c', format: 'json' });
+  });
+
+  it('should parse board-report write with inbox and kind', () => {
+    const result = parseArgs(['board-report', 'write', '--inbox', '/abs/reports/op-1', '--kind', 'artifacts']);
+    expect(result.command).toBe('board-report');
+    expect(result.taskReport).toEqual({ write: true, inbox: '/abs/reports/op-1', kind: 'artifacts' });
+  });
+
+  it('should flag board-report without a write subcommand and ignore foreign kinds', () => {
+    const bare = parseArgs(['board-report']);
+    expect(bare.command).toBe('board-report');
+    expect(bare.taskReport).toBeUndefined();
+    const foreign = parseArgs(['board-report', 'write', '--inbox', '/abs/x', '--kind', 'notes']);
+    expect(foreign.taskReport).toEqual({ write: true, inbox: '/abs/x' });
   });
 });
 

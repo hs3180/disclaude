@@ -1,5 +1,20 @@
 # Claim before executing
 
+`prepareDurableClaimedTask` composes the same admission with private
+`TaskAdmissionStore` records. The host fingerprints the complete source, task,
+criteria and route. It saves the original owner/nonce before the claim RPC and
+uses that exact lease after a lost claim/projection acknowledgement or restart.
+Native start is granted only by a fresh persisted dispatch intent.
+
+If saving the actual native receipt fails, the current attempt still owns the
+handle: retrying its start only reconciles the receipt, and release waits for
+physical settlement. Recovered admitted work must come from the read-only
+`recover(nativeId)` port, which returns the actual original native handle or
+persisted settled result, never a new execution. Unknown dispatches, absent or
+mismatched receipts, and late permission loss retain the reservation for
+reconciliation. No automatic restart, lease expiry or model-provided identity
+is introduced.
+
 `prepareClaimedTask` is a host-only composition of the F7 reservation, board
 projection and existing worker start port. The service supplies a canonical,
 authorized task key and current revision. Each prepared attempt creates a fresh
