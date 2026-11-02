@@ -1,4 +1,4 @@
-import type { GoalRecord } from '@disclaude/core';
+import type { GoalRecord, ToolDefinition } from '@disclaude/core';
 import { AgentTaskRunner } from './agent-task-runner.js';
 import type { AgentCreateOptions } from './factory.js';
 import type { ChatAgentCallbacks } from './types.js';
@@ -16,6 +16,16 @@ export interface NativeGoalExecutorOptions {
   /** Trusted host selection; the model cannot select another runtime or source. */
   runtimeOptions?(goal: Readonly<GoalRecord>, source: Readonly<NativeGoalSource>): AgentCreateOptions;
   callbacks(source: Readonly<NativeGoalSource>, goal: Readonly<GoalRecord>): ChatAgentCallbacks;
+  createTurnTools?(goal: Readonly<GoalRecord>, source: Readonly<NativeGoalSource>): NativeGoalTurnTools;
+}
+export interface NativeGoalTurnTools {
+  tools: readonly ToolDefinition[];
+  /** Request cancellation of turn-owned work; must not throw from an event listener. */
+  stop?(): void;
+  /** Join owned tool work before returning an assessment. Detached work needs
+   * its own Goal/service lifetime owner rather than this turn's cleanup.
+   */
+  close(): Promise<void>;
 }
 
 /** Native turn port for the Goal controller. Authorization belongs to its host.
@@ -54,13 +64,19 @@ export class NativeGoalExecutor {
     signal.throwIfAborted();
     const collector = createGoalReportTool(goal);
     const runtime = this.options.runtimeOptions?.(structuredClone(goal), owner) ?? {};
+    const turnTools = this.options.createTurnTools?.(structuredClone(goal), owner);
     const runner = new AgentTaskRunner({ ...runtime, configureQueryOptions: options => {
       const configured = runtime.configureQueryOptions?.(options) ?? options;
       // This worker ends after one round; a later async answer cannot re-enter it.
-      return { ...configured, onAsyncUserInputAnswer: undefined, tools: [...(configured.tools ?? []), collector.tool] };
+      return { ...configured, onAsyncUserInputAnswer: undefined, tools: [...(configured.tools ?? []), ...(turnTools?.tools ?? []), collector.tool] };
     } });
     let cancel: (() => void) | undefined;
-    const stop = (): void => { collector.close(); cancel?.(); };
+    let toolsStopped = false, stopFailed = false;
+    const stop = (): void => {
+      collector.close();
+      if (!toolsStopped) { toolsStopped = true; try { turnTools?.stop?.(); } catch { stopFailed = true; } }
+      cancel?.();
+    };
     signal.addEventListener('abort', stop, { once: true });
     try {
       const task = runner.start({ chatId: owner.chatId, senderOpenId: owner.actorId, sourceMessageId: owner.sourceMessageId,
@@ -77,13 +93,14 @@ export class NativeGoalExecutor {
       if (signal.aborted) { stop(); }
       const result = await task.completion;
       signal.throwIfAborted();
+      if (stopFailed) { throw new Error('Goal tool cancellation was not confirmed; reconcile its owned work'); }
       if (result.outcome !== 'succeeded' || result.truncated) { throw new Error(result.error ?? 'Native Goal turn did not settle successfully'); }
       const report = collector.getReport();
       if (!report) { throw new Error('Native Goal turn settled without an assessment; work was not repeated'); }
       return report;
     } finally {
       collector.close(); signal.removeEventListener('abort', stop);
-      await runner.close();
+      try { await turnTools?.close(); } finally { await runner.close(); }
     }
   }
   close(): Promise<void> {
