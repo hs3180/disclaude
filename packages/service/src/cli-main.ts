@@ -35,6 +35,8 @@ import {
   resolveChannelCredential,
   ChatFailureRegistry,
   GoalStore,
+  resolveAgentPreset,
+  getProvider,
 } from '@disclaude/core';
 import crypto from 'node:crypto';
 import { DisclaudeService } from './service.js';
@@ -45,6 +47,8 @@ import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
 import { createChannelCallbacksFactory } from './utils/channel-handlers.js';
 import { ServiceTurnRecoveryStore } from './service-turn-recovery.js';
+import { GoalExecutionService } from './goals/goal-execution-service.js';
+import { AgentFactory } from './agents/factory.js';
 import { messageLogger } from './utils/message-logger.js';
 import { queryChatHistory } from './history/history-query.js';
 import { DEFAULT_WECHAT_STATE_DIR } from './channels/wechat/state-store.js';
@@ -475,7 +479,7 @@ export async function main(): Promise<void> {
     agentPool: {
       reset: (chatId: string, skipContext?: boolean) => agentPool.reset(chatId, skipContext),
       resetProjectSessions: (chatId: string) => agentPool.resetProjectSessions(chatId),
-      isProjectBusy: (chatId: string) => agentPool.isProjectBusy(chatId),
+      isProjectBusy: (chatId: string) => agentPool.isProjectBusy(chatId) || (goalExecution?.isBusy(chatId) ?? false),
       stop: (chatId: string) => agentPool.stop(chatId),
       // Issue #4587 (part 3): thread-scoped reset/stop for commands typed
       // inside a topic-group thread — the pool's part-2 slots, previously
@@ -516,6 +520,7 @@ export async function main(): Promise<void> {
   // Issue #3801: Extract to avoid duplication and ensure consistent dependency injection.
   const channelSetupContext = {
     goalStore: new GoalStore(path.join(workspaceDir, '.disclaude', 'goals')),
+    goalExecution: undefined as ControlHandlerContext['goalExecution'],
     agentPool,
     controlHandler,
     controlHandlerContext,
@@ -547,6 +552,28 @@ export async function main(): Promise<void> {
     // Fallback for channels without a registered descriptor
     return createChannelCallbacksFactory(channel, logger)(chatId, threadRootId);
   };
+  // #5212: the only Goal runtime host. Feishu-only human commands reach it;
+  // the model-facing REST control endpoint never receives this capability.
+  const goalExecution = new GoalExecutionService({
+    store: channelSetupContext.goalStore, projectManager, logger,
+    isCommandAllowed: command => service.getChannelManager().resolveChannelForChatId(command.chatId)?.id === 'feishu' &&
+      (!controlHandlerContext.isCommandAllowed || controlHandlerContext.isCommandAllowed(command)),
+    callbacks: source => routerCallbacksFactory(source.chatId, source.threadRootId),
+    runtimeOptions: source => {
+      const presets = Config.getAgentPresets();
+      const selected = agentPool.getActiveAgentPreset(source.chatId, source.threadRootId);
+      const resolved = presets ? resolveAgentPreset(presets, selected?.name) : undefined;
+      if (resolved && !resolved.ok) { throw new Error('Selected Goal runtime is unavailable'); }
+      const preset = resolved?.ok ? structuredClone(resolved.preset) : undefined;
+      const options = { ...(preset ?? Config.getAgentConfig()), ...(preset ? { settings: preset } : {}),
+        turnRecovery, failureRecorder: (failure: import('@disclaude/core').ChatFailureRecord) => failureRegistry.record(failure),
+        messageBuilderOptions: createFeishuMessageBuilderOptions() };
+      const info = getProvider(options.agentBackend, options.settings).getInfo(AgentFactory.resolveConfig(options));
+      if (!info.available) { throw new Error('Selected Goal runtime is unavailable'); }
+      return options;
+    },
+  });
+  channelSetupContext.goalExecution = goalExecution;
   service.initInputMessageRouter(agentPool, routerCallbacksFactory);
 
   // Create ChannelLifecycleManager (Issue #1594 Phase 3)
@@ -586,6 +613,7 @@ export async function main(): Promise<void> {
     logger.info('Shutting down disclaude service...');
 
     try {
+      await goalExecution?.close();
       await agentPool.shutdownForServiceRestart({ drainTimeoutMs: 10_000, noticeTimeoutMs: 2_000 });
       await httpApiServer?.stop();
       await wechatRuntime?.stop();
