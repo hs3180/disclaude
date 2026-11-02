@@ -35,6 +35,10 @@ import {
   resolveChannelCredential,
   ChatFailureRegistry,
   GoalStore,
+  resolveAgentPreset,
+  getProvider,
+  TaskResultOutbox,
+  type ChatType,
 } from '@disclaude/core';
 import crypto from 'node:crypto';
 import { DisclaudeService } from './service.js';
@@ -45,6 +49,9 @@ import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
 import { createChannelCallbacksFactory } from './utils/channel-handlers.js';
 import { ServiceTurnRecoveryStore } from './service-turn-recovery.js';
+import { BackgroundAgentTasks } from './agents/background-agent-tasks.js';
+import { createTaskParentReporter } from './agents/background-task-parent.js';
+import { AgentFactory, type AgentCreateOptions } from './agents/factory.js';
 import { messageLogger } from './utils/message-logger.js';
 import { queryChatHistory } from './history/history-query.js';
 import { DEFAULT_WECHAT_STATE_DIR } from './channels/wechat/state-store.js';
@@ -53,7 +60,7 @@ import { WeChatRegistrationRuntime } from './channels/wechat/runtime.js';
 import net from 'node:net';
 import path from 'node:path';
 import { homedir } from 'node:os';
-import { statSync } from 'node:fs';
+import { statSync, realpathSync } from 'node:fs';
 
 const logger = createLogger('DisclaudeServiceCLI');
 
@@ -473,16 +480,25 @@ export async function main(): Promise<void> {
   let shutdownFn: (() => Promise<void>) | undefined;
   const controlHandlerContext: ControlHandlerContext = {
     agentPool: {
-      reset: (chatId: string, skipContext?: boolean) => agentPool.reset(chatId, skipContext),
+      reset: (chatId: string, skipContext?: boolean) => {
+        backgroundTasks.stopForParent(chatId); agentPool.reset(chatId, skipContext);
+      },
       resetProjectSessions: (chatId: string) => agentPool.resetProjectSessions(chatId),
-      isProjectBusy: (chatId: string) => agentPool.isProjectBusy(chatId),
-      stop: (chatId: string) => agentPool.stop(chatId),
+      isProjectBusy: (chatId: string) => agentPool.isProjectBusy(chatId) || backgroundTasks.isBusy(chatId),
+      stop: (chatId: string) => {
+        const childStopped = backgroundTasks.stopForParent(chatId), parentStopped = agentPool.stop(chatId);
+        return parentStopped || childStopped;
+      },
       // Issue #4587 (part 3): thread-scoped reset/stop for commands typed
       // inside a topic-group thread — the pool's part-2 slots, previously
       // reachable only from the message path.
-      resetThread: (chatId, skipContext, threadRootId) =>
-        agentPool.reset(chatId, skipContext, threadRootId),
-      stopThread: (chatId, threadRootId) => agentPool.stop(chatId, threadRootId),
+      resetThread: (chatId, skipContext, threadRootId) => {
+        backgroundTasks.stopForParent(chatId, threadRootId); agentPool.reset(chatId, skipContext, threadRootId);
+      },
+      stopThread: (chatId, threadRootId) => {
+        const childStopped = backgroundTasks.stopForParent(chatId, threadRootId), parentStopped = agentPool.stop(chatId, threadRootId);
+        return parentStopped || childStopped;
+      },
       listAgentPresets: () => agentPool.listAgentPresets(),
       getActiveAgentPreset: (chatId, threadRootId) =>
         agentPool.getActiveAgentPreset(chatId, threadRootId),
@@ -549,6 +565,43 @@ export async function main(): Promise<void> {
   };
   service.initInputMessageRouter(agentPool, routerCallbacksFactory);
 
+  // Background task ownership for Feishu Codex app-server chats (#5576 redo
+  // on the #5574 host module): no injected model face — the entry surface
+  // follows the disclaude CLI + built-in skill pattern (#5603/#5611).
+  const taskScopeAllowed = (source: { chatId: string; actorId: string; chatType?: ChatType; threadRootId?: string }): boolean =>
+    service.getChannelManager().resolveChannelForChatId(source.chatId)?.id === 'feishu' &&
+    (!controlHandlerContext.isCommandAllowed || controlHandlerContext.isCommandAllowed({ type: 'steer', ...source,
+      data: { prompt: 'run_agent_task' } }));
+  const taskRuntimeOptions = (input: { chatId: string; threadRootId?: string }): AgentCreateOptions => {
+    const presets = Config.getAgentPresets();
+    const selected = agentPool.getActiveAgentPreset(input.chatId, input.threadRootId);
+    const resolved = presets ? resolveAgentPreset(presets, selected?.name) : undefined;
+    if (resolved && !resolved.ok) { throw new Error('Selected subtask runtime is unavailable'); }
+    const preset = resolved?.ok ? structuredClone(resolved.preset) : undefined;
+    const options = { ...(preset ?? Config.getAgentConfig()), ...(preset ? { settings: preset } : {}),
+      turnRecovery, failureRecorder: (failure: import('@disclaude/core').ChatFailureRecord) => failureRegistry.record(failure),
+      messageBuilderOptions: createFeishuMessageBuilderOptions() };
+    if (!getProvider(options.agentBackend, options.settings).getInfo(AgentFactory.resolveConfig(options)).available) {
+      throw new Error('Selected subtask runtime is unavailable');
+    }
+    return options;
+  };
+  const taskResults = new TaskResultOutbox(path.join(workspaceDir, '.disclaude', 'tasks', 'results'));
+  const backgroundTasks: BackgroundAgentTasks = new BackgroundAgentTasks({
+    outbox: taskResults,
+    authorize: input => {
+      const current = projectManager.resolveCwd(input.chatId);
+      if (current.reason === 'bound-missing' || realpathSync(current.boundWorkingDir ?? workspaceDir) !== input.projectRoot ||
+        !taskScopeAllowed({ chatId: input.chatId, actorId: input.senderOpenId, chatType: input.chatType, threadRootId: input.threadRootId })) {
+        throw new Error('Background task Project or permission is no longer available');
+      }
+    },
+    runtimeOptions: taskRuntimeOptions,
+    callbacks: input => routerCallbacksFactory(input.chatId, input.threadRootId),
+    wakeParent: createTaskParentReporter(report => agentPool.getOrCreateChatAgent(report.chatId,
+      routerCallbacksFactory(report.chatId, report.threadRootId), report.threadRootId)),
+  });
+
   // Create ChannelLifecycleManager (Issue #1594 Phase 3)
   const lifecycleManager = new ChannelLifecycleManager(channelManager, {
     ...channelSetupContext,
@@ -586,6 +639,9 @@ export async function main(): Promise<void> {
     logger.info('Shutting down disclaude service...');
 
     try {
+      // Drain owned background children (settled records persist) before the
+      // pool and channels go away.
+      await backgroundTasks.close();
       await agentPool.shutdownForServiceRestart({ drainTimeoutMs: 10_000, noticeTimeoutMs: 2_000 });
       await httpApiServer?.stop();
       await wechatRuntime?.stop();
