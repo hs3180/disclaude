@@ -255,6 +255,11 @@ export class MessageHandler {
     return this.privateWorkflows.request(request);
   }
 
+  /** #5411: after a private input is consumed, wake the waiting chat session. */
+  setPrivateWorkflowNotifier(notify: import('./private-workflows.js').PrivateOutcomeNotifier): void {
+    this.privateWorkflows.setNotifier(notify);
+  }
+
   private readonly MAX_MESSAGE_AGE = DEDUPLICATION.MAX_MESSAGE_AGE;
 
   /**

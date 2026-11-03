@@ -89,7 +89,12 @@ export class FeishuPrivateInput {
       this.cards.delete(context.open_message_id);
       await this.update?.(context.open_message_id, statusCard(text)).catch(() => {});
     }
-    await this.send({ chatId: context.open_chat_id, type: 'text', text });
+    // #5411: the follow-up text duplicates the card's terminal status; its
+    // failure must not swallow the outcome after consumption — the workflow
+    // layer needs the result to finalize the one-shot and notify the waiting
+    // session, otherwise a delivered-success card can later read as expired.
+    try {await this.send({ chatId: context.open_chat_id, type: 'text', text });}
+    catch { /* best-effort duplicate of the terminal card status */ }
     return outcome;
   }
 

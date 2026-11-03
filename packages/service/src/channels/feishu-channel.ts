@@ -299,6 +299,11 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     return this.feishuMessageHandler.requestPrivateWorkflow(request);
   }
 
+  /** #5411: route consumed private-input outcomes back to the waiting session. */
+  setPrivateWorkflowNotifier(notify: import('./feishu/private-workflows.js').PrivateOutcomeNotifier): void {
+    this.feishuMessageHandler.setPrivateWorkflowNotifier(notify);
+  }
+
   requestAgentInput(request: import('@disclaude/core').AgentInputRequest, context: import('@disclaude/core').AgentInputContext): Promise<void> {
     return this.feishuMessageHandler.requestAgentInput(request, context);
   }
