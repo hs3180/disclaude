@@ -2172,7 +2172,7 @@ describe('ChatAgent (service)', () => {
       return { agent, send, localCallbacks, deliver };
     }
 
-    it.each([undefined, 408, 429, 503])('recovers transient status %s with one current half-open probe, without replaying old messages', async status => {
+    it.each([undefined, 408, 429, 503])('recovers transient status %s with one current half-open probe, re-sending replies skipped while open (#5470)', async status => {
       const realNow = Date.now.bind(Date); let offset = 0;
       const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset);
       const f = await recoveryFixture(Object.assign(new Error('temporary'), status ? { status } : {}));
@@ -2188,7 +2188,14 @@ describe('ChatAgent (service)', () => {
         expect(f.send).toHaveBeenCalledTimes(4);
         release('probe-receipt'); expect(await probe).toBe(true);
         expect(await f.deliver('next output')).toBe(true);
-        expect(f.localCallbacks.sendMessage.mock.calls.map(call => call[1])).toEqual(['lost-a', 'lost-b', 'lost-c', 'current probe', 'next output']);
+        const sent = f.localCallbacks.sendMessage.mock.calls.map(call => call[1]);
+        // Failed ATTEMPTS (lost-a/b/c) are never retried; payloads SKIPPED
+        // while the circuit was open are backlogged and re-sent once it
+        // closes — a completed task's owed reply included (#5470). The
+        // backfill interleaves with fresh output, so compare order-insensitively.
+        expect(sent.slice(0, 4)).toEqual(['lost-a', 'lost-b', 'lost-c', 'current probe']);
+        expect(sent.slice(4).sort()).toEqual(['before cooldown', 'concurrent probe', 'next output'].sort());
+        expect(f.agent.deliveryCircuitStatus()).toEqual({ open: false, retryAtMs: 0, queuedReplies: 0 });
       } finally { f.agent.dispose(); clock.mockRestore(); }
     });
 
@@ -2204,9 +2211,57 @@ describe('ChatAgent (service)', () => {
         offset += 30_001;
         expect(await a.deliver('recovered')).toBe(true);
         expect(await b.deliver('b-still-broken')).toBe(false);
-        expect(a.send).toHaveBeenCalledTimes(5);
+        // a: 3 failed attempts + failed probe + successful probe + the one
+        // backlogged reply ('too soon') re-sent by the post-recovery backfill
+        // (#5470). b stays isolated at 3 + 1 skipped.
+        expect(a.send).toHaveBeenCalledTimes(6);
         expect(b.send).toHaveBeenCalledTimes(4);
       } finally { a.agent.dispose(); b.agent.dispose(); clock.mockRestore(); }
+    });
+
+    it('re-sends a backlogged final reply via the cooldown half-open probe with no new agent output (#5470)', async () => {
+      const realNow = Date.now.bind(Date); let offset = 0;
+      const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset);
+      const f = await recoveryFixture();
+      try {
+        // The turn completed during a channel outage: its final reply is
+        // skipped by the open circuit → backlogged, with a cooldown probe
+        // timer armed (the timer's callback is invoked directly here).
+        expect(await f.deliver('✅ final reply of the finished task')).toBe(false);
+        expect(f.agent.deliveryCircuitStatus()).toMatchObject({ open: true, queuedReplies: 1 });
+        expect((f.agent as any).sendCircuitRecoveryTimer).toBeTruthy();
+        // Channel recovers; cooldown elapses with NO further agent output.
+        f.send.mockResolvedValue('recovered');
+        offset += 30_001;
+        await (f.agent as any).probeSendCircuitRecovery();
+        expect(f.localCallbacks.sendMessage.mock.calls.map(call => call[1]))
+          .toEqual(['lost-a', 'lost-b', 'lost-c', '✅ final reply of the finished task']);
+        expect(f.agent.deliveryCircuitStatus()).toEqual({ open: false, retryAtMs: 0, queuedReplies: 0 });
+      } finally { f.agent.dispose(); clock.mockRestore(); }
+    });
+
+    it('a failed recovery probe keeps the circuit open, re-queues the reply and starts another cooldown (#5470)', async () => {
+      const realNow = Date.now.bind(Date); let offset = 0;
+      const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset);
+      const f = await recoveryFixture();
+      try {
+        expect(await f.deliver('✅ final reply')).toBe(false);
+        offset += 30_001;
+        await (f.agent as any).probeSendCircuitRecovery();
+        // Probe send failed → circuit re-opened with a fresh cooldown and the
+        // probed reply re-queued for the next window (isolation preserved).
+        expect(f.send).toHaveBeenCalledTimes(4);
+        expect(f.agent.deliveryCircuitStatus()).toMatchObject({ open: true, queuedReplies: 1 });
+        f.send.mockResolvedValue('recovered');
+        expect(await f.deliver('still cooling down')).toBe(false);
+        offset += 30_001;
+        await (f.agent as any).probeSendCircuitRecovery();
+        // The re-queued reply is retried (4th call failed, 5th succeeds) and
+        // the backlog then drains through the closed circuit.
+        expect(f.localCallbacks.sendMessage.mock.calls.map(call => call[1]))
+          .toEqual(['lost-a', 'lost-b', 'lost-c', '✅ final reply', '✅ final reply', 'still cooling down']);
+        expect(f.agent.deliveryCircuitStatus()).toEqual({ open: false, retryAtMs: 0, queuedReplies: 0 });
+      } finally { f.agent.dispose(); clock.mockRestore(); }
     });
 
     it.each([400, 401, 403, 'expired'])('keeps permanent/auth failure %s closed to automatic probes', async status => {
