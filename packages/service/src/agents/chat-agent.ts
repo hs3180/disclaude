@@ -389,6 +389,17 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   private readonly busyMessageAdmissions = new Map<string, Promise<void>>();
   private readonly turnsWithLiveInput = new Set<string>();
 
+  // Issue #5464: EXPLICIT thread identity of each turn's starter message
+  // (`replyRootId ?? threadRootId` — no sticky orchestrator fallback), keyed by
+  // the starter's messageId. Busy-input steering compares the incoming
+  // message's explicit identity against the RUNNING turn's recorded identity:
+  // only same-topic follow-ups may steer; a thread-less main-session message
+  // queues as its own task instead of being hijacked into a topic turn.
+  // Bounded like busyMessageAdmissions; presence (`has`) distinguishes a
+  // recorded main-session turn (`undefined` value) from an unknown owner
+  // (legacy/injected paths), which keeps the pre-#5464 steer behavior.
+  private readonly turnStartThreadKeys = new Map<string, string | undefined>();
+
   // Issue #3124: One-shot mode & task completion
   // When onceMode is true, processIterator closes the channel after the first
   // `result` message and resolves the completion promise, enabling blocking
@@ -1212,9 +1223,22 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Only unattempted or definitely rejected input falls back to the channel.
     const queuedBehindActiveTurn = this.isBusy;
     this.noteActivity('input');
-    const potentialLiveInput = this.isSessionActive && this.isBusy &&
+    const liveInputEligible = this.isSessionActive && this.isBusy &&
       typeof this.queryHandle?.steer === 'function' && !!this.activeTurnMessageId &&
       this.turnCompletions.has(this.activeTurnMessageId);
+    // #5464: thread ownership routes busy input. Only a message that belongs
+    // to the running turn's topic (or the same thread-less main-session scope)
+    // may steer into it; anything else queues as its own task with its own
+    // delivery boundary instead of being hijacked into the old turn.
+    const ownsActiveTurn = liveInputEligible && this.activeTurnOwnsInput(params);
+    const potentialLiveInput = liveInputEligible && ownsActiveTurn;
+    if (liveInputEligible && !ownsActiveTurn) {
+      this.logger.info({ chatId, messageId, activeTurnMessageId: this.activeTurnMessageId,
+        inputThreadKey: params.replyRootId !== undefined ? params.replyRootId ?? undefined : params.threadRootId,
+        activeThreadKey: this.activeTurnMessageId !== undefined && this.turnStartThreadKeys.has(this.activeTurnMessageId)
+          ? this.turnStartThreadKeys.get(this.activeTurnMessageId) : 'unknown',
+      }, 'Busy input belongs to a different task scope; queueing it as its own turn instead of steering (#5464)');
+    }
     if (potentialLiveInput) { this.turnsWithLiveInput.add(this.activeTurnMessageId as string); }
 
     this.logger.info(
@@ -1314,6 +1338,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       anchorQueued = true;
       this.pendingTurnAnchors.push(replyRootId !== undefined ? replyRootId : threadRootId ?? this.conversationOrchestrator.getThreadRoot(chatId));
       this.pendingTurnMessageIds.push(messageId);
+      // Issue #5464: remember this turn starter's EXPLICIT thread identity so a
+      // later busy input can tell whether it belongs to the running turn. The
+      // anchor above may fall back to the chat-level sticky root; the steer
+      // gate needs the marker the message actually carried.
+      this.turnStartThreadKeys.set(messageId, replyRootId !== undefined ? replyRootId ?? undefined : threadRootId);
+      while (this.turnStartThreadKeys.size > MAX_TURN_COMPLETIONS) {
+        const oldest = this.turnStartThreadKeys.keys().next().value;
+        if (oldest !== undefined) { this.turnStartThreadKeys.delete(oldest); }
+      }
       this.pendingLifecycleContexts.push(lifecycleContext);
       if (!queuedBehindActiveTurn) { this.activeLifecycleContext = lifecycleContext; }
       // Issue #5399: retire only rows whose input already reached a real
@@ -1528,6 +1561,30 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
   }
 
+  /**
+   * Issue #5464: does this busy input belong to the running turn's task scope?
+   *
+   * Deterministic signal — explicit thread markers only. The incoming message
+   * owns the active turn when its `replyRootId`/`threadRootId` identity equals
+   * the identity the turn's starter message carried (both `undefined` = the
+   * same thread-less main-session scope, preserving #5240 immediate
+   * supplements for p2p chats). The chat-level sticky thread root is
+   * deliberately NOT consulted: every plain message overwrites it with its own
+   * message id, so it cannot distinguish topic ownership.
+   *
+   * An owner whose identity was never recorded (injected/legacy paths, or
+   * evicted after MAX_TURN_COMPLETIONS newer starters) fails open to the
+   * pre-#5464 behavior — steer — because ownership is unknown, not different.
+   */
+  private activeTurnOwnsInput(params: UserMessageParams): boolean {
+    const sourceMessageId = this.activeTurnMessageId;
+    if (sourceMessageId === undefined || !this.turnStartThreadKeys.has(sourceMessageId)) {
+      return true;
+    }
+    const inputKey = params.replyRootId !== undefined ? params.replyRootId ?? undefined : params.threadRootId;
+    return inputKey === this.turnStartThreadKeys.get(sourceMessageId);
+  }
+
   /** Confirm a busy input once, or fall back only after confirmed non-acceptance. */
   private async tryLiveInput(params: UserMessageParams, content: string,
     lifecycleContext: NonNullable<StreamingUserMessage['correlation']>): Promise<boolean> {
@@ -1535,7 +1592,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const steer = handle?.steer;
     const sourceMessageId = this.activeTurnMessageId;
     const owner = sourceMessageId ? this.turnCompletions.get(sourceMessageId) : undefined;
-    if (!handle || !this.isBusy || typeof steer !== 'function' || !sourceMessageId || !owner) { return false; }
+    if (!handle || !this.isBusy || typeof steer !== 'function' || !sourceMessageId || !owner ||
+      // #5464: an input from a different task scope never steers — it keeps
+      // its own execution and delivery boundary as a queued turn.
+      !this.activeTurnOwnsInput(params)) { return false; }
 
     const inputEntry = this.turnCompletions.get(params.messageId) ?? this.createTurnCompletion(params.messageId);
     const settleInput = (error?: Error, userVisible = false): void => {
