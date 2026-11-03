@@ -510,13 +510,14 @@ export class DisclaudeService extends EventEmitter {
    * the REST API uploadFile method (Issue #4279). filePath (not multipart) because
    * the REST face is localhost-bound and the caller is co-located.
    *
-   * @returns upload metadata (fileKey/fileType/fileName/fileSize)
+   * @returns upload metadata (fileKey/fileType/fileName/fileSize) plus the
+   *   delivered message_id when the channel confirms one (Issue #5630)
    */
   async uploadFile(
     chatId: string,
     filePath: string,
     threadId?: string,
-  ): Promise<{ success: boolean; fileKey?: string; fileType?: string; fileName?: string; fileSize?: number }> {
+  ): Promise<{ success: boolean; fileKey?: string; fileType?: string; fileName?: string; fileSize?: number; messageId?: string }> {
     const h = this.resolveApiHandlers(chatId);
     if (!h) {
       throw new Error('No channel handlers available');

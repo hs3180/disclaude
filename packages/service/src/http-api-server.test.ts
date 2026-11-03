@@ -344,6 +344,127 @@ describe('HttpApiServer', () => {
       expect(statusCode).toBe(500);
       expect(JSON.parse(body).message).toContain('file not found');
     });
+
+    it('should include messageId in the response when the handler confirms delivery (#5630)', async () => {
+      const mockHandler = vi.fn().mockResolvedValue({
+        success: true,
+        fileKey: 'file_v3_001',
+        fileType: 'pdf',
+        fileName: 'report.pdf',
+        fileSize: 12345,
+        messageId: 'om_777',
+      });
+      server.setUploadFileHandler(mockHandler);
+
+      const { statusCode, body } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/upload-file',
+        headers: { 'content-type': 'application/json' },
+        body: validBody,
+      });
+
+      expect(statusCode).toBe(200);
+      expect(JSON.parse(body).messageId).toBe('om_777');
+    });
+
+    // Issue #5630: retry-safe uploads. A client deadline can expire while the
+    // upload+send chain is still running server-side; same-key retries must not
+    // start a second delivery.
+    describe('idempotencyKey (Issue #5630)', () => {
+      const post = (server: HttpApiServer, payload: Record<string, unknown>) =>
+        dispatch(server, {
+          method: 'POST',
+          url: '/api/upload-file',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+      it('joins a concurrent same-key retry into the in-flight upload (one handler call)', async () => {
+        let release: (value: { success: boolean; fileKey: string; fileType: string; fileName: string; fileSize: number; messageId: string }) => void;
+        const gate = new Promise<{ success: boolean; fileKey: string; fileType: string; fileName: string; fileSize: number; messageId: string }>(resolve => {
+          release = resolve;
+        });
+        const mockHandler = vi.fn().mockImplementation(() => gate);
+        server.setUploadFileHandler(mockHandler);
+        const payload = { chatId: 'oc_test', filePath: '/tmp/report.pdf', threadId: 'om_root', idempotencyKey: 'idem-A' };
+
+        const first = post(server, payload);
+        // Wait until the first request is actually inside the handler, then
+        // fire the same-key retry while the upload is still in flight.
+        await vi.waitFor(() => expect(mockHandler).toHaveBeenCalledTimes(1));
+        const second = post(server, payload);
+        release!({
+          success: true, fileKey: 'file_v3_002', fileType: 'pdf', fileName: 'report.pdf', fileSize: 12345, messageId: 'om_1',
+        });
+
+        const [a, b] = await Promise.all([first, second]);
+        expect(mockHandler).toHaveBeenCalledTimes(1);
+        expect(a.statusCode).toBe(200);
+        expect(b.statusCode).toBe(200);
+        expect(JSON.parse(a.body).messageId).toBe('om_1');
+        expect(JSON.parse(b.body).messageId).toBe('om_1');
+      });
+
+      it('replays a remembered same-key success without re-invoking the handler', async () => {
+        const mockHandler = vi.fn().mockResolvedValue({
+          success: true, fileKey: 'file_v3_003', fileType: 'pdf', fileName: 'report.pdf', fileSize: 12345, messageId: 'om_2',
+        });
+        server.setUploadFileHandler(mockHandler);
+        const payload = { chatId: 'oc_test', filePath: '/tmp/report.pdf', idempotencyKey: 'idem-B' };
+
+        const first = await post(server, payload);
+        const second = await post(server, payload);
+
+        expect(first.statusCode).toBe(200);
+        expect(second.statusCode).toBe(200);
+        expect(mockHandler).toHaveBeenCalledTimes(1);
+        expect(JSON.parse(second.body).messageId).toBe('om_2');
+      });
+
+      it('re-executes a same-key retry after a failed first attempt (failures are not memoized)', async () => {
+        const mockHandler = vi.fn()
+          .mockRejectedValueOnce(new Error('feishu unavailable'))
+          .mockResolvedValueOnce({
+            success: true, fileKey: 'file_v3_004', fileType: 'pdf', fileName: 'report.pdf', fileSize: 12345, messageId: 'om_3',
+          });
+        server.setUploadFileHandler(mockHandler);
+        const payload = { chatId: 'oc_test', filePath: '/tmp/report.pdf', idempotencyKey: 'idem-C' };
+
+        const first = await post(server, payload);
+        const second = await post(server, payload);
+
+        expect(first.statusCode).toBe(500);
+        expect(second.statusCode).toBe(200);
+        expect(mockHandler).toHaveBeenCalledTimes(2);
+        expect(JSON.parse(second.body).messageId).toBe('om_3');
+      });
+
+      it('runs different keys and different targets independently', async () => {
+        const mockHandler = vi.fn().mockResolvedValue({
+          success: true, fileKey: 'file_v3_005', fileType: 'pdf', fileName: 'report.pdf', fileSize: 12345, messageId: 'om_4',
+        });
+        server.setUploadFileHandler(mockHandler);
+
+        await post(server, { chatId: 'oc_test', filePath: '/tmp/report.pdf', idempotencyKey: 'idem-D' });
+        await post(server, { chatId: 'oc_test', filePath: '/tmp/report.pdf', idempotencyKey: 'idem-E' });
+        // Same key but a different target file is a different operation — no replay.
+        await post(server, { chatId: 'oc_test', filePath: '/tmp/other.pdf', idempotencyKey: 'idem-D' });
+
+        expect(mockHandler).toHaveBeenCalledTimes(3);
+      });
+
+      it('treats a missing or blank key as a plain non-idempotent upload', async () => {
+        const mockHandler = vi.fn().mockResolvedValue({
+          success: true, fileKey: 'file_v3_006', fileType: 'pdf', fileName: 'report.pdf', fileSize: 12345,
+        });
+        server.setUploadFileHandler(mockHandler);
+
+        await post(server, { chatId: 'oc_test', filePath: '/tmp/report.pdf' });
+        await post(server, { chatId: 'oc_test', filePath: '/tmp/report.pdf', idempotencyKey: '   ' });
+
+        expect(mockHandler).toHaveBeenCalledTimes(2);
+      });
+    });
   });
 
   describe('POST /api/upload-image (Issue #4279)', () => {

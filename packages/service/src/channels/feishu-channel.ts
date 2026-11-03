@@ -890,6 +890,11 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
         logger.info({ chatId: message.chatId, filePath, fileName, fileSize }, 'Uploading file');
 
+        // Issue #5630: phase timing — the upload (im.file/im.image create) and
+        // message-create (im.message create/reply) phases share one REST
+        // deadline client-side; these timestamps attribute slow chains.
+        const uploadStartedAt = Date.now();
+
         // Determine message type based on file extension
         const isImage = IMAGE_EXTENSIONS.has(ext);
 
@@ -910,8 +915,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
             );
             throw new Error(`Failed to upload image: ${fileName}`);
           }
+          const uploadedAt = Date.now();
           logger.info(
-            { chatId: message.chatId, imageKey, fileName },
+            { chatId: message.chatId, imageKey, fileName, uploadMs: uploadedAt - uploadStartedAt },
             'Image uploaded, sending message'
           );
 
@@ -923,6 +929,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
               messageId: fileMessageId,
               fileName,
               threadReply: useThreadReply,
+              sendMs: Date.now() - uploadedAt,
+              totalMs: Date.now() - uploadStartedAt,
             },
             'Image message sent'
           );
@@ -944,8 +952,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
             );
             throw new Error(`Failed to upload video: ${fileName}`);
           }
+          const uploadedAt = Date.now();
           logger.info(
-            { chatId: message.chatId, fileKey, fileName },
+            { chatId: message.chatId, fileKey, fileName, uploadMs: uploadedAt - uploadStartedAt },
             'Video uploaded, extracting cover image'
           );
 
@@ -984,6 +993,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
               fileName,
               threadReply: useThreadReply,
               hasCover: !!imageKey,
+              sendMs: Date.now() - uploadedAt,
+              totalMs: Date.now() - uploadStartedAt,
             },
             'Video message sent'
           );
@@ -1005,8 +1016,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
             );
             throw new Error(`Failed to upload file: ${fileName}`);
           }
+          const uploadedAt = Date.now();
           logger.info(
-            { chatId: message.chatId, fileKey, fileName, fileType },
+            { chatId: message.chatId, fileKey, fileName, fileType, uploadMs: uploadedAt - uploadStartedAt },
             'File uploaded, sending message'
           );
 
@@ -1018,6 +1030,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
               messageId: fileMessageId,
               fileName,
               threadReply: useThreadReply,
+              sendMs: Date.now() - uploadedAt,
+              totalMs: Date.now() - uploadStartedAt,
             },
             'File message sent'
           );

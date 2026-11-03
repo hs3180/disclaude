@@ -27,6 +27,12 @@ export interface SendFileResult {
   platformMsg?: string;
   platformLogId?: string;
   troubleshooterUrl?: string;
+  /** Platform message_id of the delivered file message, when confirmed (Issue #5630). */
+  messageId?: string;
+  /** True when the attempt timed out with an unknown delivery outcome (Issue #5630). */
+  outcomeUnknown?: boolean;
+  /** Retry-dedup key; reuse it when retrying an outcomeUnknown attempt (Issue #5630). */
+  idempotencyKey?: string;
 }
 
 /**
