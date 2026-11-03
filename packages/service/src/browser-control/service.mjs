@@ -186,6 +186,64 @@ export async function refreshBrowserRuntimeConnection({ env = process.env, fetch
   } finally { closeSync(ownerFd); }
 }
 
+// #5601: classify WHY the manifest is unusable instead of reporting a bare
+// "missing". A stale (dead owner) or corrupt manifest must keep its identity.
+function classifyRuntimeFailure(path, error) {
+  let raw;
+  try { raw = readFileSync(path, 'utf8'); }
+  catch (readError) {
+    if (readError?.code === 'ENOENT') return { code: 'missing',
+      detail: `runtime manifest does not exist at ${path}: no Disclaude service has published browser coordination for this configuration`,
+      remedy: 'Start or restart the Disclaude service with a Chromium CDP endpoint configured (installed chromium-cdp.json or BU_CDP_URL); it publishes the manifest at startup' };
+    return { code: 'unreadable', detail: `runtime manifest at ${path} cannot be read: ${readError.message}`,
+      remedy: 'Fix the manifest file permissions or ownership, then restart the Disclaude service' };
+  }
+  let parsed;
+  try { parsed = JSON.parse(raw); }
+  catch { return { code: 'corrupt', detail: `runtime manifest at ${path} is not valid JSON (truncated or replaced)`,
+    remedy: 'Restart the Disclaude service to rewrite the manifest, or remove the broken file first if the service is not running' }; }
+  if (parsed && Number.isSafeInteger(parsed.pid) && !processExists(parsed.pid)) {
+    return { code: 'stale', detail: `runtime manifest at ${path} is stale: the owning Disclaude service (pid ${parsed.pid}) is no longer running`,
+      remedy: 'Start or restart the Disclaude service to re-publish browser coordination' };
+  }
+  return { code: 'invalid', detail: `runtime manifest at ${path} is not usable: ${error.message}`,
+    remedy: 'Start or restart the Disclaude service to re-publish browser coordination' };
+}
+
+// #5601: one diagnosis source for `disclaude browser status --json` and the
+// skill launcher failure path. Endpoint sources normalize to runtime.json
+// (live manifest), env (BU_CDP_URL), container (installed chromium-cdp.json)
+// or none; lastError keeps the real failure cause, never a bare ENOENT.
+export function diagnoseBrowserRuntime(env = process.env) {
+  const runtimePath = env.DISCLAUDE_BROWSER_RUNTIME || resolveBrowserRuntimePath(env);
+  const notes = [];
+  if (Object.hasOwn(env, 'BU_CDP_URL') && !String(env.BU_CDP_URL ?? '').trim()) {
+    notes.push('BU_CDP_URL is set but empty; it is treated as unset');
+  }
+  let endpoint = null, endpointSource = 'none', endpointError;
+  try {
+    const resolved = resolveCdpConfiguration(env);
+    endpoint = resolved.endpoint;
+    endpointSource = resolved.endpointSource === 'BU_CDP_URL' ? 'env' : 'container';
+  } catch (error) { endpointError = error.message; }
+  let status;
+  try { status = browserStatus(runtimePath); }
+  catch (error) {
+    const failure = classifyRuntimeFailure(runtimePath, error);
+    const parts = [failure.detail];
+    if (endpointError) parts.push(endpointError);
+    let { remedy } = failure;
+    if (/chromium cdp configuration/i.test(endpointError || '')) {
+      remedy = 'Repair or regenerate the installed chromium-cdp.json (or remove it to fall back to BU_CDP_URL), then restart the Disclaude service';
+    }
+    return { available: false, state: 'unavailable', runtimePath, endpoint, endpointSource,
+      lastError: [...parts, ...notes].join('; '), remedy, ...(notes.length ? { notes } : {}) };
+  }
+  const runtime = readBrowserRuntime(runtimePath);
+  return { available: true, ...status, runtimePath, endpoint: runtime.browserEnv.BU_CDP_URL || endpoint,
+    endpointSource: 'runtime.json', lastError: null, remedy: null, ...(notes.length ? { notes } : {}) };
+}
+
 export async function prepareBrowserCommands({ env = process.env, fetchImpl = globalThis.fetch,
   onEvent = /** @type {(record: Record<string, unknown>) => void} */ (() => {}),
 } = {}) {

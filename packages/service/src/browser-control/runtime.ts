@@ -14,7 +14,12 @@ export async function startBrowserRuntime(
   onEvent: (record: Record<string, unknown>) => void = () => {},
 ): Promise<BrowserRuntime | undefined> {
   if (!hasChromiumCdpConfiguration(env)) {
-    if (env === process.env) { delete process.env.DISCLAUDE_BROWSER_RUNTIME; }
+    // #5601: a set-but-empty BU_CDP_URL is a configuration mistake, not an
+    // opt-out. Keep the ambient runtime pointer so `disclaude browser status`
+    // reports the inconsistency (empty BU_CDP_URL treated as unset) instead of
+    // silently withdrawing coordination state.
+    const emptyCdpUrl = Object.hasOwn(env, 'BU_CDP_URL') && !env.BU_CDP_URL?.trim();
+    if (env === process.env && !emptyCdpUrl) { delete process.env.DISCLAUDE_BROWSER_RUNTIME; }
     return undefined;
   }
 

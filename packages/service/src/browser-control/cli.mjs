@@ -1,7 +1,7 @@
-import { browserStatus } from './service.mjs';
-import { resolveBrowserRuntimePath } from '@disclaude/core/browser-runtime';
+import { diagnoseBrowserRuntime } from './service.mjs';
 import { parseArgs } from 'node:util';
 const command = process.argv[2];
+const usage = 'Usage: disclaude browser status [--json] [--config PATH]|doctor\nstatus: JSON diagnosis (available, endpoint, endpointSource, runtimePath, lastError, remedy) as idle, busy, interrupted or unavailable\ndoctor --binary PATH: test a browser with temporary state\nDisclaude automatically serializes calls to the installed browser-use CLI. No separate coordinator or Python runtime is installed.';
 function explicitConfigPath(args) {
   let path;
   for (let i = 0; i < args.length; i++) {
@@ -20,7 +20,7 @@ async function resolveBrowserEnvironment() {
 }
 try {
   if (!command || ['help', '--help', '-h'].includes(command)) {
-    console.log('Usage: disclaude browser status [--config PATH]|doctor\nstatus: report CLI coordination as idle, busy, or interrupted\ndoctor --binary PATH: test a browser with temporary state\nDisclaude automatically serializes calls to the installed browser-use CLI. No separate coordinator or Python runtime is installed.');
+    console.log(usage);
   } else if (command === 'doctor') {
     const { values } = parseArgs({ args: process.argv.slice(3), options: {
       binary: { type: 'string' }, headless: { type: 'boolean', default: false },
@@ -43,9 +43,12 @@ try {
   } else if (command === 'start') {
     throw new Error('No separate browser coordinator is needed; use disclaude start');
   } else if (command === 'status') {
+    // #5601: unified diagnosis — never a bare ENOENT. Output is JSON (also
+    // with the explicit --json flag): available, endpoint, endpointSource,
+    // runtimePath, lastError and remedy share one source with the launcher.
     const env = await resolveBrowserEnvironment();
-    const status = browserStatus(resolveBrowserRuntimePath(env));
-    console.log(JSON.stringify(status));
-    if (status.state === 'interrupted') process.exitCode = 1;
+    const diagnosis = diagnoseBrowserRuntime(env);
+    console.log(JSON.stringify(diagnosis));
+    if (!diagnosis.available || diagnosis.state === 'interrupted') process.exitCode = 1;
   } else { throw new Error(`Unknown browser command: ${command}`); }
 } catch (error) { console.error(error.message); process.exitCode = 1; }
