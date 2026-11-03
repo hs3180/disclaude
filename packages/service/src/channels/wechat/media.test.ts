@@ -132,6 +132,37 @@ describe('WeChat encrypted CDN protocol', () => {
     expect(requestUpload).not.toHaveBeenCalled(); expect(fetch).not.toHaveBeenCalled();
   });
 
+  // #5516: ~15 MiB MP4 uploads fail intermittently at the CDN stage; undici
+  // reports happy-eyeballs connect failures as `TypeError: fetch failed` with
+  // an AggregateError cause. Without walking `errors`, the underlying code was
+  // dropped and the failure surfaced as a code-less generic error.
+  it('surfaces the underlying code from an undici happy-eyeballs AggregateError at the incident byte count', async () => {
+    const aggregate = new AggregateError([
+      Object.assign(new Error('connect ECONNREFUSED 203.0.113.7:443 - private-address'), { code: 'ECONNREFUSED' }),
+      new Error('connect ENETUNREACH private-address'),
+    ], 'private-connect-detail');
+    const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new TypeError('fetch failed', { cause: aggregate }));
+    const error = await uploadEncryptedMedia({ fileData: Buffer.alloc(15_481_288), to: 'private-peer', kind: 'video',
+      requestUpload: () => Promise.resolve({ upload_param: 'private-upload-ref' }),
+    }).catch(error => error);
+    expect(error).toMatchObject({ name: 'WeChatMediaUploadError',
+      cause: { name: 'TypeError', code: 'ECONNREFUSED' },
+      detail: { stage: 'upload', reason: 'network', bytes: 15_481_288, messageSent: false, attempt: 1 } });
+    expect(error.message).toContain('ECONNREFUSED');
+    expect(`${error.message} ${error.stack} ${JSON.stringify(error)}`).not.toMatch(/private-|token=|203\.0\.113/);
+    fetch.mockRestore();
+  });
+
+  it.each(['UND_ERR_REQ_RETRY', 'EHOSTUNREACH', 'ECONNABORTED'])('keeps undici/network code %s from the fetch cause chain', async code => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new TypeError('private-transport-detail', {
+      cause: Object.assign(new Error('private-inner'), { code }),
+    }));
+    await expect(uploadEncryptedMedia({ fileData: Buffer.from('fixture'), to: 'peer', kind: 'file',
+      requestUpload: () => Promise.resolve({ upload_param: 'private-upload-ref' }),
+    })).rejects.toMatchObject({ detail: { stage: 'upload', reason: 'network', cause: { name: 'TypeError', code } } });
+    fetch.mockRestore();
+  });
+
   it('decrypts both key encodings and sanitizes inbound file names', async () => {
     const dir = await fs.mkdtemp(join(tmpdir(), 'wechat-media-'));
     try {

@@ -1,7 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import type { IncomingMessage } from '@disclaude/core';
+import { createLogger, type IncomingMessage } from '@disclaude/core';
 import type { WeChatImageItem, WeChatFileItem, WeChatUploadedMedia } from './types.js';
 import { WeChatMediaError, safeMediaCause } from './media-error.js';
 import { WeChatMediaUploadError } from './media-upload-error.js';
@@ -9,6 +9,18 @@ import { WeChatMediaUploadError } from './media-upload-error.js';
 /** Adapter policy, not a claim about the gateway's maximum. */
 export const WECHAT_MEDIA_MAX_BYTES = 20 * 1024 * 1024;
 const CDN_BASE = 'https://novac2c.cdn.weixin.qq.com/c2c';
+const logger = createLogger('WeChatMedia');
+
+/**
+ * #5516: a failed CDN upload previously reached operator logs only as a
+ * flattened message string (via the base channel's catch), so intermittent
+ * undici transport failures were indistinguishable. Emit the allowlisted,
+ * already-redacted `detail` as searchable pino fields — stage, reason and the
+ * underlying cause code (or its equivalent) — before the error propagates.
+ */
+function logUploadFailure(failure: WeChatMediaUploadError): void {
+  logger.warn({ ...failure.detail }, 'WeChat CDN upload failed; message was not sent');
+}
 
 function cdnUrl(value: string): string {
   let url: URL;
@@ -62,12 +74,14 @@ export async function uploadEncryptedMedia(params: {
     if (!downloadParam) { throw failure('receipt'); }
     return { media: { encrypt_query_param: downloadParam, aes_key: Buffer.from(key.toString('hex')).toString('base64'), encrypt_type: 1 }, size: params.fileData.length, encryptedSize: encrypted.length };
   } catch (error) {
-    if (error instanceof WeChatMediaUploadError) { throw error; }
+    if (error instanceof WeChatMediaUploadError) { logUploadFailure(error); throw error; }
     const cause = safeMediaCause(error);
     const reason = stage === 'reference' ? 'reference' : stage === 'negotiate' ? 'negotiate'
       : stage !== 'upload' ? 'local' : cause?.name === 'TimeoutError' || cause?.code?.includes('TIMEOUT') || cause?.code === 'ETIMEDOUT' ? 'timeout'
         : cause?.name === 'AbortError' ? 'cancelled' : 'network';
-    throw failure(reason, undefined, error);
+    const terminal = failure(reason, undefined, error);
+    logUploadFailure(terminal);
+    throw terminal;
   }
 }
 
