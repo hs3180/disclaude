@@ -1152,12 +1152,29 @@ export function resolveChannelConfigs(
   const wechat = rawConfig.channels?.wechat;
   if (wechat && wechat.enabled !== false) {
     if (wechat.enabled !== undefined && typeof wechat.enabled !== 'boolean') { throw new Error('channels.wechat.enabled must be boolean'); }
-    const unknown = Object.keys(wechat).filter(key => !['enabled', 'stateDir', 'routeTag'].includes(key));
+    const unknown = Object.keys(wechat).filter(key => !['enabled', 'stateDir', 'routeTag', 'progressUpdates'].includes(key));
     if (unknown.length) { throw new Error(`Unsupported channels.wechat fields: ${unknown.join(', ')}; save credentials with disclaude wechat login`); }
     const stateDir = wechat.stateDir ?? DEFAULT_WECHAT_STATE_DIR;
     if (typeof stateDir !== 'string' || !path.isAbsolute(stateDir)) { throw new Error('channels.wechat.stateDir must be an absolute path'); }
     if (wechat.routeTag !== undefined && (typeof wechat.routeTag !== 'string' || /[\r\n]/.test(wechat.routeTag))) { throw new Error('channels.wechat.routeTag must be a single-line string'); }
-    entries.push({ type: 'wechat', config: { stateDir, ...(wechat.routeTag ? { routeTag: wechat.routeTag } : {}) } });
+    // #5453: progressUpdates toggles live commentary/decision narration and
+    // its anti-flood coalescing window.
+    let progressUpdates: boolean | { minIntervalMs?: number } | undefined;
+    const rawProgress = wechat.progressUpdates;
+    if (rawProgress !== undefined) {
+      const objectForm = typeof rawProgress === 'object' && rawProgress !== null &&
+        Object.keys(rawProgress).every(key => key === 'minIntervalMs') &&
+        (rawProgress.minIntervalMs === undefined ||
+          (typeof rawProgress.minIntervalMs === 'number' && Number.isInteger(rawProgress.minIntervalMs) && rawProgress.minIntervalMs >= 0));
+      if (typeof rawProgress !== 'boolean' && !objectForm) {
+        throw new Error('channels.wechat.progressUpdates must be a boolean or { minIntervalMs: <non-negative integer ms> }');
+      }
+      progressUpdates = rawProgress;
+    }
+    entries.push({
+      type: 'wechat',
+      config: { stateDir, ...(wechat.routeTag ? { routeTag: wechat.routeTag } : {}), ...(progressUpdates !== undefined ? { progressUpdates } : {}) },
+    });
   }
 
   // Warn on unrecognized channel config keys (Issue #1594 review P2)

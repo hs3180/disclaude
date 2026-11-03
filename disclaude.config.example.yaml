@@ -55,6 +55,10 @@ channels:
     enabled: false
     # Optional absolute path, same as login --state-dir; default ~/.disclaude/wechat
     # stateDir: /absolute/path/to/private/wechat-account
+    # Live public commentary / decision narration (#5453). Default: on, sent
+    # immediately. false = final reply only. Object form coalesces bursts of
+    # progress into one text per window (anti-flood):
+    # progressUpdates: { minIntervalMs: 8000 }
   feishu:
     enabled: true
     appId: $FEISHU_APP_ID

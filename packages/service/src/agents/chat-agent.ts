@@ -2170,6 +2170,48 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const bufferAssistantText = this.callbacks.finalReplyOnly === true ||
       this.chatType === 'group' || this.chatType === 'topic';
     let pendingAssistantChunks: string[] = [];
+    // #5453: anti-flood coalescing for live progress (public commentary and
+    // decision narration). Progress arriving within progressMinIntervalMs of
+    // the previous progress send is held and flushed as ONE merged text when
+    // the window elapses or right before the next user-visible delivery.
+    // Final replies are never delayed or merged into the batch.
+    const progressMinIntervalMs = this.callbacks.progressMinIntervalMs ?? 0;
+    let lastProgressSentAt = 0;
+    let progressWindowOpenedAt = 0;
+    let pendingProgress: string[] = [];
+    const flushPendingProgress = async (): Promise<void> => {
+      if (pendingProgress.length === 0) { return; }
+      const merged = pendingProgress.join('\n\n');
+      pendingProgress = [];
+      lastProgressSentAt = Date.now();
+      try {
+        await this.callbacks.sendMessage(chatId, merged, resolveReplyThreadRoot());
+      } catch (error) {
+        this.logger.debug({ error, chatId }, 'Coalesced progress delivery failed');
+      }
+    };
+    const deliverProgressText = async (text: string, root?: string): Promise<void> => {
+      const now = Date.now();
+      if (progressMinIntervalMs > 0) {
+        if (pendingProgress.length > 0) {
+          pendingProgress.push(text);
+          if (now - progressWindowOpenedAt >= progressMinIntervalMs) { await flushPendingProgress(); }
+          return;
+        }
+        if (now - lastProgressSentAt < progressMinIntervalMs) {
+          pendingProgress.push(text);
+          progressWindowOpenedAt = now;
+          return;
+        }
+      }
+      lastProgressSentAt = now;
+      try {
+        await this.callbacks.sendMessage(chatId, text, root ?? resolveReplyThreadRoot());
+      } catch (error) {
+        // Progress cannot fail or complete the turn (#5288 stays intact).
+        this.logger.debug({ error, chatId }, 'Public progress delivery failed');
+      }
+    };
     // 2026-09-08: 本轮是否收到 proxy 的 mid-stream 中断标记(带 MIDSTREAM_MARKER 的
     // assistant 正文)。turn 收尾 accounting 用;与其它 per-turn 计数一起清零。
     let sawMidstreamInterrupt = false;
@@ -2268,6 +2310,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         const guidance = startupCategory ? '请检查配置、权限和运行环境，修复后发送 /reset。' :
           '请先核对已经执行的操作，再决定是否重新提交或发送消息继续；系统没有自动重放工具。';
         const notice = `${prefix}${guidance}\n${this.formatFailureDiagnostic(failure)}`;
+        // #5453: keep any coalesced progress ahead of the failure notice.
+        await flushPendingProgress();
         const delivered = await this.deliverUserVisible(chatId, notice, anchor ?? undefined);
         this.logger.warn({ ...failure, event: 'agent_turn',
           state: startupCategory ? 'failed' : 'interrupted',
@@ -2283,6 +2327,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     };
 
     const flushPendingAssistant = async (partial = false): Promise<void> => {
+      // #5453: coalesced progress must land before the terminal answer.
+      await flushPendingProgress();
       if (pendingAssistantChunks.length === 0) { return; }
       const content = pendingAssistantChunks.join('');
       pendingAssistantChunks = [];
@@ -2412,7 +2458,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                   'Compacted commentary payload'
                 );
               }
-              await this.callbacks.sendMessage(chatId, commentary.text, resolveReplyThreadRoot());
+              // #5453: route through the coalescer so bursts collapse.
+              await deliverProgressText(commentary.text);
             } catch (error) {
               // Progress cannot fail or complete the turn.
               this.logger.debug({ error, chatId }, 'Public commentary delivery failed');
@@ -2459,7 +2506,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                 // is building; the driver owns its own send fallbacks.
                 await streamDriver.pushText(narration.text, narrationRoot);
               } else {
-                await this.callbacks.sendMessage(chatId, narration.text, narrationRoot);
+                // #5453: route through the coalescer so bursts collapse.
+                await deliverProgressText(narration.text, narrationRoot);
               }
             } catch (error) {
               this.logger.debug({ error, chatId }, 'Decision narration delivery failed');
@@ -2593,6 +2641,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             let delivered = false;
             const bufferAssistant = bufferAssistantText && isAssistantReplyText;
             if (toDeliver) {
+              // #5453: flush coalesced progress ahead of any user-visible
+              // delivery so ordering never inverts.
+              await flushPendingProgress();
               if (bufferAssistant) {
                 pendingAssistantChunks.push(toDeliver);
                 if (parsed.metadata?.phase === 'final_answer') { await flushPendingAssistant(); }

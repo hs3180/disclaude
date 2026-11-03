@@ -239,6 +239,19 @@ describe('resolveChannelConfigs', () => {
     expect(() => resolveChannelConfigs({ channels: { wechat: { stateDir: './relative' } } } as never, {} as never)).toThrow('absolute path');
     expect(resolveChannelConfigs({ channels: { wechat: { enabled: false } } } as never, {} as never)).toEqual([]);
   });
+
+  it('accepts channels.wechat.progressUpdates and rejects malformed values (#5453)', () => {
+    expect(resolveChannelConfigs({ channels: { wechat: { stateDir: '/w', progressUpdates: false } } } as never, {} as never))
+      .toEqual([{ type: 'wechat', config: { stateDir: '/w', progressUpdates: false } }]);
+    expect(resolveChannelConfigs({ channels: { wechat: { stateDir: '/w', progressUpdates: { minIntervalMs: 8000 } } } } as never, {} as never))
+      .toEqual([{ type: 'wechat', config: { stateDir: '/w', progressUpdates: { minIntervalMs: 8000 } } }]);
+    expect(() => resolveChannelConfigs({ channels: { wechat: { stateDir: '/w', progressUpdates: 'yes' } } } as never, {} as never))
+      .toThrow('progressUpdates must be a boolean or { minIntervalMs');
+    expect(() => resolveChannelConfigs({ channels: { wechat: { stateDir: '/w', progressUpdates: { minIntervalMs: -1 } } } } as never, {} as never))
+      .toThrow('progressUpdates must be a boolean or { minIntervalMs');
+    expect(() => resolveChannelConfigs({ channels: { wechat: { stateDir: '/w', progressUpdates: { intervalMs: 1000 } } } } as never, {} as never))
+      .toThrow('progressUpdates must be a boolean or { minIntervalMs');
+  });
   // Minimal mock of the Config singleton interface used by resolveChannelConfigs
   function createMockConfig(feishuAppId = '', feishuAppSecret = '', streamingCard = false) {
     return {

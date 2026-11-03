@@ -39,6 +39,24 @@ const logger = createLogger('WeChatChannel');
 const DEFAULT_BASE_URL = 'https://ilinkai.weixin.qq.com';
 
 /**
+ * Normalize `channels.wechat.progressUpdates` (#5453).
+ *
+ * Absent / `true` → enabled without coalescing (exact pre-#5453-config
+ * behavior: every public commentary item ships immediately). `false` →
+ * final-reply-only. `{ minIntervalMs: N }` → enabled with an N ms
+ * anti-flood window (0 disables coalescing; bounded to 10 minutes).
+ */
+export function normalizeProgressUpdates(
+  value: boolean | { minIntervalMs?: number } | undefined
+): { enabled: boolean; minIntervalMs: number } {
+  if (value === false) { return { enabled: false, minIntervalMs: 0 }; }
+  const raw = typeof value === 'object' && value !== null && typeof value.minIntervalMs === 'number'
+    ? value.minIntervalMs
+    : 0;
+  return { enabled: true, minIntervalMs: Math.max(0, Math.min(Math.floor(raw), 600_000)) };
+}
+
+/**
  * WeChat Channel.
  *
  * Provides WeChat (Tencent ilink) bot integration with:
@@ -51,6 +69,12 @@ const DEFAULT_BASE_URL = 'https://ilinkai.weixin.qq.com';
 export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
   private readonly baseUrl: string;
   private readonly routeTag?: string;
+  /**
+   * #5453: resolved public-progress delivery policy. `enabled` keeps live
+   * commentary/decision narration flowing (baseline since #5455);
+   * `minIntervalMs > 0` coalesces bursts into one text per window.
+   */
+  readonly progressDelivery: { enabled: boolean; minIntervalMs: number };
   private client?: WeChatApiClient;
   private auth?: WeChatAuth;
   private messageListener?: WeChatMessageListener;
@@ -65,6 +89,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
     super({ ...config, id }, 'wechat', 'WeChat');
     this.baseUrl = config.baseUrl || DEFAULT_BASE_URL;
     this.routeTag = config.routeTag;
+    this.progressDelivery = normalizeProgressUpdates(config.progressUpdates);
   }
 
   /**

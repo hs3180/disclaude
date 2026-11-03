@@ -27,6 +27,12 @@ export interface WeChatChannelConfig extends ChannelConfig {
   routeTag?: string;
   /** Persistent account directory, populated by `disclaude wechat login`. */
   stateDir?: string;
+  /**
+   * #5453: deliver public commentary / decision narration while the turn
+   * runs. `false` restores final-reply-only; `{ minIntervalMs }` enables
+   * anti-flood coalescing of rapid updates. Default: on, unthrottled.
+   */
+  progressUpdates?: boolean | { minIntervalMs?: number };
 }
 
 // ---------------------------------------------------------------------------

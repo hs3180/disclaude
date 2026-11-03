@@ -63,6 +63,15 @@ export interface ChatAgentCallbacks {
   /** Buffer assistant text until its terminal round, excluding progress from REST responses. */
   finalReplyOnly?: boolean;
 
+  /**
+   * #5453: anti-flood spacing (ms) between live progress deliveries
+   * (public commentary + decision narration). Progress arriving inside the
+   * window is coalesced and flushed as one merged text when the window
+   * elapses or right before the next user-visible delivery — final replies
+   * are never delayed or merged. 0/undefined sends each item immediately.
+   */
+  progressMinIntervalMs?: number;
+
   /** Internal consumers receive bounded assistant text after the last tool call and the actual turn outcome,
    * without mixing user notifications, tool traces or SDK progress into results. */
   onTurnResult?: (result: { success: boolean; text: string; truncated: boolean }) => Promise<void>;

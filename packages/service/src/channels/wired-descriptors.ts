@@ -363,13 +363,21 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
   },
 
   createCallbacks: (channel, context) => {
+    // #5453: progressUpdates:false restores final-reply-only delivery;
+    // a minIntervalMs window coalesces rapid progress into one text.
+    // Fallback covers mock/partial channels: baseline (on, unthrottled).
+    const progress = (channel as WeChatChannel).progressDelivery ?? { enabled: true, minIntervalMs: 0 };
     const factory = createChannelCallbacksFactory(channel, context.logger, {
       sendDoneSignal: false,
+      ...(progress.enabled ? {} : { finalReplyOnly: true }),
       getChatHistory: (chatId: string) => messageLogger.getChatHistory(chatId),
       getChatLogFilePaths: (chatId: string) => messageLogger.getChatLogFilePaths(chatId),
     });
     return (chatId, threadRootId) => ({
       ...factory(chatId, threadRootId),
+      ...(progress.enabled && progress.minIntervalMs > 0
+        ? { progressMinIntervalMs: progress.minIntervalMs }
+        : {}),
       beginProcessing: (target) => (channel as WeChatChannel).beginTyping(target),
       sendFile: async (target, filePath) => { await channel.sendMessage({ chatId: target, type: 'file', filePath }); },
     });
