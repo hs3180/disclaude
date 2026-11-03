@@ -183,6 +183,45 @@ describe('Optional Datalayer Notebook tools', () => {
     } finally { warn.mockRestore(); error.mockRestore(); }
   });
 
+  it('drops the RTC-seeded empty first cell when appending real content after create (#5548)', async () => {
+    const f = await fixture();
+    // Opening a created zero-cell notebook through RTC makes the server seed
+    // exactly one empty code cell before any user content exists.
+    f.notebook.fromJSON({
+      nbformat: 4,
+      nbformat_minor: 5,
+      metadata: {},
+      cells: [
+        { id: 'rtc-seed', cell_type: 'code', metadata: {}, source: '', outputs: [], execution_count: null },
+      ],
+    });
+    const first = await f.call(f.session, 'notebook_insert_cell', {
+      notebookId: f.args.notebookId, cellId: 'intro', beforeCellId: '', cellType: 'markdown', source: '# Findings',
+    });
+    expect(first).toMatchObject({ state: 'inserted', cellId: 'intro', removedSeedCellId: 'rtc-seed' });
+    const second = await f.call(f.session, 'notebook_insert_cell', {
+      notebookId: f.args.notebookId, cellId: 'analysis', beforeCellId: '', cellType: 'code', source: 'print(42)',
+    });
+    expect(second).toMatchObject({ state: 'inserted', cellId: 'analysis' });
+    expect('removedSeedCellId' in second).toBe(false);
+    expect(f.notebook.cells.map((c) => [c.id, c.source])).toEqual([
+      ['intro', '# Findings'],
+      ['analysis', 'print(42)'],
+    ]);
+    // Delivered exports stay faithful: the snapshot's first cell is user content.
+    const saved = exportFixture(f);
+    const report = (await f.call(f.session, 'notebook_export', { notebookId: f.args.notebookId })) as {
+      revision: string;
+      notebookPath: string;
+    };
+    expect(report.revision).toBe(notebookSnapshotHash(f.notebook.toJSON()));
+    const content = saved.get(`api/contents/${report.notebookPath}`)!.content as {
+      cells: Array<{ id: string; source: unknown }>;
+    };
+    expect(content.cells.map((c) => c.id)).toEqual(['intro', 'analysis']);
+    expect(String(content.cells[0].source)).toBe('# Findings');
+  });
+
   it('returns canonical error fields and one-release aliases that a Jupyter Notebook consumer can read', async () => {
     const f = await fixture();
     const raw = { output_type: 'error', ename: 'NameError', evalue: "name 'IN_DIR' is not defined",
