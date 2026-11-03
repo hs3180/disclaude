@@ -485,6 +485,35 @@ export class MessageHandler {
   }
 
   /**
+   * Issue #5433: build an actionable reference for thread-context content that
+   * could not be auto-expanded (a card with no extractable text, or a
+   * merge_forward whose child messages are not visible in the response).
+   *
+   * Same philosophy as buildMediaThreadGuidance (#4319): stay read-only, but
+   * never hand the agent a bare placeholder that hides both what the message
+   * is and how to get its content. The guidance surfaces the message_id, the
+   * sender, and a ready-to-run lark-cli fetch command (the same messages-mget
+   * surface the topic-thread self-service guidance advertises).
+   *
+   * @param kindLabel - Short Chinese label for the message kind (卡片消息 / 合并转发消息)
+   * @param messageId - The Feishu message_id to point the agent at
+   * @param sender - The message's sender (id wins over sender_type for display)
+   */
+  private buildOnDemandFetchGuidance(
+    kindLabel: string,
+    messageId: string,
+    sender?: { sender_type?: string; id?: string },
+  ): string {
+    const senderLabel = sender?.id || sender?.sender_type || 'unknown';
+    return [
+      `[${kindLabel} (message_id=${messageId}, 发送者=${senderLabel}): 线程上下文未能自动展开其正文。如需原文，可执行下方命令按需获取]`,
+      '```bash',
+      `npx @larksuite/cli im +messages-mget --message-ids ${messageId} --as bot`,
+      '```',
+    ].join('\n');
+  }
+
+  /**
    * Clear the client (on stop).
    */
   clearClient(): void {
@@ -654,7 +683,13 @@ export class MessageHandler {
           }
         }
 
-        const msg = response.data?.items?.[0];
+        // Issue #5433: the per-node response can carry MORE than this node.
+        // For a merge_forward parent, Feishu returns the forwarded bodies as
+        // sibling items (each child's upper_message_id → parent message_id) in
+        // this SAME response; reading only items[0] discarded them, which is
+        // how a forwarded chat record vanished from thread context.
+        const items = response.data?.items ?? [];
+        const [msg] = items;
 
         if (!msg) {
           break;
@@ -682,6 +717,28 @@ export class MessageHandler {
           if (guidance) {
             text = guidance;
           }
+        }
+
+        // Issue #5433: expand forwarded content the bot can already see.
+        // (a) merge_forward parents: the bodies are the upper_message_id children
+        //     returned alongside the parent — inline them with zero extra API
+        //     calls (still read-only). Without visible children, fall back to
+        //     the actionable reference below, not a bare placeholder.
+        if (msgType === 'merge_forward') {
+          const forwardId = msg.message_id || currentId;
+          const childTexts = items
+            .filter(item => item && item.upper_message_id === forwardId)
+            .map(child => this.extractMessageText(child.msg_type, child.body?.content || '{}').trim())
+            .filter(Boolean);
+          text = childTexts.length > 0
+            ? ['[合并转发消息]', ...childTexts.map(t => `- ${t}`)].join('\n')
+            : this.buildOnDemandFetchGuidance('合并转发消息', forwardId, msg.sender);
+        } else if (msgType === 'interactive' && text === '[Interactive Card]') {
+          // (b) a card that resisted extraction (unknown structure): give the
+          //     agent an actionable reference — message_id + sender + a
+          //     ready-to-run fetch command — instead of the generic placeholder
+          //     that hides both the content and how to get it.
+          text = this.buildOnDemandFetchGuidance('卡片消息', msg.message_id || currentId, msg.sender);
         }
 
         if (text) {
@@ -783,6 +840,13 @@ export class MessageHandler {
     // Issue #4316 nit ①: this covers both unrecognized types AND recognized
     // types with malformed content (e.g. post missing content array), so the
     // behavior is intentional and traceable.
+    // Issue #5433: merge_forward is NOT a parse failure — its content is the
+    // fixed marker string by design and the bodies are separate child messages
+    // (upper_message_id), which getThreadContext inlines when visible. Name
+    // the kind instead of "[未解析的 …]" which reads as an extraction bug.
+    if (messageType === 'merge_forward') {
+      return '[合并转发消息: 正文为子消息，需展开]';
+    }
     return `[未解析的 ${messageType} 消息]`;
   }
 
