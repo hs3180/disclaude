@@ -26,9 +26,11 @@ import { WeChatAuth } from './auth.js';
 import { WeChatMessageListener, type MessageProcessor } from './message-listener.js';
 import type { WeChatChannelConfig } from './types.js';
 import { WeChatStateStore, type WeChatSessionState } from './state-store.js';
+import { WeChatPeerIdentityStore, WECHAT_PEER_SHARED_SCOPE, type WeChatPeerContinuation } from './peer-identity.js';
 import { wechatChannelId, wechatPeer, lockWeChatIdentity } from './identity.js';
 import { downloadWeChatMedia, WECHAT_MEDIA_MAX_BYTES } from './media.js';
 import { tmpdir } from 'node:os';
+import { dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { WeChatTypingController } from './typing-controller.js';
 import { emptyWelcomeState, WeChatWelcome, WECHAT_WELCOME_TEXT } from './welcome.js';
@@ -55,6 +57,10 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
   private auth?: WeChatAuth;
   private messageListener?: WeChatMessageListener;
   private readonly contexts = new Map<string, string>();
+  /** Canonical chatId → peer on this account (#5600 continuation aliases). */
+  private readonly peerAliases = new Map<string, string>();
+  private peerIdentities?: WeChatPeerIdentityStore;
+  private peerIdentityScope = 'shared';
   private welcome?: WeChatWelcome;
   private releaseAccount?: () => Promise<void>;
   private releaseIdentity?: () => Promise<void>;
@@ -91,6 +97,19 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
         session = await store.loadSession(credentials.botId);
         this.contexts.clear();
         for (const [peer, token] of Object.entries(session.contexts)) { this.contexts.set(peer, token); }
+        // #5600: bind conversations to a stable peer id so a re-registered
+        // account (new registrationId prefix) continues the original chatId.
+        this.peerAliases.clear();
+        this.peerIdentities = this.config.registrationId
+          ? new WeChatPeerIdentityStore(this.config.peerIdentityDir ?? dirname(this.config.stateDir))
+          : undefined;
+        this.peerIdentityScope = credentials.userId ?? WECHAT_PEER_SHARED_SCOPE;
+        // Warm aliases for persisted peers so a restarted channel already owns
+        // its continued (old-prefix) chatIds before the next poll arrives.
+        for (const peer of Object.keys(session.contexts)) {
+          const continuation = await this.continuePeerIdentity(peer);
+          if (continuation) { this.peerAliases.set(continuation.chatId, peer); }
+        }
       } catch (error) { await this.releaseIdentity?.(); this.releaseIdentity = undefined; await this.releaseAccount(); this.releaseAccount = undefined; throw error; }
     }
     try {
@@ -132,10 +151,16 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
 
       // Start message listener (Issue #1556 Phase 3.1)
       const processor: MessageProcessor = async (message: IncomingMessage) => {
-        await this.emitMessage(this.config.registrationId ? {
-          ...message, chatId: `${this.id}:${message.chatId}`, messageId: `${this.id}:${message.messageId}`,
+        if (!this.config.registrationId) { await this.emitMessage(message); return; }
+        // #5600: a recognized peer keeps its originally bound chatId even
+        // after this account re-registered under a new registrationId.
+        const continuation = await this.continuePeerIdentity(message.chatId);
+        const chatId = continuation?.chatId ?? `${this.id}:${message.chatId}`;
+        this.peerAliases.set(chatId, message.chatId);
+        await this.emitMessage({
+          ...message, chatId, messageId: `${this.id}:${message.messageId}`,
           metadata: { ...message.metadata, channelId: this.id, registrationId: this.config.registrationId },
-        } : message);
+        });
       };
 
       this.messageListener = new WeChatMessageListener(this.client, processor, {
@@ -218,10 +243,44 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
     }
   }
 
+  /**
+   * Resolve the canonical chatId for a peer on this account (#5600). A stable
+   * peer id first seen by an earlier registration keeps that registration's
+   * chatId, so agent sessions, history and schedules continue across the
+   * re-registration instead of forking. Store failures are non-fatal: the
+   * natural chatId is used and new conversations still work.
+   */
+  private async continuePeerIdentity(peer: string): Promise<WeChatPeerContinuation | undefined> {
+    if (!this.peerIdentities || !this.config.registrationId) { return undefined; }
+    try {
+      const continuation = await this.peerIdentities.continuePeer({
+        peer, channelId: this.id, registrationId: this.config.registrationId, scope: this.peerIdentityScope,
+      });
+      if (continuation.continued) {
+        logger.info({ channelId: this.id, chatId: continuation.chatId,
+          previousRegistrationId: continuation.previousRegistrationId,
+          peerHash: createHash('sha256').update(peer).digest('hex').slice(0, 12) },
+          'WeChat peer matched across re-registration; continuing the original conversation');
+      }
+      return continuation;
+    } catch (error) {
+      logger.warn({ channelId: this.id, err: error instanceof Error ? error.message : String(error) },
+        'WeChat peer identity store unavailable; falling back to this registration prefix');
+      return undefined;
+    }
+  }
+
+  /** Peer on this account for a (possibly earlier-registration) chatId (#5600). */
+  private peerForChatId(chatId: string): string {
+    const alias = this.peerAliases.get(chatId);
+    if (alias) { return alias; }
+    return wechatPeer(chatId, this.config.registrationId);
+  }
+
   /** Account/peer-local leases. A stopped/missing-context channel never starts a new indicator. */
   beginTyping(chatId: string): () => void {
     if (!this.typing) { return () => {}; }
-    const peer = wechatPeer(chatId, this.config.registrationId);
+    const peer = this.peerForChatId(chatId);
     return this.contexts.has(peer) ? this.typing.begin(peer) : () => {};
   }
 
@@ -242,7 +301,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
       throw new Error('WeChat client not initialized');
     }
     if (message.type === 'done') { return; }
-    message = { ...message, chatId: wechatPeer(message.chatId, this.config.registrationId) };
+    message = { ...message, chatId: this.peerForChatId(message.chatId) };
     const contextToken = this.contexts.get(message.chatId);
     if (!contextToken) { throw new Error('No WeChat reply context for this peer; send a message to the bot first'); }
 
@@ -335,7 +394,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
    * Issue #3824: Channel ownership query for post-restart routing.
    */
   ownsChatId(chatId: string): boolean {
-    try { return this.contexts.has(wechatPeer(chatId, this.config.registrationId)); }
+    try { return this.contexts.has(this.peerForChatId(chatId)); }
     catch { return false; }
   }
 
