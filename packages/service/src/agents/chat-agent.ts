@@ -2623,6 +2623,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         if (parsed.type === 'result') {
           this.joinConsumedInputs(parsed.metadata?.consumedInputIds, currentTurnMessageId);
           const inputDeliveryFailure = parsed.metadata?.inputDeliveryFailure as AgentMessageMetadata['inputDeliveryFailure'] | undefined;
+          // #5526: when the native turn completed, a failed question-card
+          // delivery is a LOCAL interaction failure — the turn's terminal
+          // state and its already-delivered artifacts stand. This covers both
+          // the provider's success-tagged metadata and legacy turn_failed
+          // results that carry nativeCompleted (older providers).
+          const inputDeliveryLocalFailure = inputDeliveryFailure?.nativeCompleted === true;
           // A completed native reply is not truncated merely because a local
           // input card failed. Keep execution and interaction distinct.
           await flushPendingAssistant(inputDeliveryFailure?.nativeCompleted
@@ -2636,10 +2642,27 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
               'Streaming terminal delivery failed after fallback'
             );
           }
+          if (inputDeliveryLocalFailure) {
+            // Exactly one notice: the turn completed and its delivered outputs
+            // remain valid; only the question never reached the user. The
+            // structured context (failureClass input-delivery-failed + reason)
+            // keeps the cause — e.g. a missing reply anchor on a push-initialized
+            // conversation (#5430) — traceable via /issue and the diagnostic ID.
+            this.restartManager.recordFailure(chatId, 'input-delivery');
+            const failure = failureContext(this.activeLifecycleContext, resolveReplyThreadRoot(), 'input-delivery-failed',
+              parsed.terminationDetail || inputDeliveryFailure?.reason || 'Async question was not delivered',
+              parsed.sessionId ?? this.queryHandle?.sessionId);
+            const delivered = await this.deliverUserVisible(chatId,
+              `⚠️ 本轮异步提问未能确认送达，交互尚未完成。模型已结束本轮执行，本轮已送达的产出仍然有效；如仍需回答，请直接在本会话发消息，系统不会自动重放原任务。\n${this.formatFailureDiagnostic(failure)}`,
+              resolveReplyThreadRoot());
+            this.logger.warn({ ...failure, event: 'agent_input_delivery_failure', interactionStatus: 'delivery_failed',
+              nativeCompleted: true, reason: inputDeliveryFailure?.reason ?? parsed.terminationDetail, user_visible: delivered },
+            'Async input card delivery failed; native turn completed, terminal state preserved (#5526)');
+          }
           // A provider can emit an empty synthetic result after a failed process.
           // Handle this before the normal success/empty-turn accounting so it
           // always has a user-visible terminal outcome.
-          if (parsed.terminatedReason === 'turn_failed') {
+          if (parsed.terminatedReason === 'turn_failed' && !inputDeliveryLocalFailure) {
             // Issue #5452: an output-cap failure (max_output_tokens) after
             // in-turn progress is NOT a service/credential problem — the
             // generic "check model service, credentials, timeout" advice is
@@ -3241,7 +3264,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             this.restartManager.recordFailure(chatId, 'missing-tool-reply');
           } else if (isEmptyTurn && parsed.terminatedReason !== 'turn_failed') {
             this.restartManager.recordFailure(chatId, 'empty-turn');
-          } else if (parsed.terminatedReason !== 'turn_failed') {
+          } else if (parsed.terminatedReason !== 'turn_failed' && !inputDeliveryLocalFailure) {
             // Record success to reset restart state
             this.restartManager.recordSuccess(chatId);
             // Issue #4391: a non-empty turn means the session is healthy —
@@ -3270,10 +3293,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // Keep delivery/callbacks, but only a newly adopted input gets a terminal.
           if (!turnHasTerminal && !missingToolReply) {
             this.logger.info({
-              event: 'agent_turn', state: parsed.terminatedReason === 'turn_failed' ? 'failed' : 'completed',
+              event: 'agent_turn', state: parsed.terminatedReason === 'turn_failed' && !inputDeliveryLocalFailure ? 'failed' : 'completed',
               chatId, user_visible: this.didDeliverUserVisibleThisTurn,
               circuitState: this.sendCircuitOpen ? 'open' : 'closed', ...this.activeLifecycleContext,
-              ...(parsed.terminatedReason === 'turn_failed' ? { diagnosticId } : {}),
+              ...(parsed.terminatedReason === 'turn_failed' && !inputDeliveryLocalFailure ? { diagnosticId } : {}),
+              ...(inputDeliveryLocalFailure ? { interactionStatus: 'delivery_failed', nativeCompleted: true } : {}),
             }, 'agent_turn');
           }
           turnHasTerminal = true;
@@ -3282,15 +3306,17 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // The agent is now idle between turns — blocking tasks can execute.
           this.isProcessingMessage = false;
 
-          // Issue #4063: Resolve per-turn completion promise (works in persistent mode)
-          const turnError = parsed.terminatedReason === 'turn_failed'
+          // Issue #4063: Resolve per-turn completion promise (works in persistent mode).
+          // #5526: a locally failed question card does not fail the turn —
+          // turnError stays undefined so the native completion stands.
+          const turnError = parsed.terminatedReason === 'turn_failed' && !inputDeliveryLocalFailure
             ? Object.assign(new Error(sanitizeDiagnosticText(parsed.terminationDetail || parsed.content || 'Provider turn failed')),
               this.activeLifecycleContext, { name: 'ProviderTurnFailedError', backend: this.agentBackend, provider: this.sdkProvider.name, diagnosticId })
             : missingToolReplyError;
           this.resolveTurn(currentTurnMessageId, turnError);
 
           const turnSucceeded = !isEmptyTurn && !missingToolReply && !upstreamApiError && !midstreamInterrupted &&
-            !parsed.terminatedReason && !turnHadError && !turnDeliveryFailed && !turnResultTruncated;
+            (!parsed.terminatedReason || inputDeliveryLocalFailure) && !turnHadError && !turnDeliveryFailed && !turnResultTruncated;
           if (this.callbacks.onTurnResult) {
             await this.callbacks.onTurnResult({
               success: turnSucceeded,

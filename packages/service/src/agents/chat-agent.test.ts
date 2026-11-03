@@ -6197,24 +6197,71 @@ describe('ChatAgent (service)', () => {
       (agent as any).createQueryStream = query;
       try {
         await agent.processMessage({ chatId: 'input-failure', payload: 'Produce report', messageId: 'original-input', chatType: 'group', threadRootId: 'original-topic' });
-        const outcome = expect(agent.turnCompleteFor('original-input')).rejects.toMatchObject({ name: 'ProviderTurnFailedError' });
+        const outcome = nativeCompleted
+          ? expect(agent.turnCompleteFor('original-input')).resolves.toBeUndefined()
+          : expect(agent.turnCompleteFor('original-input')).rejects.toMatchObject({ name: 'ProviderTurnFailedError' });
         emit(); await outcome;
         const sent = localCallbacks.sendMessage.mock.calls.map(call => call[1]);
         const notices = sent.filter(text => text.includes('异步提问未能确认送达'));
         expect(notices).toHaveLength(1);
         expect(notices[0]).toContain('交互尚未完成'); expect(notices[0]).toContain('不会自动重放');
         expect(notices[0]).toContain('input-delivery-failed');
+        expect(notices[0]).toContain('Async question was not delivered');
         expect(notices[0].includes('模型已结束本轮执行')).toBe(nativeCompleted);
         expect(notices[0]).not.toMatch(/未生成可交付结果|凭据|超时配置/);
-        if (nativeCompleted) { expect(sent).toContain('报告已经发送。'); }
+        if (nativeCompleted) {
+          expect(sent).toContain('报告已经发送。');
+          // #5526: local card failure must not rewrite the native terminal state.
+          expect(notices[0]).toContain('已送达的产出仍然有效');
+          expect(localCallbacks.onTurnResult).toHaveBeenCalledWith(expect.objectContaining({ success: true, text: expect.stringContaining('报告已经发送。') }));
+        } else {
+          expect(localCallbacks.onTurnResult).toHaveBeenCalledWith(expect.objectContaining({ success: false }));
+        }
         expect(sent.join('\n')).not.toContain('中断前的部分回复');
         expect(sent.join('\n')).not.toContain('会话可能已失效');
         expect(query).toHaveBeenCalledOnce();
         expect((agent as any).emptyTurnRetryPolicy.markRetried).not.toHaveBeenCalled();
         expect((agent as any).restartManager.recordSuccess).not.toHaveBeenCalled();
         expect((agent as any).restartManager.recordFailure).toHaveBeenCalledExactlyOnceWith('input-failure', 'input-delivery');
-        expect(localCallbacks.onTurnResult).toHaveBeenCalledWith(expect.objectContaining({ success: false }));
         for (const call of localCallbacks.sendMessage.mock.calls.filter(call => call[1] === '报告已经发送。' || call[1].includes('异步提问未能确认送达'))) { expect(call[2]).toBe('original-topic'); }
+      } finally { emit?.(); agent.reset(); ChatAgent.prototype.dispose.call(agent); }
+    });
+
+    it('keeps a completed turn successful when the provider tags only the card delivery as failed (#5526, /api/push-initialized #5430)', async () => {
+      const localCallbacks = { ...createMockCallbacks(), onTurnResult: vi.fn().mockResolvedValue(undefined) };
+      const agent = new ChatAgent({ chatId: 'push-input-failure', agentBackend: 'codex', callbacks: localCallbacks, apiKey: 'test', model: 'test' });
+      (agent as any).isAgentTeamsEnabled = () => false;
+      vi.spyOn((agent as any).emptyTurnRetryPolicy, 'markRetried');
+      let emit!: () => void;
+      const anchorReason = 'Async question was not delivered: the channel could not confirm card delivery. '
+        + 'Input card could not be delivered: {"channel":"feishu","operation":"public-card","stage":"send","outcome":"rejected","apiCode":230001}';
+      const query = vi.fn(() => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: (async function* () {
+        await new Promise<void>(resolve => { emit = resolve; });
+        yield { parsed: { type: 'tool_use', content: 'write-once' }, raw: {} };
+        yield { parsed: { type: 'tool_result', content: 'saved' }, raw: {} };
+        yield { parsed: { type: 'text', content: '报告已生成（13 页）。', metadata: { phase: 'final_answer' } }, raw: {} };
+        // Provider-level #5526 fix: completed turn carries the local failure as
+        // metadata — no terminatedReason rewrite (push-init anchor is synthetic).
+        yield { parsed: { type: 'result', content: '✅ Complete',
+          metadata: { inputDeliveryFailure: { nativeCompleted: true, reason: anchorReason } } }, raw: {} };
+      })() }));
+      (agent as any).createQueryStream = query;
+      try {
+        await agent.processMessage({ chatId: 'push-input-failure', payload: 'Produce report', messageId: 'push_5430-init', chatType: 'group', threadRootId: 'push-topic' });
+        const outcome = expect(agent.turnCompleteFor('push_5430-init')).resolves.toBeUndefined();
+        emit(); await outcome;
+        const sent = localCallbacks.sendMessage.mock.calls.map(call => call[1]);
+        const notices = sent.filter(text => text.includes('异步提问未能确认送达'));
+        expect(notices).toHaveLength(1);
+        expect(notices[0]).toContain('已送达的产出仍然有效');
+        expect(notices[0]).toContain('input-delivery-failed');
+        expect(notices[0]).toContain('apiCode":230001');
+        expect(sent).toContain('报告已生成（13 页）。');
+        expect(sent.join('\n')).not.toContain('本轮失败');
+        expect(localCallbacks.onTurnResult).toHaveBeenCalledWith(expect.objectContaining({ success: true, text: expect.stringContaining('13 页') }));
+        expect((agent as any).restartManager.recordFailure).toHaveBeenCalledExactlyOnceWith('push-input-failure', 'input-delivery');
+        expect((agent as any).emptyTurnRetryPolicy.markRetried).not.toHaveBeenCalled();
+        expect(query).toHaveBeenCalledOnce();
       } finally { emit?.(); agent.reset(); ChatAgent.prototype.dispose.call(agent); }
     });
 
