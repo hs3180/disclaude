@@ -2,6 +2,7 @@
 
 import { createLogger } from '../utils/logger.js';
 import type { FeishuCard } from '../types/platform.js';
+import { ChannelApiRequestError, type ChannelApiFailureDetails } from './client.js';
 import type {
   ChannelApiRequestType,
   ChannelApiRequestPayloads,
@@ -18,12 +19,14 @@ export type ChannelApiMethodResult = {
   success: boolean;
   error?: string;
   errorType?: ChannelApiMethodErrorType;
+  /** Safe structured fields from the REST failure body (#5616); present when the server sent them. */
+  failure?: ChannelApiFailureDetails;
 };
 
 /**
  * Classify an error into an REST API error type based on its message prefix.
  */
-function classifyError(error: unknown): { err: Error; errorType: ChannelApiMethodErrorType } {
+function classifyError(error: unknown): { err: Error; errorType: ChannelApiMethodErrorType; failure?: ChannelApiFailureDetails } {
   const err = error instanceof Error ? error : new Error(String(error));
   let errorType: ChannelApiMethodErrorType = 'channel_api_request_failed';
   if (err.message.startsWith('CHANNEL_API_NOT_AVAILABLE')) {
@@ -31,7 +34,9 @@ function classifyError(error: unknown): { err: Error; errorType: ChannelApiMetho
   } else if (err.message.startsWith('CHANNEL_API_TIMEOUT')) {
     errorType = 'channel_api_timeout';
   }
-  return { err, errorType };
+  // #5616: keep structured diagnostics from the failure body instead of flattening to a string.
+  const failure = error instanceof ChannelApiRequestError ? error.failure : undefined;
+  return { err, errorType, ...(failure ? { failure } : {}) };
 }
 
 /**
@@ -60,9 +65,9 @@ export async function sendMessage(
   try {
     return await client.request('sendMessage', { chatId, text, threadId, mentions });
   } catch (error) {
-    const { err, errorType } = classifyError(error);
+    const { err, errorType, failure } = classifyError(error);
     logger.error({ err: error, chatId }, 'sendMessage failed');
-    return { success: false, error: err.message, errorType };
+    return { success: false, error: err.message, errorType, ...(failure ? { failure } : {}) };
   }
 }
 
