@@ -158,6 +158,9 @@ state is shared across invocations unless that behavior is implemented.
 
 See [`skills/browser-use/SKILL.md`](../skills/browser-use/SKILL.md) for browser
 automation. The packaged channel CLI is documented by its registry `SKILL.md`
-plus `disclaude channel help`. The [Jupyter CLI Skill](../skills/jupyter/README.md)
+plus `disclaude channel help`. The [history skill](../skills/history/SKILL.md)
+exposes read-only, structured session history queries through
+`disclaude history query` (CLI and REST parity, Issue #5603) so agents read
+past conversations without injected tools. The [Jupyter CLI Skill](../skills/jupyter/README.md)
 adds optional remote Notebook research through `disclaude jupyter`, using the
 agent's existing shell tool without extending ChatAgent's session lifecycle.
