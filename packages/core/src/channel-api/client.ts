@@ -47,9 +47,32 @@ const stripOk = (body: Record<string, unknown>): Record<string, unknown> => {
   return rest;
 };
 
+/** Structured failure fields kept from a DisclaudeService REST error body (#5616). */
+export interface ChannelApiFailureDetails {
+  /** Host-layer diagnostic ID (the `(diagnostic ID …)` previously only embedded in the message). */
+  diagnosticId?: string;
+  upstreamStatus?: number;
+  upstreamCode?: number;
+  /** Channel-layer safe diagnostics (endpoint/ret/errmsg/errorKind/channelDiagnosticId…). */
+  diagnostics?: Record<string, unknown>;
+}
+
+/**
+ * `CHANNEL_API_REQUEST_FAILED` with the server's structured diagnostic fields
+ * preserved alongside the message string (#5616). The message is byte-for-byte
+ * the previous contract, so prefix-based classification keeps working.
+ */
+export class ChannelApiRequestError extends Error {
+  readonly failure: ChannelApiFailureDetails;
+  constructor(message: string, failure: ChannelApiFailureDetails) {
+    super(message);
+    this.name = 'ChannelApiRequestError';
+    this.failure = failure;
+  }
+}
+
 /** A route entry: REST endpoint + optional dynamic-path builder + response shaping. */
-interface Route {
-  method: 'GET' | 'POST';
+interface Route {  method: 'GET' | 'POST';
   /** Static path (e.g. `/api/send-message`). */
   path?: string;
   /** Dynamic path builder (e.g. for path-param routes). */
@@ -174,7 +197,15 @@ export class ChannelApiClient implements ChannelApiClientLike {
 
     if (!(route.success ?? defaultSuccess)(json, res)) {
       const msg = (json.message as string | undefined) ?? `${type} failed (HTTP ${res.status})`;
-      throw new Error(`CHANNEL_API_REQUEST_FAILED: REST ${type} (HTTP ${res.status}: ${msg})`);
+      // #5616: keep the failure body's safe structured fields on the thrown
+      // error so CLI layers can surface them without parsing the message.
+      const failure: ChannelApiFailureDetails = {
+        ...(typeof json.diagnosticId === 'string' ? { diagnosticId: json.diagnosticId } : {}),
+        ...(typeof json.upstreamStatus === 'number' ? { upstreamStatus: json.upstreamStatus } : {}),
+        ...(typeof json.upstreamCode === 'number' ? { upstreamCode: json.upstreamCode } : {}),
+        ...(json.diagnostics && typeof json.diagnostics === 'object' ? { diagnostics: json.diagnostics as Record<string, unknown> } : {}),
+      };
+      throw new ChannelApiRequestError(`CHANNEL_API_REQUEST_FAILED: REST ${type} (HTTP ${res.status}: ${msg})`, failure);
     }
 
     // Apply per-route response shaping (default: strip the `ok` envelope).
