@@ -89,6 +89,13 @@ export type { ChatAgentCallbacks, ChatAgentConfig, MessageData } from './types.j
  */
 const MAX_CONSECUTIVE_SEND_FAILURES = 3;
 const SEND_CIRCUIT_COOLDOWN_MS = 30_000;
+/**
+ * Issue #5470: bounded backlog of user-visible payloads skipped while the
+ * delivery circuit is open. Oldest entries are dropped first — a recovered
+ * channel re-sends the recent, actionable replies (a completed task's final
+ * reply above all); ancient ones are long stale.
+ */
+const SEND_CIRCUIT_BACKLOG_MAX = 10;
 
 /**
  * Issue #4626: best-effort HTTP status extraction from a channel send error.
@@ -289,6 +296,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   private sendCircuitRetryAt = 0;
   private sendCircuitProbeInFlight = false;
   private sendCircuitEpoch = 0;
+  // Issue #5470: replies skipped by the open circuit are backlogged (bounded)
+  // instead of dropped, and a timer probes recovery at the cooldown deadline —
+  // without new agent output the circuit otherwise stayed open forever and the
+  // completed task's final reply never reached the user.
+  private sendCircuitBacklog: Array<{ chatId: string; content: string; threadRoot?: string }> = [];
+  private sendCircuitRecoveryTimer?: ReturnType<typeof setTimeout>;
+  private sendCircuitBacklogFlushInFlight = false;
   private activeLifecycleContext?: NonNullable<StreamingUserMessage['correlation']>;
   private pendingLifecycleContexts: Array<NonNullable<StreamingUserMessage['correlation']>> = [];
   private didDeliverUserVisibleThisTurn = false;
@@ -1816,6 +1830,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     this.sendCircuitRetryAt = 0;
     this.sendCircuitProbeInFlight = false;
     this.sendCircuitEpoch++;
+    // Issue #5470: fresh session — fresh delivery policy. Backlogged replies
+    // from the old session are not replayed across a /reset boundary (the
+    // user has re-engaged; stale final replies would only confuse).
+    this.sendCircuitBacklog = [];
+    this.sendCircuitBacklogFlushInFlight = false;
+    this.clearSendCircuitRecoveryTimer();
 
     // Issue #4587 (part 1, review fix): fresh session — anchors queued for the
     // OLD session's channel are dead (that channel is closed above). Safe
@@ -1964,11 +1984,19 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       circuitState: probe ? 'half-open' : this.sendCircuitOpen ? 'open' : 'closed',
     });
     if (this.sendCircuitOpen && !probe) {
+      // Issue #5470: the skipped payload — potentially the final reply of an
+      // already-completed task — is backlogged so a half-open probe can
+      // re-send it once the channel recovers.
+      this.queueSendCircuitBacklog(chatId, content, threadRoot);
       this.logger.debug(
-        { chatId, contentLength: content.length },
-        'Send skipped: delivery circuit open for this session (Issue #4626)'
+        { chatId, contentLength: content.length, queuedBacklog: this.sendCircuitBacklog.length },
+        'Send skipped: delivery circuit open for this session (Issue #4626); reply backlogged for half-open recovery (Issue #5470)'
       );
-      recordDeliveryEvent('delivery_final', { state: 'delivery_failed', circuitState: 'open' });
+      recordDeliveryEvent('delivery_final', {
+        state: 'delivery_failed',
+        circuitState: 'open',
+        queuedBacklog: this.sendCircuitBacklog.length,
+      });
       return false;
     }
     if (probe) { this.sendCircuitProbeInFlight = true; }
@@ -1983,6 +2011,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         this.sendCircuitProbeInFlight = false;
         if (probe) { this.sendCircuitEpoch++; }
         this.didDeliverUserVisibleThisTurn = true;
+        // Issue #5470: the circuit just closed (probe or fresh send) — the
+        // channel is confirmed healthy, so backfill backlogged replies owed to
+        // the user. Fire-and-forget; the flush re-uses this same wrapper.
+        if (this.sendCircuitBacklog.length > 0 && !this.sendCircuitBacklogFlushInFlight) {
+          void this.probeSendCircuitRecovery();
+        }
       }
       recordDeliveryEvent('delivery_final', {
         state: 'final',
@@ -2048,6 +2082,137 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       });
       return false;
     }
+  }
+
+  /**
+   * Issue #5470: queue a payload skipped by the open delivery circuit so the
+   * final reply of a completed task is not silently lost, then arm the
+   * cooldown recovery timer. Permanent-target circuits (retryAt = Infinity)
+   * never arm the timer — retrying a rejected target is futile (Issue #4626).
+   */
+  private queueSendCircuitBacklog(chatId: string, content: string, threadRoot?: string): void {
+    this.sendCircuitBacklog.push({ chatId, content, threadRoot });
+    if (this.sendCircuitBacklog.length > SEND_CIRCUIT_BACKLOG_MAX) {
+      this.sendCircuitBacklog.splice(0, this.sendCircuitBacklog.length - SEND_CIRCUIT_BACKLOG_MAX);
+    }
+    this.scheduleSendCircuitRecoveryProbe();
+  }
+
+  private clearSendCircuitRecoveryTimer(): void {
+    if (this.sendCircuitRecoveryTimer) {
+      clearTimeout(this.sendCircuitRecoveryTimer);
+      this.sendCircuitRecoveryTimer = undefined;
+    }
+  }
+
+  /**
+   * Issue #5470: arm a timer that fires at the circuit cooldown deadline (or,
+   * after a failed backfill send with the circuit still closed, after another
+   * cooldown) and probes recovery with a real backlogged reply — no new agent
+   * output required. Previously the circuit only recovered when the agent
+   * happened to produce a next message, which for an idle completed task meant
+   * "never" (user waits minutes-to-forever for the result).
+   */
+  private scheduleSendCircuitRecoveryProbe(): void {
+    if (this.disposed || this.sendCircuitRecoveryTimer || this.sendCircuitBacklog.length === 0) {
+      return;
+    }
+    const delay = this.sendCircuitOpen ? this.sendCircuitRetryAt - Date.now() : SEND_CIRCUIT_COOLDOWN_MS;
+    if (!Number.isFinite(delay)) { return; }
+    this.logger.info(
+      {
+        chatId: this.sendCircuitBacklog[0]?.chatId,
+        sendCircuitOpen: this.sendCircuitOpen,
+        retryInMs: Math.max(0, delay),
+        queuedBacklog: this.sendCircuitBacklog.length,
+        circuitState: 'half-open-scheduled',
+      },
+      'Delivery circuit open with backlogged replies — cooldown half-open probe scheduled (Issue #5470)'
+    );
+    this.sendCircuitRecoveryTimer = setTimeout(() => {
+      this.sendCircuitRecoveryTimer = undefined;
+      void this.probeSendCircuitRecovery();
+    }, Math.max(0, delay));
+    this.sendCircuitRecoveryTimer.unref?.();
+  }
+
+  /**
+   * Issue #5470 half-open recovery: one backlogged reply doubles as the probe.
+   * Success closes the circuit (inside {@link deliverUserVisible}) and the
+   * remaining backlog is re-sent through the same isolation wrapper — a fresh
+   * failure re-opens the circuit and stops the flush with the rest still
+   * queued for the next probe. Failure keeps the circuit open with a fresh
+   * cooldown and re-queues the probed payload. Also entered directly when a
+   * successful current-output probe closed the circuit with backlog pending.
+   */
+  private async probeSendCircuitRecovery(): Promise<void> {
+    if (this.disposed || this.sendCircuitBacklog.length === 0 || this.sendCircuitBacklogFlushInFlight) {
+      return;
+    }
+    this.sendCircuitBacklogFlushInFlight = true;
+    try {
+      if (this.sendCircuitOpen) {
+        if (this.sendCircuitProbeInFlight || Date.now() < this.sendCircuitRetryAt) {
+          this.scheduleSendCircuitRecoveryProbe();
+          return;
+        }
+        const entry = this.sendCircuitBacklog.shift();
+        if (!entry) { return; }
+        this.logger.info(
+          { chatId: entry.chatId, contentLength: entry.content.length,
+            queuedBacklog: this.sendCircuitBacklog.length, circuitState: 'half-open' },
+          'Half-open delivery-circuit probe: re-sending backlogged reply (Issue #5470)'
+        );
+        const delivered = await this.deliverUserVisible(entry.chatId, entry.content, entry.threadRoot);
+        if (!delivered) {
+          // deliverUserVisible kept the circuit open and reset the cooldown.
+          this.requeueSendCircuitBacklog(entry);
+          this.scheduleSendCircuitRecoveryProbe();
+          return;
+        }
+      }
+      // Circuit closed (probe succeeded above, or a current-output probe just
+      // closed it): backfill the rest. `deliverUserVisible` returning false
+      // means a fresh failure re-opened (or is re-arming) the circuit — stop.
+      let backfilled = 0;
+      while (!this.disposed && !this.sendCircuitOpen && this.sendCircuitBacklog.length > 0) {
+        const next = this.sendCircuitBacklog.shift();
+        if (!next) { break; }
+        if (!(await this.deliverUserVisible(next.chatId, next.content, next.threadRoot))) {
+          this.requeueSendCircuitBacklog(next);
+          this.scheduleSendCircuitRecoveryProbe();
+          break;
+        }
+        backfilled++;
+      }
+      if (backfilled > 0) {
+        this.logger.info(
+          { chatId: this.sendCircuitBacklog[0]?.chatId, backfilled,
+            remainingBacklog: this.sendCircuitBacklog.length, circuitState: 'closed' },
+          'Delivery circuit closed after half-open probe — backlogged replies re-sent (Issue #5470)'
+        );
+      }
+    } finally {
+      this.sendCircuitBacklogFlushInFlight = false;
+    }
+  }
+
+  private requeueSendCircuitBacklog(entry: { chatId: string; content: string; threadRoot?: string }): void {
+    this.sendCircuitBacklog.unshift(entry);
+    if (this.sendCircuitBacklog.length > SEND_CIRCUIT_BACKLOG_MAX) { this.sendCircuitBacklog.pop(); }
+  }
+
+  /**
+   * Issue #5470: delivery-circuit snapshot for status queries / observability
+   * — the response-waiting state (circuit open, next probe ETA, queued reply
+   * backlog) must be visible, not silent.
+   */
+  deliveryCircuitStatus(): { open: boolean; retryAtMs: number; queuedReplies: number } {
+    return {
+      open: this.sendCircuitOpen,
+      retryAtMs: this.sendCircuitRetryAt,
+      queuedReplies: this.sendCircuitBacklog.length,
+    };
   }
 
   /**
@@ -4023,6 +4188,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Issue #4391 (part 2 review): mark disposed synchronously first, so a
     // replay timer firing mid-dispose (or right after) sees the flag.
     this.disposed = true;
+    // Issue #5470: stop the pending half-open recovery probe timer.
+    this.clearSendCircuitRecoveryTimer();
     this.clearBackgroundWork(new Error('Agent disposed before work settled'));
     // Issue #3745: Synchronously close queryHandle and channel to prevent
     // exit listener leaks. The previous fire-and-forget pattern (dispose →
