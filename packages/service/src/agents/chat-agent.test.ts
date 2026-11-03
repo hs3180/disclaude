@@ -1265,6 +1265,101 @@ describe('ChatAgent (service)', () => {
     });
   });
 
+  describe('busy-input thread ownership routing (#5464)', () => {
+    /** Running turn owner-A with a recorded explicit thread key (`undefined` = main session). */
+    function ownedOwnerThread(threadKey: string | undefined) {
+      const callbacks = createMockCallbacks();
+      const agent = new ChatAgent({ chatId: 'scope-steer', callbacks, agentBackend: 'codex' as any, apiKey: 'test', model: 'test' });
+      const push = vi.fn().mockReturnValue(true);
+      const steer = vi.fn().mockResolvedValue({ turnId: 'native-A' });
+      Object.assign(agent as any, { channel: { push, close: vi.fn() }, queryHandle: { close: vi.fn(), cancel: vi.fn(), steer },
+        isSessionActive: true, isProcessingMessage: true, activeTurnMessageId: 'owner-A',
+        isAgentTeamsEnabled: () => false,
+        lastTurnMessage: { chatId: 'scope-steer', payload: 'original', messageId: 'owner-A' } });
+      (agent as any).historyManager.firstMessageHistoryLoaded = true;
+      (agent as any).createTurnCompletion('owner-A');
+      (agent as any).turnStartThreadKeys.set('owner-A', threadKey);
+      return { agent, callbacks, push, steer };
+    }
+    const input = (messageId = 'task-B', threadRootId?: string) =>
+      ({ chatId: 'scope-steer', payload: messageId, messageId, ...(threadRootId ? { threadRootId } : {}) });
+    const dispose = (agent: ChatAgent) => ChatAgent.prototype.dispose.call(agent);
+
+    it('steers a busy follow-up that belongs to the running turn topic', async () => {
+      const { agent, push, steer } = ownedOwnerThread('root-A');
+      try {
+        await agent.processMessage(input('follow-B', 'root-A'));
+        expect(steer).toHaveBeenCalledExactlyOnceWith('follow-B');
+        expect(push).not.toHaveBeenCalled();
+        expect((agent as any).pendingTurnMessageIds).toEqual([]);
+      } finally { dispose(agent); }
+    });
+
+    it('queues a thread-less main-session task beside a running topic turn instead of steering it', async () => {
+      const { agent, callbacks, push, steer } = ownedOwnerThread('root-A');
+      try {
+        await agent.processMessage(input('task-B'));
+        expect(steer).not.toHaveBeenCalled();
+        expect(push).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({ message: expect.objectContaining({ content: 'task-B' }) }));
+        expect((agent as any).pendingTurnMessageIds).toEqual(['task-B']);
+        // Independent delivery boundary: the queued task gets its own reply
+        // anchor slot (the mocked orchestrator's last-seen root here), never
+        // the running topic turn's thread.
+        expect((agent as any).pendingTurnAnchors).toHaveLength(1);
+        expect((agent as any).pendingTurnAnchors[0]).not.toBe('root-A');
+        expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('已排队');
+        let settled = false;
+        const completion = agent.turnCompleteFor('task-B')!.then(() => { settled = true; });
+        (agent as any).resolveTurn('owner-A');
+        await new Promise(resolve => { setTimeout(resolve, 0); });
+        expect(settled).toBe(false);
+        (agent as any).resolveTurn('task-B');
+        await completion;
+      } finally { dispose(agent); }
+    });
+
+    it('queues a busy follow-up from a different topic', async () => {
+      const { agent, push, steer } = ownedOwnerThread('root-A');
+      try {
+        await agent.processMessage(input('follow-C', 'root-C'));
+        expect(steer).not.toHaveBeenCalled();
+        expect(push).toHaveBeenCalledTimes(1);
+        expect((agent as any).pendingTurnAnchors).toEqual(['root-C']);
+      } finally { dispose(agent); }
+    });
+
+    it('keeps steering thread-less supplements while a thread-less turn runs (p2p scope)', async () => {
+      const { agent, push, steer } = ownedOwnerThread(undefined);
+      try {
+        await agent.processMessage(input('follow-B'));
+        expect(steer).toHaveBeenCalledExactlyOnceWith('follow-B');
+        expect(push).not.toHaveBeenCalled();
+      } finally { dispose(agent); }
+    });
+
+    it('records each queued turn starter thread key for later routing decisions', async () => {
+      const { agent } = ownedOwnerThread('root-A');
+      try {
+        await agent.processMessage(input('task-B'));
+        expect((agent as any).turnStartThreadKeys.has('task-B')).toBe(true);
+        expect((agent as any).turnStartThreadKeys.get('task-B')).toBeUndefined();
+        await agent.processMessage(input('follow-C', 'root-C'));
+        expect((agent as any).turnStartThreadKeys.get('follow-C')).toBe('root-C');
+      } finally { dispose(agent); }
+    });
+
+    it('keeps idle admission unchanged: a thread-less message starts an ordinary turn', async () => {
+      const { agent, push, steer } = ownedOwnerThread('root-A');
+      (agent as any).isProcessingMessage = false;
+      try {
+        await agent.processMessage(input('task-B'));
+        expect(steer).not.toHaveBeenCalled();
+        expect(push).toHaveBeenCalledTimes(1);
+      } finally { dispose(agent); }
+    });
+  });
+
   describe('MCP-free startup (Issue #4652)', () => {
     it('starts the production query path without constructing or injecting mcpServers', () => {
       (chatAgent as any).startAgentLoop();
