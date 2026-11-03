@@ -80,7 +80,7 @@ Restart policy: only restart when the user asks. Prefer `pnpm run launchd:restar
 
 ### Entry points
 
-- `bin/disclaude.js` — routes `disclaude start` → `packages/service/src/cli.ts`, `disclaude channel` → `packages/channel-cli/src/cli.ts`, `disclaude chromium-cdp` → launchd script.
+- `bin/disclaude.js` — routes `disclaude start` → `packages/service/src/cli.ts`, `disclaude channel` → `packages/channel-cli/src/cli.ts`, `disclaude history query` → read-only structured chat-history queries (`packages/service/src/history/history-query.ts`, Issue #5603; CLI + `GET /api/history/query` parity, consumed by the `history` skill), `disclaude chromium-cdp` → launchd script.
 - `packages/service/src/cli.ts` is a thin bootstrap (pre-scans `--config` into `DISCLAUDE_CONFIG_PATH`, Issue #4654); the real parser is `cli-main.ts`: subcommand `start`, flags `--config/-c`, `--api-port`, `--api-token`. The channel CLI additionally accepts `--base-url` / `DISCLAUDE_API_BASE_URL` (#4801).
 
 ### Data flow (Feishu mode)
