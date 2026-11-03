@@ -870,9 +870,9 @@ export async function main(): Promise<void> {
       // Issue #3857 Phase 2: Wire push handler to InputMessageRouter
       const router = service.getInputMessageRouter();
       if (router) {
-        httpApiServer.setPushHandler(async (chatId: string, message: string) => {
+        const routeSignal = async (prefix: string, chatId: string, message: string): Promise<void> => {
           const systemMessage: SystemMessage = {
-            id: `http-push-${crypto.randomUUID()}`,
+            id: `${prefix}-${crypto.randomUUID()}`,
             source: 'system',
             trigger: 'signal',
             chatId,
@@ -880,7 +880,15 @@ export async function main(): Promise<void> {
             createdAt: new Date().toISOString(),
           };
           await router.route(systemMessage);
+        };
+        httpApiServer.setPushHandler(async (chatId: string, message: string) => {
+          await routeSignal('http-push', chatId, message);
         });
+        // #5411: a consumed private input resumes the waiting task by itself,
+        // through the same signal routing as /api/push. The payload carries
+        // only ids/outcome — never the private value.
+        (feishuChannel as { setPrivateWorkflowNotifier?: (notify: (chatId: string, message: string) => Promise<void>) => void } | undefined)
+          ?.setPrivateWorkflowNotifier?.((chatId, message) => routeSignal('private-input', chatId, message));
       }
 
       // Issue #4279: wire REST /api/upload-file to the channel's uploadFile

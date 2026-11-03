@@ -132,4 +132,68 @@ describe('agent-defined private workflows', () => {
     ).toBe(false);
     s.workflows.revoke();
   });
+
+  it('resumes the waiting session after a consumed submission without another user message (#5411)', async () => {
+    const s = setup();
+    const notified: Array<{ chatId: string; message: string }> = [];
+    s.workflows.setNotifier((chatId, message) => {
+      notified.push({ chatId, message });
+      return Promise.resolve();
+    });
+    try {
+      await s.workflows.request(s.request);
+      // A mismatched actor is not a consumption and must not wake the session.
+      expect(await s.workflows.submit({ ...s.callback(), operator: { open_id: 'other' } })).toBe(true);
+      expect(notified).toEqual([]);
+      expect(await s.workflows.submit(s.callback())).toBe(true);
+      expect(notified).toHaveLength(1);
+      expect(notified[0].chatId).toBe('chat');
+      expect(notified[0].message).toMatch(/succeeded/);
+      // The resume signal carries ids/outcome only — never the private value.
+      expect(JSON.stringify(notified)).not.toContain('synthetic-private-value');
+      expect(JSON.parse(readFileSync(s.output, 'utf8'))).toMatchObject({ v: 'synthetic-private-value' });
+    } finally {
+      s.workflows.revoke();
+    }
+  });
+
+  it('notifies a distinguishable failure outcome and never the private value (#5411)', async () => {
+    const s = setup();
+    // The consumer exits nonzero: a real failure path with a distinct outcome.
+    s.request.workflow.args = ['-e', 'process.stdin.on("data",()=>{process.exit(3)})'];
+    const notified: string[] = [];
+    s.workflows.setNotifier((_chatId, message) => {
+      notified.push(message);
+      return Promise.resolve();
+    });
+    try {
+      await s.workflows.request(s.request);
+      expect(await s.workflows.submit(s.callback())).toBe(true);
+      expect(notified).toHaveLength(1);
+      expect(notified[0]).toMatch(/failed/);
+      expect(notified[0]).not.toMatch(/succeeded/);
+      expect(notified.join()).not.toContain('synthetic-private-value');
+    } finally {
+      s.workflows.revoke();
+    }
+  });
+
+  it('keeps the success terminal status when the follow-up text delivery fails (#5411)', async () => {
+    const s = setup();
+    try {
+      await s.workflows.request(s.request);
+      // Next send() is the post-consumption status text; make it fail after
+      // the card was already repainted to its success terminal status.
+      s.send.mockRejectedValueOnce(new Error('text delivery failed'));
+      expect(await s.workflows.submit(s.callback())).toBe(true);
+      expect(JSON.parse(readFileSync(s.output, 'utf8'))).toMatchObject({ v: 'synthetic-private-value' });
+      // The one-shot still finalized, so a replay re-asserts success — not expired.
+      expect(await s.workflows.submit(s.callback())).toBe(true);
+      expect(s.update).toHaveBeenLastCalledWith('card', expect.objectContaining({
+        body: { elements: [{ tag: 'markdown', content: '本次鉴权操作已完成。' }] },
+      }));
+    } finally {
+      s.workflows.revoke();
+    }
+  });
 });
