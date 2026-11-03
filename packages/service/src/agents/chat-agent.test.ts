@@ -3210,6 +3210,76 @@ describe('ChatAgent (service)', () => {
         } finally { parent.release(); child.release(); follow.release(); agent.dispose(); }
       });
 
+      it.each(['failed', 'completed'] as const)('honors a terminal task_notification after a snapshot so a killed child cannot stay running (#5330, %s)', async state => {
+        const callbacks = { ...createMockCallbacks(), onTurnResult: vi.fn().mockResolvedValue(undefined) };
+        const agent = new ChatAgent({ chatId: 'background-snapshot', callbacks, apiKey: 'key', model: 'model' });
+        (agent as any).isAgentTeamsEnabled = () => false;
+        const parent = gate(), terminal = gate(), follow = gate();
+        (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(), cancel: vi.fn() },
+          iterator: (async function* () {
+            await parent.promise;
+            // background_tasks_changed snapshot: stateless id list that still
+            // contains the child the CLI silently killed after this turn.
+            yield { parsed: { type: 'text', content: '', metadata: { backgroundTaskIds: ['snap-child'] } } };
+            yield { parsed: { type: 'text', content: 'Parent dispatched the child.' } };
+            yield { parsed: { type: 'result', content: '' } };
+            await terminal.promise;
+            // Late task_notification: the only visible evidence the child died.
+            yield { parsed: { type: 'text', content: '', metadata: { backgroundTask: { id: 'snap-child', state } } } };
+            yield { parsed: { type: 'text', content: `Child settled (${state}).` } };
+            yield { parsed: { type: 'result', content: '' } };
+            await follow.promise;
+          })() });
+        try {
+          await agent.processMessage({ chatId: 'background-snapshot', payload: 'start a snapshotted child', messageId: 'parent-input' });
+          parent.release();
+          await agent.turnCompleteFor('parent-input');
+          await vi.waitFor(() => expect(callbacks.onDone).toHaveBeenCalledTimes(1));
+          expect(agent.activeBackgroundTaskCount).toBe(1);
+          expect(agent.hasPendingWork).toBe(true);
+          terminal.release();
+          await vi.waitFor(() => expect(callbacks.onDone).toHaveBeenCalledTimes(2));
+          expect(agent.activeBackgroundTaskCount).toBe(0);
+          // Session still live: pending work must drop with the terminal event,
+          // not latch until the query closes (#5330 busy-queue fake hang).
+          expect(agent.hasPendingWork).toBe(false);
+          expect(callbacks.sendMessage.mock.calls.some(([, text]) => String(text).includes(`Child settled (${state}).`))).toBe(true);
+        } finally { parent.release(); terminal.release(); follow.release(); agent.dispose(); }
+      });
+
+      it('drops background continuation pending once every native background task settles (#5330)', async () => {
+        const callbacks = { ...createMockCallbacks(), onTurnResult: vi.fn().mockResolvedValue(undefined) };
+        const agent = new ChatAgent({ chatId: 'background-unlatch', callbacks, apiKey: 'key', model: 'model' });
+        (agent as any).isAgentTeamsEnabled = () => false;
+        const parent = gate(), child = gate(), follow = gate();
+        (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(), cancel: vi.fn() },
+          iterator: (async function* () {
+            await parent.promise;
+            yield { parsed: { type: 'text', content: '', metadata: { backgroundTask: { id: 'owned-child', state: 'running' } } } };
+            yield { parsed: { type: 'text', content: 'Parent dispatched the child.' } };
+            yield { parsed: { type: 'result', content: '' } };
+            await child.promise;
+            yield { parsed: { type: 'text', content: '', metadata: { backgroundTask: { id: 'owned-child', state: 'completed' } } } };
+            yield { parsed: { type: 'text', content: 'Child completed.' } };
+            yield { parsed: { type: 'result', content: '' } };
+            await follow.promise;
+          })() });
+        try {
+          await agent.processMessage({ chatId: 'background-unlatch', payload: 'start a child', messageId: 'parent-input' });
+          parent.release();
+          await agent.turnCompleteFor('parent-input');
+          await vi.waitFor(() => expect(callbacks.onDone).toHaveBeenCalledTimes(1));
+          expect(agent.hasPendingWork).toBe(true);
+          child.release();
+          await vi.waitFor(() => expect(callbacks.onDone).toHaveBeenCalledTimes(2));
+          expect(agent.activeBackgroundTaskCount).toBe(0);
+          // No queued input, no active turn, no live background id: the agent
+          // must not keep reporting pending work (isProjectBusy busy-queue).
+          expect(agent.hasPendingWork).toBe(false);
+          await expect(agent.waitForWorkSettlement()).resolves.toBeUndefined();
+        } finally { parent.release(); child.release(); follow.release(); agent.dispose(); }
+      });
+
       it.each(['stall', 'missing-reply'] as const)('records the first %s failure but never a second terminal for the same input', async reason => {
         const callbacks = { ...createMockCallbacks(), onTurnResult: vi.fn().mockResolvedValue(undefined) };
         // Keep missing-reply detection true after its first undelivered warning.

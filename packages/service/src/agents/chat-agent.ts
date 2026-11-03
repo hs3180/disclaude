@@ -823,12 +823,23 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.hasBackgroundTaskSnapshot = true;
       this.backgroundTaskIds.clear();
       for (const id of metadata.backgroundTaskIds) { this.backgroundTaskIds.add(id); }
-    } else if (metadata?.backgroundTask && !this.hasBackgroundTaskSnapshot) {
+    } else if (metadata?.backgroundTask) {
       const { id, state } = metadata.backgroundTask;
-      if (state === 'running') { this.backgroundTaskIds.add(id); }
-      else { this.backgroundTaskIds.delete(id); }
+      // #5330: a snapshot has no per-task state, so it lists killed children as
+      // running. Terminal task_notification events must still be honored after
+      // a snapshot — dropping them keeps a dead child "running" forever, which
+      // holds the busy indicator, hasPendingWork and work settlement with no
+      // error anywhere (30-minute fake hang). Late 'running' events stay
+      // snapshot-guarded so a stale start cannot resurrect an evicted id.
+      if (state === 'running') {
+        if (!this.hasBackgroundTaskSnapshot) { this.backgroundTaskIds.add(id); }
+      } else { this.backgroundTaskIds.delete(id); }
     }
-    if (this.backgroundTaskIds.size > 0) { this.backgroundContinuationPending = true; }
+    // #5330: pending continuation mirrors the live id set instead of latching.
+    // Once every native background task left "running", the agent has no
+    // background work pending; a resumed parent turn or queued input keeps
+    // hasPendingWork true through its own signals.
+    this.backgroundContinuationPending = this.backgroundTaskIds.size > 0;
     this.updateBackgroundIndicator();
   }
 
