@@ -3,6 +3,27 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { DEFAULT_WECHAT_STATE_DIR, WeChatStateStore, validateWechatBaseUrl, type WeChatCredentials } from './state-store.js';
+import { autoRecoverRegistryLock } from './registry-lock-recovery.js';
+
+// This module is imported eagerly by JSON-output CLI commands (wechat status)
+// before their configuration sets the log level, so it must stay free of
+// static '@disclaude/core' imports: pulling that barrel evaluates
+// config/loader.ts, whose module-level createLogger() initializes the root
+// logger with process defaults — ConfigLoader then emitted a stray stdout
+// line that broke machine-readable CLI output (#5513 package acceptance).
+// The quarantine warn loads its logger dynamically on first use instead.
+type QuarantineWarn = (fields: Record<string, unknown>, message: string) => void;
+let quarantineWarn: QuarantineWarn | undefined;
+const logQuarantine = (fields: Record<string, unknown>, message: string): void => {
+  if (quarantineWarn) { quarantineWarn(fields, message); return; }
+  void import('@disclaude/core')
+    .then(({ createLogger }) => {
+      const logger = createLogger('WeChatRegistry');
+      quarantineWarn = (innerFields, innerMessage) => logger.warn(innerFields, innerMessage);
+      quarantineWarn(fields, message);
+    })
+    .catch(() => { /* recovery must never fail on logging */ });
+};
 
 export interface WeChatRegistration {
   id: string;
@@ -87,14 +108,31 @@ export class WeChatRegistry {
     await this.prepare();
     const guard = new WeChatStateStore(join(this.dir, '.registry-lock'));
     let release: (() => Promise<void>) | undefined;
+    let quarantined = false;
     for (let attempt = 0; attempt < 40; attempt++) {
       try { release = await guard.lock(); break; }
       catch (error) {
-        if (!(error instanceof Error) || !error.message.includes('already in use')) { throw error; }
-        await delay(25);
+        if (!(error instanceof Error)) { throw error; }
+        if (error.message.includes('already in use')) { await delay(25); continue; }
+        if (!error.message.includes('Invalid WeChat listener lock')) { throw error; }
+        // #5513: an empty or malformed guard lock (e.g. ENOSPC residue) must not
+        // keep every registry operation failing. Quarantine the residue and let
+        // the next attempt rebuild the lock; unsafe files still fail loudly below.
+        const recovery = await autoRecoverRegistryLock(this.dir);
+        if (recovery.outcome === 'quarantined') {
+          quarantined = true;
+          logQuarantine({ code: 'wechat_registry_lock_corrupt', registryRoot: recovery.registryRoot,
+            quarantinePath: recovery.quarantinePath, bytes: recovery.bytes, sha256: recovery.sha256,
+            corruption: recovery.state },
+          'WeChat registry lock was empty or corrupt; quarantined the residue and rebuilt the lock automatically');
+        }
       }
     }
-    if (!release) { throw new Error('WeChat registry is busy; retry the operation'); }
+    if (!release) {
+      throw new Error(quarantined
+        ? 'WeChat registry lock stays corrupt after automatic quarantine; run disclaude wechat lock-inspect and repair its state'
+        : 'WeChat registry is busy; retry the operation');
+    }
     try {
       let value = await this.read();
       if (!value) {
