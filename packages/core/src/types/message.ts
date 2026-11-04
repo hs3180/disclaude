@@ -72,6 +72,12 @@ export interface UserMessage extends Message {
   chatHistoryContext?: string;
   /** True only for an empty text @mention that may refer to a pending request. */
   pendingQuestionEligible?: boolean;
+  /**
+   * True only for channel inputs that carry attachments without any
+   * user-authored text task (e.g. a bare Feishu image/file upload).
+   * Issue #5434.
+   */
+  attachmentOnly?: boolean;
   /** Chat type (e.g., 'p2p', 'group', 'topic') for context-aware behavior (Issue #3641) */
   chatType?: string;
   /** Thread context for topic groups (Issue #3641 sub-problem 1) */

@@ -1168,6 +1168,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       attachments,
       chatHistoryContext,
       pendingQuestionEligible,
+      attachmentOnly,
       chatType,
       threadContext,
       threadRootId,
@@ -1216,6 +1217,26 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.logger.warn({ event: 'agent_turn', state: 'failed', chatId, messageId, traceId: `${chatId}:${messageId}`,
         diagnosticId: crypto.randomUUID(), errorMessage: error.message, user_visible: userVisible,
       }, 'Message refused because the busy-input admission budget is full');
+      return;
+    }
+
+    // #5434: an attachment-only input (bare image/file upload, no user text
+    // task) that the running request has already consumed must not resurface
+    // as its own "what should I do with this?" Q&A turn. The consumption
+    // marker is keyed by the input's source message id and is one-shot, so a
+    // genuinely new user request (always a fresh message id) is never
+    // affected. Suppression is silent by design — the user already received
+    // the running request's delivery, another notice would be the very
+    // disturbance #5434 reports.
+    if (attachmentOnly && this.consumeSuppressedAttachmentInput(messageId)) {
+      this.createTurnCompletion(messageId);
+      this.resolveTurn(messageId);
+      try { await this.callbacks.onDone?.(chatId, threadRootId ?? messageId); }
+      catch (doneError) { this.logger.error({ err: doneError, chatId, messageId }, 'Failed to finish suppressed attachment-only input'); }
+      this.logger.info({ event: 'agent_turn', state: 'completed', chatId, messageId,
+        activeTurnMessageId: this.activeTurnMessageId, traceId: `${chatId}:${messageId}`,
+        runId: crypto.randomUUID(), user_visible: false,
+      }, 'Attachment-only input already consumed by the running turn; duplicate Q&A turn suppressed (#5434)');
       return;
     }
 
@@ -1585,6 +1606,34 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     return inputKey === this.turnStartThreadKeys.get(sourceMessageId);
   }
 
+  /**
+   * Issue #5434: source message ids of attachment-only inputs that a running
+   * request has already consumed (merged via a live-input steer into the
+   * running turn). Bounded like every other per-session accounting map — a
+   * session cannot accumulate more than MAX_TURN_COMPLETIONS live inputs.
+   */
+  private readonly consumedAttachmentInputs = new Set<string>();
+
+  /** Record an attachment-only input as consumed by the running turn (#5434). */
+  private markAttachmentInputConsumed(messageId: string): void {
+    this.consumedAttachmentInputs.add(messageId);
+    while (this.consumedAttachmentInputs.size > MAX_TURN_COMPLETIONS) {
+      const oldest = this.consumedAttachmentInputs.keys().next().value;
+      if (oldest === undefined) { break; }
+      this.consumedAttachmentInputs.delete(oldest);
+    }
+  }
+
+  /**
+   * One-shot suppression check (#5434): true exactly once for an input whose
+   * attachments the running request already consumed. A re-sent or replayed
+   * copy of the same source message is suppressed once; any later, genuinely
+   * independent request arrives under a fresh message id and never matches.
+   */
+  private consumeSuppressedAttachmentInput(messageId: string): boolean {
+    return this.consumedAttachmentInputs.delete(messageId);
+  }
+
   /** Confirm a busy input once, or fall back only after confirmed non-acceptance. */
   private async tryLiveInput(params: UserMessageParams, content: string,
     lifecycleContext: NonNullable<StreamingUserMessage['correlation']>): Promise<boolean> {
@@ -1664,6 +1713,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
     inputEntry.admitted = true;
     observeTerminal();
+    // #5434: the backend acknowledged this input for the running turn — its
+    // attachments are now consumed by that request. If the same source
+    // message is ever submitted again (redelivery/replay), it must not form
+    // an independent attachment Q&A turn after this turn ends.
+    if (params.attachmentOnly) { this.markAttachmentInputConsumed(params.messageId); }
     // Capture the original completion before the RPC. A late successful ACK
     // still belongs to that turn, even if another turn has since started.
     void owner.promise.then(() => {

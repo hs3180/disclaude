@@ -937,6 +937,41 @@ describe('ChatAgent (service)', () => {
       } finally { dispose(agent); }
     });
 
+    it('Issue #5434: suppresses a replayed attachment-only input the running turn already consumed', async () => {
+      const { agent, push, steer, callbacks } = owned();
+      const attachmentInput = (messageId = 'image-1-file') => ({ chatId: 'owned-steer', payload: '用户上传了一个图片：image_k',
+        messageId, attachments: [{ fileName: 'image_k.png', filePath: '/tmp/image_k.png' }], attachmentOnly: true });
+      try {
+        // Timeline step 1 (08:34): the bare image arrives while the main turn
+        // runs and steers into it — the running request consumes the attachment.
+        await agent.processMessage(attachmentInput());
+        expect(steer).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('用户上传了一个图片'));
+        expect(push).not.toHaveBeenCalled();
+        (agent as any).resolveTurn('owner-A');
+        await agent.turnCompleteFor('image-1-file');
+
+        // Timeline step 2 (08:58-08:59): the same source message resurfaces
+        // (redelivery/queue replay) after the main turn finished using the
+        // image — it must NOT form an independent "what should I do?" turn.
+        await agent.processMessage(attachmentInput());
+        expect(steer).toHaveBeenCalledTimes(1);
+        expect(push).not.toHaveBeenCalled();
+        await agent.turnCompleteFor('image-1-file');
+        expect((agent as any).logger.info.mock.calls.map(([record]: any[]) => record)
+          .some((record: any) => record?.event === 'agent_turn' && record.sourceMessageId === 'image-1-file'
+            && record.state === 'completed' && record.user_visible === false)).toBe(true);
+        // Suppression is silent: the user already got the delivery, so no
+        // additional notice may go out for the replayed copy.
+        expect(callbacks.sendMessage).toHaveBeenCalledTimes(1);
+
+        // Acceptance ②: a genuine later independent request carries a fresh
+        // message id and is never suppressed — it steers as ordinary input.
+        await agent.processMessage({ chatId: 'owned-steer', payload: '现在请单独处理这张图',
+          messageId: 'later-request-c', attachments: [{ fileName: 'image_k.png', filePath: '/tmp/image_k.png' }] });
+        expect(steer).toHaveBeenCalledTimes(2);
+      } finally { dispose(agent); }
+    });
+
     it.each([true, false])('settles the durable steered input with its original outcome (success=%s)', async success => {
       const directory = mkdtempSync(join(tmpdir(), 'steer-recovery-'));
       const journalPath = join(directory, 'turns.json');
