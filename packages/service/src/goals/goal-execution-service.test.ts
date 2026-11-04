@@ -37,12 +37,15 @@ it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', '
         const manager = new ProjectManager({ workspaceDir: root }); manager.use('fixture-chat', project);
         const gate = () => { let release; const promise = new Promise(resolve => { release = resolve; }); return { promise, release }; };
         const admitted = gate(), delivering = gate(), delivery = gate(), notified = gate();
-        // Store writes are fs-backed (ms, not microtasks): waits must yield
-        // real timer turns or assertions outrun the durable transitions.
-        const waitFor = async check => { const end = Date.now() + 2000;
-          while (!check()) { if (Date.now() > end) { return; } await new Promise(resolve => setTimeout(resolve, 1)); } };
-        const settle = async () => { for (let i = 0; i < 30; i++) {
-          await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setTimeout(resolve, 0)); } };
+        // Store writes are fs-backed (ms, not microtasks): every durable state
+        // assertion waits on its exact condition — not a fixed number of timer
+        // turns — and a wait timeout fails loudly instead of letting the
+        // assertions read not-yet-settled state under load.
+        const waitFor = async (check, what) => { const end = Date.now() + 8000;
+          while (!(await check())) {
+            if (Date.now() > end) { throw new Error('timeout waiting for ' + (what ?? 'condition')); }
+            await new Promise(resolve => setTimeout(resolve, 1)); } };
+        const statusOf = async id => (await store.get(id)).status;
         const queries = [], policies = [], replies = [], sends = [], scopes = []; let toolClosed = 0;
         let allowed = scenario !== 'denied'; const runtime = { model: 'fixed-offline' };
         // Per-round assessment table: round 1 belongs to the first Goal; a
@@ -135,7 +138,7 @@ it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', '
               await invoke('/goal Ship the second artifact | Record its evidence', 'fixture-launch-second');
               const second = (await store.listIds()).find(value => value !== id);
               await notified.promise;
-              await settle();
+              await waitFor(async () => (await statusOf(second)) === 'completed', 'second goal completion');
               assert.equal((await store.get(second)).status, 'completed');
               assert.equal(service.isBusy('fixture-chat'), true);
               await invoke('/stop', 'fixture-stop');
@@ -169,13 +172,17 @@ it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', '
                 await invoke('/goal Continue after restart | Finish the work', 'fixture-relaunch');
                 const resumed = (await store.listIds()).find(value => value !== id);
                 await notified.promise;
-                await settle();
+                await waitFor(async () => !service.isBusy('fixture-chat') && (await statusOf(resumed)) === 'completed', 'resumed goal settlement');
                 assert.equal(service.isBusy('fixture-chat'), false);
                 assert.equal((await store.get(resumed)).status, 'completed'); assert.equal(queries.length, 2);
                 await service.close();
               }
             } else {
-              await notified.promise; await settle();
+              await notified.promise;
+              const expected = ['revoked', 'scope-edit', 'scope-project'].includes(scenario) ? 'active'
+                : scenario === 'blocked-new-goal' ? 'blocked' : 'completed';
+              await waitFor(async () => !service.isBusy('fixture-chat') && (await statusOf(id)) === expected,
+                'goal settlement to ' + expected);
               const record = await store.get(id);
               assert.equal(service.isBusy('fixture-chat'), false);
               if (scenario === 'blocked-new-goal') {
@@ -184,7 +191,8 @@ it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', '
                 assert.ok(sends.every(send => !send.text.includes('/goal show')));
                 await invoke('/goal Continue with the decision | Finish the artifact', 'fixture-continue');
                 const second = (await store.listIds()).find(value => value !== id);
-                await notified.promise; await settle();
+                await notified.promise;
+                await waitFor(async () => (await statusOf(second)) === 'completed', 'continued goal completion');
                 assert.equal((await store.get(id)).status, 'blocked');
                 assert.equal((await store.get(second)).status, 'completed');
                 assert.equal(queries.length, 2);
