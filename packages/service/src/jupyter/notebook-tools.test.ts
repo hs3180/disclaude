@@ -201,7 +201,7 @@ describe('Optional Datalayer Notebook tools', () => {
     expect(first).toMatchObject({ state: 'inserted', cellId: 'intro', removedSeedCellId: 'rtc-seed' });
     const second = await f.call(f.session, 'notebook_insert_cell', {
       notebookId: f.args.notebookId, cellId: 'analysis', beforeCellId: '', cellType: 'code', source: 'print(42)',
-    });
+    }) as Record<string, unknown>;
     expect(second).toMatchObject({ state: 'inserted', cellId: 'analysis' });
     expect('removedSeedCellId' in second).toBe(false);
     expect(f.notebook.cells.map((c) => [c.id, c.source])).toEqual([
