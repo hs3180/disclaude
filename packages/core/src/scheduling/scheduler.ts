@@ -611,6 +611,36 @@ export class Scheduler {
   }
 
   /**
+   * Issue #5656: send a purely informational scheduled-task notification
+   * (⏰ start notices, cooldown-skip notices, …) best-effort.
+   *
+   * These notifications used to be awaited inside executeTask's main try, so
+   * a transient channel failure — e.g. a Feishu 500 that recovers 0.56s
+   * later — was indistinguishable from a task failure in the catch: the task
+   * never routed, the run was recorded via recordTaskFailure, and the false
+   * streak crept toward the #4648 chronic-failure alert. The principle from
+   * the issue: 「宁可丢通知，不可丢任务」 — losing the notice must never lose
+   * the run.
+   *
+   * Deliberately NO retry/backoff (see #507): message-class POSTs are not
+   * retried elsewhere either, because a retry after a slow success would
+   * double-deliver. One attempt, warn on failure, return undefined so the
+   * caller can fall back (e.g. no reply root).
+   */
+  private async sendInformationalNotification(task: ScheduledTask, message: string): Promise<string | undefined> {
+    try {
+      const messageId = await this.callbacks.sendMessage(task.chatId, message);
+      return typeof messageId === 'string' ? messageId : undefined;
+    } catch (error) {
+      logger.warn(
+        { err: error, taskId: task.id, name: task.name, chatId: task.chatId },
+        'Failed to send informational notification for scheduled task (best-effort — task execution continues)'
+      );
+      return undefined;
+    }
+  }
+
+  /**
    * Resolve the drain promise if no tasks are running.
    * Extracted to avoid duplication between stale-job cleanup and finally block.
    */
@@ -730,9 +760,10 @@ ${task.prompt ?? ''}`;
           'Task skipped - in cooldown period'
         );
 
-        // Send cooldown notification
-        await this.callbacks.sendMessage(
-          task.chatId,
+        // Send cooldown notification (Issue #5656: informational — a channel
+        // failure here must not reject executeTask past the cron onTick).
+        await this.sendInformationalNotification(
+          task,
           `⏰ 定时任务「${task.name}」冷静期中，跳过执行\n` +
           `   上次执行: ${status.lastExecutionTime?.toLocaleString('zh-CN')}\n` +
           `   冷静期结束: ${status.cooldownEndsAt?.toLocaleString('zh-CN')}\n` +
@@ -833,7 +864,9 @@ ${task.prompt ?? ''}`;
           if (commandExecutionGeneration !== this.commandStopGeneration) {
             throw new CommandCancelledError();
           }
-          await this.callbacks.sendMessage(task.chatId, `⏰ 定时任务「${task.name}」开始执行命令...`);
+          // Issue #5656: informational start notice — best-effort, the
+          // command must still execute if the channel is briefly down.
+          await this.sendInformationalNotification(task, `⏰ 定时任务「${task.name}」开始执行命令...`);
           if (controller.signal.aborted || commandExecutionGeneration !== this.commandStopGeneration) {
             throw new CommandCancelledError();
           }
@@ -877,8 +910,11 @@ ${task.prompt ?? ''}`;
           { taskId: task.id, hasRouter: !!this.inputMessageRouter, hasChatId: !!task.chatId },
           'Cannot execute scheduled task: InputMessageRouter not configured or task has no chatId'
         );
-        await this.callbacks.sendMessage(
-          task.chatId,
+        // Issue #5656: informational misconfiguration notice. The neutral
+        // skip decision is already made; a channel failure while reporting
+        // it must not turn this into a counted task failure in the catch.
+        await this.sendInformationalNotification(
+          task,
           `⚠️ 定时任务「${task.name}」无法执行: InputMessageRouter 未配置或任务缺少 chatId`
         );
         return;
@@ -893,16 +929,21 @@ ${task.prompt ?? ''}`;
         throw new Error('Conflicting schedule context options: skipHistory/clearContext:true require freshSession:true');
       }
 
-      // Send start notification
-      const startMessageId = await this.callbacks.sendMessage(
-        task.chatId,
+      // Send start notification. Issue #5656: this is purely informational
+      // and MUST be best-effort — previously a transient channel failure
+      // (e.g. a Feishu 500 for one request) fell into the main catch below:
+      // the task never routed, the whole run was lost, and it was counted as
+      // a consecutive failure toward the chronic alert. No retry (#507):
+      // fail once, warn, keep routing without a reply root.
+      const startMessageId = await this.sendInformationalNotification(
+        task,
         `⏰ 定时任务「${task.name}」开始执行...`
       );
 
       {
         const systemMessage: SystemMessage = {
           id: `sched-${task.id}-${randomUUID()}`,
-          replyRootId: typeof startMessageId === 'string' && startMessageId && !isSyntheticMessageId(startMessageId) ? startMessageId : null,
+          replyRootId: startMessageId && !isSyntheticMessageId(startMessageId) ? startMessageId : null,
           source: 'system',
           payload: wrappedPrompt,
           chatId: task.chatId,
