@@ -377,17 +377,22 @@ export class WeChatApiClient {
         try {
             const config = await this.postJson('ilink/bot/getconfig', {
                 ilink_user_id: to, context_token: params.contextToken,
-            }, { timeoutMs: 5_000 });
+            }, { timeoutMs: 5_000, signal: params.signal });
             if (!config.typing_ticket) {
-                return;
+                return false;
             }
-            await this.postJson('ilink/bot/sendtyping', { ilink_user_id: to, typing_ticket: config.typing_ticket, status: 1 }, { timeoutMs: 5_000 });
-            logger.debug({ to }, 'Typing indicator sent');
+            await this.postJson('ilink/bot/sendtyping', { ilink_user_id: to, typing_ticket: config.typing_ticket, status: params.status ?? 1 }, { timeoutMs: 5_000, signal: params.signal });
+            logger.debug({ status: params.status ?? 1 }, 'Typing indicator sent');
+            return true;
         }
         catch (error) {
             // Typing indicator failure should not block message processing
-            const errMsg = error instanceof Error ? error.message : String(error);
-            logger.warn({ err: errMsg, to }, 'Failed to send typing indicator (non-fatal)');
+            if (!params.signal?.aborted) {
+                logger.warn({ status: params.status ?? 1, ...(error instanceof WeChatApiError ? {
+                        code: error.code, httpStatus: error.detail?.httpStatus,
+                    } : {}) }, 'Failed to send typing indicator (non-fatal)');
+            }
+            return false;
         }
     }
     // ---------------------------------------------------------------------------

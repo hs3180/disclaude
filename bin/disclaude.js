@@ -5,6 +5,7 @@
  * Routes subcommands to the appropriate package CLI:
  *   disclaude start [options]  → @disclaude/service
  *   disclaude channel <command> → @disclaude/channel-cli
+ *   disclaude service <cmd>    → scripts/launchd.mjs application service (Issue #5619)
  *   disclaude chromium-cdp <cmd> → scripts/launchd.mjs chromium-cdp (Issue #4807)
  *
  * Issue #3928 (part 1): Provides a single `disclaude` command so users can
@@ -45,12 +46,15 @@ function showHelp() {
       '',
       'Commands:',
       '  start [options]    Start disclaude',
+      '  history query      Read locally available chat history (read-only, Issue #5603)',
+      '  board-report write Report task artifacts/review proposals (agents; JSON payload on stdin)',
       '  channel <command>  Send channel messages through the service',
       '  wechat <command>   Log in to personal WeChat or diagnose saved login',
       '  browser <cmd>      Inspect coordinated browser control',
       '  plugins <cmd>      Install, update or remove optional first-party diagnostics',
       '  jupyter <command> Work with remote Notebooks; patch installs repairs; test verifies the configured server',
       '  chromium-cdp <cmd> Manage or diagnose the persistent Chromium CDP service (Issue #4807)',
+      '  service <cmd>      Manage the application service (install/start/stop/status; --dry-run, Issue #5619)',
       '',
       'Global Options:',
       '  --version, -v      Show version number',
@@ -85,6 +89,19 @@ const ROUTES = {
     file: resolve(ROOT, 'packages/service/dist/cli.js'),
     keepCommand: true,
   },
+  // Issue #5603: read-only session history queries via the service CLI.
+  history: {
+    file: resolve(ROOT, 'packages/service/dist/cli.js'),
+    keepCommand: true,
+    jsonOutput: !['help', '--help', '-h'].includes(args[1])
+      && !(args.includes('--format') && args[args.indexOf('--format') + 1] === 'text'),
+  },
+  // Agent work/review proposals without injected collector tools (#5560).
+  'board-report': {
+    file: resolve(ROOT, 'packages/service/dist/cli.js'),
+    keepCommand: true,
+    jsonOutput: !['help', '--help', '-h'].includes(args[1]),
+  },
   channel: {
     file: resolve(ROOT, 'packages/channel-cli/dist/cli.js'),
     jsonOutput: !['help', '--help', '-h'].includes(args[1]),
@@ -102,6 +119,14 @@ const ROUTES = {
             ? 'scripts/chromium-systemd.mjs'
             : 'scripts/launchd.mjs'
     ),
+    keepCommand: true,
+  },
+  // Issue #5619: application-service lifecycle through the unified CLI.
+  // `disclaude service install|start|stop|restart|status|logs` forwards to
+  // scripts/launchd.mjs; --dry-run previews the plist and launchctl actions
+  // without touching any real service, so installs are verifiable offline.
+  service: {
+    file: resolve(ROOT, 'scripts/launchd.mjs'),
     keepCommand: true,
   },
 };

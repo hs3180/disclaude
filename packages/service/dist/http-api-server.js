@@ -34,6 +34,16 @@ import { SERVICE_VERSION } from './version.js';
 import { channelError } from './channel-error.js';
 const logger = createLogger('HttpApiServer');
 /**
+ * Issue #5630: how long a remembered same-key upload success is replayed to
+ * retries (covers a retry window well beyond the client's chain-aware upload
+ * deadline). Provisional value.
+ */
+const UPLOAD_FILE_IDEMPOTENCY_TTL_MS = 10 * 60_000;
+/** Issue #5630: bound on remembered upload outcomes (insertion-order eviction). */
+const UPLOAD_FILE_IDEMPOTENCY_MAX_ENTRIES = 128;
+/** True when the remembered/joined request matches the incoming one exactly. */
+const sameUploadRequest = (a, b) => a.chatId === b.chatId && a.filePath === b.filePath && a.threadId === b.threadId;
+/**
  * HTTP API Server — lightweight HTTP interface for disclaude service.
  *
  * Uses Node.js built-in `http` module (no external dependencies).
@@ -54,6 +64,10 @@ export class HttpApiServer {
     instanceId;
     pushHandler;
     uploadFileHandler;
+    /** Issue #5630: in-flight uploads keyed by idempotencyKey (same-key retries join one delivery). */
+    uploadFileInFlight = new Map();
+    /** Issue #5630: recently-succeeded uploads keyed by idempotencyKey (replayed, never re-sent). */
+    uploadFileMemo = new Map();
     sendMessageHandler;
     sendCardHandler;
     privateWorkflowHandler;
@@ -62,10 +76,17 @@ export class HttpApiServer {
     }
     sendInteractiveHandler;
     listTempChatsHandler;
+    /** Issue #5603: structured read-only chat history provider. */
+    historyQueryHandler;
     uploadImageHandler;
     markChatRespondedHandler;
     selfSentRegistrar;
     deliveryHealthProvider;
+    feishuConnectionHealthProvider;
+    setFeishuConnectionHealthProvider(provider) {
+        this.feishuConnectionHealthProvider = provider;
+    }
+    wechatRegistrationHealthProvider;
     browserIpcStatusProvider;
     channelCapabilitiesProvider;
     setChannelCapabilitiesProvider(provider) {
@@ -88,6 +109,9 @@ export class HttpApiServer {
     /** Supply channel delivery counters without making health checks send a message. */
     setDeliveryHealthProvider(provider) {
         this.deliveryHealthProvider = provider;
+    }
+    setWeChatRegistrationHealthProvider(provider) {
+        this.wechatRegistrationHealthProvider = provider;
     }
     /** Supply local browser IPC lifecycle state without probing another service. */
     setBrowserIpcStatusProvider(provider) {
@@ -304,7 +328,7 @@ export class HttpApiServer {
     /**
      * Register a route.
      */
-    addRoute(method, pattern, handler) {
+    addRoute(method, pattern, handler, authRequired) {
         // Convert pattern like "/api/status" or "/api/chat/:chatId" to regex
         const paramNames = [];
         const regexStr = pattern.replace(/:(\w+)/g, (_, name) => {
@@ -312,7 +336,7 @@ export class HttpApiServer {
             return '([^/]+)';
         });
         const regex = new RegExp(`^${regexStr}$`);
-        this.routes.push({ method, pattern: regex, paramNames, handler });
+        this.routes.push({ method, pattern: regex, paramNames, handler, ...(authRequired ? { authRequired } : {}) });
     }
     /**
      * Set up default routes.
@@ -345,6 +369,39 @@ export class HttpApiServer {
         this.addRoute('POST', '/api/push', this.handlePush.bind(this));
         // Issue #4031: SSE endpoint for topic group message notifications
         this.addRoute('GET', '/api/topic-stream', this.handleTopicStream.bind(this));
+        // Issue #5603: read-only structured chat history for agents (CLI parity).
+        // GET but authRequired: the payload is conversation content, not a health check.
+        this.addRoute('GET', '/api/history/query', this.handleHistoryQuery.bind(this), true);
+    }
+    /** Issue #5603: structured read-only chat history provider. */
+    setHistoryQueryHandler(handler) {
+        this.historyQueryHandler = handler;
+    }
+    async handleHistoryQuery(req, res) {
+        if (!this.historyQueryHandler) {
+            this.sendJson(res, 503, { ok: false, message: 'history query handler not configured' });
+            return;
+        }
+        const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
+        const chatId = url.searchParams.get('chat')?.trim();
+        if (!chatId) {
+            this.sendJson(res, 400, { ok: false, message: 'chat query parameter is required' });
+            return;
+        }
+        const days = Number.parseInt(url.searchParams.get('days') ?? '', 10);
+        const limit = Number.parseInt(url.searchParams.get('limit') ?? '', 10);
+        try {
+            const result = await this.historyQueryHandler({
+                chatId,
+                ...(Number.isInteger(days) && days > 0 ? { days } : {}),
+                ...(Number.isInteger(limit) && limit > 0 ? { limit } : {}),
+            });
+            this.sendJson(res, 200, { ok: true, ...result });
+        }
+        catch (err) {
+            logger.error({ err }, 'history query handler error');
+            this.sendJson(res, 500, { ok: false, message: err instanceof Error ? err.message : 'history query failed' });
+        }
     }
     async handleChannelCapabilities(req, res) {
         if (!this.channelCapabilitiesProvider) {
@@ -380,8 +437,10 @@ export class HttpApiServer {
                 continue;
             }
             // API Token authentication for write routes (Issue #3857 Phase 2)
-            // GET routes (health check) are unauthenticated; all other routes require Bearer token
-            if (req.method !== 'GET' && this.config.apiToken) {
+            // GET routes (health check) are unauthenticated; all other routes require
+            // Bearer token. Issue #5603: routes flagged authRequired carry sensitive
+            // read payloads (chat history) and are token-gated despite being GET.
+            if (this.config.apiToken && (req.method !== 'GET' || route.authRequired)) {
                 const authHeader = req.headers.authorization;
                 const expected = `Bearer ${this.config.apiToken}`;
                 const authBuf = Buffer.from(authHeader ?? '');
@@ -446,12 +505,17 @@ export class HttpApiServer {
             successes: 0,
             failures: 0,
         };
-        const status = delivery.status === 'degraded' ? 'degraded' : 'healthy';
+        const wechatRegistration = this.wechatRegistrationHealthProvider?.();
+        const feishuConnection = this.feishuConnectionHealthProvider?.();
+        const status = delivery.status === 'degraded' || (wechatRegistration && wechatRegistration.status !== 'healthy')
+            || (feishuConnection && !feishuConnection.healthy) ? 'degraded' : 'healthy';
         const response = {
             status,
             timestamp: new Date().toISOString(),
             process: { status: 'healthy', pid: process.pid, uptime: process.uptime() },
             delivery,
+            ...(wechatRegistration ? { wechatRegistration } : {}),
+            ...(feishuConnection ? { feishuConnection } : {}),
         };
         this.sendJson(res, status === 'healthy' ? 200 : 503, response);
         return Promise.resolve();
@@ -582,8 +646,12 @@ export class HttpApiServer {
             return;
         }
         const threadId = typeof raw.threadId === 'string' ? raw.threadId : undefined;
+        // Issue #5630: optional retry-dedup key — see runUploadFile for semantics.
+        const idempotencyKey = typeof raw.idempotencyKey === 'string' && raw.idempotencyKey.trim()
+            ? raw.idempotencyKey.trim()
+            : undefined;
         try {
-            const result = await this.uploadFileHandler(raw.chatId, raw.filePath, threadId);
+            const result = await this.runUploadFile(idempotencyKey, raw.chatId, raw.filePath, threadId);
             this.sendJson(res, 200, { ok: true, ...result });
         }
         catch (err) {
@@ -591,6 +659,74 @@ export class HttpApiServer {
             const msg = err instanceof Error ? err.message : 'uploadFile failed';
             this.sendJson(res, 500, { ok: false, message: msg });
         }
+    }
+    /**
+     * Issue #5630: run the upload handler with retry-safe idempotency semantics.
+     *
+     * The client deadline can expire while the upload+send chain is still running
+     * server-side; a blind retry then double-delivers. When the request carries
+     * an idempotencyKey (scoped to the exact chatId/filePath/threadId):
+     * - a same-key request still in flight is joined — one delivery, one outcome;
+     * - a recently-succeeded same-key request is replayed from the memo — the
+     *   retry gets the remembered result (including messageId), zero re-sends;
+     * - failures are never memoized, so a same-key retry after a genuine failure
+     *   re-executes normally.
+     * This deduplicates at the service boundary only; it does not assume any
+     * idempotency from the Feishu API. In-memory: a service restart forgets.
+     */
+    async runUploadFile(idempotencyKey, chatId, filePath, threadId) {
+        const handler = this.uploadFileHandler;
+        if (!handler) {
+            throw new Error('uploadFile handler not configured');
+        }
+        if (!idempotencyKey) {
+            return await handler(chatId, filePath, threadId);
+        }
+        const identity = { chatId, filePath, threadId };
+        const memo = this.uploadFileMemo.get(idempotencyKey);
+        if (memo && memo.expiresAt > Date.now() && sameUploadRequest(memo, identity)) {
+            logger.info({ idempotencyKey, chatId, messageId: memo.result.messageId }, 'uploadFile idempotent replay: returning remembered success without re-sending');
+            return memo.result;
+        }
+        this.uploadFileMemo.delete(idempotencyKey);
+        const inFlight = this.uploadFileInFlight.get(idempotencyKey);
+        if (inFlight && sameUploadRequest(inFlight, identity)) {
+            logger.info({ idempotencyKey, chatId }, 'uploadFile idempotent join: same-key upload still in flight');
+            return await inFlight.run;
+        }
+        const run = (async () => {
+            try {
+                const result = await handler(chatId, filePath, threadId);
+                this.rememberUploadResult(idempotencyKey, identity, result);
+                return result;
+            }
+            finally {
+                this.uploadFileInFlight.delete(idempotencyKey);
+            }
+        })();
+        this.uploadFileInFlight.set(idempotencyKey, { ...identity, run });
+        return await run;
+    }
+    /** Memoize a successful same-key upload for the idempotency window (Issue #5630). */
+    rememberUploadResult(idempotencyKey, identity, result) {
+        const now = Date.now();
+        for (const [key, entry] of this.uploadFileMemo) {
+            if (entry.expiresAt <= now) {
+                this.uploadFileMemo.delete(key);
+            }
+        }
+        while (this.uploadFileMemo.size >= UPLOAD_FILE_IDEMPOTENCY_MAX_ENTRIES) {
+            const oldest = this.uploadFileMemo.keys().next().value;
+            if (oldest === undefined) {
+                break;
+            }
+            this.uploadFileMemo.delete(oldest);
+        }
+        this.uploadFileMemo.set(idempotencyKey, {
+            ...identity,
+            expiresAt: now + UPLOAD_FILE_IDEMPOTENCY_TTL_MS,
+            result,
+        });
     }
     /**
      * POST /api/send-message handler (Issue #4279).

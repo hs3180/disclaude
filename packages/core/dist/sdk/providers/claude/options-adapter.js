@@ -14,7 +14,12 @@ export function adaptOptions(options, permissions = {}) {
     assertToolOptions(options);
     const sdkOptions = {};
     // Claude launches its own subprocess; this is its final environment boundary.
-    sdkOptions.env = browserAgentEnv(options.env);
+    const environment = browserAgentEnv(options.env);
+    // Native per-command Bash policy (#5515), never a query/Goal watchdog.
+    // Explicit values (including empty strings) preserve native/operator control.
+    environment.BASH_DEFAULT_TIMEOUT_MS ??= '600000';
+    environment.BASH_MAX_TIMEOUT_MS ??= '1800000';
+    sdkOptions.env = environment;
     // 基本选项
     if (options.cwd) {
         sdkOptions.cwd = options.cwd;

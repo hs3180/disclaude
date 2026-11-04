@@ -150,6 +150,8 @@ export const FEISHU_WIRED_DESCRIPTOR = {
         };
         const helpContext = {
             ...context.controlHandlerContext,
+            goalStore: context.goalStore,
+            goalExecution: context.goalExecution,
             triggerMode: triggerModeAdapter,
             getHelpCapabilities: () => feishuChannel.getCapabilities(),
         };
@@ -285,6 +287,7 @@ export const WECHAT_WIRED_DESCRIPTOR = {
         });
         return (chatId, threadRootId) => ({
             ...factory(chatId, threadRootId),
+            beginProcessing: (target) => channel.beginTyping(target),
             sendFile: async (target, filePath) => { await channel.sendMessage({ chatId: target, type: 'file', filePath }); },
         });
     },

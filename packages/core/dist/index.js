@@ -12,6 +12,13 @@
  */
 // Types (extended types for application-level use)
 export * from './types/index.js';
+// Domain barrels. New exports go in the matching <domain>/index.ts, NOT here:
+// the root re-exports each domain wholesale, so feature PRs stop colliding on
+// one shared hand-enumerated list. Add a new line here only for a brand-new
+// domain. Renamed/prefixed re-exports (see the Sdk-prefixed SDK types below)
+// stay explicit at the root.
+export * from './goals/index.js';
+export * from './coordination/index.js';
 // Constants
 export * from './constants/index.js';
 // Utils
@@ -38,7 +45,7 @@ StderrCapture, getErrorStderr, isStartupFailure,
 // Process listener cleanup (Issue #3745)
 // Factory functions
 getProvider, registerProvider, registerProviderClass, setDefaultProvider, getDefaultProviderType, getAvailableProviders, clearProviderCache, isProviderAvailable, } from './sdk/index.js';
-export { validateAgentInputAnswers } from './sdk/user-input.js';
+export { AgentInputDeliveryError, validateAgentInputAnswers } from './sdk/user-input.js';
 export { LiveInputRejectedError } from './sdk/index.js';
 // Agent Infrastructure (Issue #1040, Issue #1501: Simplified to ChatAgent-only)
 // Types and interfaces
@@ -104,3 +111,5 @@ export { ActionBoundInput } from './security/action-bound-input.js';
 export * from './feedback/index.js';
 // Harness-neutral skill discovery, precedence, and manifest contract.
 export { SkillsRegistry, formatSkillManifest } from './skills/index.js';
+// Goal and coordination exports moved to ./goals/index.ts and
+// ./coordination/index.ts (see "Domain barrels" note above).

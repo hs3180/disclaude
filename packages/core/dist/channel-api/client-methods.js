@@ -1,5 +1,6 @@
 /** Typed Channel API helpers with consistent error classification. Each helper delegates to the HTTP client request method. */
 import { createLogger } from '../utils/logger.js';
+import { ChannelApiRequestError } from './client.js';
 const logger = createLogger('ChannelApiClient');
 /**
  * Classify an error into an REST API error type based on its message prefix.
@@ -13,7 +14,9 @@ function classifyError(error) {
     else if (err.message.startsWith('CHANNEL_API_TIMEOUT')) {
         errorType = 'channel_api_timeout';
     }
-    return { err, errorType };
+    // #5616: keep structured diagnostics from the failure body instead of flattening to a string.
+    const failure = error instanceof ChannelApiRequestError ? error.failure : undefined;
+    return { err, errorType, ...(failure ? { failure } : {}) };
 }
 /**
  * Send a text message via REST API.
@@ -24,9 +27,9 @@ export async function sendMessage(client, chatId, text, threadId, mentions) {
         return await client.request('sendMessage', { chatId, text, threadId, mentions });
     }
     catch (error) {
-        const { err, errorType } = classifyError(error);
+        const { err, errorType, failure } = classifyError(error);
         logger.error({ err: error, chatId }, 'sendMessage failed');
-        return { success: false, error: err.message, errorType };
+        return { success: false, error: err.message, errorType, ...(failure ? { failure } : {}) };
     }
 }
 /**
@@ -46,14 +49,31 @@ export async function sendCard(client, chatId, card, threadId, description) {
 /**
  * Upload a file via REST API.
  * Issue #2300: Return detailed error information consistent with other REST API methods.
+ * Issue #5630: chain-aware deadline option, idempotency key pass-through, and
+ * timeout results flagged `outcomeUnknown` — a timed-out upload is not a
+ * confirmed failure (the service may still deliver), so retries must reuse the
+ * idempotency key instead of blindly re-sending.
  */
-export async function uploadFile(client, chatId, filePath, threadId) {
+export async function uploadFile(client, chatId, filePath, threadId, options) {
     try {
-        return await client.request('uploadFile', { chatId, filePath, threadId });
+        return await client.request('uploadFile', { chatId, filePath, threadId, idempotencyKey: options?.idempotencyKey }, { timeoutMs: options?.timeoutMs });
     }
     catch (error) {
         const { err, errorType } = classifyError(error);
         logger.error({ err: error, chatId, filePath }, 'uploadFile failed');
+        if (errorType === 'channel_api_timeout') {
+            // Issue #5630: the client deadline expired mid-chain — the service may
+            // still complete the upload and deliver the file. Report the ambiguous
+            // outcome (plus the dedup key) instead of a plain failure the caller
+            // might blindly retry, which could double-deliver.
+            return {
+                success: false,
+                error: err.message,
+                errorType,
+                outcomeUnknown: true,
+                ...(options?.idempotencyKey ? { idempotencyKey: options.idempotencyKey } : {}),
+            };
+        }
         return { success: false, error: err.message, errorType };
     }
 }

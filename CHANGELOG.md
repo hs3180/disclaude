@@ -7,6 +7,102 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.8] - 2026-11-04
+
+### Added
+
+- Provide a session history query service as the primary agent entry:
+  `disclaude history query` and the REST `GET /api/history/query` route, with
+  agent-facing documentation (#5603, #5618; #5611, #5629).
+- Add a verifiable launchd service lifecycle: `generatePlist()` derives a
+  production-faithful plist from `.disclaude` configuration, and the new
+  `disclaude service install|start|stop|restart|status|logs|uninstall|generate`
+  commands manage it, all with `--dry-run` support (#5619; #5628).
+- Land the goal/board/coordination suite: the single-entry `/goal` command
+  surface with native execution (#5559, #5563, #5592), private versioned goal
+  persistence and a sequential continuation driver (#5538, #5539), explicit
+  lifecycle controls, draft records and revision-bound turn assessments
+  (#5542, #5543, #5556, #5557), durable versioned task claims with
+  projection-checked admission (#5553, #5579, #5596, #5597), durable task
+  submission and review records read and patched through lark-cli
+  (#5621, #5622), receipt inboxes for task work and review proposals
+  (#5623, #5624), background task ownership wired into the default service
+  with native-only child reporting (#5574, #5620), independently scoped task
+  executions (#5550), Feishu task feedback cards and question callbacks
+  (#5589, #5590), persisted question/answer delivery state (#5585, #5586),
+  input admission receipts and chat-scoped query hooks (#5587, #5588), host
+  tools bound to the originating input context with host-verified user-input
+  provenance (#5554, #5555), host query hooks forwarded through factory
+  creation (#5558), temporary sessions retained until native work settles
+  (#5547), and review-side Project artifact identity verification (#5581).
+- Bind WeChat conversation identity to stable peer identifiers (persisted
+  atomically, scoped to the operator identity) so a re-registration continues
+  the original chatId instead of forking the session (#5600; #5634).
+
+### Changed
+
+- Route busy-session input by thread ownership before steering: a new task
+  sent to the main conversation gets its own execution and delivery boundary,
+  while same-topic follow-ups still steer the running turn (#5464; #5638).
+
+### Fixed
+
+- Quarantine corrupt WeChat registry locks (for example the zero-byte lock
+  left behind by ENOSPC) and rebuild the lock automatically, so a host no
+  longer crash-loops with a permanently degraded registry; carries the
+  earlier startup isolation, atomic lock publication and manual
+  lock-recovery groundwork (#5513; #5525, #5523, #5577, #5632).
+- Surface underlying cause codes for WeChat CDN upload failures with
+  structured, sanitized diagnostics (#5516; #5536, #5625), keep inbound
+  image failures recoverable through a durable asynchronous media inbox
+  (#5518; #5530, #5532, #5636), and give channel-cli JSON output structured
+  delivery diagnostics with two-layer diagnostic ids (#5616; #5639).
+- Give the Feishu upload-file chain a chain-aware deadline with per-stage
+  timings and idempotency keys, so a slow upload no longer collapses into an
+  ambiguous 30-second REST timeout (#5630; #5644).
+- Resume the waiting session automatically after a private input card is
+  consumed, with a distinguishable safe failure path instead of a false
+  failure report (#5411; #5626).
+- Keep delivered outcomes when an async question card fails: the native
+  completion stands, the failure is reported once with bounded diagnostics,
+  and the `/api/push` initialization scenario is covered (#5526, #5430;
+  #5528, #5535, #5635).
+- Recover a tripped delivery circuit through a bounded half-open probe with
+  backfill of skipped replies, exposing `deliveryCircuitStatus()`
+  (#5470; #5531, #5637).
+- Wait for DNS resolution and a real websocket connection before reporting a
+  Feishu channel as available at startup, and expose Feishu ingress readiness
+  independently in health checks (#5519; #5533, #5534, #5643).
+- Preserve forwarded card content in Feishu thread context (schema 2.0 card
+  bodies and merge-forwarded messages) instead of degrading to a placeholder
+  (#5433; #5645).
+- Exclude healthy work from the codex capacity recovery budget with
+  regression coverage, so long-running tasks no longer exhaust the recovery
+  window (#5514; #5524, #5641), reject capacity waits for dependent queries
+  (#5567; #5568), persist task results before parent notification (#5571),
+  and refuse reconnects after native owner disposal so independent tasks can
+  settle (#5572; #5573).
+- Configure native foreground Bash timeouts by default for SDK subprocesses
+  so babysit-style waiting commands can no longer wedge a session forever
+  (#5515; #5541).
+- Surface the CDP endpoint and runtime failure causes in
+  `disclaude browser status` with classified remedies, including stale or
+  invalid runtime.json states (#5601; #5642).
+- Welcome new WeChat peers once after valid reply context, with login
+  onboarding guidance toward the first message (#5469; #5545, #5646), and
+  retain the typing indicator through task and delivery settlement
+  (#5471; #5544).
+- Diagnose system heartbeats without assuming rate limits (#5537), load codex
+  skills in place through native directory roots (#5546), resolve leftover
+  goal.md merge markers (#5591; #5627), and finish the single-entry surface
+  left behind by #5559, repairing main Unit Tests (#5617).
+- Rebuild the runtime before generating the Git distribution: prune stale
+  build artifacts, force `tsc --build`, assert the source tree did not
+  change, and record build provenance in `release-source.json` — the 0.6.7
+  archive shipped stale dist output for files already fixed on its declared
+  source (#5517; #5522), and the install acceptance test now isolates
+  inherited workspace context (#5527).
+
 ## [0.6.7] - 2026-10-23
 
 ### Added

@@ -63,6 +63,9 @@ export async function send_text(params) {
                 success: false,
                 error: result.error ?? 'Failed to send message via REST API',
                 message: errorMsg,
+                // #5616: safe structured diagnostics (endpoint/ret/errmsg/errorKind +
+                // both diagnostic IDs) so the CLI JSON need not be string-parsed.
+                ...(result.failure ? { diagnostic: result.failure } : {}),
             };
         }
         invokeMessageSentCallback(chatId);

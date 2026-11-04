@@ -14,6 +14,7 @@
  * @module utils/channel-handlers
  */
 import { createLogger as coreCreateLogger, } from "../../../core/dist/index.js";
+import { getIncomingInputSource } from '../agents/input-provenance.js';
 const routingLogger = coreCreateLogger('ChannelMessageRouter');
 /** Convert a timestamp (seconds or milliseconds) to ISO string, falling back to now. */
 function toISOStringSafe(ts) {
@@ -144,6 +145,8 @@ export function createChannelCallbacksFactory(channel, logger, options) {
 export function createDefaultMessageHandler(channel, context, options) {
     return async (message) => {
         const { chatId, content, messageId, userId, metadata, messageType } = message;
+        const source = getIncomingInputSource(message);
+        const provenance = source === undefined ? {} : { runtimeSource: source };
         context.logger.info({ chatId, messageId, messageType, contentLength: content.length, hasAttachments: !!message.attachments }, `Processing message from ${options.channelName}`);
         // Issue #3582: Route through InputMessageRouter when available (Phase 3)
         if (context.inputMessageRouter) {
@@ -158,6 +161,7 @@ export function createDefaultMessageHandler(channel, context, options) {
             const userMessage = {
                 id: messageId,
                 source: 'user',
+                ...provenance,
                 payload: content,
                 chatId,
                 messageId,
@@ -200,7 +204,7 @@ export function createDefaultMessageHandler(channel, context, options) {
         // Convert attachments if the channel supports them
         const fileRefs = options.extractAttachments?.(message);
         try {
-            void agent.processMessage({ chatId, payload: content, messageId, senderOpenId, attachments: fileRefs, chatHistoryContext, pendingQuestionEligible, chatType, threadContext, threadRootId });
+            void agent.processMessage({ chatId, payload: content, messageId, senderOpenId, attachments: fileRefs, chatHistoryContext, pendingQuestionEligible, chatType, threadContext, threadRootId, ...provenance });
         }
         catch (error) {
             context.logger.error({ err: error, chatId, messageId }, 'Failed to process message');
@@ -268,8 +272,12 @@ export function createChannelApiHandlers(channel, options) {
         },
         uploadFile: async (chatId, filePath, threadId) => {
             logger.debug({ chatId, filePath, channel: channelName }, 'uploadFile: using channel.sendMessage — file metadata may be incomplete');
+            let messageId;
             try {
-                await channel.sendMessage({ chatId, type: 'file', filePath, threadId });
+                // Issue #5630: preserve the platform message_id — it is the verifiable
+                // delivery conclusion surfaced through the REST response. Channels whose
+                // sendMessage returns void simply omit it.
+                messageId = await channel.sendMessage({ chatId, type: 'file', filePath, threadId });
             }
             catch (error) {
                 logger.error({ err: error, chatId, channel: channelName, handler: 'uploadFile' }, 'REST API handler failed');
@@ -283,6 +291,7 @@ export function createChannelApiHandlers(channel, options) {
                 fileType: 'file',
                 fileName: filePath.split('/').pop() || 'file',
                 fileSize: 0, // synthetic — not available via sendMessage
+                ...(typeof messageId === 'string' && messageId ? { messageId } : {}),
             };
         },
     };

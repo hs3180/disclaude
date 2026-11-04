@@ -13,11 +13,13 @@ import { setTimeout as sleep } from 'timers/promises';
 import { execFile } from 'child_process';
 import crypto from 'node:crypto';
 import { Config, DEDUPLICATION, REACTIONS, CHAT_HISTORY, createLogger, isGroupChat, stripLeadingMentions, ensureFileExtensionFromPath, } from "../../../../core/dist/index.js";
+import { registerFeishuInputSource } from '../../agents/input-provenance.js';
 import { extractFullCardContent } from '../../platforms/feishu/card-builders/card-text-extractor.js';
 import { messageLogger } from '../../utils/message-logger.js';
 import { evaluateMessageFilters } from './message-filters.js';
 import { FeishuPrivateInput } from './private-input.js';
 import { FeishuAgentInput } from './agent-input.js';
+import { FeishuTaskQuestionCards } from './task-question-cards.js';
 import { FeishuIssueReport } from './issue-report.js';
 import { FeishuPrivateWorkflows } from './private-workflows.js';
 import { tryHandleSlashCommand, tryHandleGuidance } from './command-router.js';
@@ -120,6 +122,8 @@ export class MessageHandler {
     tenantAccessToken;
     privateInput;
     agentInput;
+    taskQuestionCards;
+    taskQuestionHost;
     issueReport;
     issueClient;
     welcomeService;
@@ -129,6 +133,36 @@ export class MessageHandler {
             throw new Error('Feishu input channel is unavailable');
         }
         await this.agentInput.request(request, context);
+    }
+    configureTaskQuestions(appId, ports) {
+        if (this.taskQuestionHost) {
+            throw new Error('Task question runtime is already configured');
+        }
+        this.taskQuestionHost = { appId, ports };
+        if (this.client) {
+            this.taskQuestionCards = new FeishuTaskQuestionCards(this.client, appId, ports);
+        }
+    }
+    requestTaskQuestion(question) {
+        if (!this.isRunning() || !this.taskQuestionCards) {
+            return Promise.reject(new Error('Feishu task questions are unavailable'));
+        }
+        return this.taskQuestionCards.ask(question);
+    }
+    reconcileTaskQuestionWake(id) {
+        if (!this.isRunning() || !this.taskQuestionCards) {
+            return Promise.reject(new Error('Feishu task questions are unavailable'));
+        }
+        return this.taskQuestionCards.reconcileWake(id);
+    }
+    async drainTaskQuestions() {
+        const cards = this.taskQuestionCards;
+        if (cards) {
+            await cards.close();
+            if (this.taskQuestionCards === cards) {
+                this.taskQuestionCards = undefined;
+            }
+        }
     }
     /** Issue #5400: send the /issue confirmation card for the chat's last failure. */
     requestIssueReport(record, target) {
@@ -140,6 +174,10 @@ export class MessageHandler {
     privateWorkflows;
     requestPrivateWorkflow(request) {
         return this.privateWorkflows.request(request);
+    }
+    /** #5411: after a private input is consumed, wake the waiting chat session. */
+    setPrivateWorkflowNotifier(notify) {
+        this.privateWorkflows.setNotifier(notify);
     }
     MAX_MESSAGE_AGE = DEDUPLICATION.MAX_MESSAGE_AGE;
     /**
@@ -173,9 +211,15 @@ export class MessageHandler {
      * Initialize the handler with client.
      */
     initialize(client) {
+        if (this.taskQuestionCards) {
+            throw new Error('Drain task questions before replacing the Feishu client');
+        }
         this.client = client;
         this.agentInput?.close();
         this.agentInput = new FeishuAgentInput(client);
+        if (this.taskQuestionHost) {
+            this.taskQuestionCards = new FeishuTaskQuestionCards(client, this.taskQuestionHost.appId, this.taskQuestionHost.ports);
+        }
         this.issueReport?.close();
         this.issueReport = new FeishuIssueReport(client, this.issueClient ?? (() => undefined));
         this.controlHandler = this.getHasControlHandler();
@@ -332,9 +376,36 @@ export class MessageHandler {
         ].join('\n');
     }
     /**
+     * Issue #5433: build an actionable reference for thread-context content that
+     * could not be auto-expanded (a card with no extractable text, or a
+     * merge_forward whose child messages are not visible in the response).
+     *
+     * Same philosophy as buildMediaThreadGuidance (#4319): stay read-only, but
+     * never hand the agent a bare placeholder that hides both what the message
+     * is and how to get its content. The guidance surfaces the message_id, the
+     * sender, and a ready-to-run lark-cli fetch command (the same messages-mget
+     * surface the topic-thread self-service guidance advertises).
+     *
+     * @param kindLabel - Short Chinese label for the message kind (卡片消息 / 合并转发消息)
+     * @param messageId - The Feishu message_id to point the agent at
+     * @param sender - The message's sender (id wins over sender_type for display)
+     */
+    buildOnDemandFetchGuidance(kindLabel, messageId, sender) {
+        const senderLabel = sender?.id || sender?.sender_type || 'unknown';
+        return [
+            `[${kindLabel} (message_id=${messageId}, 发送者=${senderLabel}): 线程上下文未能自动展开其正文。如需原文，可执行下方命令按需获取]`,
+            '```bash',
+            `npx @larksuite/cli im +messages-mget --message-ids ${messageId} --as bot`,
+            '```',
+        ].join('\n');
+    }
+    /**
      * Clear the client (on stop).
      */
     clearClient() {
+        if (this.taskQuestionCards) {
+            throw new Error('Drain task questions before clearing the Feishu client');
+        }
         this.agentInput?.close();
         this.agentInput = undefined;
         this.issueReport?.close();
@@ -482,7 +553,13 @@ export class MessageHandler {
                         break;
                     }
                 }
-                const msg = response.data?.items?.[0];
+                // Issue #5433: the per-node response can carry MORE than this node.
+                // For a merge_forward parent, Feishu returns the forwarded bodies as
+                // sibling items (each child's upper_message_id → parent message_id) in
+                // this SAME response; reading only items[0] discarded them, which is
+                // how a forwarded chat record vanished from thread context.
+                const items = response.data?.items ?? [];
+                const [msg] = items;
                 if (!msg) {
                     break;
                 }
@@ -503,6 +580,28 @@ export class MessageHandler {
                     if (guidance) {
                         text = guidance;
                     }
+                }
+                // Issue #5433: expand forwarded content the bot can already see.
+                // (a) merge_forward parents: the bodies are the upper_message_id children
+                //     returned alongside the parent — inline them with zero extra API
+                //     calls (still read-only). Without visible children, fall back to
+                //     the actionable reference below, not a bare placeholder.
+                if (msgType === 'merge_forward') {
+                    const forwardId = msg.message_id || currentId;
+                    const childTexts = items
+                        .filter(item => item && item.upper_message_id === forwardId)
+                        .map(child => this.extractMessageText(child.msg_type, child.body?.content || '{}').trim())
+                        .filter(Boolean);
+                    text = childTexts.length > 0
+                        ? ['[合并转发消息]', ...childTexts.map(t => `- ${t}`)].join('\n')
+                        : this.buildOnDemandFetchGuidance('合并转发消息', forwardId, msg.sender);
+                }
+                else if (msgType === 'interactive' && text === '[Interactive Card]') {
+                    // (b) a card that resisted extraction (unknown structure): give the
+                    //     agent an actionable reference — message_id + sender + a
+                    //     ready-to-run fetch command — instead of the generic placeholder
+                    //     that hides both the content and how to get it.
+                    text = this.buildOnDemandFetchGuidance('卡片消息', msg.message_id || currentId, msg.sender);
                 }
                 if (text) {
                     threadMessages.push({
@@ -599,6 +698,13 @@ export class MessageHandler {
         // Issue #4316 nit ①: this covers both unrecognized types AND recognized
         // types with malformed content (e.g. post missing content array), so the
         // behavior is intentional and traceable.
+        // Issue #5433: merge_forward is NOT a parse failure — its content is the
+        // fixed marker string by design and the bodies are separate child messages
+        // (upper_message_id), which getThreadContext inlines when visible. Name
+        // the kind instead of "[未解析的 …]" which reads as an extraction bug.
+        if (messageType === 'merge_forward') {
+            return '[合并转发消息: 正文为子消息，需展开]';
+        }
         return `[未解析的 ${messageType} 消息]`;
     }
     /**
@@ -1014,7 +1120,7 @@ export class MessageHandler {
                         fileMetadata.chatHistoryContext = chatHistoryContext;
                     }
                 }
-                await this.callbacks.emitMessage({
+                const incoming = {
                     messageId: `${message_id}-${message_type === 'audio' ? 'audio' : 'file'}`,
                     chatId: chat_id,
                     userId: extractOpenId(sender),
@@ -1024,7 +1130,9 @@ export class MessageHandler {
                     threadId,
                     attachments: localPath ? [{ fileName: fileName || fileKey, filePath: localPath }] : undefined,
                     metadata: Object.keys(fileMetadata).length > 0 ? fileMetadata : undefined,
-                });
+                };
+                registerFeishuInputSource(incoming, message_id, sender?.sender_type);
+                await this.callbacks.emitMessage(incoming);
                 return;
             }
             // Handle text, post, share_chat, and interactive messages
@@ -1206,7 +1314,7 @@ export class MessageHandler {
             // /reset or /stop typed inside a topic-group thread addresses that
             // thread's agent slot rather than the chat-scoped one.
             const commandInput = {
-                textWithoutMentions, mentions, chatId: chat_id, threadRootId,
+                textWithoutMentions, mentions, chatId: chat_id, threadRootId, sourceMessageId: message_id, senderType: sender?.sender_type,
                 ...(chat_type === 'p2p' || chat_type === 'group' || chat_type === 'topic' ? { chatType: chat_type } : {}),
                 actorId: extractOpenId(sender),
             };
@@ -1267,8 +1375,8 @@ export class MessageHandler {
             const quotedAttachments = quotedMessageResult?.attachment
                 ? [quotedMessageResult.attachment]
                 : undefined;
-            // Emit as incoming message
-            await this.callbacks.emitMessage({
+            // Attest only accepted raw user events; card-action/system inputs use other paths.
+            const incoming = {
                 messageId: message_id,
                 chatId: chat_id,
                 userId: extractOpenId(sender),
@@ -1278,7 +1386,9 @@ export class MessageHandler {
                 threadId,
                 metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
                 attachments: quotedAttachments,
-            });
+            };
+            registerFeishuInputSource(incoming, message_id, sender?.sender_type);
+            await this.callbacks.emitMessage(incoming);
         }
         catch (error) {
             messageLogger.releaseMessage(message_id);
@@ -1294,6 +1404,10 @@ export class MessageHandler {
         }
         // Parse actual Feishu event structure
         const rawData = data;
+        if (FeishuTaskQuestionCards.isCallback(rawData)) {
+            return this.taskQuestionCards?.handleAuthenticatedCallback(rawData)
+                ?? { toast: { type: 'info', content: '任务反馈暂不可用；原问题和已保存的回答会保留。' } };
+        }
         if (FeishuAgentInput.isCallback(rawData)) {
             void this.agentInput?.submit(rawData).catch(() => logger.warn('Agent input callback could not be handled'));
             return;

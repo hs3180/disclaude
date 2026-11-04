@@ -46,7 +46,7 @@ function emitOk(payload) {
         writeResult(`${JSON.stringify({ ok: true, ...payload })}\n`);
     }
 }
-function emitFail(command, error, hint) {
+function emitFail(command, error, hint, diagnostic) {
     if (emitted) {
         return;
     }
@@ -54,6 +54,11 @@ function emitFail(command, error, hint) {
     const result = { ok: false, command, error };
     if (hint) {
         result.hint = hint;
+    }
+    // #5616: safe structured delivery diagnostics instead of string-parsing the
+    // error for endpoint/ret/errmsg and the two diagnostic IDs.
+    if (diagnostic !== undefined) {
+        result.diagnostic = diagnostic;
     }
     writeResult(`${JSON.stringify(result)}\n`);
 }
@@ -471,7 +476,7 @@ async function execute(command, args, chatId, baseUrl) {
         return 0;
     }
     const resultError = result.error || result.message || `${command} returned without success`;
-    emitFail(command, resultError, await failureHint(baseUrl, resultError));
+    emitFail(command, resultError, await failureHint(baseUrl, resultError), result.diagnostic);
     return 1;
 }
 export async function run(argv) {

@@ -66,6 +66,10 @@ The service can start with no registered accounts. Run `disclaude wechat login` 
 
 ## One service with Feishu, REST and registered WeChat accounts
 
+When a user first sends a message with a valid reply context, the bot sends a brief plain-text welcome and still processes that first task normally. Login output asks the user to send the first message; registration alone does not claim a welcome was delivered. Ask “怎么用” in the chat for help.
+
+Saved accounts keep per-bot/per-peer onboarding attempts in private `welcome.json`, independently of cursor/media state. Normal restart, reconnect and repeated updates do not resend the welcome. An unknown delivery outcome is retained for inspection rather than blindly retried; an unreadable welcome file disables only automatic onboarding and leaves task reception available. Programmatic token-only channels without a state directory retain this deduplication only for their current process.
+
 These channels can share one service process and configuration. Each channel connects independently. This differs from the isolated two-process candidate deployment described in the original acceptance record.
 
 ```yaml
@@ -154,6 +158,27 @@ disclaude wechat status --check
 ```
 
 Migration tightens the legacy file permissions and privately writes the new account directory. It does not print/copy credentials into YAML or chat. Keep the old file until rollback is no longer needed; stop the candidate before resuming a legacy listener. Rolling back to 0.6.5 does not provide the new setup/diagnostics or encrypted-media fixes.
+
+## Registry lock recovery
+
+Use `disclaude wechat lock-inspect --state-dir /path/to/registry > lock-snapshot.json`
+to read file identity/timestamps/hash without starting a listener, creating a
+registry or exposing lock contents/credentials. Then run
+`disclaude wechat lock-recover --state-dir /path/to/registry --snapshot lock-snapshot.json`.
+
+Recovery accepts only unchanged, owned, single-link regular files whose creation
+and modification metadata predate this OS boot. It quarantines malformed records
+under a private `.registry-lock-quarantine` directory, preserves their inode and
+bytes, and syncs the directories. Repairs serialize; retrying the same snapshot
+reconciles the existing archive and leaves a subsequent owner alone. No account,
+credentials, cursor or deduplication state is reset. A running degraded service
+can retry its registry after recovery; no listener or business input is replayed
+by this command.
+
+Readable PID records use the normal owner/dead-PID locking path. Current-boot
+corruption, changed snapshots, symlinks, unsafe ownership and unknown archives
+are refused. There is no age-based expiry or force bypass. Simulated-boot tests
+do not constitute an actual machine reboot or real-account acceptance.
 
 ## Acceptance record
 

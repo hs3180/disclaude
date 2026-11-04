@@ -35,15 +35,21 @@ export async function tryHandleSlashCommand(input, deps) {
         chatId: input.chatId,
         ...(input.threadRootId ? { threadId: input.threadRootId } : {}),
     };
+    // Goal execution must originate from a human event, including in bot-to-bot chats.
+    if (cmd === 'goal' && input.senderType !== 'user') {
+        await deps.sendMessage({ ...replyTarget, type: 'text', text: 'Goal 命令需由用户直接发送，未创建或改变目标。' });
+        return true;
+    }
     // Control-handler path (Issue #3529: typed command data).
     // Issue #4587 (part 3): threadRootId rides along so /reset and /stop
     // address the thread's agent slot when typed inside a topic-group thread.
     if (deps.hasControlHandler) {
         const rawData = { args };
-        const response = await deps.emitControl(createControlCommand(cmd, input.chatId, rawData, input.threadRootId || input.chatType || input.actorId ? {
+        const response = await deps.emitControl(createControlCommand(cmd, input.chatId, rawData, input.threadRootId || input.chatType || input.actorId || input.sourceMessageId ? {
             ...(input.threadRootId ? { threadRootId: input.threadRootId } : {}),
             ...(input.chatType ? { chatType: input.chatType } : {}),
             ...(input.actorId ? { actorId: input.actorId } : {}),
+            ...(input.sourceMessageId ? { sourceMessageId: input.sourceMessageId } : {}),
         } : undefined));
         // Issue #1562: relay both success and error messages from the control handler.
         const message = response.message ?? (cmd === 'project' ? response.error : undefined);

@@ -166,6 +166,7 @@ export class AgentFactory {
                 sdkSessionKey: options.sdkSessionKey,
                 turnRecovery: options.turnRecovery,
                 failureRecorder: options.failureRecorder,
+                configureQueryOptions: options.configureQueryOptions,
             };
             return createChatAgent(config);
         }
@@ -217,6 +218,7 @@ export class AgentFactory {
             sdkSessionKey: options.sdkSessionKey,
             turnRecovery: options.turnRecovery,
             failureRecorder: options.failureRecorder,
+            configureQueryOptions: options.configureQueryOptions,
         };
         return createChatAgent(config);
     }

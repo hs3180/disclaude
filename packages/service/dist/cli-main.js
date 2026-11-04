@@ -14,7 +14,7 @@
  *
  * @module service/cli-main
  */
-import { loadConfigFile, setLoadedConfig, applyGlobalEnv, createDefaultRuntimeContext, createLogger, initLogger, flushLogger, Config, createControlHandler, ProcessLock, ProjectManager, eventBus, channelCredentialErrors, resolveChannelCredential, ChatFailureRegistry, } from "../../core/dist/index.js";
+import { loadConfigFile, setLoadedConfig, applyGlobalEnv, createDefaultRuntimeContext, createLogger, initLogger, flushLogger, Config, createControlHandler, ProcessLock, ProjectManager, eventBus, channelCredentialErrors, resolveChannelCredential, ChatFailureRegistry, GoalStore, resolveAgentPreset, getProvider, TaskResultOutbox, } from "../../core/dist/index.js";
 import crypto from 'node:crypto';
 import { DisclaudeService } from './service.js';
 import { HttpApiServer } from './http-api-server.js';
@@ -22,16 +22,26 @@ import { ChatSessionPool } from './chat-session-pool.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
 import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
+// #5519: bounded DNS/connection readiness wait before the startup sequence
+// reports the Feishu channel as available.
+import { waitForStartupReadiness } from './channels/feishu/dns-readiness.js';
 import { createChannelCallbacksFactory } from './utils/channel-handlers.js';
 import { ServiceTurnRecoveryStore } from './service-turn-recovery.js';
+import { BackgroundAgentTasks } from './agents/background-agent-tasks.js';
+import { createTaskParentReporter } from './agents/background-task-parent.js';
+import { GoalExecutionService } from './goals/goal-execution-service.js';
+import { createGoalBoardTurnTools } from './goals/goal-board-tools.js';
+import { AgentFactory } from './agents/factory.js';
 import { messageLogger } from './utils/message-logger.js';
+import { queryChatHistory } from './history/history-query.js';
+import { writeTaskReport } from './goals/task-report-inbox.js';
 import { DEFAULT_WECHAT_STATE_DIR } from './channels/wechat/state-store.js';
 import { WeChatRegistry } from './channels/wechat/registry.js';
 import { WeChatRegistrationRuntime } from './channels/wechat/runtime.js';
 import net from 'node:net';
 import path from 'node:path';
 import { homedir } from 'node:os';
-import { statSync } from 'node:fs';
+import { statSync, realpathSync } from 'node:fs';
 const logger = createLogger('DisclaudeServiceCLI');
 /** Generate a fresh in-memory credential for each startup unless explicitly configured. */
 export function resolveStartupApiToken(explicitToken) {
@@ -56,6 +66,60 @@ export function parseArgs(args) {
         }
         if (arg === 'start') {
             options.command = 'start';
+        }
+        else if (arg === 'history') {
+            // Issue #5603: read-only history queries run without starting the service.
+            options.command = 'history';
+        }
+        else if (arg === 'board-report') {
+            // Agent work/review proposals reach the host through the CLI, not
+            // injected collector tools (#5560 review direction).
+            options.command = 'board-report';
+        }
+        else if (options.command === 'board-report' && arg === 'write') {
+            options.taskReport = options.taskReport ?? {};
+            options.taskReport.write = true;
+        }
+        else if (options.command === 'board-report' && options.taskReport?.write && arg === '--inbox') {
+            const value = args[++i];
+            if (value && !value.startsWith('-')) {
+                options.taskReport.inbox = value;
+            }
+        }
+        else if (options.command === 'board-report' && options.taskReport?.write && arg === '--kind') {
+            const value = args[++i];
+            if (value === 'artifacts' || value === 'review') {
+                options.taskReport.kind = value;
+            }
+        }
+        else if (options.command === 'history' && arg === 'query') {
+            options.historyQuery = options.historyQuery ?? { chatId: '', format: 'json' };
+        }
+        else if (options.command === 'history' && options.historyQuery !== undefined && arg === '--chat') {
+            const value = args[++i];
+            if (value && !value.startsWith('-')) {
+                options.historyQuery.chatId = value;
+            }
+        }
+        else if (options.command === 'history' && options.historyQuery !== undefined && arg === '--days') {
+            const value = args[++i];
+            const days = value ? Number.parseInt(value, 10) : NaN;
+            if (Number.isInteger(days) && days > 0) {
+                options.historyQuery.days = days;
+            }
+        }
+        else if (options.command === 'history' && options.historyQuery !== undefined && arg === '--limit') {
+            const value = args[++i];
+            const limit = value ? Number.parseInt(value, 10) : NaN;
+            if (Number.isInteger(limit) && limit > 0) {
+                options.historyQuery.limit = limit;
+            }
+        }
+        else if (options.command === 'history' && options.historyQuery !== undefined && arg === '--format') {
+            const value = args[++i];
+            if (value === 'json' || value === 'text') {
+                options.historyQuery.format = value;
+            }
         }
         else if (arg === '--config' || arg === '-c') {
             const value = args[i + 1];
@@ -96,15 +160,23 @@ disclaude - application service
 
 Usage:
   disclaude start [options]
+  disclaude history query --chat <chatId> [--days N] [--limit N] [--format json|text]
 
 Commands:
-  start    Start disclaude
+  start           Start disclaude
+  history query   Read locally available chat history (read-only, structured JSON; Issue #5603)
 
 Options:
   --config, -c PATH       Path to configuration file
   --api-port PORT         Enable HTTP API server (0 = OS-assigned port)
   --api-token TOKEN       Override the random per-startup token for write routes
   --help                  Show this help message
+
+History query options:
+  --chat chatId           Chat whose history to read (required)
+  --days N                Days to look back (default: sessionRestore.historyDays, 7)
+  --limit N               Return only the newest N messages across days
+  --format json|text      Output format (default: json)
 
 Configuration:
   All settings (port, host, etc.) are read from the config file.
@@ -114,6 +186,7 @@ Configuration:
 Examples:
   disclaude start
   disclaude start --config /path/to/disclaude.config.yaml
+  disclaude history query --chat oc_123 --days 3 --limit 50
 `);
 }
 export function validateWorkspaceDir(workspaceDir) {
@@ -129,6 +202,103 @@ export function validateWorkspaceDir(workspaceDir) {
     }
 }
 /**
+ * Agent work proposals (task artifacts, independent review verdicts) are
+ * delivered through this CLI write, not an injected collector tool: the
+ * reporting agent keeps its ordinary shell, the receipt is only a proposal,
+ * and the owning host pins identity, settlement and persistence. Payload JSON
+ * arrives on stdin so quoting can never corrupt it.
+ */
+async function runTaskReportCommand(options, readInput = readStdinPayload) {
+    const report = options.taskReport;
+    if (!report?.write || !report.inbox || !report.kind) {
+        console.error('Usage: disclaude board-report write --inbox <absolute-inbox-path> --kind artifacts|review  < payload.json');
+        process.exit(1);
+    }
+    if (!report.inbox.startsWith('/')) {
+        console.error('Error: board-report --inbox must be an absolute path');
+        process.exit(1);
+    }
+    let payloadText;
+    try {
+        payloadText = await readInput();
+    }
+    catch (error) {
+        console.error(`Error: ${error instanceof Error ? error.message : 'board-report input failed'}`);
+        process.exit(1);
+    }
+    let payload;
+    try {
+        payload = JSON.parse(payloadText);
+    }
+    catch {
+        console.error('Error: board-report payload must be a single JSON object on stdin');
+        process.exit(1);
+    }
+    try {
+        const receipt = await writeTaskReport(report.inbox, report.kind, payload);
+        console.log(JSON.stringify({ ok: true, receipt }));
+    }
+    catch (error) {
+        console.error(`Error: ${error instanceof Error ? error.message : 'board-report failed'}`);
+        process.exit(1);
+    }
+}
+async function readStdinPayload() {
+    const chunks = [];
+    for await (const chunk of process.stdin) {
+        chunks.push(chunk);
+    }
+    const payload = Buffer.concat(chunks).toString('utf8');
+    if (Buffer.byteLength(payload) > 128 * 1024) {
+        throw new Error('board-report payload exceeds the receipt format');
+    }
+    return payload;
+}
+/**
+ * Issue #5603: run `disclaude history query` without starting the service.
+ *
+ * Read-only and process-local: no logger init, no PID lock, no agent stack.
+ * Output is structured JSON by default so agents (including built-in skills)
+ * can consume it directly; `--format text` renders the same result for humans.
+ */
+async function runHistoryCommand(options) {
+    if (!options.historyQuery) {
+        console.error('Usage: disclaude history query --chat <chatId> [--days N] [--limit N] [--format json|text]');
+        process.exit(1);
+    }
+    if (options.configPath) {
+        const config = loadConfigFile(options.configPath);
+        if (!config._fromFile) {
+            console.error(`Error: Could not load configuration file: ${options.configPath}`);
+            process.exit(1);
+        }
+        setLoadedConfig(config);
+    }
+    const query = options.historyQuery;
+    if (!query.chatId) {
+        console.error('Error: history query requires --chat <chatId>');
+        process.exit(1);
+    }
+    const result = await queryChatHistory({ chatId: query.chatId, days: query.days, limit: query.limit });
+    if (query.format === 'text') {
+        for (const day of result.days) {
+            console.log(`--- ${day.date} ---`);
+            for (const message of day.messages) {
+                const who = message.direction === 'incoming' ? '👤' : '🤖';
+                console.log(`${who} [${message.timestamp}] (${message.messageId})`);
+                console.log(message.content);
+            }
+        }
+        if (result.truncatedByLimit) {
+            console.log('_(…older messages truncated by --limit; raise it or read the day files)_');
+        }
+        return;
+    }
+    // Single-line `{"ok":true,...}` on stdout so the unified CLI entry can route
+    // it apart from startup log lines (same contract as the channel CLI).
+    console.log(JSON.stringify({ ok: true, ...result }));
+}
+/**
  * Main entry point.
  */
 export async function main() {
@@ -136,6 +306,14 @@ export async function main() {
     const options = parseArgs(args);
     if (options.command === 'help' || args.length === 0) {
         printUsage();
+        process.exit(0);
+    }
+    if (options.command === 'history') {
+        await runHistoryCommand(options);
+        process.exit(0);
+    }
+    if (options.command === 'board-report') {
+        await runTaskReportCommand(options);
         process.exit(0);
     }
     options.apiToken = resolveStartupApiToken(options.apiToken);
@@ -299,15 +477,27 @@ export async function main() {
     let shutdownFn;
     const controlHandlerContext = {
         agentPool: {
-            reset: (chatId, skipContext) => agentPool.reset(chatId, skipContext),
+            reset: (chatId, skipContext) => {
+                backgroundTasks.stopForParent(chatId);
+                agentPool.reset(chatId, skipContext);
+            },
             resetProjectSessions: (chatId) => agentPool.resetProjectSessions(chatId),
-            isProjectBusy: (chatId) => agentPool.isProjectBusy(chatId),
-            stop: (chatId) => agentPool.stop(chatId),
+            isProjectBusy: (chatId) => agentPool.isProjectBusy(chatId) || backgroundTasks.isBusy(chatId) || (goalExecution?.isBusy(chatId) ?? false),
+            stop: (chatId) => {
+                const childStopped = backgroundTasks.stopForParent(chatId), parentStopped = agentPool.stop(chatId);
+                return parentStopped || childStopped;
+            },
             // Issue #4587 (part 3): thread-scoped reset/stop for commands typed
             // inside a topic-group thread — the pool's part-2 slots, previously
             // reachable only from the message path.
-            resetThread: (chatId, skipContext, threadRootId) => agentPool.reset(chatId, skipContext, threadRootId),
-            stopThread: (chatId, threadRootId) => agentPool.stop(chatId, threadRootId),
+            resetThread: (chatId, skipContext, threadRootId) => {
+                backgroundTasks.stopForParent(chatId, threadRootId);
+                agentPool.reset(chatId, skipContext, threadRootId);
+            },
+            stopThread: (chatId, threadRootId) => {
+                const childStopped = backgroundTasks.stopForParent(chatId, threadRootId), parentStopped = agentPool.stop(chatId, threadRootId);
+                return parentStopped || childStopped;
+            },
             listAgentPresets: () => agentPool.listAgentPresets(),
             getActiveAgentPreset: (chatId, threadRootId) => agentPool.getActiveAgentPreset(chatId, threadRootId),
             switchAgentPreset: (chatId, presetName, threadRootId) => agentPool.switchAgentPreset(chatId, presetName, threadRootId),
@@ -335,6 +525,8 @@ export async function main() {
     // Shared context for both ChannelLifecycleManager and routerCallbacksFactory.
     // Issue #3801: Extract to avoid duplication and ensure consistent dependency injection.
     const channelSetupContext = {
+        goalStore: new GoalStore(path.join(workspaceDir, '.disclaude', 'goals')),
+        goalExecution: undefined,
         agentPool,
         controlHandler,
         controlHandlerContext,
@@ -365,7 +557,72 @@ export async function main() {
         // Fallback for channels without a registered descriptor
         return createChannelCallbacksFactory(channel, logger)(chatId, threadRootId);
     };
+    // #5212: the only Goal runtime host. Feishu-only human commands reach it;
+    // the model-facing REST control endpoint never receives this capability.
+    const goalExecution = new GoalExecutionService({
+        store: channelSetupContext.goalStore, projectManager, logger,
+        // Goal rounds compose claimed Base tasks with independent native review;
+        // children report through the disclaude CLI, not injected tools.
+        createTurnTools: scope => createGoalBoardTurnTools(scope, path.join(channelSetupContext.goalStore.directory, 'tasks')),
+        isCommandAllowed: command => service.getChannelManager().resolveChannelForChatId(command.chatId)?.id === 'feishu' &&
+            (!controlHandlerContext.isCommandAllowed || controlHandlerContext.isCommandAllowed(command)),
+        callbacks: source => routerCallbacksFactory(source.chatId, source.threadRootId),
+        runtimeOptions: source => {
+            const presets = Config.getAgentPresets();
+            const selected = agentPool.getActiveAgentPreset(source.chatId, source.threadRootId);
+            const resolved = presets ? resolveAgentPreset(presets, selected?.name) : undefined;
+            if (resolved && !resolved.ok) {
+                throw new Error('Selected Goal runtime is unavailable');
+            }
+            const preset = resolved?.ok ? structuredClone(resolved.preset) : undefined;
+            const options = { ...(preset ?? Config.getAgentConfig()), ...(preset ? { settings: preset } : {}),
+                turnRecovery, failureRecorder: (failure) => failureRegistry.record(failure),
+                messageBuilderOptions: createFeishuMessageBuilderOptions() };
+            const info = getProvider(options.agentBackend, options.settings).getInfo(AgentFactory.resolveConfig(options));
+            if (!info.available) {
+                throw new Error('Selected Goal runtime is unavailable');
+            }
+            return options;
+        },
+    });
+    channelSetupContext.goalExecution = goalExecution;
     service.initInputMessageRouter(agentPool, routerCallbacksFactory);
+    // Background task ownership for Feishu Codex app-server chats (#5576 redo
+    // on the #5574 host module): no injected model face — the entry surface
+    // follows the disclaude CLI + built-in skill pattern (#5603/#5611).
+    const taskScopeAllowed = (source) => service.getChannelManager().resolveChannelForChatId(source.chatId)?.id === 'feishu' &&
+        (!controlHandlerContext.isCommandAllowed || controlHandlerContext.isCommandAllowed({ type: 'steer', ...source,
+            data: { prompt: 'run_agent_task' } }));
+    const taskRuntimeOptions = (input) => {
+        const presets = Config.getAgentPresets();
+        const selected = agentPool.getActiveAgentPreset(input.chatId, input.threadRootId);
+        const resolved = presets ? resolveAgentPreset(presets, selected?.name) : undefined;
+        if (resolved && !resolved.ok) {
+            throw new Error('Selected subtask runtime is unavailable');
+        }
+        const preset = resolved?.ok ? structuredClone(resolved.preset) : undefined;
+        const options = { ...(preset ?? Config.getAgentConfig()), ...(preset ? { settings: preset } : {}),
+            turnRecovery, failureRecorder: (failure) => failureRegistry.record(failure),
+            messageBuilderOptions: createFeishuMessageBuilderOptions() };
+        if (!getProvider(options.agentBackend, options.settings).getInfo(AgentFactory.resolveConfig(options)).available) {
+            throw new Error('Selected subtask runtime is unavailable');
+        }
+        return options;
+    };
+    const taskResults = new TaskResultOutbox(path.join(workspaceDir, '.disclaude', 'tasks', 'results'));
+    const backgroundTasks = new BackgroundAgentTasks({
+        outbox: taskResults,
+        authorize: input => {
+            const current = projectManager.resolveCwd(input.chatId);
+            if (current.reason === 'bound-missing' || realpathSync(current.boundWorkingDir ?? workspaceDir) !== input.projectRoot ||
+                !taskScopeAllowed({ chatId: input.chatId, actorId: input.senderOpenId, chatType: input.chatType, threadRootId: input.threadRootId })) {
+                throw new Error('Background task Project or permission is no longer available');
+            }
+        },
+        runtimeOptions: taskRuntimeOptions,
+        callbacks: input => routerCallbacksFactory(input.chatId, input.threadRootId),
+        wakeParent: createTaskParentReporter(report => agentPool.getOrCreateChatAgent(report.chatId, routerCallbacksFactory(report.chatId, report.threadRootId), report.threadRootId)),
+    });
     // Create ChannelLifecycleManager (Issue #1594 Phase 3)
     const lifecycleManager = new ChannelLifecycleManager(channelManager, {
         ...channelSetupContext,
@@ -395,13 +652,20 @@ export async function main() {
     let isShuttingDown = false;
     // Issue #3857 Phase 2: HTTP API server reference for shutdown
     let httpApiServer;
+    // #5519: cancels the bounded startup readiness wait when shutdown begins.
+    const startupReadinessAbort = new AbortController();
     const shutdown = async () => {
         if (isShuttingDown) {
             return;
         }
         isShuttingDown = true;
+        startupReadinessAbort.abort();
         logger.info('Shutting down disclaude service...');
         try {
+            // Drain owned background children (settled records persist) before the
+            // pool and channels go away.
+            await backgroundTasks.close();
+            await goalExecution?.close();
             await agentPool.shutdownForServiceRestart({ drainTimeoutMs: 10_000, noticeTimeoutMs: 2_000 });
             await httpApiServer?.stop();
             await wechatRuntime?.stop();
@@ -451,6 +715,29 @@ export async function main() {
             }
             logger.warn('No connected channel; WeChat registration remains available');
         }
+        // #5519: autostart can outrun DNS (launchd boots before the network
+        // stack answers). startAll() is deliberately non-blocking, so wait —
+        // bounded, cancellable, observable — for DNS and the first real Feishu
+        // handshake before the startup sequence reports the channel available.
+        // After the bound the wait gives up and the channel is reported with its
+        // real state; the connection manager keeps retrying in the background,
+        // so the connection still completes once the network recovers.
+        const feishuStartupChannel = channelManager.get('feishu');
+        if (feishuStartupChannel?.status === 'running' && feishuStartupChannel.getConnectionHealth) {
+            const readiness = await waitForStartupReadiness({
+                host: 'open.feishu.cn',
+                signal: startupReadinessAbort.signal,
+                isConnectionReady: () => feishuStartupChannel.getConnectionHealth?.().healthy === true,
+            });
+            if (!readiness.ready) {
+                logger.warn({
+                    dnsReady: readiness.dnsReady,
+                    attempts: readiness.attempts,
+                    lastErrorCode: readiness.lastErrorCode,
+                    connectionState: feishuStartupChannel.getConnectionHealth().state,
+                }, 'Feishu connection not ready within the startup bound; reporting unavailable and letting background retries finish it (#5519)');
+            }
+        }
         // Channels are ready: report prior-process interruptions even if the
         // user sends no further message. Failed delivery stays pending for that
         // session's next available path; startup never replays model inputs.
@@ -469,6 +756,14 @@ export async function main() {
             const channel = service.getChannel(String(config.id ?? type));
             if (channel?.status !== 'running') {
                 logger.warn({ type, channelId: channel?.id, status: channel?.status }, 'Channel unavailable; other channels continue serving');
+                continue;
+            }
+            // #5519: only a channel with a live connection is reported as
+            // available; a still-waiting Feishu channel reports its real state.
+            const connectionHealth = channel
+                .getConnectionHealth?.();
+            if (connectionHealth && !connectionHealth.healthy) {
+                logger.warn({ type, channelId: channel.id, connectionState: connectionHealth.state }, 'Channel started but its connection is not ready; messages queue until it connects (#5519)');
                 continue;
             }
             logger.info({ type }, `${type.charAt(0).toUpperCase() + type.slice(1)} Channel started`);
@@ -504,11 +799,18 @@ export async function main() {
                 apiToken: options.apiToken,
             });
             httpApiServer.setInstanceId(service.getInstanceId());
+            const registrationRuntime = wechatRuntime;
+            if (registrationRuntime) {
+                httpApiServer.setWeChatRegistrationHealthProvider(() => registrationRuntime.getHealth());
+            }
             httpApiServer.setBrowserIpcStatusProvider(() => service.getBrowserIpcStatus());
             httpApiServer.setChannelCapabilitiesProvider(chatId => service.getChannels()
                 .filter(channel => !chatId || channel.ownsChatId(chatId))
                 .map(channel => ({ id: channel.id, name: channel.name, status: channel.status, healthy: channel.isHealthy(), capabilities: channel.getCapabilities() })));
             const feishuChannel = channelManager.get('feishu');
+            if (feishuChannel?.getConnectionHealth) {
+                httpApiServer.setFeishuConnectionHealthProvider(() => feishuChannel.getConnectionHealth?.() ?? { state: 'stopped', healthy: false });
+            }
             httpApiServer.setDeliveryHealthProvider(() => feishuChannel?.getDeliveryHealth?.() ?? {
                 status: 'unknown',
                 attempts: 0,
@@ -518,9 +820,9 @@ export async function main() {
             // Issue #3857 Phase 2: Wire push handler to InputMessageRouter
             const router = service.getInputMessageRouter();
             if (router) {
-                httpApiServer.setPushHandler(async (chatId, message) => {
+                const routeSignal = async (prefix, chatId, message) => {
                     const systemMessage = {
-                        id: `http-push-${crypto.randomUUID()}`,
+                        id: `${prefix}-${crypto.randomUUID()}`,
                         source: 'system',
                         trigger: 'signal',
                         chatId,
@@ -528,7 +830,15 @@ export async function main() {
                         createdAt: new Date().toISOString(),
                     };
                     await router.route(systemMessage);
+                };
+                httpApiServer.setPushHandler(async (chatId, message) => {
+                    await routeSignal('http-push', chatId, message);
                 });
+                // #5411: a consumed private input resumes the waiting task by itself,
+                // through the same signal routing as /api/push. The payload carries
+                // only ids/outcome — never the private value.
+                feishuChannel
+                    ?.setPrivateWorkflowNotifier?.((chatId, message) => routeSignal('private-input', chatId, message));
             }
             // Issue #4279: wire REST /api/upload-file to the channel's uploadFile
             // capability (REST parity with the REST API method).
@@ -553,6 +863,9 @@ export async function main() {
             // Issue #4279: wire REST GET /api/temp-chats to the channel's
             // listTempChats capability (REST parity with the REST API method).
             httpApiServer.setListTempChatsHandler(() => service.listTempChats());
+            // Issue #5603: wire REST GET /api/history/query to the shared read-only
+            // history backend (same module as `disclaude history query`).
+            httpApiServer.setHistoryQueryHandler(options => queryChatHistory(options));
             // Issue #4279: wire REST /api/upload-image to the channel's uploadImage
             // capability (REST parity with the REST API method).
             httpApiServer.setUploadImageHandler((filePath) => service.uploadImage(filePath));

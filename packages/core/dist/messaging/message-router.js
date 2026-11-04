@@ -111,6 +111,7 @@ export class MessageRouter {
             threadContext: message.threadContext,
             threadRootId: message.threadRootId,
             ...(message.agentSession ? { agentSession: message.agentSession } : {}),
+            ...(message.runtimeSource !== undefined ? { runtimeSource: message.runtimeSource } : {}),
         });
     }
     async routeSystemMessage(message) {

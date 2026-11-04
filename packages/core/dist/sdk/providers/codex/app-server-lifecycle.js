@@ -1,4 +1,4 @@
-import { CodexAppServerTransport, CodexAppServerRequestTimeoutError, } from './app-server-transport.js';
+import { CodexAppServerTransport, CodexAppServerRequestTimeoutError, CodexAppServerRpcError, } from './app-server-transport.js';
 import { CodexAsyncUserInput } from './async-user-input.js';
 export class CodexNoActiveTurnError extends Error {
     operation;
@@ -38,7 +38,9 @@ export class CodexAppServerLifecycle {
     ownsAsyncInputs;
     closing = false;
     reasoningEffortsByModel = new Map();
+    extraSkillRoots;
     constructor(options = {}) {
+        this.extraSkillRoots = [...(options.extraSkillRoots ?? [])];
         this.interruptTimeoutMs = options.requestTimeoutMs ?? 10000;
         const onUserInput = options.onUserInput ? async (request) => {
             this.pendingInputs.add(request);
@@ -59,6 +61,7 @@ export class CodexAppServerLifecycle {
         }, options.userInputTimeoutMs);
         this.transport = new CodexAppServerTransport({
             ...options, onUserInput,
+            experimentalApi: options.experimentalApi || this.extraSkillRoots.length > 0,
             onNotification: (method, params) => {
                 this.receive(method, params);
                 const handled = method === 'item/completed' && this.asyncInputs.receive(params, {
@@ -97,9 +100,22 @@ export class CodexAppServerLifecycle {
         if (this.initialized) {
             return;
         }
-        this.initializeFlight ??= this.transport.initialize().then(() => {
+        this.initializeFlight ??= (async () => {
+            await this.transport.initialize();
+            if (this.extraSkillRoots.length) {
+                try {
+                    await this.transport.request('skills/extraRoots/set', { extraRoots: this.extraSkillRoots });
+                }
+                catch (error) {
+                    if (error instanceof CodexAppServerRpcError && error.code === -32601) {
+                        throw new Error('Codex CLI does not support native skill directory loading (skills/extraRoots/set). ' +
+                            'Update Codex CLI; directory loading was verified with 0.140.0-0.164.0. No prompt manifest or model turn was submitted.', { cause: error });
+                    }
+                    throw error;
+                }
+            }
             this.initialized = true;
-        });
+        })();
         await this.initializeFlight;
     }
     async ensureThread(sessionKey, options = {}) {

@@ -18,17 +18,19 @@ export class CodexAppServerRpcError extends Error {
 }
 export class CodexAppServerRequestTimeoutError extends Error {
     method;
-    constructor(method) {
+    timeoutMs;
+    constructor(method, timeoutMs = 30_000) {
         super(`codex app-server request timed out: ${method}`);
         this.method = method;
+        this.timeoutMs = timeoutMs;
         this.name = 'CodexAppServerRequestTimeoutError';
     }
 }
 /**
  * Experimental persistent stdio transport for the Codex app-server protocol.
  * CodexAgentProvider selects it only when explicitly configured; `codex exec`
- * remains the compatibility default. Dynamic host-tool calls use the
- * app-server's experimental API and are enabled only when a handler is set.
+ * remains the compatibility default. Native skill-directory registration and
+ * dynamic host-tool calls opt into the app-server's experimental API.
  */
 export class CodexAppServerTransport {
     options;
@@ -94,7 +96,7 @@ export class CodexAppServerTransport {
     async initialize(clientName = 'disclaude', clientVersion = '0.5.0') {
         const result = await this.request('initialize', {
             clientInfo: { name: clientName, title: 'Disclaude', version: clientVersion },
-            capabilities: this.options.onUserInput || this.options.onDynamicToolCall ? { experimentalApi: true } : null,
+            capabilities: this.options.experimentalApi || this.options.onUserInput || this.options.onDynamicToolCall ? { experimentalApi: true } : null,
         });
         this.notify('initialized');
         await this.reportResources('initialized');
@@ -106,10 +108,13 @@ export class CodexAppServerTransport {
         }
         const id = this.nextId++;
         return new Promise((resolve, reject) => {
+            // #5505: carry the effective deadline on the typed error so upstream
+            // failure reports state the timeout that actually elapsed.
+            const effectiveTimeoutMs = timeoutMs ?? this.options.requestTimeoutMs ?? 30_000;
             const timer = setTimeout(() => {
                 this.pending.delete(id);
-                reject(new CodexAppServerRequestTimeoutError(method));
-            }, timeoutMs ?? this.options.requestTimeoutMs ?? 30_000);
+                reject(new CodexAppServerRequestTimeoutError(method, effectiveTimeoutMs));
+            }, effectiveTimeoutMs);
             timer.unref();
             this.pending.set(id, { resolve, reject, timer });
             this.write({ jsonrpc: '2.0', id, method, params });

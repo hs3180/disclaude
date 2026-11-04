@@ -58,11 +58,11 @@ import { CodexSessionGovernor } from './session-governor.js';
 import { reserveLlmSession } from '../../llm-session-limit.js';
 import { CodexAppServerLifecycle, CodexNoActiveTurnError } from './app-server-lifecycle.js';
 import { LiveInputRejectedError } from '../../live-input.js';
-import { CodexAppServerRpcError, } from './app-server-transport.js';
+import { CodexAppServerRequestTimeoutError, CodexAppServerRpcError, } from './app-server-transport.js';
 import { createCodexDynamicToolRegistry } from './dynamic-tools.js';
 import { CodexAsyncUserInput, CodexAsyncInputDeliveryError } from './async-user-input.js';
 import { adaptCodexEvent, classifyCodexEvent, isCodexAuthFailure, isCodexResumeTargetMissing, isCodexUsageLimit, userInputText, } from './exec-adapter.js';
-import { codexSkillsRegistry } from './skill-sources.js';
+import { codexNativeSkillRoots, codexSkillsRegistry } from './skill-sources.js';
 import { CODEX_OVERLOAD_MAX_RETRIES, CODEX_OVERLOAD_MAX_WAIT_MS, codexOverloadRetryDelay, readCodexOverloadFailure, waitForCodexOverloadRetry, codexCapacityRecoveryDelay, readCodexCapacityRecoveryPolicy, isCodexCapacityFailure, alignCodexCapacityWait, recordCodexCapacityCooldown } from './overload-policy.js';
 const logger = createLogger('CodexAgentProvider');
 /**
@@ -177,6 +177,8 @@ export class CodexAgentProvider {
     maxResumeInputTokens;
     builtinRoot;
     transportMode;
+    /** #5505: app-server JSON-RPC timeout passthrough (default 30s). */
+    appServerRequestTimeoutMs;
     appServerRoutes = new Map();
     appServerLifecycles = new Map();
     appServerStops = new Map();
@@ -235,6 +237,7 @@ export class CodexAgentProvider {
         this.maxResumeInputTokens = options.maxResumeInputTokens ?? DEFAULT_MAX_RESUME_INPUT_TOKENS;
         this.builtinRoot = options.builtinsDir ?? Config.getBuiltinsDir();
         this.transportMode = options.transport ?? 'exec';
+        this.appServerRequestTimeoutMs = options.requestTimeoutMs;
         this.governor = new CodexSessionGovernor({
             maxActiveSessions: options.maxActiveSessions,
             maxConcurrentRuns: options.maxConcurrentRuns,
@@ -427,10 +430,10 @@ export class CodexAgentProvider {
                 ? 'Codex full-access mode is enabled by the selected agent.fullAccess=true; commands and workspace mutations are unrestricted'
                 : 'Codex full-access was requested but the sandbox policy remains enforced');
         }
-        const skillsManifest = this.skillsManifestFor(options.projectRoot ?? options.cwd, options.cwd ?? process.cwd());
         if ((native ? native.transport ?? 'exec' : this.transportMode) === 'app-server') {
-            return this.queryAppServer(input, options, sandboxDecision.sandbox, binary, skillsManifest, codexModel, requestedEffort);
+            return this.queryAppServer(input, options, sandboxDecision.sandbox, binary, codexModel, requestedEffort);
         }
+        const skillsManifest = this.skillsManifestFor(options.projectRoot ?? options.cwd, options.cwd ?? process.cwd());
         if (options.tools?.length) {
             throw new Error('Codex host tools require agents.<name>.codex.transport: app-server; codex exec cannot dispatch host tools.');
         }
@@ -817,7 +820,7 @@ export class CodexAgentProvider {
                     // Backpressure UX (#4634): announce the wait BEFORE it happens —
                     // never silence. (Also announce when merely joining the queue.)
                     const pre = governorSink.getStats();
-                    if (pre.runningRuns >= pre.maxConcurrentRuns || pre.queuedRuns > 0) {
+                    if (options.capacityAdmission !== 'reject' && (pre.runningRuns >= pre.maxConcurrentRuns || pre.queuedRuns > 0)) {
                         pushSynthetic({
                             type: 'status',
                             content: `⏳ Codex 并发已满（${pre.runningRuns}/${pre.maxConcurrentRuns} 运行中）` +
@@ -825,7 +828,7 @@ export class CodexAgentProvider {
                             role: 'assistant',
                         });
                     }
-                    const lease = await governorSink.acquireRun();
+                    const lease = await governorSink.acquireRun(options.capacityAdmission);
                     if (stalled || aborted || terminated) {
                         // Cancelled/finished while queued — don't spawn a zombie run.
                         lease.release();
@@ -1174,7 +1177,7 @@ export class CodexAgentProvider {
             iterator: adaptIterator(),
         };
     }
-    queryAppServer(input, options, sandbox, binary, skillsManifest, codexModel, reasoningEffort) {
+    queryAppServer(input, options, sandbox, binary, codexModel, reasoningEffort) {
         const sessionGovernor = this.sessionGovernor(options);
         const dynamicToolRegistry = createCodexDynamicToolRegistry(options.tools);
         const dynamicToolSignature = dynamicToolRegistry.signature;
@@ -1190,7 +1193,7 @@ export class CodexAgentProvider {
         if (threadId && registeredToolSignature === undefined && dynamicToolRegistry.specs.length > 0) {
             throw new Error('Codex app-server cannot add host tools to an existing thread; reset the conversation to register them.');
         }
-        let llmReservation = reserveLlmSession(options.llmSessionLimit);
+        let llmReservation = reserveLlmSession(options.llmSessionLimit, undefined, undefined, options.capacityAdmission);
         this.appServerStops.get(sessionKey)?.();
         let done = false;
         let stopped = false;
@@ -1214,6 +1217,7 @@ export class CodexAgentProvider {
         let probingLifecycle;
         const { timeoutMs: stallTimeoutMs } = readStallPolicy({ ...process.env, ...this.env, ...options.env });
         const capacityRecoveryPolicy = readCodexCapacityRecoveryPolicy({ ...process.env, ...this.env, ...options.env });
+        let noteCapacityProgress = () => { };
         let turnCanRetry = true;
         // #5452: bounded probe of the latest tool item this turn (kind/status/input
         // length only) so an output-cap failure receipt can say what the last tool
@@ -1222,6 +1226,11 @@ export class CodexAgentProvider {
         let deferredTurnOverload;
         let deferredFailedTurnId;
         let interruptFlight;
+        // #5505: RPC lifecycle stage of the current turn attempt, plus the
+        // lifecycle's own commit-state verdict read while the attempt unwinds —
+        // both feed the structured terminal failure the outer catch reports.
+        let rpcStage;
+        let turnCloseUncertain = false;
         const isToolItem = (type) => type === 'commandExecution' || type === 'mcpToolCall' || type === 'dynamicToolCall';
         const terminateStall = (detail, expectedTurnId) => {
             if (stopped || activeTurnId !== expectedTurnId) {
@@ -1351,6 +1360,9 @@ export class CodexAgentProvider {
             if (unsafeItem) {
                 turnCanRetry = false;
             }
+            if ((method === 'item/started' || method === 'item/completed') && isToolItem(event.item?.type)) {
+                noteCapacityProgress();
+            }
             // #5467: an async question this session cannot deliver interactively
             // degrades to a plain-text question. It is NOT a failure — the turn
             // completes normally and the user answers in-band as a new message
@@ -1444,9 +1456,15 @@ export class CodexAgentProvider {
                         return;
                     }
                     const status = event.turn?.status;
-                    const failed = status === 'failed' || !!asyncDeliveryFailure;
+                    // #5526: a locally failed question-card delivery must NOT rewrite a
+                    // natively completed turn into a provider failure. The turn's work
+                    // (and any already-delivered artifacts) stands; only the interaction
+                    // failed. The failure rides the success result as structured
+                    // metadata so the host can surface it as a local, traceable defect.
+                    const nativeCompletedInputFailure = status === 'completed' && !!asyncDeliveryFailure;
+                    const failed = status === 'failed' || (!!asyncDeliveryFailure && !nativeCompletedInputFailure);
                     const interrupted = status === 'interrupted' || status === 'cancelled';
-                    const detail = asyncDeliveryFailure?.message ?? event.turn?.error?.message ?? 'unknown error';
+                    const detail = [asyncDeliveryFailure?.message, event.turn?.error?.message].filter(Boolean).join('; ') || 'unknown error';
                     // #5468: classify capacity even after progress — the post-progress
                     // consumer is same-thread continuation, not the pre-work replay.
                     const overload = failed && !asyncDeliveryFailure
@@ -1490,9 +1508,22 @@ export class CodexAgentProvider {
                             type: 'result',
                             content: failed ? `❌ Codex turn failed: ${detail}` : interrupted ? '⏹️ Codex turn interrupted' : '✅ Complete',
                             role: 'assistant',
-                            ...(failed ? { metadata: { terminatedReason: 'turn_failed', terminationDetail: `codex app-server turn failed: ${detail}; ${JSON.stringify({ threadId, turnId: finishingTurn })}`, messageId: finishingTurn } }
-                                : interrupted ? { metadata: { terminatedReason: 'interrupted' } } : {}),
+                            ...(failed ? { metadata: { terminatedReason: 'turn_failed', terminationDetail: `codex app-server turn failed: ${detail}; ${JSON.stringify({ threadId, turnId: finishingTurn })}`, messageId: finishingTurn,
+                                    ...(asyncDeliveryFailure ? { inputDeliveryFailure: { nativeCompleted: status === 'completed' },
+                                        automaticReplayBlocked: 'async-input-delivery-failed' } : {}) } }
+                                : interrupted ? { metadata: { terminatedReason: 'interrupted' } }
+                                    // #5526: completed turn + failed card delivery = LOCAL failure.
+                                    // No terminatedReason: the native terminal state (and delivered
+                                    // artifacts) survive; the reason stays attached for the host.
+                                    : nativeCompletedInputFailure ? { metadata: { messageId: finishingTurn,
+                                            inputDeliveryFailure: { nativeCompleted: true, reason: detail },
+                                            automaticReplayBlocked: 'async-input-delivery-failed' } } : {}),
                         });
+                        if (nativeCompletedInputFailure) {
+                            logger.warn({ threadId, turnId: finishingTurn, ...activeCorrelation,
+                                event: 'async_input_delivery_failed', interactionStatus: 'delivery_failed',
+                                nativeCompleted: true, reason: detail }, 'Codex turn completed but its async question card was not delivered (#5526)');
+                        }
                     }
                     turnDone?.();
                     turnDone = undefined;
@@ -1550,19 +1581,29 @@ export class CodexAgentProvider {
                     if (next.done || stopped) {
                         break;
                     }
+                    const toolInputContext = next.value.inputContext ? Object.freeze({ ...next.value.inputContext }) : undefined;
                     let retryWaitedMs = 0;
-                    // #5468: post-progress capacity-continuation state, per logical
-                    // input — the wall-clock budget never resets on progress.
+                    // #5514: charge recovery waits/unsuccessful requests cumulatively,
+                    // while proven productive runs do not spend later recovery eligibility.
                     let capacityRecoveryAttempt = 0;
                     let capacityFirstFailureAt;
+                    let capacityAcceptedAt;
+                    let capacityHealthyFrom;
+                    noteCapacityProgress = () => {
+                        // A real tool/host interaction proves this accepted request resumed
+                        // work. Status text, reasoning heartbeats and turn/start alone do not.
+                        capacityHealthyFrom ??= capacityAcceptedAt;
+                    };
                     let capacityRecoveryNext = false;
                     for (let retryAttempt = 0;; retryAttempt++) {
                         turnCanRetry = true;
                         deferredTurnOverload = undefined;
                         deferredFailedTurnId = undefined;
                         outputLimitLastTool = undefined;
+                        capacityAcceptedAt = undefined;
+                        rpcStage = undefined;
                         earlyEvents.length = 0;
-                        llmReservation ??= reserveLlmSession(options.llmSessionLimit);
+                        llmReservation ??= reserveLlmSession(options.llmSessionLimit, undefined, undefined, options.capacityAdmission);
                         if (llmReservation && !await Promise.race([
                             llmReservation.ready, stopSignal.then(() => false),
                         ])) {
@@ -1571,7 +1612,7 @@ export class CodexAgentProvider {
                         if (stopped) {
                             break;
                         }
-                        const acquisition = this.governor.acquireRun();
+                        const acquisition = this.governor.acquireRun(options.capacityAdmission);
                         const lease = await Promise.race([acquisition, stopSignal.then(() => undefined)]);
                         if (!lease) {
                             void acquisition.then((lateLease) => lateLease.release());
@@ -1587,7 +1628,8 @@ export class CodexAgentProvider {
                                 throw new Error('Host tool request has no matching active Codex turn');
                             }
                             turnCanRetry = false;
-                            return dynamicToolRegistry.call(request);
+                            noteCapacityProgress();
+                            return dynamicToolRegistry.call(request, toolInputContext);
                         } : undefined;
                         try {
                             // App-server connections live for one attempt, not for the input
@@ -1597,7 +1639,7 @@ export class CodexAgentProvider {
                                     wasEvicted = true;
                                     stopHandle('codex app-server session evicted');
                                 },
-                            }, admissionAbort.signal);
+                            }, admissionAbort.signal, options.capacityAdmission);
                             if (stopped) {
                                 break;
                             }
@@ -1612,6 +1654,7 @@ export class CodexAgentProvider {
                                     throw new Error('Input request has no active channel turn');
                                 }
                                 turnCanRetry = false;
+                                noteCapacityProgress();
                                 if (request.kind === 'async-message' && (!next.value.inputContext || !options.onAsyncUserInputAnswer)) {
                                     throw new CodexAsyncInputDeliveryError('unsupported');
                                 }
@@ -1658,8 +1701,9 @@ export class CodexAgentProvider {
                                     }
                                 }
                                 await options.onAsyncUserInputAnswer(request, text, context);
-                            }, options.env);
+                            }, options.env, codexNativeSkillRoots(options.projectRoot ?? options.cwd, this.builtinRoot));
                             const requestedThreadId = threadId;
+                            rpcStage = 'ensure-thread';
                             threadId = await lifecycle.ensureThread(sessionKey, {
                                 threadId,
                                 cwd: options.cwd,
@@ -1689,6 +1733,7 @@ export class CodexAgentProvider {
                                 : next.value.continuationContext && (!requestedThreadId || requestedThreadId !== threadId)
                                     ? `${next.value.continuationContext}\n${currentInput}` : currentInput;
                             capacityRecoveryNext = false;
+                            rpcStage = 'turn-start';
                             activeTurnId = await lifecycle.startTurn(sessionKey, 
                             // #5467: when wiring already proves this session cannot receive
                             // async question forms (no interactive channel, no input
@@ -1699,8 +1744,8 @@ export class CodexAgentProvider {
                             // prompt is the layer we control. Blocking questions are
                             // unaffected (they ride onUserInput only).
                             !options.onUserInput || !options.onAsyncUserInputAnswer || !next.value.inputContext
-                                ? `${skillsManifest ? `${skillsManifest}\n\n` : ''}${userInput}\n\n[Session note] This conversation cannot receive asynchronous question forms. When you need clarification, ask the user directly in your reply text instead of using an async question tool.`
-                                : skillsManifest ? `${skillsManifest}\n\nUser request:\n${userInput}` : userInput, {
+                                ? `${userInput}\n\n[Session note] This conversation cannot receive asynchronous question forms. When you need clarification, ask the user directly in your reply text instead of using an async question tool.`
+                                : userInput, {
                                 sandbox,
                                 networkAccess: options.codexRuntime ? options.codexRuntime.networkAccess ?? true : this.networkAccess,
                                 cwd: options.cwd,
@@ -1708,6 +1753,10 @@ export class CodexAgentProvider {
                                 reasoningEffort,
                             });
                             bindTurn(activeTurnId);
+                            rpcStage = 'turn-active';
+                            if (capacityRecoveryAttempt > 0) {
+                                capacityAcceptedAt = Date.now();
+                            }
                             logger.debug({ sessionKey, threadId, turnId: activeTurnId }, 'Codex turn started');
                             // Keep the lifecycle anchor available to control/steer consumers,
                             // but provide no user-facing content for this internal status.
@@ -1733,6 +1782,10 @@ export class CodexAgentProvider {
                         }
                         finally {
                             bindTurn(undefined);
+                            // #5505: read the lifecycle's own verdict while it still owns the
+                            // session map — `uncertain` means the submission may have reached
+                            // Codex and must never be replayed silently.
+                            turnCloseUncertain = lifecycle?.snapshot(sessionKey)?.state === 'uncertain';
                             try {
                                 await interruptFlight;
                                 if (threadId && this.appServerRoutes.get(threadId) === onNotification) {
@@ -1761,8 +1814,17 @@ export class CodexAgentProvider {
                             break;
                         }
                         const failure = deferredTurnOverload;
+                        if (capacityHealthyFrom !== undefined && capacityFirstFailureAt !== undefined) {
+                            // Exclude the proven-healthy accepted request, preserving every
+                            // previous wait and failed recovery interval plus the attempt cap.
+                            capacityFirstFailureAt += Math.max(0, Date.now() - capacityHealthyFrom);
+                            capacityHealthyFrom = undefined;
+                        }
+                        // Once the logical input has made work, even an empty failed recovery
+                        // must continue the thread rather than replay the original request.
+                        const preWorkRetry = turnCanRetry && capacityRecoveryAttempt === 0;
                         let delayMs;
-                        if (turnCanRetry) {
+                        if (preWorkRetry) {
                             delayMs = codexOverloadRetryDelay(failure, retryAttempt, retryWaitedMs);
                         }
                         else {
@@ -1778,7 +1840,7 @@ export class CodexAgentProvider {
                         // publish the final wait for other sessions to align behind.
                         if (delayMs !== undefined && isCodexCapacityFailure(failure)) {
                             delayMs = alignCodexCapacityWait(codexModel ?? '', delayMs);
-                            const fitsBudget = turnCanRetry
+                            const fitsBudget = preWorkRetry
                                 ? retryWaitedMs + delayMs <= CODEX_OVERLOAD_MAX_WAIT_MS
                                 : Date.now() + delayMs - capacityFirstFailureAt <= capacityRecoveryPolicy.budgetMs;
                             if (!fitsBudget) {
@@ -1789,11 +1851,15 @@ export class CodexAgentProvider {
                             }
                         }
                         if (delayMs === undefined) {
+                            const recoveryReason = !preWorkRetry && isCodexCapacityFailure(failure)
+                                ? capacityRecoveryAttempt >= capacityRecoveryPolicy.maxAttempts
+                                    ? 'capacity_recovery_attempt_limit' : 'capacity_recovery_budget_exhausted'
+                                : undefined;
                             push({ type: 'result', role: 'assistant', content: `❌ Codex turn failed: ${failure.message}${capacityRecoveryAttempt ? `（已自动续接 ${capacityRecoveryAttempt} 次后仍容量不足）` : ''}`,
-                                metadata: { terminatedReason: 'turn_failed', terminationDetail: `${failure.message}${capacityRecoveryAttempt ? `; capacityRecoveryAttempts=${capacityRecoveryAttempt}` : ''}` } });
+                                metadata: { terminatedReason: 'turn_failed', terminationDetail: `${failure.message}${capacityRecoveryAttempt ? `; capacityRecoveryAttempts=${capacityRecoveryAttempt}` : ''}${recoveryReason ? `; ${recoveryReason}; capacityRecoveryElapsedMs=${Math.max(0, Date.now() - capacityFirstFailureAt)}; capacityRecoveryBudgetMs=${capacityRecoveryPolicy.budgetMs}` : ''}` } });
                             break;
                         }
-                        if (turnCanRetry) {
+                        if (preWorkRetry) {
                             logger.warn({ sessionKey, retryAttempt: retryAttempt + 1, delayMs, cause: failure.message }, 'Retrying Codex overload before output or tools');
                             push({ type: 'status', role: 'system', content: `⏳ Codex 服务暂时过载，将在 ${(delayMs / 1000).toFixed(1)} 秒后重试（${retryAttempt + 1}/${CODEX_OVERLOAD_MAX_RETRIES}）。` });
                         }
@@ -1812,11 +1878,34 @@ export class CodexAgentProvider {
                 }
             }
             catch (error) {
+                // #5505: the typed failure must reach the consumer with its structure
+                // (class, RPC method, stage, elapsed timeout, unknown submission
+                // state) instead of degrading to a bare string the stream-end
+                // settlement then overwrites with a generic iterator-ended report.
+                const failure = error instanceof Error ? error : new Error(String(error));
+                const rpcTimeout = error instanceof CodexAppServerRequestTimeoutError ? error : undefined;
                 if (!stopped) {
+                    logger.warn({
+                        sessionKey,
+                        stage: rpcStage,
+                        errorKind: failure.name,
+                        ...(rpcTimeout ? { method: rpcTimeout.method, timeoutMs: rpcTimeout.timeoutMs } : {}),
+                        uncertainSubmission: turnCloseUncertain,
+                        ...(failure.cause !== undefined ? { cause: failure.cause instanceof Error ? failure.cause.message : String(failure.cause) } : {}),
+                    }, 'Codex app-server stream failed before a terminal result');
                     push({
                         type: 'error',
-                        content: error instanceof Error ? error.message : String(error),
+                        content: failure.message,
                         role: 'system',
+                        metadata: {
+                            error: {
+                                kind: failure.name,
+                                ...(rpcTimeout ? { method: rpcTimeout.method, timeoutMs: rpcTimeout.timeoutMs } : {}),
+                                ...(rpcStage ? { stage: rpcStage } : {}),
+                                ...(turnCloseUncertain ? { uncertain: true } : {}),
+                                ...(failure.cause !== undefined ? { cause: failure.cause instanceof Error ? failure.cause.message : String(failure.cause) } : {}),
+                            },
+                        },
                     });
                 }
             }
@@ -1885,11 +1974,13 @@ export class CodexAgentProvider {
             iterator,
         };
     }
-    createAppServerLifecycle(binary, sessionKey, correlation, onUserInput, onDynamicToolCall, asyncInputs, onAsyncAnswer, environment) {
+    createAppServerLifecycle(binary, sessionKey, correlation, onUserInput, onDynamicToolCall, asyncInputs, onAsyncAnswer, environment, extraSkillRoots) {
         const lifecycle = new CodexAppServerLifecycle({
             binary,
             sessionKey,
             correlation,
+            extraSkillRoots,
+            ...(this.appServerRequestTimeoutMs ? { requestTimeoutMs: this.appServerRequestTimeoutMs } : {}),
             onUserInput,
             onDynamicToolCall,
             asyncInputs,

@@ -194,6 +194,7 @@ export class ChatSessionPool {
     }
     createAgent(chatId, callbacks, preset, skipHistory = false, sdkSessionKey = chatId, modelOverride, freezeDirectory = false) {
         let { cwdProvider, cwdResolver } = this.options;
+        const { configureQueryOptions } = this.options;
         if (freezeDirectory) {
             const initial = cwdResolver?.(chatId);
             // Preserve an unavailable bound target too: taking effectiveCwd alone
@@ -219,6 +220,7 @@ export class ChatSessionPool {
             sdkSessionKey,
             turnRecovery: this.options.turnRecovery,
             failureRecorder: this.options.failureRecorder,
+            ...(configureQueryOptions ? { configureQueryOptions: (options) => configureQueryOptions(options, chatId) } : {}),
             ...(preset ? {
                 ...preset,
                 settings: preset,

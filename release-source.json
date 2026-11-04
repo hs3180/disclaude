@@ -1,6 +1,11 @@
 {
-  "sourceCommit": "ed8bc4acb03ca752827419dc2beed296f0fc829a",
-  "sourceFingerprint": "6223aeacb49ca036c2c71fa1353430784c94d6ee1e09576ac56601b7abd1f40f",
-  "version": "0.6.7",
-  "generator": "scripts/build-git-release.mjs"
+  "sourceCommit": "f6499cb58c24a1002cc9895f8e7d032585aa4d1c",
+  "sourceFingerprint": "a6d6801977bd757d5b37b0d2b5e399588f07f6b8537c377cf1eeff729e26424b",
+  "version": "0.6.8",
+  "generator": "scripts/build-git-release.mjs",
+  "build": {
+    "command": "tsc --build --force",
+    "typescriptVersion": "5.9.3",
+    "runtimeFingerprint": "8b346ab3180969628256fdebe2b1573114cf58beca834fd8a12b94570309b5d5"
+  }
 }

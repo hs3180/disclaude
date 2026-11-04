@@ -17,6 +17,8 @@ export function normalizeCommandData(type, rawData) {
         return undefined;
     }
     switch (type) {
+        case 'goal':
+            return { args: Array.isArray(rawData.args) ? rawData.args : [] };
         case 'help': {
             const args = Array.isArray(rawData.args) ? rawData.args : [];
             const mode = rawData.mode ?? args[0];

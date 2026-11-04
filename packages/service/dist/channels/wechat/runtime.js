@@ -9,6 +9,7 @@ export class WeChatRegistrationRuntime {
     running = false;
     timer;
     pending = Promise.resolve();
+    registryUnavailable = false;
     active = new Map();
     constructor(registry, lifecycle, service, options = {}) {
         this.registry = registry;
@@ -16,19 +17,20 @@ export class WeChatRegistrationRuntime {
         this.service = service;
         this.options = options;
     }
+    getHealth() {
+        return !this.running ? { status: 'stopped' } : this.registryUnavailable
+            ? { status: 'degraded', reason: 'registry_unavailable' } : { status: 'healthy' };
+    }
     async start() {
         if (this.running) {
             return;
         }
         this.running = true;
-        try {
-            await this.sync();
+        await this.sync();
+        if (!this.running) {
+            return;
         }
-        catch (error) {
-            this.running = false;
-            throw error;
-        }
-        logger.info('WeChat registration enabled; use disclaude wechat login to add an account');
+        logger.info({ status: this.getHealth().status }, 'WeChat registration watcher started; use disclaude wechat login to add an account');
         this.schedule();
     }
     schedule() {
@@ -36,14 +38,24 @@ export class WeChatRegistrationRuntime {
             return;
         }
         this.timer = setTimeout(() => {
-            void this.sync().catch(() => logger.error('Cannot reconcile WeChat registry; existing accounts retained')).finally(() => this.schedule());
+            void this.sync().finally(() => this.schedule());
         }, this.options.intervalMs ?? 1000);
         this.timer.unref();
     }
     sync() {
         const operation = this.pending.then(() => this.reconcile());
-        this.pending = operation.catch(() => { });
-        return operation;
+        this.pending = operation.then(() => {
+            if (this.registryUnavailable) {
+                logger.info('WeChat registry recovered; registration reconciliation resumed');
+            }
+            this.registryUnavailable = false;
+        }, () => {
+            if (!this.registryUnavailable) {
+                logger.error('Cannot reconcile WeChat registry; repair or restore its private state/lock. Other channels and existing accounts remain available; retrying automatically');
+            }
+            this.registryUnavailable = true;
+        });
+        return this.pending;
     }
     async remove(id) {
         const entry = this.active.get(id);

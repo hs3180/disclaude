@@ -8,6 +8,7 @@ import { handleProject } from './project.js';
 import { handleAgent } from './agent.js';
 import { handleSteer } from './steer.js';
 import { handleIssue } from './issue.js';
+import { handleGoal } from './goal.js';
 /**
  * 命令注册表 (Issue #3529: typed per-command definitions)
  */
@@ -30,6 +31,8 @@ export const commandRegistry = [
         showInHelp: (c, command) => c.agentPool.canSteer?.(command.chatId, command.threadRootId) === true },
     { type: 'issue', handler: handleIssue, description: '一键上报本会话最近一次失败为 GitHub issue', usage: '/issue',
         isAvailable: c => !!c.failureRegistry },
+    { type: 'goal', handler: handleGoal, description: '一键启动本聊天当前项目的目标', usage: '/goal <目标> | <验收要求…>',
+        isAvailable: c => !!c.goalStore && !!c.projectManager },
 ];
 export function getAvailableCommands(context, command) {
     return commandRegistry.filter(def => (!def.isAvailable || def.isAvailable(context, { ...command, type: def.type })) &&

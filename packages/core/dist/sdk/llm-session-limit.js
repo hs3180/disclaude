@@ -5,7 +5,7 @@ export class LlmSessionLimitError extends Error {
     code = 'LLM_SESSION_LIMIT';
 }
 /** A bounded FIFO reservation, also usable by per-connection native runtimes. */
-export function reserveLlmSession(limit, preflight, onAdmitted) {
+export function reserveLlmSession(limit, preflight, onAdmitted, admission = 'queue') {
     if (!limit) {
         return undefined;
     }
@@ -18,6 +18,9 @@ export function reserveLlmSession(limit, preflight, onAdmitted) {
     // Known auth/configuration failures must not receive an accepted queue notice.
     if (mustWait) {
         preflight?.();
+    }
+    if (mustWait && admission === 'reject') {
+        throw new LlmSessionLimitError(`LLM ${name} capacity is busy; dependent work was not queued`);
     }
     budgets.set(name, budget);
     if (mustWait && budget.waiters.length >= MAX_WAITING_LLM_SESSIONS) {
@@ -92,7 +95,7 @@ export function reserveLlmSession(limit, preflight, onAdmitted) {
     }
     return { ready, release, get queued() { return waiter !== undefined; } };
 }
-export function withLlmSessionLimit(start, limit, preflight) {
+export function withLlmSessionLimit(start, limit, preflight, admission = 'queue') {
     let result;
     let closed = false, failed = false, failure;
     const reservation = reserveLlmSession(limit, preflight, release => {
@@ -107,7 +110,7 @@ export function withLlmSessionLimit(start, limit, preflight) {
             failure = error;
             release();
         }
-    });
+    }, admission);
     if (!reservation) {
         return start();
     }

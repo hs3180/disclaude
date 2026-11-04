@@ -2,8 +2,20 @@ import * as fs from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { validMediaInbox } from './media-inbox-state.js';
+import { emptyWelcomeState, validWelcomeState } from './welcome.js';
 export const DEFAULT_WECHAT_STATE_DIR = join(homedir(), '.disclaude', 'wechat');
 export const DEFAULT_WECHAT_BASE_URL = 'https://ilinkai.weixin.qq.com';
+/** A readable PID is an owner record, not proof that its process is alive. */
+export function wechatLockPid(record) {
+    try {
+        const value = JSON.parse(record);
+        return value && Number.isInteger(value.pid) && value.pid > 0 ? value.pid : undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
 /** Only HTTPS Tencent iLink hosts may receive server-issued credentials. */
 export function validateWechatBaseUrl(value) {
     let url;
@@ -49,10 +61,14 @@ export class WeChatStateStore {
         await fs.chmod(this.dir, 0o700);
     }
     async write(name, value) {
+        const content = JSON.stringify(value);
+        if (Buffer.byteLength(content) > 4 * 1024 * 1024) {
+            throw new Error(`WeChat ${name} exceeds private storage limit`);
+        }
         await this.prepare();
         const temp = join(this.dir, `.${randomUUID()}.tmp`);
         try {
-            await fs.writeFile(temp, JSON.stringify(value), { mode: 0o600, flag: 'wx' });
+            await fs.writeFile(temp, content, { mode: 0o600, flag: 'wx' });
             await fs.rename(temp, join(this.dir, name));
         }
         finally {
@@ -84,9 +100,47 @@ export class WeChatStateStore {
         if (typeof value.cursor !== 'string' || !Array.isArray(value.seenMessageIds) || !value.seenMessageIds.every(x => typeof x === 'string') || !value.contexts || typeof value.contexts !== 'object' || Array.isArray(value.contexts) || Object.values(value.contexts).some(x => typeof x !== 'string')) {
             throw new Error('Invalid WeChat session state; restore the file before restarting');
         }
+        if (value.mediaInbox !== undefined && !validMediaInbox(value.mediaInbox)) {
+            throw new Error('Invalid WeChat media recovery state; restore the session file');
+        }
         return value;
     }
     async saveSession(state) { await this.write('session.json', state); }
+    async loadWelcome(botId) {
+        const state = await this.read('welcome.json');
+        if (!state) {
+            return emptyWelcomeState(botId);
+        }
+        if (!validWelcomeState(state)) {
+            throw new Error('Invalid WeChat welcome state; repair it privately');
+        }
+        return state.botId === botId ? state : emptyWelcomeState(botId);
+    }
+    async saveWelcome(state) {
+        if (!validWelcomeState(state)) {
+            throw new Error('Invalid WeChat welcome state');
+        }
+        await this.write('welcome.json', state);
+    }
+    /** Publish a complete owner record, never an empty canonical lock on write failure. */
+    async publishLock(file, nonce) {
+        const pending = join(this.dir, `.listener-${nonce}.tmp`);
+        const handle = await fs.open(pending, 'wx', 0o600);
+        try {
+            await handle.writeFile(JSON.stringify({ pid: process.pid, nonce }));
+            await handle.sync();
+            await handle.close();
+            // link is exclusive like wx, but makes the already-written inode visible
+            // in one operation. Both paths are in the same account directory.
+            await fs.link(pending, file);
+        }
+        finally {
+            await handle.close().catch(() => { });
+            // Only our unique staging file is removed. A published canonical lock
+            // stays owned even if best-effort staging cleanup fails.
+            await fs.rm(pending, { force: true }).catch(() => { });
+        }
+    }
     /** Excludes concurrent listeners/login writers, recovering locks from dead PIDs. */
     async lock() {
         await this.prepare();
@@ -94,7 +148,7 @@ export class WeChatStateStore {
         const nonce = randomUUID();
         for (let attempt = 0; attempt < 2; attempt++) {
             try {
-                await fs.writeFile(file, JSON.stringify({ pid: process.pid, nonce }), { flag: 'wx', mode: 0o600 });
+                await this.publishLock(file, nonce);
                 return async () => {
                     const owner = await this.read('listener.lock');
                     if (owner?.nonce === nonce) {
@@ -118,18 +172,12 @@ export class WeChatStateStore {
                     }
                     throw new Error('Invalid WeChat listener lock');
                 }
-                let owner;
-                try {
-                    owner = JSON.parse(record);
-                }
-                catch {
-                    throw new Error('Invalid WeChat listener lock');
-                }
-                if (!owner || !Number.isInteger(owner.pid) || owner.pid <= 0) {
+                const pid = wechatLockPid(record);
+                if (pid === undefined) {
                     throw new Error('Invalid WeChat listener lock');
                 }
                 try {
-                    process.kill(owner.pid, 0);
+                    process.kill(pid, 0);
                 }
                 catch (probeError) {
                     if (probeError.code === 'ESRCH') {

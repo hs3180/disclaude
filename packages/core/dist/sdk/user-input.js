@@ -1,3 +1,20 @@
+/** Only bounded codes and host-owned labels cross the channel/provider error boundary. */
+export class AgentInputDeliveryError extends Error {
+    code = 'AGENT_INPUT_DELIVERY_FAILED';
+    diagnostic;
+    constructor(detail) {
+        const integer = (value, min, max) => typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max ? value : undefined;
+        const transportCodes = ['ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ECONNABORTED',
+            'ERR_NETWORK', 'ERR_BAD_REQUEST', 'ERR_BAD_RESPONSE', 'ERR_CANCELED', 'ABORT_ERR',
+            'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_SOCKET'];
+        const diagnostic = { channel: detail.channel, operation: detail.operation, stage: detail.stage, outcome: detail.outcome,
+            httpStatus: integer(detail.httpStatus, 100, 599), apiCode: integer(detail.apiCode, -2147483648, 2147483647),
+            transportCode: typeof detail.transportCode === 'string' && transportCodes.includes(detail.transportCode) ? detail.transportCode : undefined };
+        super(`Input card could not be delivered: ${JSON.stringify(diagnostic)}`);
+        this.name = 'AgentInputDeliveryError';
+        this.diagnostic = Object.freeze(diagnostic);
+    }
+}
 const object = (value) => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
         throw new Error('Invalid user-input request');

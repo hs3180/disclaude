@@ -37,6 +37,11 @@ export { DisclaudeService } from './service.js';
 export { ChatSessionPool } from './chat-session-pool.js';
 // Agents (Issue #2717: consolidated into service)
 export { AgentFactory, toChatAgentCallbacks } from './agents/factory.js';
+export { AgentTaskRunner } from './agents/agent-task-runner.js';
+// Issue #5603: shared read-only history backend for the CLI subcommand and REST route.
+export { queryChatHistory } from './history/history-query.js';
+export { BackgroundAgentTasks } from './agents/background-agent-tasks.js';
+export { NativeGoalExecutor } from './agents/native-goal-executor.js';
 export { ChatAgent } from './agents/chat-agent.js';
 // Channel Lifecycle Manager (Issue #1594 Phase 2)
 export { ChannelLifecycleManager, } from './channel-lifecycle-manager.js';
@@ -52,3 +57,5 @@ export { SERVICE_VERSION } from './version.js';
 export { HttpApiServer, } from './http-api-server.js';
 // Messaging module (Issue #513, Issue #515)
 export * from './messaging/index.js';
+// Goal runtime host (#5212): one service-owned execution capability
+export { GoalExecutionService } from './goals/goal-execution-service.js';

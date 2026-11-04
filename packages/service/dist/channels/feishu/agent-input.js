@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { validateAgentInputAnswers } from "../../../../core/dist/index.js";
+import { AgentInputDeliveryError, validateAgentInputAnswers } from "../../../../core/dist/index.js";
 const plain = (content) => ({ tag: 'plain_text', content });
 const text = (content) => ({ tag: 'div', text: plain(content) });
 const object = (value) => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -79,36 +79,58 @@ export class FeishuAgentInput {
             p.state = 'expired';
             void this.update(token, p).catch(() => { });
         }, { once: true });
+        const secret = request.questions.some(q => q.isSecret);
+        const operation = secret ? 'private-card' : 'public-card';
+        let stage = 'send';
+        let outcome = 'unknown';
         try {
-            const secret = request.questions.some(q => q.isSecret);
             const content = JSON.stringify(this.card(token, p));
+            const replyRoot = context.replyRootId !== undefined ? context.replyRootId : context.threadRootId ?? context.sourceMessageId;
+            const sendPublic = (msg_type, value) => replyRoot === null
+                ? this.client.im.message.create({ params: { receive_id_type: 'chat_id' }, data: { receive_id: context.chatId, msg_type, content: value } })
+                : this.client.im.message.reply({ path: { message_id: replyRoot }, data: { msg_type, content: value, reply_in_thread: true } });
             const result = secret
                 ? await this.client.im.message.create({ params: { receive_id_type: 'open_id' }, data: { receive_id: context.actorId, msg_type: 'interactive', content } })
-                : await this.client.im.message.reply({ path: { message_id: context.threadRootId ?? context.sourceMessageId }, data: { msg_type: 'interactive', content, reply_in_thread: true } });
+                : await sendPublic('interactive', content);
+            stage = 'receipt';
+            if (typeof result.code === 'number' && Number.isInteger(result.code) && result.code !== 0) {
+                throw new AgentInputDeliveryError({ channel: 'feishu', operation, stage, outcome: 'rejected', apiCode: result.code });
+            }
             if (result.code !== 0 || !result.data?.message_id || !result.data.chat_id) {
                 throw new Error('Input card was not delivered');
             }
             p.card = result.data.message_id;
             p.chat = result.data.chat_id;
+            stage = 'target-check';
+            outcome = 'delivered';
             if (!secret && p.chat !== context.chatId) {
                 p.state = 'failed';
                 await this.update(token, p);
                 throw new Error('Input card chat mismatch');
             }
+            stage = 'update';
             if (request.signal.aborted) {
                 p.state = 'expired';
                 await this.update(token, p);
             }
             // Secret questions and values are never included in a public notice.
             if (secret && !request.signal.aborted) {
-                await this.client.im.message.reply({ path: { message_id: context.sourceMessageId },
-                    data: { msg_type: 'text', content: JSON.stringify({ text: '任务需要私密输入，请在与机器人的私聊中填写并提交。' }), reply_in_thread: true } }).catch(() => { });
+                await sendPublic('text', JSON.stringify({ text: '任务需要私密输入，请在与机器人的私聊中填写并提交。' })).catch(() => { });
             }
         }
-        catch {
+        catch (error) {
             p.state = 'failed';
             await this.update(token, p).catch(() => { });
-            throw new Error('Input card could not be delivered');
+            if (error instanceof AgentInputDeliveryError) {
+                throw error;
+            }
+            // SDK errors can contain headers, card bodies and private questions.
+            // Keep only codes, never the raw Error, message, request or response body.
+            const failure = object(Array.isArray(error) ? error[0] : error);
+            const response = object(failure.response), data = object(response.data);
+            const rejected = stage === 'send' && typeof data.code === 'number' && Number.isInteger(data.code) && data.code !== 0;
+            throw new AgentInputDeliveryError({ channel: 'feishu', operation, stage, outcome: rejected ? 'rejected' : outcome,
+                httpStatus: response.status, apiCode: data.code, transportCode: failure.code ?? object(failure.cause).code });
         }
     }
     async submit(data) {

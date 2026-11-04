@@ -275,6 +275,9 @@ export class BaseAgent {
                     systemSubtype: message.metadata.systemSubtype,
                     backgroundTaskIds: message.metadata.backgroundTaskIds,
                     backgroundTask: message.metadata.backgroundTask,
+                    // #5505: provider-declared terminal stream failure must survive
+                    // this legacy rebuild as structure, not degrade to `content`.
+                    error: message.metadata.error,
                 }
                 : undefined,
             sessionId: message.metadata?.sessionId,
@@ -323,7 +326,7 @@ export class BaseAgent {
             if (!info.available) {
                 throw new Error(info.unavailableReason ?? 'Selected agent backend is unavailable');
             }
-        });
+        }, options.capacityAdmission);
         const self = this;
         const streamStartMs = Date.now(); // Issue #3003: track stream timing
         async function* wrappedIterator() {

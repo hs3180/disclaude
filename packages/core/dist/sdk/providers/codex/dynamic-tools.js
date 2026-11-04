@@ -27,7 +27,7 @@ export function createCodexDynamicToolRegistry(definitions = []) {
                 },
             ]
             : [],
-        call: async (request) => {
+        call: async (request, inputContext) => {
             const tool = request.namespace === HOST_NAMESPACE ? registered.get(request.tool) : undefined;
             if (!tool) {
                 return failure('Requested host tool is not registered');
@@ -35,6 +35,7 @@ export function createCodexDynamicToolRegistry(definitions = []) {
             try {
                 const value = await tool.execute(request.arguments, {
                     signal: request.signal,
+                    ...(inputContext ? { inputContext: Object.freeze({ ...inputContext }) } : {}),
                 });
                 const rendered = renderToolResult(value);
                 return {

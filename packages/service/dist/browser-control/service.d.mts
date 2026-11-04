@@ -19,6 +19,28 @@ export function refreshBrowserRuntimeConnection({ env, fetchImpl, onEvent, toler
     onEvent?: (() => void) | undefined;
     tolerateDiscoveryFailure?: boolean | undefined;
 }): Promise<any>;
+export function diagnoseBrowserRuntime(env?: NodeJS.ProcessEnv): {
+    notes?: string[] | undefined;
+    available: boolean;
+    state: string;
+    runtimePath: string;
+    endpoint: string | null;
+    endpointSource: string;
+    lastError: string;
+    remedy: string;
+} | {
+    notes?: string[] | undefined;
+    runtimePath: string;
+    endpoint: any;
+    endpointSource: string;
+    lastError: null;
+    remedy: null;
+    lastDiagnostic?: any;
+    state: string;
+    pid: any;
+    executable: any;
+    available: boolean;
+};
 export function prepareBrowserCommands({ env, fetchImpl, onEvent, }?: {
     env?: NodeJS.ProcessEnv | undefined;
     fetchImpl?: typeof fetch | undefined;

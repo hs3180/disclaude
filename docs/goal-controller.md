@@ -1,0 +1,11 @@
+# Explicit Goal execution controller
+
+Create one `GoalController` in the owning service and route all workers and entry points through it. It composes Goal persistence, lifecycle controls, the sequential driver and settled-turn assessments. It is not a distributed lock and must not be instantiated as separate competing worker controllers for the same records.
+
+The trusted entry supplies the actor, real source message, chat and pinned Project directory. The required `authorize` port checks current policy and Project binding before activation, before each round, after execution and for pause/stop. Each port receives a captured request; the controller also enforces the Goal record's chat and Project. These fields are not themselves authentication. Native `runTurn` must own admission, revalidate authority at actual dispatch and await all native work and delivery settlement before returning a report.
+
+`start(request, "activate" | "resume")` persists the explicit transition and starts the loop. Concurrent identical calls share one admission; a competing request is refused until that ownership settles. `control(request, "pause" | "stop")` persists the decision first, then requests cancellation and exposes a separate settlement promise. A failed state write does not cancel native work. Resume is refused while earlier work is still settling. Cancelled results cannot overwrite the durable control.
+
+A report is committed only after the execution port settles and authority/revision checks pass. New feedback during authorization is re-read before dispatch. Feedback arriving after dispatch makes the old assessment stale; the driver reports failure without overwriting it or automatically repeating work. Failed, unknown or invalid reports leave the Goal's actual durable state visible for explicit reconciliation. Restored active records are not automatically executed: inspect prior side effects before explicit pause/resume. Closing stops and awaits owned work without inferring a user pause or success.
+
+Tests use real Goal files and controlled execution ports. They verify orchestration, not live SDK/platform behavior. Chat command registration, native execution/report-tool adapters and service startup/shutdown wiring remain separate integration work. No step, token or duration budget is imposed.

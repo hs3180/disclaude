@@ -181,8 +181,21 @@ export class FeishuChannel extends BaseChannel {
     requestPrivateWorkflow(request) {
         return this.feishuMessageHandler.requestPrivateWorkflow(request);
     }
+    /** #5411: route consumed private-input outcomes back to the waiting session. */
+    setPrivateWorkflowNotifier(notify) {
+        this.feishuMessageHandler.setPrivateWorkflowNotifier(notify);
+    }
     requestAgentInput(request, context) {
         return this.feishuMessageHandler.requestAgentInput(request, context);
+    }
+    configureTaskQuestions(ports) {
+        this.feishuMessageHandler.configureTaskQuestions(this.appId, ports);
+    }
+    requestTaskQuestion(question) {
+        return this.feishuMessageHandler.requestTaskQuestion(question);
+    }
+    reconcileTaskQuestionWake(id) {
+        return this.feishuMessageHandler.reconcileTaskQuestionWake(id);
     }
     /** Issue #5400: send the /issue confirmation card for the chat's last failure. */
     requestIssueReport(record, target) {
@@ -239,6 +252,7 @@ export class FeishuChannel extends BaseChannel {
         logger.info({ id: this.id }, 'FeishuChannel created');
     }
     async doStart() {
+        await this.feishuMessageHandler.drainTaskQuestions();
         // Initialize message logger
         await messageLogger.init();
         // Create Feishu client
@@ -362,6 +376,7 @@ export class FeishuChannel extends BaseChannel {
         logger.info('FeishuChannel started');
     }
     async doStop() {
+        await this.feishuMessageHandler.drainTaskQuestions();
         // Stop WebSocket connection manager (closes WSClient + cleans up resources)
         if (this.wsConnectionManager) {
             await this.wsConnectionManager.stop();
@@ -662,6 +677,10 @@ export class FeishuChannel extends BaseChannel {
                 const ext = path.extname(filePath).toLowerCase();
                 const { size: fileSize } = fs.statSync(filePath);
                 logger.info({ chatId: message.chatId, filePath, fileName, fileSize }, 'Uploading file');
+                // Issue #5630: phase timing — the upload (im.file/im.image create) and
+                // message-create (im.message create/reply) phases share one REST
+                // deadline client-side; these timestamps attribute slow chains.
+                const uploadStartedAt = Date.now();
                 // Determine message type based on file extension
                 const isImage = IMAGE_EXTENSIONS.has(ext);
                 let fileMessageId;
@@ -675,7 +694,8 @@ export class FeishuChannel extends BaseChannel {
                         logger.error({ chatId: message.chatId, fileName }, 'Failed to upload image, no image_key returned');
                         throw new Error(`Failed to upload image: ${fileName}`);
                     }
-                    logger.info({ chatId: message.chatId, imageKey, fileName }, 'Image uploaded, sending message');
+                    const uploadedAt = Date.now();
+                    logger.info({ chatId: message.chatId, imageKey, fileName, uploadMs: uploadedAt - uploadStartedAt }, 'Image uploaded, sending message');
                     // Send image message
                     fileMessageId = await sendFeishuMessage('image', JSON.stringify({ image_key: imageKey }));
                     logger.info({
@@ -683,6 +703,8 @@ export class FeishuChannel extends BaseChannel {
                         messageId: fileMessageId,
                         fileName,
                         threadReply: useThreadReply,
+                        sendMs: Date.now() - uploadedAt,
+                        totalMs: Date.now() - uploadStartedAt,
                     }, 'Image message sent');
                     logOutgoing(fileMessageId, `[image: ${fileName}]`, 'image');
                 }
@@ -697,7 +719,8 @@ export class FeishuChannel extends BaseChannel {
                         logger.error({ chatId: message.chatId, fileName }, 'Failed to upload video, no file_key returned');
                         throw new Error(`Failed to upload video: ${fileName}`);
                     }
-                    logger.info({ chatId: message.chatId, fileKey, fileName }, 'Video uploaded, extracting cover image');
+                    const uploadedAt = Date.now();
+                    logger.info({ chatId: message.chatId, fileKey, fileName, uploadMs: uploadedAt - uploadStartedAt }, 'Video uploaded, extracting cover image');
                     // Extract first frame as cover image
                     const coverResult = extractVideoCover(filePath);
                     let imageKey;
@@ -726,6 +749,8 @@ export class FeishuChannel extends BaseChannel {
                         fileName,
                         threadReply: useThreadReply,
                         hasCover: !!imageKey,
+                        sendMs: Date.now() - uploadedAt,
+                        totalMs: Date.now() - uploadStartedAt,
                     }, 'Video message sent');
                     logOutgoing(fileMessageId, `[video: ${fileName}]`, 'media');
                 }
@@ -740,7 +765,8 @@ export class FeishuChannel extends BaseChannel {
                         logger.error({ chatId: message.chatId, fileName }, 'Failed to upload file, no file_key returned');
                         throw new Error(`Failed to upload file: ${fileName}`);
                     }
-                    logger.info({ chatId: message.chatId, fileKey, fileName, fileType }, 'File uploaded, sending message');
+                    const uploadedAt = Date.now();
+                    logger.info({ chatId: message.chatId, fileKey, fileName, fileType, uploadMs: uploadedAt - uploadStartedAt }, 'File uploaded, sending message');
                     // Send file message
                     fileMessageId = await sendFeishuMessage('file', JSON.stringify({ file_key: fileKey }));
                     logger.info({
@@ -748,6 +774,8 @@ export class FeishuChannel extends BaseChannel {
                         messageId: fileMessageId,
                         fileName,
                         threadReply: useThreadReply,
+                        sendMs: Date.now() - uploadedAt,
+                        totalMs: Date.now() - uploadStartedAt,
                     }, 'File message sent');
                     logOutgoing(fileMessageId, `[file: ${fileName}]`, 'file');
                 }
@@ -759,6 +787,10 @@ export class FeishuChannel extends BaseChannel {
             default:
                 throw new Error(`Unsupported message type: ${message.type}`);
         }
+    }
+    /** Ingress readiness never inferred from outbound delivery counters. */
+    getConnectionHealth() {
+        return { state: this.wsConnectionManager?.state ?? 'stopped', healthy: this.checkHealth() };
     }
     /** Snapshot of recent Feishu result-delivery attempts for monitoring. */
     getDeliveryHealth() {

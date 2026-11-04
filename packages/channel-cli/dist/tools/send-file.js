@@ -7,6 +7,7 @@
  */
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { randomUUID } from 'node:crypto';
 import { Config, createLogger, uploadFile } from "../../../core/dist/index.js";
 import { isChannelApiAvailable, getChannelApiClient, buildChannelApiFallbackHint } from './channel-api-utils.js';
 const logger = createLogger('SendFile');
@@ -15,21 +16,12 @@ const logger = createLogger('SendFile');
  * Issue #1035: Routes Feishu API calls through unified client.
  * Issue #1619: Added threadId parameter for thread reply support.
  * Issue #2300: Propagate REST API error details for better diagnostics.
+ * Issue #5630: Passes the retry-dedup idempotency key through to the service.
  */
-async function uploadFileViaChannelApi(chatId, filePath, threadId) {
+async function uploadFileViaChannelApi(chatId, filePath, threadId, idempotencyKey) {
     // Issue #4280 (Phase 3, part 3): REST-only — direct ChannelApiClient.
     const apiClient = getChannelApiClient();
-    const result = await uploadFile(apiClient, chatId, filePath, threadId);
-    if (!result.success) {
-        const errorDetail = result.error ? `: ${result.error}` : '';
-        throw new Error(`Failed to upload file via REST API${errorDetail}`);
-    }
-    return {
-        fileKey: result.fileKey ?? '',
-        fileType: result.fileType ?? 'file',
-        fileName: result.fileName ?? path.basename(filePath),
-        fileSize: result.fileSize ?? 0,
-    };
+    return await uploadFile(apiClient, chatId, filePath, threadId, { idempotencyKey });
 }
 export async function send_file(params) {
     const { filePath, chatId, parentMessageId, onProgress } = params;
@@ -68,16 +60,39 @@ export async function send_file(params) {
             const sizeMBBefore = (stats.size / 1024 / 1024).toFixed(2);
             onProgress({ message: `Uploading ${path.basename(resolvedPath)} (${sizeMBBefore} MB)…` });
         }
-        const { fileSize } = await uploadFileViaChannelApi(chatId, resolvedPath, parentMessageId);
-        const sizeMB = (fileSize / 1024 / 1024).toFixed(2);
+        // Issue #5630: a stable key per logical send lets a post-timeout retry
+        // dedupe at the service instead of double-delivering.
+        const idempotencyKey = params.idempotencyKey?.trim() || `send-file-${randomUUID()}`;
         const fileName = path.basename(resolvedPath);
-        logger.info({ fileName, fileSize, chatId, threadReply: !!parentMessageId }, 'File sent successfully');
+        const result = await uploadFileViaChannelApi(chatId, resolvedPath, parentMessageId, idempotencyKey);
+        if (result.outcomeUnknown) {
+            // Issue #5630: the deadline expired mid-chain, NOT a confirmed failure —
+            // the service may still complete the upload and deliver the file.
+            logger.warn({ filePath: resolvedPath, chatId, idempotencyKey }, 'send_file deadline reached; delivery outcome unknown');
+            return {
+                success: false,
+                error: result.error,
+                outcomeUnknown: true,
+                idempotencyKey,
+                message: `⏱️ Upload timed out — delivery outcome UNKNOWN: the disclaude service may still be sending ${fileName}, so it may still arrive in the chat. Do NOT blindly resend.` +
+                    ` To retry safely, call send_file again with idempotencyKey "${idempotencyKey}" — the service replays the remembered outcome instead of re-sending.` +
+                    ' Alternatively, check the chat first to see whether the file already arrived.',
+            };
+        }
+        if (!result.success) {
+            const errorDetail = result.error ? `: ${result.error}` : '';
+            throw new Error(`Failed to upload file via REST API${errorDetail}`);
+        }
+        const fileSize = result.fileSize ?? 0;
+        const sizeMB = (fileSize / 1024 / 1024).toFixed(2);
+        logger.info({ fileName, fileSize, chatId, threadReply: !!parentMessageId, messageId: result.messageId }, 'File sent successfully');
         return {
             success: true,
             message: `✅ File sent: ${fileName} (${sizeMB} MB)`,
             fileName,
             fileSize,
             sizeMB,
+            ...(result.messageId ? { messageId: result.messageId } : {}),
         };
     }
     catch (error) {

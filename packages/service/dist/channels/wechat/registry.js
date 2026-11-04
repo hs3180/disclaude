@@ -3,6 +3,21 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { DEFAULT_WECHAT_STATE_DIR, WeChatStateStore, validateWechatBaseUrl } from './state-store.js';
+import { autoRecoverRegistryLock } from './registry-lock-recovery.js';
+let quarantineWarn;
+const logQuarantine = (fields, message) => {
+    if (quarantineWarn) {
+        quarantineWarn(fields, message);
+        return;
+    }
+    void import("../../../../core/dist/index.js")
+        .then(({ createLogger }) => {
+        const logger = createLogger('WeChatRegistry');
+        quarantineWarn = (innerFields, innerMessage) => logger.warn(innerFields, innerMessage);
+        quarantineWarn(fields, message);
+    })
+        .catch(() => { });
+};
 export const isWeChatRegistrationId = (id) => /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id);
 /**
  * A forced re-login scanned a different bot identity than the target
@@ -100,20 +115,39 @@ export class WeChatRegistry {
         await this.prepare();
         const guard = new WeChatStateStore(join(this.dir, '.registry-lock'));
         let release;
+        let quarantined = false;
         for (let attempt = 0; attempt < 40; attempt++) {
             try {
                 release = await guard.lock();
                 break;
             }
             catch (error) {
-                if (!(error instanceof Error) || !error.message.includes('already in use')) {
+                if (!(error instanceof Error)) {
                     throw error;
                 }
-                await delay(25);
+                if (error.message.includes('already in use')) {
+                    await delay(25);
+                    continue;
+                }
+                if (!error.message.includes('Invalid WeChat listener lock')) {
+                    throw error;
+                }
+                // #5513: an empty or malformed guard lock (e.g. ENOSPC residue) must not
+                // keep every registry operation failing. Quarantine the residue and let
+                // the next attempt rebuild the lock; unsafe files still fail loudly below.
+                const recovery = await autoRecoverRegistryLock(this.dir);
+                if (recovery.outcome === 'quarantined') {
+                    quarantined = true;
+                    logQuarantine({ code: 'wechat_registry_lock_corrupt', registryRoot: recovery.registryRoot,
+                        quarantinePath: recovery.quarantinePath, bytes: recovery.bytes, sha256: recovery.sha256,
+                        corruption: recovery.state }, 'WeChat registry lock was empty or corrupt; quarantined the residue and rebuilt the lock automatically');
+                }
             }
         }
         if (!release) {
-            throw new Error('WeChat registry is busy; retry the operation');
+            throw new Error(quarantined
+                ? 'WeChat registry lock stays corrupt after automatic quarantine; run disclaude wechat lock-inspect and repair its state'
+                : 'WeChat registry is busy; retry the operation');
         }
         try {
             let value = await this.read();

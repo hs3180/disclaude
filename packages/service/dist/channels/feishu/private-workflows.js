@@ -31,10 +31,13 @@ export class FeishuPrivateWorkflows {
     pending = new Map();
     /** #5489: recently consumed one-shots whose replays re-assert the real terminal status. */
     completed = new Map();
+    notifier;
     constructor(send, update) {
         this.send = send;
         this.update = update;
     }
+    /** #5411: wire the session-resume path; set after construction, once the router exists. */
+    setNotifier(notify) { this.notifier = notify; }
     async request(request) {
         if (!isPrivateWorkflowRequest(request)) {
             throw new Error('Invalid private workflow');
@@ -83,6 +86,12 @@ export class FeishuPrivateWorkflows {
         if (outcome && outcome !== 'invalid') {
             this.remove(id);
             this.remember(id, outcome);
+            // #5411: a consumed submission resumes the waiting task on its own —
+            // no extra user message needed. Fire-and-forget: a routing hiccup must
+            // not repaint the terminal card or drop the one-shot finalization above.
+            if (this.notifier) {
+                void this.notifier(entry.chat, `private input ${id} ${outcome}`).catch(() => { });
+            }
         }
         return true;
     }

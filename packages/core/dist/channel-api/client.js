@@ -29,6 +29,18 @@ export function normalizeChannelApiBaseUrl(value) {
 /** Default request timeout (30s), matching the REST API client default. */
 const DEFAULT_TIMEOUT_MS = 30_000;
 /**
+ * Default deadline for upload routes (uploadFile/uploadImage) — Issue #5630.
+ *
+ * One upload request covers the FULL delivery chain server-side — Feishu
+ * im.file/im.image create (upload) plus im.message create/reply (message
+ * construction) — under a single REST roundtrip. The generic 30s deadline cut
+ * that chain mid-flight (#5630: a 1.8MB PNG and a 551KB JPEG both timed out at
+ * 30s with no delivery conclusion), so uploads get a chain-aware default.
+ * Provisional value; per-call `timeoutMs` overrides it. Which phase is slow
+ * (upload vs message create) is not yet measured — see server-side phase logs.
+ */
+export const DEFAULT_UPLOAD_TIMEOUT_MS = 120_000;
+/**
  * Default response shape: strip the `ok` REST envelope (REST responses are
  * `{ ok: true, ...ChannelApiResponsePayload }`; REST API payloads are just the inner fields).
  */
@@ -36,6 +48,19 @@ const stripOk = (body) => {
     const { ok: _ok, ...rest } = body;
     return rest;
 };
+/**
+ * `CHANNEL_API_REQUEST_FAILED` with the server's structured diagnostic fields
+ * preserved alongside the message string (#5616). The message is byte-for-byte
+ * the previous contract, so prefix-based classification keeps working.
+ */
+export class ChannelApiRequestError extends Error {
+    failure;
+    constructor(message, failure) {
+        super(message);
+        this.name = 'ChannelApiRequestError';
+        this.failure = failure;
+    }
+}
 /** Default success: HTTP ok AND the REST `{ ok: true }` envelope. */
 const defaultSuccess = (json, res) => res.ok && json.ok === true;
 /**
@@ -53,8 +78,8 @@ const ROUTES = {
     sendMessage: { method: 'POST', path: '/api/send-message' },
     sendCard: { method: 'POST', path: '/api/send-card' },
     requestPrivateInput: { method: 'POST', path: '/api/private-workflows' },
-    uploadFile: { method: 'POST', path: '/api/upload-file' },
-    uploadImage: { method: 'POST', path: '/api/upload-image' },
+    uploadFile: { method: 'POST', path: '/api/upload-file', timeoutMs: DEFAULT_UPLOAD_TIMEOUT_MS },
+    uploadImage: { method: 'POST', path: '/api/upload-image', timeoutMs: DEFAULT_UPLOAD_TIMEOUT_MS },
     sendInteractive: { method: 'POST', path: '/api/send-interactive' },
     listTempChats: { method: 'GET', path: '/api/temp-chats' },
     markChatResponded: { method: 'POST', path: '/api/mark-chat-responded' },
@@ -93,7 +118,8 @@ export class ChannelApiClient {
             }
             init.body = JSON.stringify(payload ?? {});
         }
-        const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+        // Explicit per-call timeout > per-route default (upload chains, #5630) > 30s generic.
+        const timeoutMs = options?.timeoutMs ?? route.timeoutMs ?? DEFAULT_TIMEOUT_MS;
         if (timeoutMs > 0) {
             init.signal = AbortSignal.timeout(timeoutMs);
         }
@@ -123,7 +149,15 @@ export class ChannelApiClient {
         }
         if (!(route.success ?? defaultSuccess)(json, res)) {
             const msg = json.message ?? `${type} failed (HTTP ${res.status})`;
-            throw new Error(`CHANNEL_API_REQUEST_FAILED: REST ${type} (HTTP ${res.status}: ${msg})`);
+            // #5616: keep the failure body's safe structured fields on the thrown
+            // error so CLI layers can surface them without parsing the message.
+            const failure = {
+                ...(typeof json.diagnosticId === 'string' ? { diagnosticId: json.diagnosticId } : {}),
+                ...(typeof json.upstreamStatus === 'number' ? { upstreamStatus: json.upstreamStatus } : {}),
+                ...(typeof json.upstreamCode === 'number' ? { upstreamCode: json.upstreamCode } : {}),
+                ...(json.diagnostics && typeof json.diagnostics === 'object' ? { diagnostics: json.diagnostics } : {}),
+            };
+            throw new ChannelApiRequestError(`CHANNEL_API_REQUEST_FAILED: REST ${type} (HTTP ${res.status}: ${msg})`, failure);
         }
         // Apply per-route response shaping (default: strip the `ok` envelope).
         return (route.shape ?? stripOk)(json);
