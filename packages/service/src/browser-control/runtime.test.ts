@@ -175,6 +175,46 @@ describe('transparent browser-use command coordination', () => {
     expect(browserStatus(recovered.path).state).toBe('idle');
   });
 
+  it('heals drifted service.lock ownership on refresh instead of fencing a live owner (#5474)', async () => {
+    const f = await fixture();
+    const lock = join(dirname(f.path), 'service.lock');
+    renameSync(lock, `${lock}.moved`);
+    writeFileSync(lock, '', { mode: 0o600 });
+    // The live owner still validates for reads; the refresh must not treat the
+    // fresh unlocked path file as proof the owner died.
+    const onEvent = vi.fn();
+    const refreshed = await refreshBrowserRuntimeConnection({ env: f.taskEnv, fetchImpl: f.fetchImpl, onEvent });
+    expect(refreshed.instance).toBe(f.data.instance);
+    const healed = JSON.parse(readFileSync(f.path, 'utf8'));
+    expect(healed.ownerLockInode).toBeNull();
+    expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'browser-owner-evidence-refreshed' }));
+    expect(browserStatus(f.path).state).toBe('idle');
+    // A browser id change (the real --reload outcome) migrates on the healed
+    // evidence instead of failing with "owner is not live".
+    const second = randomUUID();
+    f.setBrowserId(second);
+    expect((await f.run({}, ['--reload']).result).code).toBe(0);
+    const migrated = JSON.parse(readFileSync(f.path, 'utf8'));
+    expect(migrated.browserEnv.BU_CDP_WS).toContain(second);
+    expect(migrated.ownerLockInode).toBeNull();
+    roots.add(migrated.directory);
+    expect(browserStatus(f.path).state).toBe('idle');
+    await f.service.stop();
+    expect(() => browserStatus(f.path)).toThrow(/unavailable/);
+  });
+
+  it('does not let a second service steal commands after service.lock drift with a live owner (#5474)', async () => {
+    const f = await fixture();
+    const lock = join(dirname(f.path), 'service.lock');
+    renameSync(lock, `${lock}.moved`);
+    writeFileSync(lock, '', { mode: 0o600 });
+    await expect(f.start()).rejects.toThrow(/already belong/);
+    expect(browserStatus(f.path).state).toBe('idle');
+    await f.service.stop();
+    const recovered = await f.start();
+    expect(browserStatus(recovered.path).state).toBe('idle');
+  });
+
   it('releases service ownership when a startup write fails', async () => {
     const f = await fixture();
     await f.service.stop();

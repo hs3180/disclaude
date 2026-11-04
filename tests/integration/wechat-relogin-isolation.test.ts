@@ -12,9 +12,10 @@ import type { WeChatApiClient } from '../../packages/service/src/channels/wechat
 import type { WeChatUpdate } from '../../packages/service/src/channels/wechat/types.js';
 
 const exec = promisify(execFile);
-function cli(dir: string, args: string[], fixture?: { bot?: string; fail?: boolean; hold?: boolean }) {
+function cli(dir: string, args: string[], fixture?: { bot?: string; user?: string; fail?: boolean; hold?: boolean }) {
   return exec(process.execPath, ['bin/disclaude.js', 'wechat', ...args, '--state-dir', dir], {
     env: { ...process.env, LOG_LEVEL: 'silent', LOG_TO_FILE: 'false', WECHAT_FIXTURE_BOT: fixture?.bot,
+      WECHAT_FIXTURE_USER: fixture?.user,
       NODE_OPTIONS: fixture ? `--import ${JSON.stringify(resolve('tests/fixtures/wechat-login-gateway.mjs'))}` : '',
       WECHAT_FIXTURE_FAILURE: fixture?.fail ? '1' : undefined,
       WECHAT_FIXTURE_HOLD_QR: fixture?.hold ? '1' : undefined }, timeout: 30000,
@@ -28,7 +29,11 @@ describe('forced re-login isolation (#5479)', () => {
     const registry = new WeChatRegistry(dir);
     try {
       const target = lastJson((await cli(dir, ['login', '--qr-file', join(dir, 'target.png')], { bot: 'target-bot' })).stdout);
-      const sibling = lastJson((await cli(dir, ['login', '--qr-file', join(dir, 'sibling.png')], { bot: 'sibling-bot' })).stdout);
+      // #5480 (maintainer review on #5662): the sibling needs a distinct WeChat
+      // user — the same user's fresh scan rebinds their registration by the
+      // server-provided user id instead of adding a second account, which
+      // would collapse the "target + sibling accounts" premise of #5479.
+      const sibling = lastJson((await cli(dir, ['login', '--qr-file', join(dir, 'sibling.png')], { bot: 'sibling-bot', user: 'sibling-operator@im.wechat' })).stdout);
       const before = (await registry.list()).find(account => account.id === sibling.id)!;
       // The held QR keeps the re-login (and its rollback window) open so a
       // concurrent operator action can land inside it.
