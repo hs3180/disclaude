@@ -30,13 +30,42 @@ describe('Notebook cell insertion (#5317)', () => {
       expect(notebook.cells[0].toJSON()).toMatchObject({
         outputs: [],
         execution_count: null,
-        metadata: {},
+        metadata: { jupyter: { source_hidden: true } },
       });
       expect(warn).not.toHaveBeenCalled();
       expect(error).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
       error.mockRestore();
+      notebook.dispose();
+      peer.dispose();
+    }
+  });
+
+  it('defaults code cells to jupyter.source_hidden while leaving markdown cells visible (#5615)', () => {
+    const notebook = new YNotebook();
+    const peer = new YNotebook();
+    const metadata = (doc: YNotebook, index: number): unknown =>
+      (doc.getCell(index) as unknown as { toJSON: () => { metadata: unknown } }).toJSON().metadata;
+    try {
+      insertNotebookCell(notebook, 0, { id: 'code', cell_type: 'code', source: 'print(1)' });
+      insertNotebookCell(notebook, 1, { id: 'prose', cell_type: 'markdown', source: 'Read me.' });
+      expect(metadata(notebook, 0)).toEqual({ jupyter: { source_hidden: true } });
+      expect(metadata(notebook, 1)).toEqual({});
+      // The nbformat export of the whole Notebook carries the default too.
+      expect(notebook.toJSON().cells.map((cell) => cell.metadata)).toEqual([
+        { jupyter: { source_hidden: true } },
+        {},
+      ]);
+      applyUpdate(peer.ydoc, encodeStateAsUpdate(notebook.ydoc));
+      expect(peer.toJSON().cells.map((cell) => cell.metadata)).toEqual([
+        { jupyter: { source_hidden: true } },
+        {},
+      ]);
+      // Editing the source never rewrites or drops the metadata default.
+      (notebook.getCell(0) as unknown as { source: string }).source = 'print(2)';
+      expect(metadata(notebook, 0)).toEqual({ jupyter: { source_hidden: true } });
+    } finally {
       notebook.dispose();
       peer.dispose();
     }

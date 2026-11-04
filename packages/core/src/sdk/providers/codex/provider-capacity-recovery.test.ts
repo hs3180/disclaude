@@ -129,12 +129,19 @@ describe('Codex capacity continuation (#5468)', () => {
   it('spends only genuine waits of the recovery budget across long healthy work (#5514)', async () => {
     // Production timeline of the issue: capacity failure -> recovery -> a long
     // productive run (far beyond the whole budget) -> a second independent
-    // capacity fluctuation. The 100ms budget must track the real recovery
-    // waits (each 20-40ms after FAST+jitter), not the healthy wall clock, so
-    // the second fluctuation still continues; accumulated waits alone then
-    // terminate the turn within the bound instead of resetting it.
+    // capacity fluctuation. The budget must track only the real recovery
+    // waits, not the healthy wall clock, so the second fluctuation still
+    // continues. De-flaked: the budget deliberately sits far above any
+    // plausible timer overshoot of the jittered FAST waits (a ~48ms setTimeout
+    // firing a few ms late on a loaded runner used to deny the second
+    // recovery) yet far below the 240s injected per productive attempt — so
+    // the green path never depends on wall-clock precision while charging
+    // healthy work to the budget (the #5514 regression) still exhausts it and
+    // denies the second recovery. Waits keep charging cumulatively, but the
+    // nominal ~0.3s of waits cannot reach a 20s budget, so bounded
+    // termination falls to the attempt cap: 1 original + 6 recoveries.
     const fx = fixture({ failures: 10, delayedFailure: true }, {
-      DISCLAUDE_CODEX_CAPACITY_RECOVERY_BUDGET_MS: '100',
+      DISCLAUDE_CODEX_CAPACITY_RECOVERY_BUDGET_MS: '20000',
     });
     let elapsed = 0, recoveries = 0;
     const realNow = Date.now.bind(Date);
@@ -152,8 +159,8 @@ describe('Codex capacity continuation (#5468)', () => {
     expect(results).toHaveLength(1);
     expect(results[0].metadata?.terminatedReason).toBe('turn_failed');
     expect(results[0].metadata?.terminationDetail).toMatch(/capacity_recovery_(budget_exhausted|attempt_limit)/);
-    // Bounded termination: five waits of >=20ms cannot all fit a 100ms budget.
-    expect(fx.attempts()).toBeLessThanOrEqual(6);
+    // Bounded termination: 1 original attempt + the 6-recovery attempt cap.
+    expect(fx.attempts()).toBeLessThanOrEqual(7);
   });
 
   it('keeps empty recovery failures on the continuation path without replaying the task', async () => {

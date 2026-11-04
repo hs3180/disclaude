@@ -356,9 +356,12 @@ async function verifyPackage() {
   const loginFixture = new URL('../tests/fixtures/wechat-login-gateway.mjs', import.meta.url).href;
   const runtimeFixture = new URL('../tests/fixtures/wechat-runtime-gateway.mjs', import.meta.url).href;
   function registerAccount(bot, id) {
+    // Each bot scans as its own WeChat user so the two registrations below stay
+    // two distinct accounts (per-user identity lands the second login on its
+    // own registration instead of rebinding the first bot's account).
     const output = run(cli, ['wechat', 'login', '--state-dir', join(temp, 'wechat-account'),
       '--qr-file', join(temp, `${bot}.png`), ...(id ? ['--id', id, '--force'] : [])],
-      { NODE_OPTIONS: `--import ${loginFixture}`, WECHAT_FIXTURE_BOT: bot });
+      { NODE_OPTIONS: `--import ${loginFixture}`, WECHAT_FIXTURE_BOT: bot, WECHAT_FIXTURE_USER: `${bot}@im.wechat` });
     assert(!output.includes('fixture-private-token'));
     return JSON.parse(output.trim().split('\n').at(-1));
   }
@@ -424,7 +427,7 @@ async function verifyPackage() {
           const result = spawnSync(cli, ['wechat', 'login', '--state-dir', join(temp, 'wechat-account'),
             '--id', registered[0].id, '--force', '--qr-file', join(temp, 'failed-relogin.png')], {
             cwd: temp, encoding: 'utf8', timeout: 60_000,
-            env: { ...env, NODE_OPTIONS: `--import ${loginFixture}`, WECHAT_FIXTURE_BOT: 'package-first', WECHAT_FIXTURE_FAILURE: '1' },
+            env: { ...env, NODE_OPTIONS: `--import ${loginFixture}`, WECHAT_FIXTURE_BOT: 'package-first', WECHAT_FIXTURE_USER: 'package-first@im.wechat', WECHAT_FIXTURE_FAILURE: '1' },
           });
           assert.notEqual(result.status, 0, 'A failed re-login must exit non-zero');
           // Stdout only, like registerAccount above: stderr carries the fixture

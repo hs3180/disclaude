@@ -12,6 +12,8 @@ import { inspectRegistryLock, recoverRegistryLock } from './registry-lock-recove
 const help = `Usage: disclaude wechat <login|status|enable ID|disable ID|remove ID|lock-inspect|lock-recover> [options]
 Personal WeChat via Tencent iLink (QR login; no public callback server).
   login             Scan to register another account; existing accounts keep serving
+                    (a returning user's scan rebinds their registration to the
+                    new bot identity, judged by the WeChat-server-provided id)
   status            List registered IDs; use channel capabilities for live connection health
   lock-inspect      Read registry lock metadata only; save its JSON for recovery
   lock-recover      Quarantine unchanged pre-boot corruption using --snapshot FILE
@@ -175,27 +177,38 @@ async function main(): Promise<void> {
         account = await registry.register(credentials, targetId, restoreGeneration);
       } catch (cause) {
         if (!(cause instanceof WeChatIdentityMismatchError)) { throw cause; }
-        // #5480: the scan confirmed a different bot identity, so nothing was
-        // saved. Keep refusing to overwrite; explain the identity change and
-        // the safe continuation instead of leaving the operator with a scan
-        // that just "didn't work". The rollback below restores the target.
+        // #5480 (maintainer review on #5662): identity is judged by the
+        // WeChat-server-provided user id, so reaching here means the scan
+        // confirmed a different WeChat user than the registered one; nothing
+        // was saved and the rollback below restores the target. No command
+        // line --id binding decides whether a scanned user exists: a plain
+        // login routes by the server-provided id — the registered user's scan
+        // rebinds their registration automatically, another user's scan
+        // registers a separate account.
         const saved = target ? await new WeChatStateStore(registry.stateDir(target)).loadCredentials() : undefined;
         const sameUser = !!saved?.userId && !!credentials.userId && saved.userId === credentials.userId;
         console.log(JSON.stringify({ ok: false, stage: 'identity-changed', saved: false,
           targetId: cause.targetId, registeredBotId: cause.registeredBotId, scannedBotId: cause.scannedBotId,
           sameUser,
-          reason: sameUser ? 'scan confirmed a new bot identity for the same WeChat user'
-            : 'scan confirmed an unexpected WeChat identity',
+          reason: 'scan confirmed a different WeChat user than the registered one (judged by the WeChat-server-provided user id)',
           next: `disclaude wechat login --state-dir ${registry.dir}` }));
         process.exitCode = 1;
         return;
       }
       committed = true;
+      // #5480 (maintainer review on #5662): when the scan was a returning
+      // user with a new bot identity, register() rebound their existing
+      // registration (matched by the WeChat-server-provided user id) instead
+      // of registering a parallel account; report that explicitly.
+      const previous = accounts.find(item => item.id === account.id);
+      const rebound = previous && previous.botId !== credentials.botId ? previous : undefined;
       // #5479: a committed registration is not a verified login. Probe the
       // just-saved credentials so the report distinguishes the two.
       console.log(JSON.stringify({ stage: 'verifying-connection' }));
       const probe = await probeSavedLogin(registry, account);
       console.log(JSON.stringify({ ok: true, registered: true, id: account.id, channelId: registry.channelId(account), ...probe,
+        ...(rebound ? { rebound: true, reboundFromBotId: rebound.botId,
+          continuation: 'this scan rebound the existing registration to the new bot identity for the same WeChat user (WeChat-server-provided user id); served conversations continue on their bound chatIds via stable peer-identity bindings' } : {}),
         onboarding: 'After this account is active, send a first WeChat message; the welcome requires that peer\'s valid reply context.',
         ...(probe.verified ? {} : { next: `disclaude wechat login --id ${account.id} --force` }) }));
     };
