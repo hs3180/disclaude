@@ -35,9 +35,15 @@ Defaults include `CHROMIUM_MEMORY=4G`, `CHROMIUM_SHM_SIZE=2gb`,
 `TZ=Asia/Shanghai`, `CHROMIUM_LANG=C.UTF-8`, and
 `CHROMIUM_ACCEPT_LANG=en-US,en`. `CHROMIUM_LANG` sets the process locale;
 `CHROMIUM_ACCEPT_LANG` controls Chromium's Accept-Language and JavaScript
-language properties. Set a comma-separated value such as `zh-CN,zh` for a
+language properties, and its first segment also sets the `--lang` UI language.
+Set a comma-separated value such as `zh-CN,zh` for a
 Chinese-language deployment. This startup setting does not rewrite profile
 preferences.
+
+The launcher enables software WebGL (`--enable-unsafe-swiftshader
+--use-gl=angle --use-angle=vulkan`, no GPU dependency) and starts Chromium with
+`--restore-last-session`, so session-level cookies survive a full container
+rebuild as long as the profile volume is kept.
 
 Chromium runs as root with `--no-sandbox` inside this image. The container is
 not a sandbox for untrusted agent code. Headed mode does not guarantee

@@ -91,10 +91,17 @@ trap cleanup EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
 
+# Software WebGL (no GPU): Chrome 132+ needs explicit SwiftShader via the ANGLE
+# Vulkan backend or canvas WebGL contexts come back null; the gles backend blanks on Xvfb.
 args=(--no-sandbox --no-first-run --no-default-browser-check
       --disable-blink-features=AutomationControlled
       "--remote-debugging-port=$CDP_INTERNAL_PORT" "--user-data-dir=$CHROMIUM_CDP_PROFILE_DIR"
-      --window-size=1920,1080 "--accept-lang=$CHROMIUM_ACCEPT_LANG")
+      --window-size=1920,1080 "--accept-lang=$CHROMIUM_ACCEPT_LANG"
+      --enable-unsafe-swiftshader --use-gl=angle --use-angle=vulkan
+      # Session restore keeps session cookies across full container rebuild+recreate.
+      --restore-last-session
+      # --accept-lang alone leaves the UI locale en-US; align it to the first segment.
+      "--lang=${CHROMIUM_ACCEPT_LANG%%,*}")
 if [[ "$CHROMIUM_HEADLESS" == 1 ]]; then
     args+=(--headless=new)
 else
