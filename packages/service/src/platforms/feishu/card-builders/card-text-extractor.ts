@@ -103,10 +103,18 @@ export function extractFullCardContent(card: Record<string, unknown> | string): 
     lines.push(`**${header.title.content}**`);
   }
 
-  // Elements
+  // Elements. Schema 1.0 carries them at the card root; schema 2.0 (the shape
+  // this repo's own builders send — streaming-card-builder, task-question-cards,
+  // agent-input — and the shape forwarded card content arrives in) nests them
+  // under `body.elements`. Issue #5433: reading only the root array degraded
+  // every 2.0 card to the bare `[Interactive Card]` placeholder.
   const elements = card.elements as unknown[] | undefined;
   if (Array.isArray(elements)) {
     lines.push(...extractFullFromElements(elements));
+  }
+  const bodyElements = (card.body as { elements?: unknown[] } | undefined)?.elements;
+  if (Array.isArray(bodyElements)) {
+    lines.push(...extractFullFromElements(bodyElements));
   }
 
   return lines.length > 0 ? lines.join('\n') : '[Interactive Card]';
