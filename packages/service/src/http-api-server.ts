@@ -110,6 +110,8 @@ export type UploadFileResponse = {
   fileType?: string;
   fileName?: string;
   fileSize?: number;
+  /** Platform message_id of the delivered file message, when confirmed (Issue #5630). */
+  messageId?: string;
 };
 
 /**
@@ -125,6 +127,28 @@ export type UploadFileHandler = (
   filePath: string,
   threadId: string | undefined
 ) => Promise<UploadFileResponse>;
+
+/**
+ * Issue #5630: how long a remembered same-key upload success is replayed to
+ * retries (covers a retry window well beyond the client's chain-aware upload
+ * deadline). Provisional value.
+ */
+const UPLOAD_FILE_IDEMPOTENCY_TTL_MS = 10 * 60_000;
+/** Issue #5630: bound on remembered upload outcomes (insertion-order eviction). */
+const UPLOAD_FILE_IDEMPOTENCY_MAX_ENTRIES = 128;
+
+/** Identity of an upload request, scoping an idempotency key to one operation (Issue #5630). */
+interface UploadFileRequestIdentity {
+  chatId: string;
+  filePath: string;
+  threadId: string | undefined;
+}
+
+/** True when the remembered/joined request matches the incoming one exactly. */
+const sameUploadRequest = (
+  a: UploadFileRequestIdentity,
+  b: UploadFileRequestIdentity
+): boolean => a.chatId === b.chatId && a.filePath === b.filePath && a.threadId === b.threadId;
 
 /**
  * Response payload for sendMessage (mirrors REST API ChannelApiResponsePayloads).
@@ -285,6 +309,16 @@ export class HttpApiServer {
   private instanceId?: string;
   private pushHandler?: PushHandler;
   private uploadFileHandler?: UploadFileHandler;
+  /** Issue #5630: in-flight uploads keyed by idempotencyKey (same-key retries join one delivery). */
+  private readonly uploadFileInFlight = new Map<
+    string,
+    UploadFileRequestIdentity & { run: Promise<UploadFileResponse> }
+  >();
+  /** Issue #5630: recently-succeeded uploads keyed by idempotencyKey (replayed, never re-sent). */
+  private readonly uploadFileMemo = new Map<
+    string,
+    UploadFileRequestIdentity & { expiresAt: number; result: UploadFileResponse }
+  >();
   private sendMessageHandler?: SendMessageHandler;
   private sendCardHandler?: SendCardHandler;
   private privateWorkflowHandler?: (request: PrivateWorkflowRequest) => Promise<{ actionId: string }>;
@@ -941,9 +975,15 @@ export class HttpApiServer {
     }
 
     const threadId = typeof raw.threadId === 'string' ? raw.threadId : undefined;
+    // Issue #5630: optional retry-dedup key — see runUploadFile for semantics.
+    const idempotencyKey =
+      typeof raw.idempotencyKey === 'string' && raw.idempotencyKey.trim()
+        ? raw.idempotencyKey.trim()
+        : undefined;
 
     try {
-      const result = await this.uploadFileHandler(
+      const result = await this.runUploadFile(
+        idempotencyKey,
         raw.chatId as string,
         raw.filePath as string,
         threadId
@@ -954,6 +994,91 @@ export class HttpApiServer {
       const msg = err instanceof Error ? err.message : 'uploadFile failed';
       this.sendJson(res, 500, { ok: false, message: msg });
     }
+  }
+
+  /**
+   * Issue #5630: run the upload handler with retry-safe idempotency semantics.
+   *
+   * The client deadline can expire while the upload+send chain is still running
+   * server-side; a blind retry then double-delivers. When the request carries
+   * an idempotencyKey (scoped to the exact chatId/filePath/threadId):
+   * - a same-key request still in flight is joined — one delivery, one outcome;
+   * - a recently-succeeded same-key request is replayed from the memo — the
+   *   retry gets the remembered result (including messageId), zero re-sends;
+   * - failures are never memoized, so a same-key retry after a genuine failure
+   *   re-executes normally.
+   * This deduplicates at the service boundary only; it does not assume any
+   * idempotency from the Feishu API. In-memory: a service restart forgets.
+   */
+  private async runUploadFile(
+    idempotencyKey: string | undefined,
+    chatId: string,
+    filePath: string,
+    threadId: string | undefined
+  ): Promise<UploadFileResponse> {
+    const handler = this.uploadFileHandler;
+    if (!handler) {
+      throw new Error('uploadFile handler not configured');
+    }
+    if (!idempotencyKey) {
+      return await handler(chatId, filePath, threadId);
+    }
+    const identity: UploadFileRequestIdentity = { chatId, filePath, threadId };
+
+    const memo = this.uploadFileMemo.get(idempotencyKey);
+    if (memo && memo.expiresAt > Date.now() && sameUploadRequest(memo, identity)) {
+      logger.info(
+        { idempotencyKey, chatId, messageId: memo.result.messageId },
+        'uploadFile idempotent replay: returning remembered success without re-sending'
+      );
+      return memo.result;
+    }
+    this.uploadFileMemo.delete(idempotencyKey);
+
+    const inFlight = this.uploadFileInFlight.get(idempotencyKey);
+    if (inFlight && sameUploadRequest(inFlight, identity)) {
+      logger.info(
+        { idempotencyKey, chatId },
+        'uploadFile idempotent join: same-key upload still in flight'
+      );
+      return await inFlight.run;
+    }
+
+    const run = (async () => {
+      try {
+        const result = await handler(chatId, filePath, threadId);
+        this.rememberUploadResult(idempotencyKey, identity, result);
+        return result;
+      } finally {
+        this.uploadFileInFlight.delete(idempotencyKey);
+      }
+    })();
+    this.uploadFileInFlight.set(idempotencyKey, { ...identity, run });
+    return await run;
+  }
+
+  /** Memoize a successful same-key upload for the idempotency window (Issue #5630). */
+  private rememberUploadResult(
+    idempotencyKey: string,
+    identity: UploadFileRequestIdentity,
+    result: UploadFileResponse
+  ): void {
+    const now = Date.now();
+    for (const [key, entry] of this.uploadFileMemo) {
+      if (entry.expiresAt <= now) {
+        this.uploadFileMemo.delete(key);
+      }
+    }
+    while (this.uploadFileMemo.size >= UPLOAD_FILE_IDEMPOTENCY_MAX_ENTRIES) {
+      const oldest = this.uploadFileMemo.keys().next().value;
+      if (oldest === undefined) { break; }
+      this.uploadFileMemo.delete(oldest);
+    }
+    this.uploadFileMemo.set(idempotencyKey, {
+      ...identity,
+      expiresAt: now + UPLOAD_FILE_IDEMPOTENCY_TTL_MS,
+      result,
+    });
   }
 
   /**

@@ -2,6 +2,7 @@
 
 import { createLogger } from '../utils/logger.js';
 import type { FeishuCard } from '../types/platform.js';
+import { ChannelApiRequestError, type ChannelApiFailureDetails } from './client.js';
 import type {
   ChannelApiRequestType,
   ChannelApiRequestPayloads,
@@ -18,12 +19,14 @@ export type ChannelApiMethodResult = {
   success: boolean;
   error?: string;
   errorType?: ChannelApiMethodErrorType;
+  /** Safe structured fields from the REST failure body (#5616); present when the server sent them. */
+  failure?: ChannelApiFailureDetails;
 };
 
 /**
  * Classify an error into an REST API error type based on its message prefix.
  */
-function classifyError(error: unknown): { err: Error; errorType: ChannelApiMethodErrorType } {
+function classifyError(error: unknown): { err: Error; errorType: ChannelApiMethodErrorType; failure?: ChannelApiFailureDetails } {
   const err = error instanceof Error ? error : new Error(String(error));
   let errorType: ChannelApiMethodErrorType = 'channel_api_request_failed';
   if (err.message.startsWith('CHANNEL_API_NOT_AVAILABLE')) {
@@ -31,7 +34,9 @@ function classifyError(error: unknown): { err: Error; errorType: ChannelApiMetho
   } else if (err.message.startsWith('CHANNEL_API_TIMEOUT')) {
     errorType = 'channel_api_timeout';
   }
-  return { err, errorType };
+  // #5616: keep structured diagnostics from the failure body instead of flattening to a string.
+  const failure = error instanceof ChannelApiRequestError ? error.failure : undefined;
+  return { err, errorType, ...(failure ? { failure } : {}) };
 }
 
 /**
@@ -60,9 +65,9 @@ export async function sendMessage(
   try {
     return await client.request('sendMessage', { chatId, text, threadId, mentions });
   } catch (error) {
-    const { err, errorType } = classifyError(error);
+    const { err, errorType, failure } = classifyError(error);
     logger.error({ err: error, chatId }, 'sendMessage failed');
-    return { success: false, error: err.message, errorType };
+    return { success: false, error: err.message, errorType, ...(failure ? { failure } : {}) };
   }
 }
 
@@ -86,21 +91,70 @@ export async function sendCard(
   }
 }
 
+/** Options for uploadFile (Issue #5630). */
+export interface UploadFileOptions {
+  /**
+   * Deadline for the full upload + message-create chain. Defaults to the
+   * chain-aware upload deadline (see `DEFAULT_UPLOAD_TIMEOUT_MS` in client.ts),
+   * not the generic 30s REST default.
+   */
+  timeoutMs?: number;
+  /**
+   * Retry-dedup key: the service joins an in-flight same-key request and
+   * replays a recent same-key success instead of re-sending. On an ambiguous
+   * timeout, retry with the key this call reported.
+   */
+  idempotencyKey?: string;
+}
+
 /**
  * Upload a file via REST API.
  * Issue #2300: Return detailed error information consistent with other REST API methods.
+ * Issue #5630: chain-aware deadline option, idempotency key pass-through, and
+ * timeout results flagged `outcomeUnknown` — a timed-out upload is not a
+ * confirmed failure (the service may still deliver), so retries must reuse the
+ * idempotency key instead of blindly re-sending.
  */
 export async function uploadFile(
   client: ChannelApiClientLike,
   chatId: string,
   filePath: string,
-  threadId?: string
-): Promise<ChannelApiMethodResult & { fileKey?: string; fileType?: string; fileName?: string; fileSize?: number }> {
+  threadId?: string,
+  options?: UploadFileOptions
+): Promise<ChannelApiMethodResult & {
+  fileKey?: string;
+  fileType?: string;
+  fileName?: string;
+  fileSize?: number;
+  /** Platform message_id of the delivered file message (Issue #5630). */
+  messageId?: string;
+  /** Present (true) when the attempt timed out with an unknown delivery outcome. */
+  outcomeUnknown?: boolean;
+  /** Echoed back on an ambiguous timeout so the caller can retry safely. */
+  idempotencyKey?: string;
+}> {
   try {
-    return await client.request('uploadFile', { chatId, filePath, threadId });
+    return await client.request(
+      'uploadFile',
+      { chatId, filePath, threadId, idempotencyKey: options?.idempotencyKey },
+      { timeoutMs: options?.timeoutMs },
+    );
   } catch (error) {
     const { err, errorType } = classifyError(error);
     logger.error({ err: error, chatId, filePath }, 'uploadFile failed');
+    if (errorType === 'channel_api_timeout') {
+      // Issue #5630: the client deadline expired mid-chain — the service may
+      // still complete the upload and deliver the file. Report the ambiguous
+      // outcome (plus the dedup key) instead of a plain failure the caller
+      // might blindly retry, which could double-deliver.
+      return {
+        success: false,
+        error: err.message,
+        errorType,
+        outcomeUnknown: true,
+        ...(options?.idempotencyKey ? { idempotencyKey: options.idempotencyKey } : {}),
+      };
+    }
     return { success: false, error: err.message, errorType };
   }
 }

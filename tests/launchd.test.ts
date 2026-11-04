@@ -29,7 +29,7 @@
 
 import { describe, it, expect, afterEach } from 'vitest';
 import { assertServiceMigrationComplete } from '../scripts/launchd.mjs';
-import { mkdtempSync, rmSync, writeFileSync, symlinkSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, symlinkSync, readFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -52,6 +52,8 @@ describe('service upgrade guard', () => {
 import {
   buildChromiumArguments,
   buildProgramArguments,
+  buildServicePlist,
+  readLaunchdDeploymentConfig,
   resolveChromiumAddress,
   resolveChromiumBinary,
   resolveChromiumHeadless,
@@ -60,6 +62,7 @@ import {
   resolveApiPort,
   resolveAppLog,
   resolveRestChannelApiBaseUrl,
+  resolveServiceEntry,
   resolveServiceLaunchdConfig,
   xmlEscape,
 } from '../scripts/launchd.mjs';
@@ -101,23 +104,34 @@ function snapshotEnv() {
   }
 }
 
-describe('resolveApiPort (#4576)', () => {
-  it('defaults to an OS-assigned port when no env override is set', () => {
+describe('resolveApiPort (#4576, #5619)', () => {
+  it('defaults to the fixed production port 19200 when nothing is configured', () => {
     snapshotEnv();
-    expect(resolveApiPort()).toBe(0);
+    expect(resolveApiPort()).toBe(19200);
   });
 
-  it('accepts a valid override in 1-65535', () => {
+  it('accepts a valid override in 0-65535', () => {
     snapshotEnv();
     process.env.DISCLAUDE_LAUNCHD_API_PORT = '9300';
     expect(resolveApiPort()).toBe(9300);
+  });
+
+  it('still allows an explicit OS-assigned port via 0', () => {
+    snapshotEnv();
+    process.env.DISCLAUDE_LAUNCHD_API_PORT = '0';
+    expect(resolveApiPort()).toBe(0);
+  });
+
+  it('prefers the deployment config port over the built-in default', () => {
+    snapshotEnv();
+    expect(resolveApiPort({ apiPort: 8400 })).toBe(8400);
   });
 
   it('rejects out-of-range values and falls back to the default', () => {
     snapshotEnv();
     for (const bad of ['99999', '-1']) {
       process.env.DISCLAUDE_LAUNCHD_API_PORT = bad;
-      expect(resolveApiPort()).toBe(0);
+      expect(resolveApiPort()).toBe(19200);
     }
   });
 
@@ -127,7 +141,7 @@ describe('resolveApiPort (#4576)', () => {
     // CLI parser (packages/service/src/cli.ts); only NaN cases here.
     for (const bad of ['abc', '']) {
       process.env.DISCLAUDE_LAUNCHD_API_PORT = bad;
-      expect(resolveApiPort()).toBe(0);
+      expect(resolveApiPort()).toBe(19200);
     }
   });
 });
@@ -237,19 +251,19 @@ describe('isolated service service paths (S08-A4)', () => {
   });
 });
 
-describe('buildProgramArguments REST API wiring (#4576)', () => {
-  it('appends --api-port 0 by default for isolated managed instances', () => {
+describe('buildProgramArguments REST API wiring (#4576, #5619)', () => {
+  it('appends the fixed default --api-port 19200', () => {
     snapshotEnv();
     const args = buildProgramArguments(NODE, null);
     // The first argument is the executable, not Node plus a private module.
-    expect(args).toEqual([NODE, 'start', '--api-port', '0']);
+    expect(args).toEqual([NODE, 'start', '--api-port', '19200']);
   });
 
   it('keeps the caffeinate wrapper and still appends --api-port', () => {
     snapshotEnv();
     const args = buildProgramArguments(NODE, CAFFEINATE);
     expect(args.slice(0, 2)).toEqual([CAFFEINATE, '-s']);
-    expect(args.slice(-3)).toEqual(['start', '--api-port', '0']);
+    expect(args.slice(-3)).toEqual(['start', '--api-port', '19200']);
   });
 
   it('honours DISCLAUDE_LAUNCHD_API_PORT in the generated args', () => {
@@ -259,14 +273,21 @@ describe('buildProgramArguments REST API wiring (#4576)', () => {
     expect(args.slice(-2)).toEqual(['--api-port', '9300']);
   });
 
+  it('honours the deployment config port and token (Issue #5619)', () => {
+    snapshotEnv();
+    const deployment = { configPath: null, apiPort: 8400, apiToken: 'cfg-token' };
+    expect(buildProgramArguments(NODE, null, deployment)).toEqual([
+      NODE, 'start', '--api-port', '8400', '--api-token', 'cfg-token',
+    ]);
+  });
+
   it('appends --api-token only when DISCLAUDE_LAUNCHD_API_TOKEN is set', () => {
     snapshotEnv();
     expect(buildProgramArguments(NODE, null)).not.toContain('--api-token');
 
     process.env.DISCLAUDE_LAUNCHD_API_TOKEN = 'secret-token';
     const args = buildProgramArguments(NODE, null);
-    // args = [node, cli, 'start', '--api-port', '19200', '--api-token', token]
-    expect(args.slice(-4)).toEqual(['--api-port', '0', '--api-token', 'secret-token']);
+    expect(args.slice(-4)).toEqual(['--api-port', '19200', '--api-token', 'secret-token']);
   });
 
   it('passes an explicit isolated config path to the service', () => {
@@ -276,6 +297,162 @@ describe('buildProgramArguments REST API wiring (#4576)', () => {
       '--config',
       '/tmp/s08/config.yaml',
     ]);
+  });
+
+  it('passes the discovered config path so the plist is self-contained (#5619)', () => {
+    snapshotEnv();
+    const args = buildProgramArguments(NODE, null, { configPath: '/home/op/.disclaude/disclaude.config.yaml' });
+    expect(args.slice(-2)).toEqual(['--config', '/home/op/.disclaude/disclaude.config.yaml']);
+  });
+});
+
+describe('readLaunchdDeploymentConfig (.disclaude config, #5619)', () => {
+  function writeConfig(home: string, yaml: string) {
+    mkdirSync(join(home, '.disclaude'), { recursive: true });
+    writeFileSync(join(home, '.disclaude', 'disclaude.config.yaml'), yaml);
+  }
+
+  it('reads entry/apiPort/apiToken/env from ~/.disclaude/disclaude.config.yaml', () => {
+    const home = mkdtempSync(join(tmpdir(), 'launchd-deploy-'));
+    try {
+      writeConfig(home, [
+        'launchd:',
+        '  entry: /opt/disclaude/bin/disclaude.js',
+        '  apiPort: 8400',
+        '  apiToken: cfg-secret',
+        '  env:',
+        '    FEISHU_REGION: cn',
+        'env:',
+        '  TOP_LEVEL: yes',
+        '',
+      ].join('\n'));
+      const deployment = readLaunchdDeploymentConfig({}, home, join(home, 'cwd'));
+      expect(deployment.configPath).toBe(join(home, '.disclaude', 'disclaude.config.yaml'));
+      expect(deployment.entry).toBe('/opt/disclaude/bin/disclaude.js');
+      expect(deployment.apiPort).toBe(8400);
+      expect(deployment.apiToken).toBe('cfg-secret');
+      expect(deployment.env).toEqual({ FEISHU_REGION: 'cn', TOP_LEVEL: 'yes' });
+      expect(deployment.sources.join('\n')).toContain(join(home, '.disclaude', 'disclaude.config.yaml'));
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
+  it('lets launchd.env override the top-level env block on collisions', () => {
+    const home = mkdtempSync(join(tmpdir(), 'launchd-deploy-'));
+    try {
+      writeConfig(home, 'env:\n  SHARED: base\n  ONLY_TOP: 1\nlaunchd:\n  env:\n    SHARED: override\n');
+      const deployment = readLaunchdDeploymentConfig({}, home, join(home, 'cwd'));
+      expect(deployment.env).toEqual({ SHARED: 'override', ONLY_TOP: '1' });
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
+  it('falls back to the top-level env block when launchd.env is absent', () => {
+    const home = mkdtempSync(join(tmpdir(), 'launchd-deploy-'));
+    try {
+      writeConfig(home, 'env:\n  MY_TOOL_HOME: /opt/my-tool\n');
+      const deployment = readLaunchdDeploymentConfig({}, home, join(home, 'cwd'));
+      expect(deployment.env).toEqual({ MY_TOOL_HOME: '/opt/my-tool' });
+      expect(deployment.entry).toBeUndefined();
+      expect(deployment.apiPort).toBeUndefined();
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
+  it('rejects a relative entry and an out-of-range port, stating the source', () => {
+    const home = mkdtempSync(join(tmpdir(), 'launchd-deploy-'));
+    try {
+      writeConfig(home, 'launchd:\n  entry: bin/disclaude.js\n  apiPort: 99999\n');
+      const deployment = readLaunchdDeploymentConfig({}, home, join(home, 'cwd'));
+      expect(deployment.entry).toBeUndefined();
+      expect(deployment.apiPort).toBeUndefined();
+      expect(deployment.sources.join('\n')).toMatch(/launchd\.entry must be an absolute path/);
+      expect(deployment.sources.join('\n')).toMatch(/launchd\.apiPort "99999"/);
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
+  it('reports safe defaults when no config exists anywhere', () => {
+    const home = mkdtempSync(join(tmpdir(), 'launchd-deploy-'));
+    try {
+      const deployment = readLaunchdDeploymentConfig({}, home, join(home, 'cwd'));
+      expect(deployment.configPath).toBeNull();
+      expect(deployment.env).toEqual({});
+      expect(deployment.sources.join('\n')).toMatch(/no disclaude config found/);
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
+  it('honours DISCLAUDE_CONFIG_PATH ahead of the home config', () => {
+    const home = mkdtempSync(join(tmpdir(), 'launchd-deploy-'));
+    const explicit = join(home, 'explicit.config.yaml');
+    try {
+      writeConfig(home, 'launchd:\n  apiPort: 7000\n');
+      writeFileSync(explicit, 'launchd:\n  apiPort: 7001\n');
+      const deployment = readLaunchdDeploymentConfig({ DISCLAUDE_CONFIG_PATH: explicit }, home, join(home, 'cwd'));
+      expect(deployment.apiPort).toBe(7001);
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+});
+
+describe('resolveServiceEntry (plist entry source, #5619)', () => {
+  it('takes the entry from the deployment config when provided', () => {
+    snapshotEnv();
+    const { entry, source } = resolveServiceEntry({ entry: '/opt/disclaude/bin/disclaude.js' });
+    expect(entry).toBe('/opt/disclaude/bin/disclaude.js');
+    expect(source).toContain('launchd.entry');
+  });
+
+  it('falls back to the package checkout entry and says so', () => {
+    snapshotEnv();
+    const { entry, source } = resolveServiceEntry(null);
+    expect(entry.endsWith('bin/disclaude.js')).toBe(true);
+    expect(source).toContain('package checkout default');
+  });
+});
+
+describe('buildServicePlist (production-reproducible plist, #5619)', () => {
+  const baseOptions = {
+    label: 'com.disclaude.service',
+    programArgs: ['/usr/bin/caffeinate', '-s', '/opt/disclaude/bin/disclaude.js', 'start', '--api-port', '19200'],
+    workingDirectory: '/opt/disclaude',
+    stdoutLog: '/Users/op/Library/Logs/disclaude/launchd-stdout.log',
+    stderrLog: '/Users/op/Library/Logs/disclaude/launchd-stderr.log',
+    logDir: '/Users/op/Library/Logs/disclaude',
+    home: '/Users/op',
+    pathEnv: '/usr/local/bin:/usr/bin:/bin',
+    restChannelApiBaseUrl: 'http://127.0.0.1:19200' as string | null,
+  };
+
+  it('embeds the configured entry, fixed port and working directory', () => {
+    const plist = buildServicePlist(baseOptions);
+    expect(plist).toContain('<string>/opt/disclaude/bin/disclaude.js</string>');
+    expect(plist).toContain('<string>--api-port</string>');
+    expect(plist).toContain('<string>19200</string>');
+    expect(plist).not.toContain('>0</string>');
+    expect(plist).toContain('<string>/opt/disclaude</string>');
+    expect(plist).toContain('<key>DISCLAUDE_API_BASE_URL</key>');
+  });
+
+  it('merges config env entries and keeps the reserved launchd keys', () => {
+    const plist = buildServicePlist({ ...baseOptions, extraEnv: { FEISHU_REGION: 'cn', NODE_ENV: 'development' } });
+    expect(plist).toContain('<key>FEISHU_REGION</key>');
+    expect(plist).toContain('<string>cn</string>');
+    // NODE_ENV stays the plist's own production value.
+    expect(plist).not.toContain('<string>development</string>');
+    expect(plist).toContain('<key>NODE_ENV</key>');
+    expect(plist).toMatch(/<key>NODE_ENV<\/key>\s*<string>production<\/string>/);
+  });
+
+  it('XML-escapes interpolated values', () => {
+    const plist = buildServicePlist({
+      ...baseOptions,
+      programArgs: ['/opt/bin/disclaude.js', 'start', '--api-token', 'a&b<c>'],
+      extraEnv: { MARKUP: '<value>' },
+    });
+    expect(plist).toContain('<string>a&amp;b&lt;c&gt;</string>');
+    expect(plist).toContain('<string>&lt;value&gt;</string>');
+  });
+
+  it('renders the isolated LOCKFILE_PATH only when requested', () => {
+    expect(buildServicePlist(baseOptions)).not.toContain('LOCKFILE_PATH');
+    expect(buildServicePlist({ ...baseOptions, lockfilePath: '/tmp/state/disclaude.pid' }))
+      .toContain('<key>LOCKFILE_PATH</key>');
   });
 });
 

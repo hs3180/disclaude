@@ -111,17 +111,46 @@ it('reconciles an acknowledgement lost after the quarantine rename without repea
   expect(await fs.readdir(join(f.root, '.registry-lock-quarantine'))).toHaveLength(1);
 });
 
-it('restores actual registry access while preserving registration, auth, cursor and deduplication bytes', async () => {
-  const root = await fs.mkdtemp(join(os.tmpdir(), 'wechat-registry-recover-')); roots.push(root);
+it.each(['', '{partial'])('auto-quarantines same-boot corrupt registry locks and restores access without a reboot (#5513: %s)', async body => {
+  const root = await fs.mkdtemp(join(os.tmpdir(), 'wechat-registry-auto-')); roots.push(root);
   const registry = new WeChatRegistry(root);
   const account = await registry.register({ botId: 'offline-fixture', token: 'private-canary', baseUrl: 'https://ilinkai.weixin.qq.com', savedAt: new Date().toISOString() });
   const store = new WeChatStateStore(registry.stateDir(account));
   await store.saveSession({ botId: account.botId, cursor: 'saved-cursor', seenMessageIds: ['already-processed'], contexts: { peer: 'private-context' } });
   const files = [join(root, 'accounts.json'), join(store.dir, 'auth.json'), join(store.dir, 'session.json')];
   const before = await Promise.all(files.map(async file => hash(await fs.readFile(file))));
-  await fs.writeFile(join(root, '.registry-lock', 'listener.lock'), '', { mode: 0o600 });
-  await expect(registry.list()).rejects.toThrow('Invalid WeChat listener lock'); simulatedLaterBoot();
-  await recoverRegistryLock(root, await inspectRegistryLock(root));
+  const lockDir = join(root, '.registry-lock');
+  await fs.writeFile(join(lockDir, 'listener.lock'), body, { mode: 0o600 });
+  // #5577's manual recovery refuses same-boot corruption — exactly what an
+  // ENOSPC-emptied write leaves behind — so the registry path must heal itself.
+  const preview = await inspectRegistryLock(root);
+  expect(preview.state).toBe('corrupt-current-boot');
+  await expect(recoverRegistryLock(root, preview)).rejects.toThrow('pre-boot');
   expect(await registry.list()).toEqual([account]);
+  const residue = (await fs.readdir(lockDir)).filter(name => name !== 'listener.lock');
+  expect(residue).toEqual([expect.stringMatching(/^listener\.lock\.\d{4}-\d{2}-\d{2}T[0-9-]+Z\.[0-9a-f]{8}\.corrupt$/)]);
+  expect(await fs.readFile(join(lockDir, residue[0]), 'utf8')).toBe(body);
+  // The rebuilt guard lock was acquired and released cleanly; no live residue of it.
+  expect(await fs.readdir(lockDir)).toEqual(residue);
   expect(await Promise.all(files.map(async file => hash(await fs.readFile(file))))).toEqual(before);
+  expect(await registry.list()).toEqual([account]);
+});
+
+it('never quarantines a live owner record; it stays untouched and the registry reports busy', async () => {
+  const root = await fs.mkdtemp(join(os.tmpdir(), 'wechat-registry-live-')); roots.push(root);
+  const lockDir = join(root, '.registry-lock'); await fs.mkdir(lockDir, { mode: 0o700 });
+  const owner = JSON.stringify({ pid: process.pid, nonce: 'live-owner' });
+  await fs.writeFile(join(lockDir, 'listener.lock'), owner, { mode: 0o600 });
+  await expect(new WeChatRegistry(root).list()).rejects.toThrow('WeChat registry is busy');
+  expect(await fs.readFile(join(lockDir, 'listener.lock'), 'utf8')).toBe(owner);
+  expect((await fs.readdir(lockDir)).filter(name => name.endsWith('.corrupt'))).toEqual([]);
+});
+
+it('refuses to auto-recover a lock it cannot prove safe and points at lock-inspect', async () => {
+  const f = await fixture(), outside = await fs.mkdtemp(join(os.tmpdir(), 'wechat-lock-outside-')); roots.push(outside);
+  const target = join(outside, 'residue'); await fs.writeFile(target, '', { mode: 0o600 });
+  await fs.rm(f.file); await fs.symlink(target, f.file);
+  await expect(new WeChatRegistry(f.root).list()).rejects.toThrow('disclaude wechat lock-inspect');
+  expect((await fs.lstat(f.file)).isSymbolicLink()).toBe(true);
+  expect(await fs.readFile(target, 'utf8')).toBe('');
 });

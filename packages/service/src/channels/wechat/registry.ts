@@ -3,6 +3,27 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { DEFAULT_WECHAT_STATE_DIR, WeChatStateStore, validateWechatBaseUrl, type WeChatCredentials } from './state-store.js';
+import { autoRecoverRegistryLock } from './registry-lock-recovery.js';
+
+// This module is imported eagerly by JSON-output CLI commands (wechat status)
+// before their configuration sets the log level, so it must stay free of
+// static '@disclaude/core' imports: pulling that barrel evaluates
+// config/loader.ts, whose module-level createLogger() initializes the root
+// logger with process defaults — ConfigLoader then emitted a stray stdout
+// line that broke machine-readable CLI output (#5513 package acceptance).
+// The quarantine warn loads its logger dynamically on first use instead.
+type QuarantineWarn = (fields: Record<string, unknown>, message: string) => void;
+let quarantineWarn: QuarantineWarn | undefined;
+const logQuarantine = (fields: Record<string, unknown>, message: string): void => {
+  if (quarantineWarn) { quarantineWarn(fields, message); return; }
+  void import('@disclaude/core')
+    .then(({ createLogger }) => {
+      const logger = createLogger('WeChatRegistry');
+      quarantineWarn = (innerFields, innerMessage) => logger.warn(innerFields, innerMessage);
+      quarantineWarn(fields, message);
+    })
+    .catch(() => { /* recovery must never fail on logging */ });
+};
 
 export interface WeChatRegistration {
   id: string;
@@ -87,14 +108,31 @@ export class WeChatRegistry {
     await this.prepare();
     const guard = new WeChatStateStore(join(this.dir, '.registry-lock'));
     let release: (() => Promise<void>) | undefined;
+    let quarantined = false;
     for (let attempt = 0; attempt < 40; attempt++) {
       try { release = await guard.lock(); break; }
       catch (error) {
-        if (!(error instanceof Error) || !error.message.includes('already in use')) { throw error; }
-        await delay(25);
+        if (!(error instanceof Error)) { throw error; }
+        if (error.message.includes('already in use')) { await delay(25); continue; }
+        if (!error.message.includes('Invalid WeChat listener lock')) { throw error; }
+        // #5513: an empty or malformed guard lock (e.g. ENOSPC residue) must not
+        // keep every registry operation failing. Quarantine the residue and let
+        // the next attempt rebuild the lock; unsafe files still fail loudly below.
+        const recovery = await autoRecoverRegistryLock(this.dir);
+        if (recovery.outcome === 'quarantined') {
+          quarantined = true;
+          logQuarantine({ code: 'wechat_registry_lock_corrupt', registryRoot: recovery.registryRoot,
+            quarantinePath: recovery.quarantinePath, bytes: recovery.bytes, sha256: recovery.sha256,
+            corruption: recovery.state },
+          'WeChat registry lock was empty or corrupt; quarantined the residue and rebuilt the lock automatically');
+        }
       }
     }
-    if (!release) { throw new Error('WeChat registry is busy; retry the operation'); }
+    if (!release) {
+      throw new Error(quarantined
+        ? 'WeChat registry lock stays corrupt after automatic quarantine; run disclaude wechat lock-inspect and repair its state'
+        : 'WeChat registry is busy; retry the operation');
+    }
     try {
       let value = await this.read();
       if (!value) {
@@ -118,10 +156,18 @@ export class WeChatRegistry {
       const target = targetId ? value.accounts.find(account => account.id === targetId) : undefined;
       if (targetId) {
         if (!target) { throw new Error('Reauthentication must match the registered WeChat identity'); }
-        if (target.botId !== credentials.botId) { throw new WeChatIdentityMismatchError(targetId, target.botId, credentials.botId); }
+        if (target.botId !== credentials.botId) {
+          // #5480 (maintainer review on #5662): a registration's identity is
+          // its WeChat-server-provided user id, not the command-line --id
+          // binding. A confirmed scan from that same user rebinds the bot
+          // identity in place; any other scan still fails closed here.
+          const saved = credentials.userId ? await new WeChatStateStore(this.stateDir(target)).loadCredentials() : undefined;
+          if (!saved?.userId || saved.userId !== credentials.userId) { throw new WeChatIdentityMismatchError(targetId, target.botId, credentials.botId); }
+        }
       }
       if (expectedGeneration && target?.generation !== expectedGeneration) { throw new Error('Registration changed during login; retry'); }
-      const existing = target ?? value.accounts.find(account => account.botId === credentials.botId);
+      const existing = target ?? value.accounts.find(account => account.botId === credentials.botId)
+        ?? await this.findRegisteredUser(value.accounts, credentials.userId);
       const account: WeChatRegistration = { ...(existing ?? { id: randomUUID(), createdAt: new Date().toISOString() }),
         botId: credentials.botId, enabled: true, generation: randomUUID() };
       const store = new WeChatStateStore(this.stateDir(account));
@@ -135,6 +181,21 @@ export class WeChatRegistry {
         return account;
       } finally { await release(); }
     });
+  }
+
+  /**
+   * #5480 (maintainer review on #5662): whether a newly scanned user already
+   * exists is judged from the WeChat-server-provided user id, so a returning
+   * user's fresh scan lands on their registration instead of registering a
+   * parallel account. Registrations saved without a user id never match.
+   */
+  private async findRegisteredUser(accounts: WeChatRegistration[], userId?: string): Promise<WeChatRegistration | undefined> {
+    if (!userId) { return undefined; }
+    for (const account of accounts) {
+      const saved = await new WeChatStateStore(this.stateDir(account)).loadCredentials();
+      if (saved?.userId === userId) { return account; }
+    }
+    return undefined;
   }
 
   async setEnabled(id: string, enabled: boolean): Promise<WeChatRegistration> {

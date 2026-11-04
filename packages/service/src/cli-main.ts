@@ -47,6 +47,9 @@ import { ChatSessionPool } from './chat-session-pool.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
 import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
+// #5519: bounded DNS/connection readiness wait before the startup sequence
+// reports the Feishu channel as available.
+import { waitForStartupReadiness } from './channels/feishu/dns-readiness.js';
 import { createChannelCallbacksFactory } from './utils/channel-handlers.js';
 import { ServiceTurnRecoveryStore } from './service-turn-recovery.js';
 import { BackgroundAgentTasks } from './agents/background-agent-tasks.js';
@@ -723,11 +726,14 @@ export async function main(): Promise<void> {
   let isShuttingDown = false;
   // Issue #3857 Phase 2: HTTP API server reference for shutdown
   let httpApiServer: HttpApiServer | undefined;
+  // #5519: cancels the bounded startup readiness wait when shutdown begins.
+  const startupReadinessAbort = new AbortController();
   const shutdown = async (): Promise<void> => {
     if (isShuttingDown) {
       return;
     }
     isShuttingDown = true;
+    startupReadinessAbort.abort();
     logger.info('Shutting down disclaude service...');
 
     try {
@@ -787,6 +793,35 @@ export async function main(): Promise<void> {
       logger.warn('No connected channel; WeChat registration remains available');
     }
 
+    // #5519: autostart can outrun DNS (launchd boots before the network
+    // stack answers). startAll() is deliberately non-blocking, so wait —
+    // bounded, cancellable, observable — for DNS and the first real Feishu
+    // handshake before the startup sequence reports the channel available.
+    // After the bound the wait gives up and the channel is reported with its
+    // real state; the connection manager keeps retrying in the background,
+    // so the connection still completes once the network recovers.
+    const feishuStartupChannel = channelManager.get('feishu') as
+      | { status?: string; getConnectionHealth?: () => { state: string; healthy: boolean } }
+      | undefined;
+    if (feishuStartupChannel?.status === 'running' && feishuStartupChannel.getConnectionHealth) {
+      const readiness = await waitForStartupReadiness({
+        host: 'open.feishu.cn',
+        signal: startupReadinessAbort.signal,
+        isConnectionReady: () => feishuStartupChannel.getConnectionHealth?.().healthy === true,
+      });
+      if (!readiness.ready) {
+        logger.warn(
+          {
+            dnsReady: readiness.dnsReady,
+            attempts: readiness.attempts,
+            lastErrorCode: readiness.lastErrorCode,
+            connectionState: feishuStartupChannel.getConnectionHealth().state,
+          },
+          'Feishu connection not ready within the startup bound; reporting unavailable and letting background retries finish it (#5519)',
+        );
+      }
+    }
+
     // Channels are ready: report prior-process interruptions even if the
     // user sends no further message. Failed delivery stays pending for that
     // session's next available path; startup never replays model inputs.
@@ -805,6 +840,17 @@ export async function main(): Promise<void> {
       const channel = service.getChannel(String(config.id ?? type));
       if (channel?.status !== 'running') {
         logger.warn({ type, channelId: channel?.id, status: channel?.status }, 'Channel unavailable; other channels continue serving');
+        continue;
+      }
+      // #5519: only a channel with a live connection is reported as
+      // available; a still-waiting Feishu channel reports its real state.
+      const connectionHealth = (channel as { getConnectionHealth?: () => { state: string; healthy: boolean } })
+        .getConnectionHealth?.();
+      if (connectionHealth && !connectionHealth.healthy) {
+        logger.warn(
+          { type, channelId: channel.id, connectionState: connectionHealth.state },
+          'Channel started but its connection is not ready; messages queue until it connects (#5519)',
+        );
         continue;
       }
       logger.info({ type }, `${type.charAt(0).toUpperCase() + type.slice(1)} Channel started`);
@@ -870,9 +916,9 @@ export async function main(): Promise<void> {
       // Issue #3857 Phase 2: Wire push handler to InputMessageRouter
       const router = service.getInputMessageRouter();
       if (router) {
-        httpApiServer.setPushHandler(async (chatId: string, message: string) => {
+        const routeSignal = async (prefix: string, chatId: string, message: string): Promise<void> => {
           const systemMessage: SystemMessage = {
-            id: `http-push-${crypto.randomUUID()}`,
+            id: `${prefix}-${crypto.randomUUID()}`,
             source: 'system',
             trigger: 'signal',
             chatId,
@@ -880,7 +926,15 @@ export async function main(): Promise<void> {
             createdAt: new Date().toISOString(),
           };
           await router.route(systemMessage);
+        };
+        httpApiServer.setPushHandler(async (chatId: string, message: string) => {
+          await routeSignal('http-push', chatId, message);
         });
+        // #5411: a consumed private input resumes the waiting task by itself,
+        // through the same signal routing as /api/push. The payload carries
+        // only ids/outcome — never the private value.
+        (feishuChannel as { setPrivateWorkflowNotifier?: (notify: (chatId: string, message: string) => Promise<void>) => void } | undefined)
+          ?.setPrivateWorkflowNotifier?.((chatId, message) => routeSignal('private-input', chatId, message));
       }
 
       // Issue #4279: wire REST /api/upload-file to the channel's uploadFile
