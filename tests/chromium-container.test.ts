@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { resolve, join } from 'node:path';
-import { readFileSync } from 'node:fs';
+import { resolve, join, dirname } from 'node:path';
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import yaml from 'js-yaml';
 
 describe('container Chromium configuration', () => {
@@ -70,6 +71,82 @@ describe('container Chromium configuration', () => {
   it('keeps Chromium automation exposure disabled in the container launcher', () => {
     const launcher = readFileSync(resolve('docker/start-chromium.sh'), 'utf8');
     expect(launcher).toContain('--disable-blink-features=AutomationControlled');
+  });
+
+  // Extracted from the real launcher so the probe is tested verbatim (#5652):
+  // retail Google Chrome first, bundled Playwright Chromium as fallback.
+  const probe = readFileSync(resolve('docker/start-chromium.sh'), 'utf8')
+    .match(/^select_browser_binary\(\) \{[\s\S]*?^\}/m)![0];
+  const runProbe = (retail: string, glob: string) => {
+    const result = spawnSync('bash', ['-c', `${probe}\nselect_browser_binary "$PROBE_RETAIL" "$PROBE_GLOB"`], {
+      encoding: 'utf8',
+      env: { PATH: process.env.PATH, PROBE_RETAIL: retail, PROBE_GLOB: glob },
+    });
+    return { status: result.status, stdout: (result.stdout ?? '').trimEnd(), stderr: result.stderr ?? '' };
+  };
+  const makeFixture = () => {
+    const root = mkdtempSync(join(tmpdir(), 'disclaude-chromium-probe-'));
+    const playwrightBinary = join(root, 'chromium-1234', 'chrome-linux', 'chrome');
+    mkdirSync(dirname(playwrightBinary), { recursive: true });
+    writeFileSync(playwrightBinary, '');
+    chmodSync(playwrightBinary, 0o755);
+    return { root, playwrightBinary };
+  };
+
+  it('prefers the retail Google Chrome binary when the deb layer is present', () => {
+    const { root, playwrightBinary } = makeFixture();
+    try {
+      const retail = join(root, 'opt', 'google', 'chrome', 'chrome');
+      mkdirSync(dirname(retail), { recursive: true });
+      writeFileSync(retail, '');
+      chmodSync(retail, 0o755);
+      const result = runProbe(retail, join(root, 'chromium-*', 'chrome-linux*', 'chrome'));
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe(retail);
+      expect(result.stderr).toContain('INFO: using retail Google Chrome binary');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to the bundled Playwright Chromium without the retail deb', () => {
+    const { root, playwrightBinary } = makeFixture();
+    try {
+      const result = runProbe(join(root, 'opt', 'google', 'chrome', 'chrome'), join(root, 'chromium-*', 'chrome-linux*', 'chrome'));
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe(playwrightBinary);
+      expect(result.stderr).not.toContain('retail');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('ignores a non-executable retail binary and keeps Playwright behavior unchanged', () => {
+    const { root, playwrightBinary } = makeFixture();
+    try {
+      const retail = join(root, 'opt', 'google', 'chrome', 'chrome');
+      mkdirSync(dirname(retail), { recursive: true });
+      writeFileSync(retail, '');
+      chmodSync(retail, 0o644);
+      const result = runProbe(retail, join(root, 'chromium-*', 'chrome-linux*', 'chrome'));
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe(playwrightBinary);
+      expect(result.stderr).not.toContain('retail');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('fails with the original fatal message when no executable browser exists', () => {
+    const { root } = makeFixture();
+    rmSync(join(root, 'chromium-1234'), { recursive: true, force: true });
+    try {
+      const result = runProbe(join(root, 'opt', 'google', 'chrome', 'chrome'), join(root, 'chromium-*', 'chrome-linux*', 'chrome'));
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('FATAL: bundled Chromium executable not found');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('publishes the password-protected headed view by default', () => {

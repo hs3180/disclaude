@@ -6,6 +6,28 @@ RUN apt-get update -qq \
     && apt-get install -y --no-install-recommends nginx xvfb x11-utils iproute2 curl x11vnc novnc websockify \
     && rm -rf /var/lib/apt/lists/*
 COPY chromium-cdp-nginx.conf /etc/nginx/cdp-proxy.conf.template
+# Retail Google Chrome (#5652): Playwright Chromium reports UA-CH brands
+# without a "Google Chrome" entry, mismatching its UA string — an automation
+# fingerprint. Pinned-deb download instead of the apt `google-chrome-stable`
+# metapackage so builds stay reproducible; bump GOOGLE_CHROME_VERSION and
+# GOOGLE_CHROME_DEB_SHA256 together. The default below is a real published
+# stable but dated; verify the current stable deb and its sha256 at deploy
+# time and pass both via --build-arg.
+ARG GOOGLE_CHROME_VERSION=138.0.7204.49
+ARG GOOGLE_CHROME_DEB_SHA256=
+RUN set -eux; \
+    deb="/tmp/google-chrome-stable_${GOOGLE_CHROME_VERSION}-1_amd64.deb"; \
+    curl -fsSL --retry 3 -o "$deb" \
+      "https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_${GOOGLE_CHROME_VERSION}-1_amd64.deb"; \
+    if [ -n "$GOOGLE_CHROME_DEB_SHA256" ]; then \
+      echo "${GOOGLE_CHROME_DEB_SHA256}  $deb" | sha256sum -c -; \
+    else \
+      echo "WARN: GOOGLE_CHROME_DEB_SHA256 not set; installing google-chrome-stable ${GOOGLE_CHROME_VERSION} without checksum verification" >&2; \
+    fi; \
+    apt-get update -qq \
+    && apt-get install -y --no-install-recommends "$deb" \
+    && rm -f "$deb" && rm -rf /var/lib/apt/lists/* \
+    && test -x /opt/google/chrome/chrome
 COPY close-chromium.mjs /usr/local/lib/disclaude/close-chromium.mjs
 COPY start-chromium.sh /usr/local/bin/disclaude-chromium
 RUN chmod 755 /usr/local/bin/disclaude-chromium \

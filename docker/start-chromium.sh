@@ -51,11 +51,27 @@ if [[ "$CHROMIUM_VNC_ENABLED" == 1 ]]; then
     fi
 fi
 
-binary=''
-for candidate in /ms-playwright/chromium-*/chrome-linux*/chrome; do
-    if [[ -x "$candidate" ]]; then binary="$candidate"; break; fi
-done
-if [[ -z "$binary" ]]; then echo 'FATAL: bundled Chromium executable not found' >&2; exit 1; fi
+# Retail Google Chrome keeps navigator.userAgentData.brands consistent with the
+# UA string (#5652); when the image carries no retail deb the bundled Playwright
+# Chromium build stays the fallback with unchanged behavior. Paths default to
+# the in-image locations but are parameters so the probe is unit-testable.
+select_browser_binary() {
+    local retail=${1:-/opt/google/chrome/chrome}
+    local glob=${2:-'/ms-playwright/chromium-*/chrome-linux*/chrome'}
+    if [[ -x "$retail" ]]; then
+        echo "INFO: using retail Google Chrome binary $retail" >&2
+        printf '%s\n' "$retail"
+        return 0
+    fi
+    local candidate
+    for candidate in $glob; do
+        if [[ -x "$candidate" ]]; then printf '%s\n' "$candidate"; return 0; fi
+    done
+    echo 'FATAL: bundled Chromium executable not found' >&2
+    return 1
+}
+
+binary=$(select_browser_binary) || exit 1
 
 CDP_HOST=$(ip -4 route get 1.1.1.1 | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')
 GATEWAY=$(ip -4 route show default | awk '/default/{print $3; exit}')
