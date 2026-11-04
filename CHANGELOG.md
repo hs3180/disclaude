@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.10] - 2026-11-04
+
+### Fixed
+
+- Make input consumption visible while a turn is busy: picking up a queued
+  input now emits a receipt anchored to that input, and admission receipts
+  name the attachments carried along, so a user can tell their input was
+  consumed instead of re-asking during long waits (#5470; #5666).
+- Send scheduler informational notices best-effort: a transient failure of
+  the scheduled-task opening notice (or other purely informational notices)
+  no longer aborts the task or counts toward its consecutive failures — the
+  task still routes and runs; task-body failure accounting is unchanged
+  (#5656; #5669).
+- Record host-side rejections of blocking async questions in
+  push-initialized sessions as the structured local input-delivery failure
+  with the natively completed turn state preserved and exactly one notice,
+  instead of an unlabelled protocol cancellation that mislabels a delivered
+  turn as provider-failed (#5430; #5668).
+
+### Changed
+
+- De-flake the #5514 capacity-budget regression test (#5648) and make the
+  browser-control CLI 404-provenance test deterministic (#5673), so main
+  Unit Tests are green again on consecutive batches.
+
 ## [0.6.9] - 2026-11-04
 
 ### Fixed
@@ -120,7 +145,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   archive shipped stale dist output for files already fixed on its declared
   source (#5517; #5522), and the install acceptance test now isolates
   inherited workspace context (#5527).
-
 
 ## [0.6.7] - 2026-10-23
 
