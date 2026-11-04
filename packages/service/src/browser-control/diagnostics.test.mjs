@@ -165,9 +165,26 @@ describe('browser HTTP failure provenance', () => {
     const root = mkdtempSync(join(tmpdir(), 'dc-browser-404-'));
     cleanup.push(() => rmSync(root, { recursive: true, force: true }));
     const bin = join(root, 'upstream'); mkdirSync(bin);
-    writeFileSync(join(bin, 'browser-use'), `#!${process.execPath}\nsetTimeout(() => { process.stdout.write('original result'); process.exit(0); }, 300);\n`, { mode: 0o700 });
+    // The upstream CLI exits only when this test releases it, so the synthetic
+    // CDP events below cannot lose a race against a fixed-lifetime CLI exit
+    // (the observer is torn down with the CLI before late events are handled).
+    const release = join(root, 'release');
+    writeFileSync(join(bin, 'browser-use'),
+      `#!${process.execPath}\nconst { existsSync } = require('node:fs');\n` +
+      `const timer = setInterval(() => { if (!existsSync(${JSON.stringify(release)})) return; ` +
+      `clearInterval(timer); process.stdout.write('original result'); process.exit(0); }, 10);\n`, { mode: 0o700 });
     const env = { PATH: `${bin}:/usr/bin:/bin`, XDG_RUNTIME_DIR: root, BU_CDP_URL: s.endpoint,
       DISCLAUDE_CONFIG_PATH: join(root, 'config.json'), DISCLAUDE_CHROMIUM_CONFIG: join(root, 'missing.json') };
+    // browserAgentEnv() deliberately prefers the service handoff pointer from
+    // the CALLER's process env; an ambient DISCLAUDE_BROWSER_RUNTIME leaked
+    // from a host disclaude service would route this wrapper at the real
+    // service manifest instead of the fixture prepared above.
+    const ambientRuntime = process.env.DISCLAUDE_BROWSER_RUNTIME;
+    delete process.env.DISCLAUDE_BROWSER_RUNTIME;
+    cleanup.push(() => {
+      if (ambientRuntime === undefined) delete process.env.DISCLAUDE_BROWSER_RUNTIME;
+      else process.env.DISCLAUDE_BROWSER_RUNTIME = ambientRuntime;
+    });
     const runtime = await prepareBrowserCommands({ env, fetchImpl: () => Promise.resolve(new Response(JSON.stringify({ webSocketDebuggerUrl: s.websocket }))) });
     const path = resolveBrowserRuntimePath(env), data = JSON.parse(readFileSync(path, 'utf8'));
     cleanup.push(() => rmSync(data.directory, { recursive: true, force: true }));
@@ -179,9 +196,14 @@ describe('browser HTTP failure provenance', () => {
     const result = new Promise(resolve => child.once('close', code => resolve(code)));
     cleanup.push(() => { if (child.exitCode === null) child.kill('SIGTERM'); });
     child.stdin.end('upstream script');
-    await vi.waitFor(() => expect(s.seen.some(item => item.method === 'Network.enable')).toBe(true));
+    await vi.waitFor(() => expect(s.seen.some(item => item.method === 'Network.enable')).toBe(true), { timeout: 4000 });
     s.event('Network.requestWillBeSent', { requestId: 'nav', type: 'Document', request: { method: 'GET' } });
     s.event('Network.responseReceived', { requestId: 'nav', type: 'Document', response: { status: 404, url: 'https://example.test/not-found?private=secret' } });
+    // Latch the page-404 attribution while the CLI is still running; only a
+    // recorded diagnostic proves the observer handled the events before exit.
+    await vi.waitFor(() => expect(diagnostics(stderr).some(record =>
+      record.stage === 'page-navigation' && record.status === 404)).toBe(true), { timeout: 4000 });
+    writeFileSync(release, '');
     expect(await result).toBe(0); expect(stdout).toBe('original result');
     const [record] = diagnostics(stderr);
     expect(record).toMatchObject({ stage: 'page-navigation', status: 404, method: 'GET', path: '/not-found', observation: 'diagnostic-observer' });
