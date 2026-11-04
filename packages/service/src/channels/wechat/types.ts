@@ -27,6 +27,13 @@ export interface WeChatChannelConfig extends ChannelConfig {
   routeTag?: string;
   /** Persistent account directory, populated by `disclaude wechat login`. */
   stateDir?: string;
+  /**
+   * Directory holding the cross-registration peer identity bindings (#5600).
+   * Defaults to the parent of `stateDir` — the registry's accounts root
+   * shared by every registration — so a re-registered peer continues its
+   * original chatId.
+   */
+  peerIdentityDir?: string;
 }
 
 // ---------------------------------------------------------------------------
