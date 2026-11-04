@@ -155,7 +155,8 @@ import { ChatAgent } from './chat-agent.js';
 import { createChannelCallbacksFactory, createDefaultMessageHandler } from '../utils/channel-handlers.js';
 import { registerFeishuInputSource, readVerifiedInputSource } from './input-provenance.js';
 import type { WiredContext } from '../channel-lifecycle-manager.js';
-import { MessageRouter, TurnSupersededError, type IChannel, type OutgoingMessage, type IncomingMessage } from '@disclaude/core';
+import { MessageRouter, TurnSupersededError, LiveInputRejectedError,
+  type IChannel, type OutgoingMessage, type IncomingMessage, type StreamingUserMessage } from '@disclaude/core';
 import type { Logger } from 'pino';
 import { ServiceTurnRecoveryStore } from '../service-turn-recovery.js';
 import { AgentPoolMessageHandler } from '../messaging/agent-pool-handler.js';
@@ -275,6 +276,20 @@ describe('ChatAgent (service)', () => {
         await expect(chatAgent.turnCompleteFor('rejected-source')).rejects.toThrow('Channel closed');
         expect(chatAgent.hasAdmittedInput('rejected-source')).toBe(false);
       } finally { chatAgent.reset(); finish?.(); ChatAgent.prototype.dispose.call(chatAgent); }
+    });
+
+    it('hands the backend the #5434-guarded channel FIFO at session start', async () => {
+      const guard = vi.spyOn(ChatAgent.prototype as any, 'guardChannelFifo');
+      try {
+        await (chatAgent as any).startAgentLoop();
+        expect(guard).toHaveBeenCalledTimes(1);
+        expect((chatAgent as any).createQueryStream.mock.calls[0][0])
+          .toBe(guard.mock.results[0].value);
+      } finally {
+        guard.mockRestore();
+        chatAgent.reset();
+        ChatAgent.prototype.dispose.call(chatAgent);
+      }
     });
 
     it('settles a capacity rejection with a channel notice and lets a later retry start', async () => {
@@ -939,8 +954,11 @@ describe('ChatAgent (service)', () => {
 
     it('Issue #5434: suppresses a replayed attachment-only input the running turn already consumed', async () => {
       const { agent, push, steer, callbacks } = owned();
+      // #5434: a proper inbound image FileRef (id/source/localPath per core type).
+      const tireImage = () => ({ id: 'att-image-k', fileName: 'image_k.png', source: 'user' as const,
+        localPath: '/tmp/image_k.png', createdAt: 1 });
       const attachmentInput = (messageId = 'image-1-file') => ({ chatId: 'owned-steer', payload: '用户上传了一个图片：image_k',
-        messageId, attachments: [{ fileName: 'image_k.png', filePath: '/tmp/image_k.png' }], attachmentOnly: true });
+        messageId, attachments: [tireImage()], attachmentOnly: true });
       try {
         // Timeline step 1 (08:34): the bare image arrives while the main turn
         // runs and steers into it — the running request consumes the attachment.
@@ -967,8 +985,101 @@ describe('ChatAgent (service)', () => {
         // Acceptance ②: a genuine later independent request carries a fresh
         // message id and is never suppressed — it steers as ordinary input.
         await agent.processMessage({ chatId: 'owned-steer', payload: '现在请单独处理这张图',
-          messageId: 'later-request-c', attachments: [{ fileName: 'image_k.png', filePath: '/tmp/image_k.png' }] });
+          messageId: 'later-request-c', attachments: [tireImage()] });
         expect(steer).toHaveBeenCalledTimes(2);
+      } finally { dispose(agent); }
+    });
+
+    // #5434 queued-variant harness: a real in-test channel FIFO (steer is
+    // rejected once, so the attachment-only input queues behind the running
+    // text turn exactly like the issue's 08:34 "图片已排队" timeline) plus the
+    // FIFO dequeue guard under test.
+    const queuedVariant = (steer: ReturnType<typeof vi.fn>) => {
+      const callbacks = createMockCallbacks();
+      const agent = new ChatAgent({ chatId: 'owned-steer', callbacks, agentBackend: 'codex' as any, apiKey: 'test', model: 'test' });
+      const fifo: StreamingUserMessage[] = [];
+      const waiting: (() => void)[] = [];
+      const channel = {
+        push: (message: StreamingUserMessage): boolean => {
+          fifo.push(message);
+          waiting.splice(0).forEach(resolve => { resolve(); });
+          return true;
+        },
+        close: vi.fn(),
+      };
+      Object.assign(agent as any, { channel, queryHandle: { close: vi.fn(), cancel: vi.fn(), steer },
+        isSessionActive: true, isProcessingMessage: true, activeTurnMessageId: 'owner-A',
+        isAgentTeamsEnabled: () => false,
+        lastTurnMessage: { chatId: 'owned-steer', payload: 'original', messageId: 'owner-A' } });
+      (agent as any).historyManager.firstMessageHistoryLoaded = true;
+      (agent as any).createTurnCompletion('owner-A');
+      const channelFifo = (async function* (): AsyncGenerator<StreamingUserMessage> {
+        while (true) {
+          while (fifo.length > 0) { yield fifo.shift()!; }
+          await new Promise<void>(resolve => { waiting.push(resolve); });
+        }
+      })();
+      const backendInputs: string[] = [];
+      const drainFifo = async (): Promise<void> => {
+        for await (const message of (agent as any).guardChannelFifo(channelFifo)) {
+          backendInputs.push(message.correlation?.sourceMessageId ?? 'unknown');
+        }
+      };
+      const imageInput = (messageId: string, attachmentId = 'att-tire-1') => ({
+        chatId: 'owned-steer', payload: '用户上传了一个图片：tire_1', messageId,
+        attachments: [{ id: attachmentId, fileName: 'tire_1.png', source: 'user' as const,
+          localPath: '/tmp/tire_1.png', createdAt: 1 }],
+        attachmentOnly: true, threadRootId: 'root-B' });
+      return { agent, callbacks, steer, drainFifo, backendInputs, imageInput };
+    };
+
+    it('Issue #5434 (queued variant): suppresses a queued image turn at FIFO dequeue when the running turn consumed its attachment', async () => {
+      const steer = vi.fn()
+        .mockRejectedValueOnce(new LiveInputRejectedError('backend cannot take live input now'))
+        .mockResolvedValue({ turnId: 'native-A' });
+      const { agent, callbacks, drainFifo, backendInputs, imageInput } = queuedVariant(steer);
+      try {
+        // 08:34:29 (#5434): the bare image arrives while the main text turn
+        // runs; the backend rejects the steer, so the input queues once
+        // behind it in the channel FIFO.
+        await agent.processMessage(imageInput('image-1-file'));
+        expect(steer).toHaveBeenCalledTimes(1);
+        expect(callbacks.sendMessage.mock.calls.some(([, text]) => text.includes('已排队'))).toBe(true);
+        // The running request consumes the attachment copy that reached it
+        // (steer ack) — the #5434 consumption marker is written.
+        await agent.processMessage(imageInput('image-1-copy'));
+        expect(steer).toHaveBeenCalledTimes(2);
+        // 08:58 (#5434): FIFO dequeue after the main turn delivered — the
+        // queued image turn must NOT reach the backend as an independent
+        // "what should I do with this?" Q&A turn.
+        void drainFifo();
+        await agent.turnCompleteFor('image-1-file');
+        expect(backendInputs).toEqual([]);
+        expect((agent as any).pendingTurnMessageIds).not.toContain('image-1-file');
+        expect((agent as any).queuedAttachmentInputs.has('image-1-file')).toBe(false);
+        await vi.waitFor(() => expect((agent as any).logger.info.mock.calls.map(([record]: any[]) => record)
+          .some((record: any) => record?.event === 'agent_turn' && record.sourceMessageId === 'image-1-file'
+            && record.state === 'completed' && record.user_visible === false)).toBe(true));
+        // Suppression is silent: only the queue notice and the steer-ack
+        // notice went out — no additional question for the queued copy.
+        expect(callbacks.sendMessage).toHaveBeenCalledTimes(2);
+        expect(callbacks.onDone).toHaveBeenCalledWith('owned-steer', 'root-B');
+      } finally { dispose(agent); }
+    });
+
+    it('Issue #5434 (queued variant): a queued image turn whose attachment was not consumed still runs its own turn', async () => {
+      const steer = vi.fn()
+        .mockRejectedValueOnce(new LiveInputRejectedError('backend cannot take live input now'));
+      const { agent, drainFifo, backendInputs, imageInput } = queuedVariant(steer);
+      try {
+        await agent.processMessage(imageInput('image-2-file', 'att-tire-2'));
+        expect(steer).toHaveBeenCalledTimes(1);
+        // Nothing consumed the attachment: the FIFO dequeue must hand the
+        // input to the backend so its own attachment turn runs normally.
+        void drainFifo();
+        await vi.waitFor(() => expect(backendInputs).toEqual(['image-2-file']));
+        expect((agent as any).pendingTurnMessageIds).toContain('image-2-file');
+        expect(agent.turnCompleteFor('image-2-file')).toBeDefined();
       } finally { dispose(agent); }
     });
 
