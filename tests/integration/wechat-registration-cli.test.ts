@@ -80,16 +80,33 @@ describe('dynamic registration CLI', () => {
         .filter(line => line.startsWith('{') && line.endsWith('}')).map(line => JSON.parse(line));
       expect(entries).toEqual(expect.arrayContaining([expect.objectContaining({ ok: false, stage: 'identity-changed',
         saved: false, targetId: first.id, registeredBotId: 'original', scannedBotId: 'different', sameUser: true,
-        next: `disclaude wechat login --state-dir ${dir}` })]));
+        continuation: expect.stringContaining('stable peer-identity bindings'),
+        next: `disclaude wechat disable ${first.id} --state-dir ${dir} && disclaude wechat login --state-dir ${dir}`,
+        oldRecord: expect.stringContaining(`disclaude wechat remove ${first.id}`) })]));
       const [record] = await registry.list();
       expect(record.enabled).toBe(true);
       expect((await new WeChatStateStore(registry.stateDir(record)).loadCredentials())?.botId).toBe('original');
       // A scan from a different WeChat user reports the unexpected identity
-      // instead of offering the same-user continuation.
+      // instead of offering the same-user continuation, and points back at
+      // reauthenticating the registered identity.
       const stranger = await cli(dir, ['login', '--id', first.id, '--force', '--qr-file', join(dir, 'stranger.png')],
         { bot: 'different', user: 'someone-else@im.wechat' }).catch(error => error);
       expect(stranger.code).toBe(1);
       expect(stranger.stdout).toContain('"sameUser":false');
+      expect(stranger.stdout).toContain(`disclaude wechat login --id ${first.id} --force`);
+      // The guided same-user path (#5480 + #5600) executes end to end: disable
+      // the re-enabled old identity, register the scanned bot beside it, then
+      // unregister the old record while its private state is retained.
+      await cli(dir, ['disable', first.id]);
+      const renewed = lastJson((await cli(dir, ['login', '--qr-file', join(dir, 'renewed.png')], { bot: 'different' })).stdout);
+      expect(renewed).toMatchObject({ ok: true, registered: true });
+      expect(renewed.id).not.toBe(first.id);
+      const after = await new WeChatRegistry(dir).list();
+      expect(after.map(account => account.id)).toEqual(expect.arrayContaining([first.id, renewed.id]));
+      expect(after.find(account => account.id === first.id)?.enabled).toBe(false);
+      await cli(dir, ['remove', first.id]);
+      expect((await new WeChatRegistry(dir).list()).map(account => account.id)).toEqual([renewed.id]);
+      expect((await new WeChatStateStore(registry.stateDir(record)).loadCredentials())?.botId).toBe('original');
       await expect(cli(dir, ['status', '--id', 'unknown'])).rejects.toThrow('Unknown WeChat registration');
     } finally { await rm(dir, { recursive: true, force: true }); }
   });

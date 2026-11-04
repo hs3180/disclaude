@@ -181,12 +181,27 @@ async function main(): Promise<void> {
         // that just "didn't work". The rollback below restores the target.
         const saved = target ? await new WeChatStateStore(registry.stateDir(target)).loadCredentials() : undefined;
         const sameUser = !!saved?.userId && !!credentials.userId && saved.userId === credentials.userId;
+        // #5480/#5600: for the same WeChat user, a fresh registration continues
+        // each served conversation on its originally bound chatId through the
+        // stable peer-identity bindings (T-008 scopes them by this operator's
+        // WeChat user id) — but only once this typically-expired registration
+        // stops serving: while both accounts are live in one process, the
+        // serving guard keeps their conversations isolated on purpose. The
+        // rollback below re-enabled this registration, so the guided path
+        // disables it first. Removing it later keeps its private state for
+        // explicit recovery; it is never auto-reloaded.
         console.log(JSON.stringify({ ok: false, stage: 'identity-changed', saved: false,
           targetId: cause.targetId, registeredBotId: cause.registeredBotId, scannedBotId: cause.scannedBotId,
           sameUser,
           reason: sameUser ? 'scan confirmed a new bot identity for the same WeChat user'
             : 'scan confirmed an unexpected WeChat identity',
-          next: `disclaude wechat login --state-dir ${registry.dir}` }));
+          ...(sameUser ? {
+            continuation: 'a fresh login under this WeChat user continues the served conversations on their originally bound chatIds via stable peer-identity bindings, once this registration is no longer serving',
+            next: `disclaude wechat disable ${cause.targetId} --state-dir ${registry.dir} && disclaude wechat login --state-dir ${registry.dir}`,
+            oldRecord: `registration ${cause.targetId} keeps its record and private state after disable; disclaude wechat remove ${cause.targetId} unregisters it while retaining its state for explicit recovery, never auto-reloading it`,
+          } : {
+            next: `disclaude wechat login --id ${cause.targetId} --force --state-dir ${registry.dir} with the registered WeChat user's scan`,
+          }) }));
         process.exitCode = 1;
         return;
       }
