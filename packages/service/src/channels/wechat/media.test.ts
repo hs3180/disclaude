@@ -295,8 +295,11 @@ describe('WeChat encrypted CDN protocol', () => {
   // upload; the https.request channel must budget per-byte time instead.
   it('scales the upload deadline with payload size instead of a fixed 15s signal', () => {
     expect(uploadDeadlineMs(0)).toBe(15_000);
-    expect(uploadDeadlineMs(15_481_296)).toBe(15_000 + 15_481_296 * 4);
+    // 15,481,296 bytes × 0.004 ms/byte (4 µs/byte, 250 KiB/s floor) ≈ 61.9s
+    // + 15s base ≈ 77s. Bounds pin the magnitude: a 1000× unit slip back to
+    // 4 ms/byte (deadline ≈ 17.2h) must fail here.
     expect(uploadDeadlineMs(15_481_296)).toBeGreaterThan(60_000);
+    expect(uploadDeadlineMs(15_481_296)).toBeLessThan(90_000);
   });
 
   // Real setTimeout -> req.destroy(error) chain under fake timers; the stalled

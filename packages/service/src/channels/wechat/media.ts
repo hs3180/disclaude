@@ -55,12 +55,13 @@ function mediaSignal(signal?: AbortSignal): AbortSignal {
  * undici's happy-eyeballs connect race (see media-error.ts) added
  * intermittent `fetch failed` on top. The 2026-11-02 repro showed
  * https.request delivering the same payload where fetch failed, so the
- * upload channel is now https.request with a size-aware deadline. A 4ms/byte
- * budget is a 250 KiB/s worst-case uplink floor; 15 MiB thus gets ~77s.
+ * upload channel is now https.request with a size-aware deadline. A
+ * 0.004 ms/byte (4 µs/byte) budget is a 250 KiB/s worst-case uplink floor;
+ * 15 MiB thus gets 15s + 15,481,296 × 0.004ms ≈ 77s.
  * Downloads keep fetch streaming with the unchanged 15s signal.
  */
 export const UPLOAD_DEADLINE_BASE_MS = 15_000;
-export const UPLOAD_DEADLINE_MS_PER_BYTE = 4;
+export const UPLOAD_DEADLINE_MS_PER_BYTE = 0.004;
 
 export function uploadDeadlineMs(encryptedBytes: number): number {
   return UPLOAD_DEADLINE_BASE_MS + Math.max(0, encryptedBytes) * UPLOAD_DEADLINE_MS_PER_BYTE;
