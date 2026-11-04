@@ -52,15 +52,19 @@ function ownerLockPath(path) { return join(dirname(path), 'service.lock'); }
 // one — or an older manifest recorded none — fall back to the legacy
 // PID/lstart/mtime check, which a live owner still satisfies and a dead or
 // PID-reused owner fails.
+function acquiredLockProvesOwnerGone(runtime, path, fd) {
+  const inode = fstatSync(fd).ino;
+  if (typeof runtime.ownerLockInode === 'number' && runtime.ownerLockInode === inode) return true;
+  return !legacyOwnerIsLive(runtime, path);
+}
+
 function runtimeOwnerIsLive(runtime, path) {
   if (!processExists(runtime.pid)) return false;
   if (runtime.ownerLock !== 1) return legacyOwnerIsLive(runtime, path);
   const fd = openCommandLock(ownerLockPath(path));
   try {
     if (!tryCommandLock(fd)) return true;
-    const inode = fstatSync(fd).ino;
-    if (typeof runtime.ownerLockInode === 'number' && runtime.ownerLockInode === inode) return false;
-    return legacyOwnerIsLive(runtime, path);
+    return !acquiredLockProvesOwnerGone(runtime, path, fd);
   } finally { closeSync(fd); }
 }
 
@@ -162,20 +166,39 @@ export async function refreshBrowserRuntimeConnection({ env = process.env, fetch
     throw error;
   }
   const { websocket, browserId } = discovered;
-  if (websocket.href === runtime.browserEnv.BU_CDP_WS) return runtime; // Connection is still current.
+  const changed = websocket.href !== runtime.browserEnv.BU_CDP_WS;
   const identity = createHash('sha256').update(browserId).digest('hex').slice(0, 24);
   const directory = join(`/tmp/disclaude-browser-${process.getuid?.()}`, identity);
-  privateDirectory(directory);
+  if (changed) { privateDirectory(directory); }
+  let ownership = runtime;
   const ownerFd = openCommandLock(ownerLockPath(path));
   try {
-    if (tryCommandLock(ownerFd)) throw new Error('Browser runtime owner is not live; start or restart Disclaude');
+    // #5474: after service.lock inode drift the path lock is acquirable while
+    // the owner still lives (its kernel lock sits on the unlinked object).
+    // Acquisition proves the owner gone only on the recorded inode; on drift,
+    // re-verify with the legacy PID/lstart evidence and heal the manifest to
+    // that evidence so --reload auto-recovers what 0.6.6 field ops had to
+    // check by hand. No process can re-take the original object through the
+    // path, so the kernel-lock proof is gone for good once drift is confirmed.
+    if (tryCommandLock(ownerFd)) {
+      if (acquiredLockProvesOwnerGone(runtime, path, ownerFd)) {
+        throw new Error('Browser runtime owner is not live; start or restart Disclaude');
+      }
+      const healed = { ...runtime, ownerLockInode: null };
+      const healing = `${path}.${runtime.instance}.heal.tmp`;
+      try { writeFileSync(healing, JSON.stringify(healed), { flag: 'wx', mode: 0o600 }); renameSync(healing, path); }
+      finally { rmSync(healing, { force: true }); }
+      ownership = healed;
+      onEvent({ type: 'browser-owner-evidence-refreshed', recordedInode: runtime.ownerLockInode ?? null });
+    }
+    if (!changed) { return ownership; } // Connection is still current.
     const fd = openCommandLock(join(directory, 'command.lock'));
     try { if (!tryCommandLock(fd)) throw new Error(`Browser commands are busy in ${directory}; retry --reload when idle`); }
     finally { closeSync(fd); }
     if (JSON.parse(readFileSync(path, 'utf8')).instance !== runtime.instance) {
       throw new Error('Browser service restarted during the refresh; retry the invocation');
     }
-    const migrated = { ...runtime, directory, browserEnv: { ...runtime.browserEnv,
+    const migrated = { ...ownership, directory, browserEnv: { ...ownership.browserEnv,
       BU_CDP_WS: websocket.href, BU_NAME: `disclaude-${identity}`,
       BH_RUNTIME_DIR: directory, BH_TMP_DIR: directory, BH_HOME: directory } };
     const temporary = `${path}.${runtime.instance}.refresh.tmp`;
@@ -267,7 +290,15 @@ export async function prepareBrowserCommands({ env = process.env, fetchImpl = gl
   const ownerFd = openCommandLock(ownerLockPath(path));
   try {
     const previous = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : undefined;
-    if (!tryCommandLock(ownerFd) || (previous && previous.ownerLock !== 1 && legacyOwnerIsLive(previous, path))) {
+    // #5474: after service.lock inode drift the path lock is acquirable while
+    // the previous owner still lives. Acquisition alone must not hand a live
+    // owner's commands to a second service; a dead or PID-reused owner still
+    // fails the drift-aware evidence and remains reclaimable.
+    const acquired = tryCommandLock(ownerFd);
+    const previousOwnerLive = !acquired || Boolean(previous && (previous.ownerLock === 1
+      ? !acquiredLockProvesOwnerGone(previous, path, ownerFd)
+      : legacyOwnerIsLive(previous, path)));
+    if (previousOwnerLive) {
       throw new Error(`Browser commands already belong to service ${previous?.pid || 'another process'}`);
     }
     const fd = openCommandLock(join(directory, 'command.lock'));
