@@ -45,7 +45,8 @@
  */
 
 import { execSync, execFileSync, execFile } from 'node:child_process';
-import { writeFileSync, existsSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
+import { writeFileSync, existsSync, mkdirSync, rmSync, readFileSync, renameSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { realpathSync, accessSync, constants, statSync } from 'node:fs';
 import { resolve, dirname, relative, isAbsolute } from 'node:path';
 import { promisify } from 'node:util';
@@ -362,6 +363,127 @@ export function xmlEscape(value) {
 }
 
 // ---------------------------------------------------------------------------
+// Plist validation + atomic install (Issue #5619, T-038)
+// ---------------------------------------------------------------------------
+
+/**
+ * Offline structural validation for a generated launchd plist (Issue #5619).
+ *
+ * The authoritative check on macOS is `plutil -lint`; on non-darwin hosts
+ * (Linux CI) plutil does not exist, so this function provides the equivalent
+ * contract we can assert offline: a well-formed XML document with balanced
+ * tags and the keys a launchd LaunchAgent cannot work without (Label,
+ * ProgramArguments, RunAtLoad, KeepAlive). It is intentionally conservative —
+ * it only needs to catch a corrupted or half-written plist, not fully
+ * implement plist typing.
+ *
+ * @param {string} xml - plist document text
+ * @returns {string | null} null when valid, otherwise a human-readable error
+ */
+export function validatePlistStructure(xml) {
+  if (typeof xml !== 'string' || xml.length === 0) return 'plist is empty';
+  if (!xml.startsWith('<?xml')) return 'plist is missing the XML declaration';
+  if (!xml.includes('<plist version="1.0">')) return 'plist is missing the <plist> root element';
+  // Tag balance: tokenize tags, ignore the declaration/doctype/comments, and
+  // treat self-closing tags (<true/>) as balanced by construction.
+  const stack = [];
+  const tagRe = /<(\/?)([A-Za-z][\w.:-]*)((?:"[^"]*"|'[^']*'|[^'">])*?)(\/?)>/g;
+  let match;
+  let sawRootClose = false;
+  while ((match = tagRe.exec(xml)) !== null) {
+    const [, closing, name, , selfClosing] = match;
+    if (selfClosing) continue;
+    if (!closing) {
+      stack.push(name);
+      continue;
+    }
+    const open = stack.pop();
+    if (open !== name) {
+      return open === undefined
+        ? `unexpected closing tag </${name}>`
+        : `mismatched closing tag </${name}> (expected </${open}>)`;
+    }
+    if (name === 'plist') sawRootClose = true;
+  }
+  if (stack.length > 0) return `unclosed tag <${stack[stack.length - 1]}>`;
+  if (!sawRootClose) return 'plist root element is never closed';
+  for (const required of ['Label', 'ProgramArguments', 'RunAtLoad', 'KeepAlive']) {
+    if (!xml.includes(`<key>${required}</key>`)) {
+      return `plist is missing the required <key>${required}</key> entry`;
+    }
+  }
+  return null;
+}
+
+/**
+ * Validate a plist file the strongest way the platform allows (Issue #5619).
+ *
+ * On macOS runs `plutil -lint <path>` — the authoritative check launchd
+ * operators rely on. Everywhere else (Linux CI) plutil does not exist, so it
+ * falls back to {@link validatePlistStructure} over the file contents and the
+ * caller reports which mode ran; real `plutil -lint` behaviour on macOS is
+ * verified on-device, not in CI.
+ *
+ * @param {string} path - plist file to validate
+ * @param {NodeJS.ProcessEnv} [env] - environment (test seam for platform)
+ * @returns {string | null} null when valid, otherwise a human-readable error
+ */
+export function lintPlistFile(path, env = process.env) {
+  if (env.PLATFORM_OVERRIDE === 'darwin' || process.platform === 'darwin') {
+    try {
+      execFileSync('plutil', ['-lint', path], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
+      return null;
+    } catch (error) {
+      return `plutil -lint rejected ${path}: ${error.message}`;
+    }
+  }
+  let xml;
+  try {
+    xml = readFileSync(path, 'utf-8');
+  } catch (error) {
+    return `cannot read plist for validation: ${error.message}`;
+  }
+  return validatePlistStructure(xml);
+}
+
+/**
+ * Install a plist atomically: write a uniquely-named temporary file next to
+ * the target, validate it, then rename over the target (Issue #5619, T-038).
+ *
+ * rename(2) is atomic, so a crash or interruption can only ever leave either
+ * the previous plist or the complete new one — never a half-written partial
+ * file that launchd might pick up on the next load. Re-running with the
+ * same content is idempotent (the rename simply replaces the file).
+ *
+ * @param {string} path - final plist path
+ * @param {string | Buffer} bytes - plist document
+ * @param {object} [options]
+ * @param {number} [options.mode=0o644] - file mode for the plist
+ * @param {(path: string) => string | null} [options.lint] - validator invoked
+ *   on the temporary file before the rename; returning a message aborts the
+ *   install with the previous plist untouched
+ * @returns {{ linted: boolean }} whether a lint function ran
+ */
+export function installPlistAtomically(path, bytes, { mode = 0o644, lint = null } = {}) {
+  mkdirSync(dirname(path), { recursive: true });
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  let linted = false;
+  try {
+    writeFileSync(temporary, bytes, { flag: 'wx', mode });
+    if (lint) {
+      linted = true;
+      const failure = lint(temporary);
+      if (failure) throw new Error(failure);
+    }
+    renameSync(temporary, path);
+  } finally {
+    // No-op after a successful rename; removes the temporary on any failure.
+    rmSync(temporary, { force: true });
+  }
+  return { linted };
+}
+
+// ---------------------------------------------------------------------------
 // Plist generation
 // ---------------------------------------------------------------------------
 
@@ -622,8 +744,18 @@ function generatePlist({ dryRun = false } = {}) {
 
   ensureLaunchAgentsDir();
   ensureLogDir();
-  writeFileSync(PLIST_PATH, plist, 'utf-8');
-  console.log(`Plist generated: ${PLIST_PATH}`);
+  // Issue #5619 (T-038): lint the fully-written temporary file, then rename it
+  // over the target — an interrupted or invalid generate can never leave a
+  // half-written plist behind for launchd to load.
+  const onDarwin = process.platform === 'darwin';
+  installPlistAtomically(PLIST_PATH, plist, {
+    mode: 0o644,
+    lint: (temp) => lintPlistFile(temp),
+  });
+  console.log(`Plist generated atomically: ${PLIST_PATH}`);
+  console.log(
+    `  Validated: ${onDarwin ? 'plutil -lint' : 'structural XML validation (plutil is macOS-only; real plutil -lint is verified on macOS, not in CI)'}`
+  );
   console.log(`  Node: ${nodePath}`);
   console.log(`  Entry: ${entry} (${source})`);
   for (const line of deployment.sources) console.log(`  ${line}`);
@@ -1185,8 +1317,62 @@ async function cmdChromiumStatus() {
 }
 
 // ---------------------------------------------------------------------------
-// launchctl commands
+// launchctl commands (modern bootstrap/bootout API, Issue #5619 / T-038)
 // ---------------------------------------------------------------------------
+
+/**
+ * Build a launchctl argument vector for the modern domain-target API
+ * (Issue #5619, T-038). Pure so Linux CI can assert the exact commands the
+ * service lifecycle uses without a real launchd:
+ *
+ *   bootstrap gui/<uid> <plist>   — install the definition into the domain
+ *   bootout   gui/<uid>/<label>   — remove it (and stop the job)
+ *   print     gui/<uid>/<label>   — inspect state ("state =", "pid =")
+ *
+ * `load`/`unload` (file-path form) remain available for pre-Yosemite
+ * fallbacks; they take the plist path, not the service target.
+ *
+ * @param {'bootstrap'|'bootout'|'print'|'load'|'unload'} action
+ * @param {object} [options]
+ * @param {number} [options.uid] - owning uid (defaults to this process)
+ * @param {string} [options.plistPath] - plist file path (bootstrap/load)
+ * @param {string} [options.label] - service label (bootout/print)
+ * @returns {string[]} argv for launchctl
+ */
+export function buildLaunchctlInvocation(action, { uid = process.getuid?.() ?? 0, plistPath = PLIST_PATH, label = LABEL } = {}) {
+  const domain = `gui/${uid}`;
+  switch (action) {
+    case 'bootstrap':
+      return ['bootstrap', domain, plistPath];
+    case 'bootout':
+      return ['bootout', `${domain}/${label}`];
+    case 'print':
+      return ['print', `${domain}/${label}`];
+    case 'load':
+      return ['load', plistPath];
+    case 'unload':
+      return ['unload', plistPath];
+    default:
+      throw new Error(`Unknown launchctl action: ${String(action)}`);
+  }
+}
+
+/**
+ * Whether the service is currently bootstrapped into the user domain, via
+ * `launchctl print gui/<uid>/<label>`. Returns the captured print output so
+ * `status` can surface the same state operators would see on the host.
+ */
+function printServiceState() {
+  try {
+    const output = execFileSync('launchctl', buildLaunchctlInvocation('print'), {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return { loaded: true, output };
+  } catch {
+    return { loaded: false, output: '' };
+  }
+}
 
 function loadPlist() {
   if (!existsSync(PLIST_PATH)) {
@@ -1194,16 +1380,30 @@ function loadPlist() {
     console.error('Run "generate" or "install" first.');
     process.exit(1);
   }
-  execFileSync('launchctl', ['load', PLIST_PATH], { stdio: 'inherit' });
-  console.log('Service loaded.');
+  try {
+    execFileSync('launchctl', buildLaunchctlInvocation('bootstrap'), { stdio: 'inherit' });
+  } catch (error) {
+    // Idempotent install/start: bootstrap fails when the label is already in
+    // the domain. Confirm via print, then bootout + bootstrap so the fresh
+    // plist takes effect; anything else is a real failure.
+    if (!printServiceState().loaded) throw error;
+    console.log('Service already bootstrapped; reloading with the new plist.');
+    execFileSync('launchctl', buildLaunchctlInvocation('bootout'), { stdio: 'pipe' });
+    execFileSync('launchctl', buildLaunchctlInvocation('bootstrap'), { stdio: 'inherit' });
+  }
+  console.log('Service loaded (launchctl bootstrap).');
 }
 
 function unloadPlist() {
-  if (!existsSync(PLIST_PATH)) {
-    return; // Nothing to unload
+  // bootout addresses the service by domain target, so it works even when
+  // the plist file has already been removed; not-loaded is a no-op (stop and
+  // uninstall stay idempotent).
+  if (!printServiceState().loaded) {
+    console.log('Service is not loaded (nothing to boot out).');
+    return;
   }
-  execFileSync('launchctl', ['unload', PLIST_PATH], { stdio: 'pipe' });
-  console.log('Service unloaded.');
+  execFileSync('launchctl', buildLaunchctlInvocation('bootout'), { stdio: 'pipe' });
+  console.log('Service unloaded (launchctl bootout).');
 }
 
 function build() {
@@ -1247,7 +1447,7 @@ function cmdInstall() {
   assertDarwinServiceCommand('install');
   if (DRY_RUN) {
     generatePlist({ dryRun: true });
-    console.log(`[dry-run] would run: launchctl load ${PLIST_PATH}`);
+    console.log(`[dry-run] would run: launchctl ${buildLaunchctlInvocation('bootstrap').join(' ')}`);
     console.log('[dry-run] no launchctl commands executed');
     return;
   }
@@ -1259,7 +1459,7 @@ function cmdInstall() {
 function cmdUninstall() {
   assertDarwinServiceCommand('uninstall');
   if (DRY_RUN) {
-    console.log(`[dry-run] would run: launchctl unload ${PLIST_PATH}`);
+    console.log(`[dry-run] would run: launchctl ${buildLaunchctlInvocation('bootout').join(' ')}`);
     console.log(`[dry-run] would remove plist: ${PLIST_PATH}`);
     console.log('[dry-run] no launchctl commands executed');
     return;
@@ -1277,7 +1477,7 @@ function cmdStart() {
   if (DRY_RUN) {
     console.log(`[dry-run] would run: npm run build (cwd ${PROJECT_ROOT})`);
     generatePlist({ dryRun: true });
-    console.log(`[dry-run] would run: launchctl load ${PLIST_PATH}`);
+    console.log(`[dry-run] would run: launchctl ${buildLaunchctlInvocation('bootstrap').join(' ')}`);
     console.log('[dry-run] no launchctl commands executed');
     return;
   }
@@ -1290,7 +1490,7 @@ function cmdStart() {
 function cmdStop() {
   assertDarwinServiceCommand('stop');
   if (DRY_RUN) {
-    console.log(`[dry-run] would run: launchctl unload ${PLIST_PATH}`);
+    console.log(`[dry-run] would run: launchctl ${buildLaunchctlInvocation('bootout').join(' ')}`);
     console.log('[dry-run] no launchctl commands executed');
     return;
   }
@@ -1300,10 +1500,10 @@ function cmdStop() {
 function cmdRestart() {
   assertDarwinServiceCommand('restart');
   if (DRY_RUN) {
-    console.log(`[dry-run] would run: launchctl unload ${PLIST_PATH}`);
+    console.log(`[dry-run] would run: launchctl ${buildLaunchctlInvocation('bootout').join(' ')}`);
     console.log(`[dry-run] would run: npm run build (cwd ${PROJECT_ROOT})`);
     generatePlist({ dryRun: true });
-    console.log(`[dry-run] would run: launchctl load ${PLIST_PATH}`);
+    console.log(`[dry-run] would run: launchctl ${buildLaunchctlInvocation('bootstrap').join(' ')}`);
     console.log('[dry-run] no launchctl commands executed');
     return;
   }
@@ -1333,14 +1533,21 @@ function cmdLogs() {
 
 function cmdStatus() {
   if (DRY_RUN) {
-    console.log('[dry-run] would run: launchctl list | grep', LABEL);
+    console.log(`[dry-run] would run: launchctl ${buildLaunchctlInvocation('print').join(' ')}`);
     console.log(`[dry-run] plist: ${PLIST_PATH}`);
     console.log('[dry-run] no launchctl commands executed');
     return;
   }
-  const result = run(`launchctl list | grep ${LABEL}`, { allowFail: true, silent: true });
-  if (result) {
-    console.log(result.trim());
+  // Issue #5619 (T-038): status comes from `launchctl print gui/<uid>/<label>`
+  // — the modern replacement for `launchctl list | grep`. Surface its state
+  // and pid lines plus the operator-relevant paths.
+  const state = printServiceState();
+  if (state.loaded) {
+    const keyLines = state.output
+      .split('\n')
+      .filter((line) => /^\s*(state|pid)\s*=/.test(line))
+      .map((line) => line.trim());
+    console.log(keyLines.length ? keyLines.join('\n') : `Service is loaded (${LABEL}).`);
     console.log(`\nPlist: ${PLIST_PATH}`);
     console.log(`App log: ${resolveAppLog()} (use newsyslog for rotation)`);
     console.log(`Stdout: ${STDOUT_LOG} (launchd fallback log)`);
