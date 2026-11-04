@@ -39,6 +39,19 @@ export function normalizeChannelApiBaseUrl(value: string): string {
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 /**
+ * Default deadline for upload routes (uploadFile/uploadImage) — Issue #5630.
+ *
+ * One upload request covers the FULL delivery chain server-side — Feishu
+ * im.file/im.image create (upload) plus im.message create/reply (message
+ * construction) — under a single REST roundtrip. The generic 30s deadline cut
+ * that chain mid-flight (#5630: a 1.8MB PNG and a 551KB JPEG both timed out at
+ * 30s with no delivery conclusion), so uploads get a chain-aware default.
+ * Provisional value; per-call `timeoutMs` overrides it. Which phase is slow
+ * (upload vs message create) is not yet measured — see server-side phase logs.
+ */
+export const DEFAULT_UPLOAD_TIMEOUT_MS = 120_000;
+
+/**
  * Default response shape: strip the `ok` REST envelope (REST responses are
  * `{ ok: true, ...ChannelApiResponsePayload }`; REST API payloads are just the inner fields).
  */
@@ -87,6 +100,13 @@ interface Route {  method: 'GET' | 'POST';
   success?: (json: Record<string, unknown>, res: Response) => boolean;
   /** Per-route response shaping (default: strip `ok`). */
   shape?: (body: Record<string, unknown>) => Record<string, unknown>;
+  /**
+   * Per-route default deadline (Issue #5630). Upload routes cover the whole
+   * upload+message-create chain in one request and default to the chain-aware
+   * `DEFAULT_UPLOAD_TIMEOUT_MS`; other routes keep the 30s generic default.
+   * An explicit `timeoutMs` option always wins.
+   */
+  timeoutMs?: number;
 }
 
 /** Default success: HTTP ok AND the REST `{ ok: true }` envelope. */
@@ -108,8 +128,8 @@ const ROUTES: Readonly<Record<string, Route>> = {
   sendMessage: { method: 'POST', path: '/api/send-message' },
   sendCard: { method: 'POST', path: '/api/send-card' },
   requestPrivateInput: { method: 'POST', path: '/api/private-workflows' },
-  uploadFile: { method: 'POST', path: '/api/upload-file' },
-  uploadImage: { method: 'POST', path: '/api/upload-image' },
+  uploadFile: { method: 'POST', path: '/api/upload-file', timeoutMs: DEFAULT_UPLOAD_TIMEOUT_MS },
+  uploadImage: { method: 'POST', path: '/api/upload-image', timeoutMs: DEFAULT_UPLOAD_TIMEOUT_MS },
   sendInteractive: { method: 'POST', path: '/api/send-interactive' },
   listTempChats: { method: 'GET', path: '/api/temp-chats' },
   markChatResponded: { method: 'POST', path: '/api/mark-chat-responded' },
@@ -165,7 +185,8 @@ export class ChannelApiClient implements ChannelApiClientLike {
       init.body = JSON.stringify(payload ?? {});
     }
 
-    const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    // Explicit per-call timeout > per-route default (upload chains, #5630) > 30s generic.
+    const timeoutMs = options?.timeoutMs ?? route.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     if (timeoutMs > 0) {
       init.signal = AbortSignal.timeout(timeoutMs);
     }

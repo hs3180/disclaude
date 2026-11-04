@@ -20,7 +20,14 @@ export interface ChannelApiHandlers {
     chatId: string,
     filePath: string,
     threadId?: string
-  ) => Promise<{ fileKey: string; fileType: string; fileName: string; fileSize: number }>;
+  ) => Promise<{
+    fileKey: string;
+    fileType: string;
+    fileName: string;
+    fileSize: number;
+    /** Platform message_id of the delivered file message, when confirmed (Issue #5630). */
+    messageId?: string;
+  }>;
   /** Issue #2951: Upload image and return Feishu image_key for card embedding */
   uploadImage?: (
     filePath: string
