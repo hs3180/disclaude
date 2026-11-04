@@ -154,6 +154,19 @@ function formatElapsedForNotice(ms: number): string {
   return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分钟`;
 }
 
+/**
+ * Issue #5654: narration-silence window for the platform-side progress
+ * heartbeat. Backends like dsh/glm-5.3 run 400+ tool calls per turn with
+ * almost no pre-tool text, so the #5377 narration pipeline gets no input and
+ * the user cannot tell "working" from "hung" without poking the bot. The
+ * heartbeat is platform text that only fires when BOTH hold: the model has
+ * narrated nothing user-visible for this long, and tool calls actually ran
+ * since the last heartbeat — so a narrating turn never sees one (#5377
+ * semantics untouched), a stalled stream never claims activity, and the
+ * reset-on-send silence clock bounds the rate to one per window.
+ */
+export const HEARTBEAT_SILENCE_MS = 5 * 60_000;
+
 // 2026-09-08: mid-stream 中断自动续跑(诊断见 ./docs 之外 —— ES 双侧证据:agent「同一
 // tool use 后中断」= 续写调用在 200 已锁后静默,proxy 只能补「看似成功」的收尾)。
 // MIDSTREAM_MARKER —— proxy(litellm custom_callbacks._MIDSTREAM_INTERRUPT_MARKER)在
@@ -2387,6 +2400,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     let firstMessageMs: number | undefined;
     let lastToolCallMs: number | undefined;
     let toolCallCount = 0;
+    // Issue #5654: per-turn heartbeat + side-effect receipt accounting. The
+    // silence clock starts at the turn's first event and is reset by every
+    // user-visible progress delivery (commentary, narration, buffered
+    // assistant flush, heartbeat itself); the platform heartbeat only ever
+    // fires inside that silence, so model-narrated turns are untouched.
+    let turnLastProgressAtMs = Date.now();
+    let turnToolsSinceHeartbeat = 0;
+    let turnHeartbeatsSent = 0;
+    const turnToolUsage = new Map<string, number>();
     // Issue #4194: count substantive user-visible output sent this turn
     // (excludes the ✅ Complete result marker) so empty turns are detectable.
     let userVisibleOutputCount = 0;
@@ -2443,6 +2465,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         // Issue #5394: narration belongs to the turn that produced it — a
         // fresh turn's busy notices start from its own trigger line.
         this.activeTurnNarration = '';
+        // Issue #5654: restart heartbeat/receipt accounting for the new
+        // turn; the silence window counts from its first event.
+        turnLastProgressAtMs = Date.now();
+        turnToolsSinceHeartbeat = 0;
+        turnToolUsage.clear();
         turnFailedWithConnectivityIssue = false;
       }
       return currentTurnAnchor ?? undefined;
@@ -2455,6 +2482,63 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const failureContext = (context: StreamingUserMessage['correlation'], anchor: string | null | undefined,
       failureClass: string, detail: string, sessionId = this.queryHandle?.sessionId) =>
       this.createFailureContext(context, anchor, failureClass, detail, diagnosticId, sessionId);
+    // Issue #5654: any user-visible progress resets the heartbeat silence
+    // clock — commentary, decision narration, a flushed buffered reply, or a
+    // heartbeat itself. Only genuine silence can trigger the platform heartbeat.
+    const noteUserVisibleProgress = (): void => { turnLastProgressAtMs = Date.now(); };
+    /**
+     * Issue #5654: compact digest of this turn's tool activity for failure
+     * receipts. When a turn dies (context overflow, provider failure, stall),
+     * its already-performed side effects (created issues, modified files, …)
+     * must not vanish with the lost final reply: name the tool mix so the
+     * user knows what to verify. Bounded to tool names + counts — never tool
+     * inputs or outputs (#4774 keeps traces internal; payloads may be
+     * sensitive), never model claims.
+     */
+    const formatSideEffectReceipt = (): string => {
+      if (toolCallCount === 0 || turnToolUsage.size === 0) { return ''; }
+      const ranked = [...turnToolUsage.entries()].sort((a, b) => b[1] - a[1]);
+      const shown = ranked.slice(0, 6).map(([name, count]) => `${name}×${count}`).join('、');
+      const rest = ranked.length - Math.min(ranked.length, 6);
+      const suffix = rest > 0 ? ` 等 ${ranked.length} 种` : '';
+      return `\n📋 本轮已执行 ${toolCallCount} 次工具调用（${shown}${suffix}），这些操作已实际发生；请据此核对产物（如已创建的 issue、已修改的文件），系统不会自动重放。`;
+    };
+    /**
+     * Issue #5654: platform-side progress heartbeat for narration-silent
+     * turns (dsh/glm-5.3 ran 50+ min / 455 tool calls with zero mid-turn
+     * messages). Checked on each tool call — the only proof of liveness that
+     * does not depend on model behavior. Fires when nothing user-visible was
+     * narrated for HEARTBEAT_SILENCE_MS AND tools ran since the last
+     * heartbeat; resets both clocks (delivered or not) so a broken channel
+     * cannot produce a retry burst. Delivery follows the commentary contract
+     * (#5288): isolated, best-effort, never fails the turn; excluded from
+     * turnResultText and finalReplyOnly workflows; never stored into
+     * activeTurnNarration (#5394 keeps resolving model wording only).
+     */
+    const maybeSendProgressHeartbeat = async (): Promise<void> => {
+      if (this.callbacks.finalReplyOnly === true) { return; }
+      const now = Date.now();
+      const silenceMs = now - turnLastProgressAtMs;
+      if (silenceMs < HEARTBEAT_SILENCE_MS || turnToolsSinceHeartbeat === 0) { return; }
+      const toolsSinceLast = turnToolsSinceHeartbeat;
+      const summary = this.activeTurnNarration || this.activeTurnTriggerLine;
+      const elapsedMs = this.turnStartedAtMs > 0 ? now - this.turnStartedAtMs : now - startTime;
+      const text =
+        `⏳ 本轮仍在执行：${summary ? `「${summary}」` : '当前任务'}已运行 ${formatElapsedForNotice(elapsedMs)}，` +
+        `最近 ${formatElapsedForNotice(silenceMs)} 无模型播报，期间完成 ${toolsSinceLast} 次工具调用（累计 ${toolCallCount} 次）。无需干预，结果产出后会自动回复。`;
+      try {
+        await this.callbacks.sendMessage(chatId, text, resolveReplyThreadRoot());
+      } catch (error) {
+        this.logger.debug({ error, chatId }, 'Progress heartbeat delivery failed');
+      }
+      turnLastProgressAtMs = now;
+      turnToolsSinceHeartbeat = 0;
+      turnHeartbeatsSent++;
+      this.logger.info(
+        { chatId, heartbeatIndex: turnHeartbeatsSent, silenceMs, toolsSinceLast, toolCallCount, elapsedMs },
+        'Narration-silent progress heartbeat sent (#5654)'
+      );
+    };
     const finishUnexpectedTurns = async (error: Error, startupCategory?: string): Promise<void> => {
       if (this.sessionGeneration !== myGeneration || this.stoppedQueryGenerations.has(myGeneration)) { return; }
       const sessionId = this.queryHandle?.sessionId;
@@ -2490,9 +2574,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         const failure = failureContext(context, anchor, startupCategory ? 'startup-failure'
           : iteratorError ? 'iterator-error' : 'iterator-ended', error.message, sessionId);
         const prefix = startupCategory ? `❌ Agent 启动失败（${startupCategory}）。` : '❌ 本次请求中断，结果可能不完整。';
+        // Issue #5654: an interrupted turn keeps its receipt — the tool mix
+        // already executed survives the lost final reply (e.g. a context
+        // overflow after side effects were performed).
+        const sideEffects = startupCategory ? '' : formatSideEffectReceipt();
         const guidance = startupCategory ? '请检查配置、权限和运行环境，修复后发送 /reset。' :
           '请先核对已经执行的操作，再决定是否重新提交或发送消息继续；系统没有自动重放工具。';
-        const notice = `${prefix}${guidance}\n${this.formatFailureDiagnostic(failure)}`;
+        const notice = `${prefix}${sideEffects}\n${guidance}\n${this.formatFailureDiagnostic(failure)}`;
         const delivered = await this.deliverUserVisible(chatId, notice, anchor ?? undefined);
         this.logger.warn({ ...failure, event: 'agent_turn',
           state: startupCategory ? 'failed' : 'interrupted',
@@ -2520,6 +2608,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       if (!delivered) {
         finalDeliveryId = undefined;
         turnDeliveryFailed = true;
+      } else {
+        // Issue #5654: a flushed buffered reply is user-visible progress.
+        noteUserVisibleProgress();
       }
       userVisibleOutputCount++;
     };
@@ -2638,6 +2729,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                 );
               }
               await this.callbacks.sendMessage(chatId, commentary.text, resolveReplyThreadRoot());
+              // Issue #5654: commentary is user-visible progress.
+              noteUserVisibleProgress();
             } catch (error) {
               // Progress cannot fail or complete the turn.
               this.logger.debug({ error, chatId }, 'Public commentary delivery failed');
@@ -2694,12 +2787,24 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             // root consumes the turn anchor, which clears the per-turn
             // narration slot for a turn's first output.
             this.activeTurnNarration = this.summarizeForBusyNotice(narration.text);
+            // Issue #5654: narration is user-visible progress; it resets the
+            // heartbeat silence clock (the heartbeat below stays dormant for
+            // narrating turns).
+            noteUserVisibleProgress();
           }
           // Text preceding another tool call is intermediate commentary, not
           // the terminal answer consumed by structured internal workflows.
           turnResultText = '';
           turnResultTruncated = false;
           toolCallCount++;
+          // Issue #5654: record the turn's tool mix for failure receipts and
+          // probe the narration-silence heartbeat — the only liveness signal
+          // that does not depend on model behavior.
+          const heartbeatToolName = typeof parsed.metadata?.toolName === 'string' && parsed.metadata.toolName
+            ? parsed.metadata.toolName : 'tool';
+          turnToolUsage.set(heartbeatToolName, (turnToolUsage.get(heartbeatToolName) ?? 0) + 1);
+          turnToolsSinceHeartbeat++;
+          await maybeSendProgressHeartbeat();
           const now = Date.now();
           const sinceLastTool = lastToolCallMs ? now - lastToolCallMs : undefined;
           lastToolCallMs = now;
@@ -2923,7 +3028,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                 : '请先核对已执行的操作，再检查模型服务、凭据和超时配置。'}`;
             const delivered = await this.deliverUserVisible(
               chatId,
-              `${outputLimitReceipt}\n${this.formatFailureDiagnostic(failure)}`,
+              // Issue #5654: the non-output-limit failure branches carry the
+              // side-effect receipt (the output-limit branch already itemizes
+              // its tool activity above).
+              `${outputLimitReceipt}${outputLimit ? '' : formatSideEffectReceipt()}\n${this.formatFailureDiagnostic(failure)}`,
               resolveReplyThreadRoot()
             );
             this.logger.error({ ...failure, event: 'agent_turn_failure', user_visible: delivered,
@@ -2940,7 +3048,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
               parsed.terminationDetail ?? 'Provider stall watchdog terminated the turn', parsed.sessionId ?? this.queryHandle?.sessionId);
             const providerNotice = sanitizeDiagnosticText(parsed.content?.trim() || `⚠️ ${this.sdkProvider.name} 响应已中断，结果可能不完整。`);
             const delivered = await this.deliverUserVisible(chatId,
-              `${providerNotice}\n请先核对已经执行的操作，再决定是否继续；系统没有自动重放工具。\n${this.formatFailureDiagnostic(failure)}`,
+              // Issue #5654: a stalled turn keeps its side-effect receipt.
+              `${providerNotice}${formatSideEffectReceipt()}\n请先核对已经执行的操作，再决定是否继续；系统没有自动重放工具。\n${this.formatFailureDiagnostic(failure)}`,
               resolveReplyThreadRoot());
             if (!turnHasTerminal) {
               this.logger.warn(
