@@ -12,6 +12,7 @@ export function browserDiagnostic({ stage, url, endpoint, endpointSource, method
     headers: any;
 }): {
     response: any;
+    remedy?: any;
     reason?: any;
     status?: any;
     endpoint: string;

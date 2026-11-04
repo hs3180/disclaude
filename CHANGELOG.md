@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.9] - 2026-11-04
+
+### Fixed
+
+- Do not declare a live browser runtime owner dead just because
+  `service.lock` was re-created at the same path: ownership proof matches the
+  lock inode recorded in the runtime manifest and falls back to PID/lstart
+  liveness checks on drift, `--reload` atomically heals the manifest evidence
+  (emitting `browser-owner-evidence-refreshed`) instead of aborting with
+  "owner is not live", and the takeover gate no longer preempts a live owner
+  while still allowing recovery from a truly dead one, including PID reuse
+  (#5474; #5661).
+- Attach stage-matched recovery guidance to browser HTTP 404 failures:
+  `http-discovery`, `websocket-attach` and `page-navigation` each carry their
+  own remedy through the existing browserDiagnostic record, so an agent can
+  map a 404 to the right recovery action instead of restarting blindly
+  (#5352; #5659).
+
 ## [0.6.8] - 2026-11-04
 
 ### Added
@@ -102,6 +120,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   archive shipped stale dist output for files already fixed on its declared
   source (#5517; #5522), and the install acceptance test now isolates
   inherited workspace context (#5527).
+
 
 ## [0.6.7] - 2026-10-23
 
