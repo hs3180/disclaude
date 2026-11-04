@@ -1265,6 +1265,101 @@ describe('ChatAgent (service)', () => {
     });
   });
 
+  describe('busy-input thread ownership routing (#5464)', () => {
+    /** Running turn owner-A with a recorded explicit thread key (`undefined` = main session). */
+    function ownedOwnerThread(threadKey: string | undefined) {
+      const callbacks = createMockCallbacks();
+      const agent = new ChatAgent({ chatId: 'scope-steer', callbacks, agentBackend: 'codex' as any, apiKey: 'test', model: 'test' });
+      const push = vi.fn().mockReturnValue(true);
+      const steer = vi.fn().mockResolvedValue({ turnId: 'native-A' });
+      Object.assign(agent as any, { channel: { push, close: vi.fn() }, queryHandle: { close: vi.fn(), cancel: vi.fn(), steer },
+        isSessionActive: true, isProcessingMessage: true, activeTurnMessageId: 'owner-A',
+        isAgentTeamsEnabled: () => false,
+        lastTurnMessage: { chatId: 'scope-steer', payload: 'original', messageId: 'owner-A' } });
+      (agent as any).historyManager.firstMessageHistoryLoaded = true;
+      (agent as any).createTurnCompletion('owner-A');
+      (agent as any).turnStartThreadKeys.set('owner-A', threadKey);
+      return { agent, callbacks, push, steer };
+    }
+    const input = (messageId = 'task-B', threadRootId?: string) =>
+      ({ chatId: 'scope-steer', payload: messageId, messageId, ...(threadRootId ? { threadRootId } : {}) });
+    const dispose = (agent: ChatAgent) => ChatAgent.prototype.dispose.call(agent);
+
+    it('steers a busy follow-up that belongs to the running turn topic', async () => {
+      const { agent, push, steer } = ownedOwnerThread('root-A');
+      try {
+        await agent.processMessage(input('follow-B', 'root-A'));
+        expect(steer).toHaveBeenCalledExactlyOnceWith('follow-B');
+        expect(push).not.toHaveBeenCalled();
+        expect((agent as any).pendingTurnMessageIds).toEqual([]);
+      } finally { dispose(agent); }
+    });
+
+    it('queues a thread-less main-session task beside a running topic turn instead of steering it', async () => {
+      const { agent, callbacks, push, steer } = ownedOwnerThread('root-A');
+      try {
+        await agent.processMessage(input('task-B'));
+        expect(steer).not.toHaveBeenCalled();
+        expect(push).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({ message: expect.objectContaining({ content: 'task-B' }) }));
+        expect((agent as any).pendingTurnMessageIds).toEqual(['task-B']);
+        // Independent delivery boundary: the queued task gets its own reply
+        // anchor slot (the mocked orchestrator's last-seen root here), never
+        // the running topic turn's thread.
+        expect((agent as any).pendingTurnAnchors).toHaveLength(1);
+        expect((agent as any).pendingTurnAnchors[0]).not.toBe('root-A');
+        expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('已排队');
+        let settled = false;
+        const completion = agent.turnCompleteFor('task-B')!.then(() => { settled = true; });
+        (agent as any).resolveTurn('owner-A');
+        await new Promise(resolve => { setTimeout(resolve, 0); });
+        expect(settled).toBe(false);
+        (agent as any).resolveTurn('task-B');
+        await completion;
+      } finally { dispose(agent); }
+    });
+
+    it('queues a busy follow-up from a different topic', async () => {
+      const { agent, push, steer } = ownedOwnerThread('root-A');
+      try {
+        await agent.processMessage(input('follow-C', 'root-C'));
+        expect(steer).not.toHaveBeenCalled();
+        expect(push).toHaveBeenCalledTimes(1);
+        expect((agent as any).pendingTurnAnchors).toEqual(['root-C']);
+      } finally { dispose(agent); }
+    });
+
+    it('keeps steering thread-less supplements while a thread-less turn runs (p2p scope)', async () => {
+      const { agent, push, steer } = ownedOwnerThread(undefined);
+      try {
+        await agent.processMessage(input('follow-B'));
+        expect(steer).toHaveBeenCalledExactlyOnceWith('follow-B');
+        expect(push).not.toHaveBeenCalled();
+      } finally { dispose(agent); }
+    });
+
+    it('records each queued turn starter thread key for later routing decisions', async () => {
+      const { agent } = ownedOwnerThread('root-A');
+      try {
+        await agent.processMessage(input('task-B'));
+        expect((agent as any).turnStartThreadKeys.has('task-B')).toBe(true);
+        expect((agent as any).turnStartThreadKeys.get('task-B')).toBeUndefined();
+        await agent.processMessage(input('follow-C', 'root-C'));
+        expect((agent as any).turnStartThreadKeys.get('follow-C')).toBe('root-C');
+      } finally { dispose(agent); }
+    });
+
+    it('keeps idle admission unchanged: a thread-less message starts an ordinary turn', async () => {
+      const { agent, push, steer } = ownedOwnerThread('root-A');
+      (agent as any).isProcessingMessage = false;
+      try {
+        await agent.processMessage(input('task-B'));
+        expect(steer).not.toHaveBeenCalled();
+        expect(push).toHaveBeenCalledTimes(1);
+      } finally { dispose(agent); }
+    });
+  });
+
   describe('MCP-free startup (Issue #4652)', () => {
     it('starts the production query path without constructing or injecting mcpServers', () => {
       (chatAgent as any).startAgentLoop();
@@ -2172,7 +2267,7 @@ describe('ChatAgent (service)', () => {
       return { agent, send, localCallbacks, deliver };
     }
 
-    it.each([undefined, 408, 429, 503])('recovers transient status %s with one current half-open probe, without replaying old messages', async status => {
+    it.each([undefined, 408, 429, 503])('recovers transient status %s with one current half-open probe, re-sending replies skipped while open (#5470)', async status => {
       const realNow = Date.now.bind(Date); let offset = 0;
       const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset);
       const f = await recoveryFixture(Object.assign(new Error('temporary'), status ? { status } : {}));
@@ -2188,7 +2283,14 @@ describe('ChatAgent (service)', () => {
         expect(f.send).toHaveBeenCalledTimes(4);
         release('probe-receipt'); expect(await probe).toBe(true);
         expect(await f.deliver('next output')).toBe(true);
-        expect(f.localCallbacks.sendMessage.mock.calls.map(call => call[1])).toEqual(['lost-a', 'lost-b', 'lost-c', 'current probe', 'next output']);
+        const sent = f.localCallbacks.sendMessage.mock.calls.map(call => call[1]);
+        // Failed ATTEMPTS (lost-a/b/c) are never retried; payloads SKIPPED
+        // while the circuit was open are backlogged and re-sent once it
+        // closes — a completed task's owed reply included (#5470). The
+        // backfill interleaves with fresh output, so compare order-insensitively.
+        expect(sent.slice(0, 4)).toEqual(['lost-a', 'lost-b', 'lost-c', 'current probe']);
+        expect(sent.slice(4).sort()).toEqual(['before cooldown', 'concurrent probe', 'next output'].sort());
+        expect(f.agent.deliveryCircuitStatus()).toEqual({ open: false, retryAtMs: 0, queuedReplies: 0 });
       } finally { f.agent.dispose(); clock.mockRestore(); }
     });
 
@@ -2204,9 +2306,57 @@ describe('ChatAgent (service)', () => {
         offset += 30_001;
         expect(await a.deliver('recovered')).toBe(true);
         expect(await b.deliver('b-still-broken')).toBe(false);
-        expect(a.send).toHaveBeenCalledTimes(5);
+        // a: 3 failed attempts + failed probe + successful probe + the one
+        // backlogged reply ('too soon') re-sent by the post-recovery backfill
+        // (#5470). b stays isolated at 3 + 1 skipped.
+        expect(a.send).toHaveBeenCalledTimes(6);
         expect(b.send).toHaveBeenCalledTimes(4);
       } finally { a.agent.dispose(); b.agent.dispose(); clock.mockRestore(); }
+    });
+
+    it('re-sends a backlogged final reply via the cooldown half-open probe with no new agent output (#5470)', async () => {
+      const realNow = Date.now.bind(Date); let offset = 0;
+      const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset);
+      const f = await recoveryFixture();
+      try {
+        // The turn completed during a channel outage: its final reply is
+        // skipped by the open circuit → backlogged, with a cooldown probe
+        // timer armed (the timer's callback is invoked directly here).
+        expect(await f.deliver('✅ final reply of the finished task')).toBe(false);
+        expect(f.agent.deliveryCircuitStatus()).toMatchObject({ open: true, queuedReplies: 1 });
+        expect((f.agent as any).sendCircuitRecoveryTimer).toBeTruthy();
+        // Channel recovers; cooldown elapses with NO further agent output.
+        f.send.mockResolvedValue('recovered');
+        offset += 30_001;
+        await (f.agent as any).probeSendCircuitRecovery();
+        expect(f.localCallbacks.sendMessage.mock.calls.map(call => call[1]))
+          .toEqual(['lost-a', 'lost-b', 'lost-c', '✅ final reply of the finished task']);
+        expect(f.agent.deliveryCircuitStatus()).toEqual({ open: false, retryAtMs: 0, queuedReplies: 0 });
+      } finally { f.agent.dispose(); clock.mockRestore(); }
+    });
+
+    it('a failed recovery probe keeps the circuit open, re-queues the reply and starts another cooldown (#5470)', async () => {
+      const realNow = Date.now.bind(Date); let offset = 0;
+      const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset);
+      const f = await recoveryFixture();
+      try {
+        expect(await f.deliver('✅ final reply')).toBe(false);
+        offset += 30_001;
+        await (f.agent as any).probeSendCircuitRecovery();
+        // Probe send failed → circuit re-opened with a fresh cooldown and the
+        // probed reply re-queued for the next window (isolation preserved).
+        expect(f.send).toHaveBeenCalledTimes(4);
+        expect(f.agent.deliveryCircuitStatus()).toMatchObject({ open: true, queuedReplies: 1 });
+        f.send.mockResolvedValue('recovered');
+        expect(await f.deliver('still cooling down')).toBe(false);
+        offset += 30_001;
+        await (f.agent as any).probeSendCircuitRecovery();
+        // The re-queued reply is retried (4th call failed, 5th succeeds) and
+        // the backlog then drains through the closed circuit.
+        expect(f.localCallbacks.sendMessage.mock.calls.map(call => call[1]))
+          .toEqual(['lost-a', 'lost-b', 'lost-c', '✅ final reply', '✅ final reply', 'still cooling down']);
+        expect(f.agent.deliveryCircuitStatus()).toEqual({ open: false, retryAtMs: 0, queuedReplies: 0 });
+      } finally { f.agent.dispose(); clock.mockRestore(); }
     });
 
     it.each([400, 401, 403, 'expired'])('keeps permanent/auth failure %s closed to automatic probes', async status => {
@@ -6267,24 +6417,71 @@ describe('ChatAgent (service)', () => {
       (agent as any).createQueryStream = query;
       try {
         await agent.processMessage({ chatId: 'input-failure', payload: 'Produce report', messageId: 'original-input', chatType: 'group', threadRootId: 'original-topic' });
-        const outcome = expect(agent.turnCompleteFor('original-input')).rejects.toMatchObject({ name: 'ProviderTurnFailedError' });
+        const outcome = nativeCompleted
+          ? expect(agent.turnCompleteFor('original-input')).resolves.toBeUndefined()
+          : expect(agent.turnCompleteFor('original-input')).rejects.toMatchObject({ name: 'ProviderTurnFailedError' });
         emit(); await outcome;
         const sent = localCallbacks.sendMessage.mock.calls.map(call => call[1]);
         const notices = sent.filter(text => text.includes('异步提问未能确认送达'));
         expect(notices).toHaveLength(1);
         expect(notices[0]).toContain('交互尚未完成'); expect(notices[0]).toContain('不会自动重放');
         expect(notices[0]).toContain('input-delivery-failed');
+        expect(notices[0]).toContain('Async question was not delivered');
         expect(notices[0].includes('模型已结束本轮执行')).toBe(nativeCompleted);
         expect(notices[0]).not.toMatch(/未生成可交付结果|凭据|超时配置/);
-        if (nativeCompleted) { expect(sent).toContain('报告已经发送。'); }
+        if (nativeCompleted) {
+          expect(sent).toContain('报告已经发送。');
+          // #5526: local card failure must not rewrite the native terminal state.
+          expect(notices[0]).toContain('已送达的产出仍然有效');
+          expect(localCallbacks.onTurnResult).toHaveBeenCalledWith(expect.objectContaining({ success: true, text: expect.stringContaining('报告已经发送。') }));
+        } else {
+          expect(localCallbacks.onTurnResult).toHaveBeenCalledWith(expect.objectContaining({ success: false }));
+        }
         expect(sent.join('\n')).not.toContain('中断前的部分回复');
         expect(sent.join('\n')).not.toContain('会话可能已失效');
         expect(query).toHaveBeenCalledOnce();
         expect((agent as any).emptyTurnRetryPolicy.markRetried).not.toHaveBeenCalled();
         expect((agent as any).restartManager.recordSuccess).not.toHaveBeenCalled();
         expect((agent as any).restartManager.recordFailure).toHaveBeenCalledExactlyOnceWith('input-failure', 'input-delivery');
-        expect(localCallbacks.onTurnResult).toHaveBeenCalledWith(expect.objectContaining({ success: false }));
         for (const call of localCallbacks.sendMessage.mock.calls.filter(call => call[1] === '报告已经发送。' || call[1].includes('异步提问未能确认送达'))) { expect(call[2]).toBe('original-topic'); }
+      } finally { emit?.(); agent.reset(); ChatAgent.prototype.dispose.call(agent); }
+    });
+
+    it('keeps a completed turn successful when the provider tags only the card delivery as failed (#5526, /api/push-initialized #5430)', async () => {
+      const localCallbacks = { ...createMockCallbacks(), onTurnResult: vi.fn().mockResolvedValue(undefined) };
+      const agent = new ChatAgent({ chatId: 'push-input-failure', agentBackend: 'codex', callbacks: localCallbacks, apiKey: 'test', model: 'test' });
+      (agent as any).isAgentTeamsEnabled = () => false;
+      vi.spyOn((agent as any).emptyTurnRetryPolicy, 'markRetried');
+      let emit!: () => void;
+      const anchorReason = 'Async question was not delivered: the channel could not confirm card delivery. '
+        + 'Input card could not be delivered: {"channel":"feishu","operation":"public-card","stage":"send","outcome":"rejected","apiCode":230001}';
+      const query = vi.fn(() => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: (async function* () {
+        await new Promise<void>(resolve => { emit = resolve; });
+        yield { parsed: { type: 'tool_use', content: 'write-once' }, raw: {} };
+        yield { parsed: { type: 'tool_result', content: 'saved' }, raw: {} };
+        yield { parsed: { type: 'text', content: '报告已生成（13 页）。', metadata: { phase: 'final_answer' } }, raw: {} };
+        // Provider-level #5526 fix: completed turn carries the local failure as
+        // metadata — no terminatedReason rewrite (push-init anchor is synthetic).
+        yield { parsed: { type: 'result', content: '✅ Complete',
+          metadata: { inputDeliveryFailure: { nativeCompleted: true, reason: anchorReason } } }, raw: {} };
+      })() }));
+      (agent as any).createQueryStream = query;
+      try {
+        await agent.processMessage({ chatId: 'push-input-failure', payload: 'Produce report', messageId: 'push_5430-init', chatType: 'group', threadRootId: 'push-topic' });
+        const outcome = expect(agent.turnCompleteFor('push_5430-init')).resolves.toBeUndefined();
+        emit(); await outcome;
+        const sent = localCallbacks.sendMessage.mock.calls.map(call => call[1]);
+        const notices = sent.filter(text => text.includes('异步提问未能确认送达'));
+        expect(notices).toHaveLength(1);
+        expect(notices[0]).toContain('已送达的产出仍然有效');
+        expect(notices[0]).toContain('input-delivery-failed');
+        expect(notices[0]).toContain('apiCode":230001');
+        expect(sent).toContain('报告已生成（13 页）。');
+        expect(sent.join('\n')).not.toContain('本轮失败');
+        expect(localCallbacks.onTurnResult).toHaveBeenCalledWith(expect.objectContaining({ success: true, text: expect.stringContaining('13 页') }));
+        expect((agent as any).restartManager.recordFailure).toHaveBeenCalledExactlyOnceWith('push-input-failure', 'input-delivery');
+        expect((agent as any).emptyTurnRetryPolicy.markRetried).not.toHaveBeenCalled();
+        expect(query).toHaveBeenCalledOnce();
       } finally { emit?.(); agent.reset(); ChatAgent.prototype.dispose.call(agent); }
     });
 
@@ -6952,6 +7149,45 @@ describe('Issue #4907: completion feedback belongs to delivered output', () => {
     expect(cb.startStreaming.mock.calls).toEqual([['oc_queue', 'om-user-1'], ['oc_queue', 'om-user-2']]);
     expect(cb.finalizeStreaming.mock.calls).toEqual([['card-1'], ['card-2']]);
     expect(cb.addReaction.mock.calls).toEqual([['om-answer-1', 'DONE'], ['om-answer-2', 'DONE']]);
+  });
+
+  it('shows queue, attachment and consumption receipts for a queued input (#5470 remaining items)', async () => {
+    const cb = { ...createMockCallbacks() };
+    const agent = new ChatAgent({ chatId: 'oc_consume', callbacks: cb, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    async function* events() {
+      await gate;
+      for (const content of ['first answer', 'second answer']) {
+        yield { parsed: { type: 'text', content }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete' }, raw: {} };
+      }
+    }
+    (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: events() });
+    (agent as any).isAgentTeamsEnabled = () => false;
+    try {
+      const first = agent.processMessage({
+        chatId: 'oc_consume', payload: 'first', messageId: 'c-user-1', threadRootId: 'c-user-1', chatType: 'p2p',
+      });
+      await first;
+      // The running turn keeps the session busy, so this input (with a file)
+      // waits in the queue: receipt at admission must mention both the queue
+      // and the attachment.
+      await agent.processMessage({
+        chatId: 'oc_consume', payload: 'second', messageId: 'c-user-2', threadRootId: 'c-user-2', chatType: 'p2p',
+        attachments: [{ fileId: 'f1', fileName: 'a.png' }] as any,
+      });
+      const queuedNotice = cb.sendMessage.mock.calls.map((call: unknown[]) => String(call[1]))
+        .find((text: string) => text.includes('已排队'));
+      expect(queuedNotice).toContain('1 个附件');
+      release();
+      await agent.turnCompleteFor('c-user-2');
+      // Receipt at the moment the queued input is actually taken up.
+      expect(cb.sendMessage.mock.calls.map((call: unknown[]) => String(call[1]))
+        .some((text: string) => text.includes('已取用你排队的这条输入'))).toBe(true);
+    } finally {
+      agent.dispose();
+    }
   });
 });
 

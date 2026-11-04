@@ -3,9 +3,76 @@ import { sanitizeDiagnosticText } from '@disclaude/core';
 
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' ? value as Record<string, unknown> : {};
 
+/**
+ * Structured, safe delivery diagnostics for the REST failure body (#5616).
+ * Every field is copied from the channel layer's already-allowlisted detail —
+ * unknown rejection causes are never guessed, so a generic code stays generic.
+ */
+export interface ChannelDeliveryDiagnostics {
+  channel: 'wechat';
+  /** `delivery-rejected` = server answered with a business error; `delivery-outcome-unknown` = timeout/network, verify before retry; `login-expired` = credentials rejected. */
+  errorKind: 'delivery-rejected' | 'delivery-outcome-unknown' | 'login-expired';
+  /** Only `login-expired` is conclusive; any other failure leaves the session unverified (#5478). */
+  sessionState: 'login-expired' | 'unverified';
+  endpoint?: string;
+  httpStatus?: number;
+  ret?: number;
+  errcode?: number;
+  errmsg?: string;
+  /** Channel-layer diagnostic ID (the `[diag …]` previously buried in the message string). */
+  channelDiagnosticId?: string;
+}
+
+/** Defense-in-depth at the REST boundary: drop anything that could carry a credential or URL. */
+function safeErrmsgText(value: unknown): string | undefined {
+  if (typeof value !== 'string') { return undefined; }
+  const text = value.trim().slice(0, 120);
+  return text && !/token|secret|signature|credential|password|authorization|https?:|\/\//i.test(text)
+    && /^[\p{L}\p{N}\p{P}\p{Zs}]{1,120}$/u.test(text) ? text : undefined;
+}
+
+const AUTH_EXPIRED_CODES = new Set([-14, 401]);
+
+/**
+ * Extract #5616 structured diagnostics from a channel failure's cause chain.
+ * Detects the WeChat API error structurally (name + allowlisted detail) and
+ * classifies only what the failure itself proves; returns undefined for
+ * non-WeChat errors so the body stays as before.
+ */
+function wechatDeliveryDiagnostics(error: unknown): ChannelDeliveryDiagnostics | undefined {
+  const message = error instanceof Error ? error.message : '';
+  if (!message.includes('WeChat')) { return undefined; }
+  let source: unknown = error;
+  for (let depth = 0; depth < 4 && source instanceof Error; depth++) {
+    const api = source as { name?: unknown; code?: unknown; authExpired?: unknown; detail?: unknown };
+    const detail = object(api.detail);
+    if (api.name === 'WeChatApiError' && typeof api.code === 'number' && Object.keys(detail).length > 0) {
+      const loginExpired = api.authExpired === true || AUTH_EXPIRED_CODES.has(api.code);
+      const errmsg = safeErrmsgText(detail.errmsg);
+      return {
+        channel: 'wechat',
+        errorKind: loginExpired ? 'login-expired' : 'delivery-rejected',
+        sessionState: loginExpired ? 'login-expired' : 'unverified',
+        ...(typeof detail.endpoint === 'string' ? { endpoint: detail.endpoint } : {}),
+        ...(typeof detail.httpStatus === 'number' ? { httpStatus: detail.httpStatus } : {}),
+        ...(typeof detail.ret === 'number' ? { ret: detail.ret } : {}),
+        ...(typeof detail.errcode === 'number' ? { errcode: detail.errcode } : {}),
+        ...(errmsg ? { errmsg } : {}),
+        ...(typeof detail.diagnosticId === 'string' ? { channelDiagnosticId: detail.diagnosticId } : {}),
+      };
+    }
+    source = (source as { cause?: unknown }).cause;
+  }
+  // postMessage's fixed literal for timeout/network/refused responses: the
+  // delivery outcome is unknown, not rejected — the only honest classification.
+  return message.includes('delivery outcome unknown')
+    ? { channel: 'wechat', errorKind: 'delivery-outcome-unknown', sessionState: 'unverified' }
+    : undefined;
+}
+
 /** Allowlist provider rejection details. Axios request/config/headers never leave this boundary. */
 export function channelError(error: unknown, secrets: readonly string[] = []): {
-  status: number; body: { ok: false; message: string; diagnosticId: string; upstreamStatus?: number; upstreamCode?: number };
+  status: number; body: { ok: false; message: string; diagnosticId: string; upstreamStatus?: number; upstreamCode?: number; diagnostics?: ChannelDeliveryDiagnostics };
 } {
   const response = object(object(error).response);
   const upstreamStatus = typeof response.status === 'number' && response.status >= 400 && response.status <= 599
@@ -16,8 +83,10 @@ export function channelError(error: unknown, secrets: readonly string[] = []): {
     : typeof object(data.error).message === 'string' ? object(data.error).message as string
       : error instanceof Error ? error.message : 'Channel request failed';
   const diagnosticId = randomUUID();
+  const diagnostics = wechatDeliveryDiagnostics(error);
   return { status: upstreamStatus ? upstreamStatus < 500 ? upstreamStatus : 502 : 500,
     body: { ok: false, diagnosticId, ...(upstreamStatus ? { upstreamStatus } : {}),
       ...(upstreamCode !== undefined ? { upstreamCode } : {}),
+      ...(diagnostics ? { diagnostics } : {}),
       message: `${upstreamStatus ? `Channel upstream HTTP ${upstreamStatus}` : 'Channel request failed'}${upstreamCode !== undefined ? ` / code ${upstreamCode}` : ''}: ${sanitizeDiagnosticText(detail, secrets)} (diagnostic ID ${diagnosticId})` } };
 }

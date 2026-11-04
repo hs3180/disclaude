@@ -80,6 +80,54 @@ describe('client-methods', () => {
 
       expect(result).toEqual({ success: true, fileKey: 'fk_1', fileType: 'pdf', fileName: 'a.pdf', fileSize: 42 });
     });
+
+    it('should pass idempotencyKey and timeoutMs through and keep messageId (#5630)', async () => {
+      const client = createMockClient({
+        uploadFile: { success: true, fileKey: 'fk_1', fileType: 'pdf', fileName: 'a.pdf', fileSize: 42, messageId: 'om_9' },
+      });
+      const { uploadFile } = await import('./client-methods.js');
+
+      const result = await uploadFile(client, 'oc_test', '/tmp/a.pdf', 'om_root', {
+        idempotencyKey: 'idem-1', timeoutMs: 60_000,
+      });
+
+      expect(result).toEqual({
+        success: true, fileKey: 'fk_1', fileType: 'pdf', fileName: 'a.pdf', fileSize: 42, messageId: 'om_9',
+      });
+      expect(client.request).toHaveBeenCalledWith(
+        'uploadFile',
+        { chatId: 'oc_test', filePath: '/tmp/a.pdf', threadId: 'om_root', idempotencyKey: 'idem-1' },
+        { timeoutMs: 60_000 },
+      );
+    });
+
+    it('should flag a timeout as outcomeUnknown and echo the idempotency key (#5630)', async () => {
+      const client = createMockClient({
+        uploadFile: new Error('CHANNEL_API_TIMEOUT: REST uploadFile (The operation was aborted due to timeout)'),
+      });
+      const { uploadFile } = await import('./client-methods.js');
+
+      const result = await uploadFile(client, 'oc_test', '/tmp/a.pdf', undefined, { idempotencyKey: 'idem-2' });
+
+      expect(result.success).toBe(false);
+      expect(result.errorType).toBe('channel_api_timeout');
+      expect(result.outcomeUnknown).toBe(true);
+      expect(result.idempotencyKey).toBe('idem-2');
+    });
+
+    it('should not flag definite (non-timeout) failures as outcomeUnknown (#5630)', async () => {
+      const client = createMockClient({
+        uploadFile: new Error('CHANNEL_API_REQUEST_FAILED: REST uploadFile (HTTP 500: handler error)'),
+      });
+      const { uploadFile } = await import('./client-methods.js');
+
+      const result = await uploadFile(client, 'oc_test', '/tmp/a.pdf', undefined, { idempotencyKey: 'idem-3' });
+
+      expect(result.success).toBe(false);
+      expect(result.errorType).toBe('channel_api_request_failed');
+      expect(result.outcomeUnknown).toBeUndefined();
+      expect(result.idempotencyKey).toBeUndefined();
+    });
   });
 
   describe('uploadImage', () => {

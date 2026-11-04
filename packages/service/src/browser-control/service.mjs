@@ -52,15 +52,19 @@ function ownerLockPath(path) { return join(dirname(path), 'service.lock'); }
 // one — or an older manifest recorded none — fall back to the legacy
 // PID/lstart/mtime check, which a live owner still satisfies and a dead or
 // PID-reused owner fails.
+function acquiredLockProvesOwnerGone(runtime, path, fd) {
+  const inode = fstatSync(fd).ino;
+  if (typeof runtime.ownerLockInode === 'number' && runtime.ownerLockInode === inode) return true;
+  return !legacyOwnerIsLive(runtime, path);
+}
+
 function runtimeOwnerIsLive(runtime, path) {
   if (!processExists(runtime.pid)) return false;
   if (runtime.ownerLock !== 1) return legacyOwnerIsLive(runtime, path);
   const fd = openCommandLock(ownerLockPath(path));
   try {
     if (!tryCommandLock(fd)) return true;
-    const inode = fstatSync(fd).ino;
-    if (typeof runtime.ownerLockInode === 'number' && runtime.ownerLockInode === inode) return false;
-    return legacyOwnerIsLive(runtime, path);
+    return !acquiredLockProvesOwnerGone(runtime, path, fd);
   } finally { closeSync(fd); }
 }
 
@@ -162,20 +166,39 @@ export async function refreshBrowserRuntimeConnection({ env = process.env, fetch
     throw error;
   }
   const { websocket, browserId } = discovered;
-  if (websocket.href === runtime.browserEnv.BU_CDP_WS) return runtime; // Connection is still current.
+  const changed = websocket.href !== runtime.browserEnv.BU_CDP_WS;
   const identity = createHash('sha256').update(browserId).digest('hex').slice(0, 24);
   const directory = join(`/tmp/disclaude-browser-${process.getuid?.()}`, identity);
-  privateDirectory(directory);
+  if (changed) { privateDirectory(directory); }
+  let ownership = runtime;
   const ownerFd = openCommandLock(ownerLockPath(path));
   try {
-    if (tryCommandLock(ownerFd)) throw new Error('Browser runtime owner is not live; start or restart Disclaude');
+    // #5474: after service.lock inode drift the path lock is acquirable while
+    // the owner still lives (its kernel lock sits on the unlinked object).
+    // Acquisition proves the owner gone only on the recorded inode; on drift,
+    // re-verify with the legacy PID/lstart evidence and heal the manifest to
+    // that evidence so --reload auto-recovers what 0.6.6 field ops had to
+    // check by hand. No process can re-take the original object through the
+    // path, so the kernel-lock proof is gone for good once drift is confirmed.
+    if (tryCommandLock(ownerFd)) {
+      if (acquiredLockProvesOwnerGone(runtime, path, ownerFd)) {
+        throw new Error('Browser runtime owner is not live; start or restart Disclaude');
+      }
+      const healed = { ...runtime, ownerLockInode: null };
+      const healing = `${path}.${runtime.instance}.heal.tmp`;
+      try { writeFileSync(healing, JSON.stringify(healed), { flag: 'wx', mode: 0o600 }); renameSync(healing, path); }
+      finally { rmSync(healing, { force: true }); }
+      ownership = healed;
+      onEvent({ type: 'browser-owner-evidence-refreshed', recordedInode: runtime.ownerLockInode ?? null });
+    }
+    if (!changed) { return ownership; } // Connection is still current.
     const fd = openCommandLock(join(directory, 'command.lock'));
     try { if (!tryCommandLock(fd)) throw new Error(`Browser commands are busy in ${directory}; retry --reload when idle`); }
     finally { closeSync(fd); }
     if (JSON.parse(readFileSync(path, 'utf8')).instance !== runtime.instance) {
       throw new Error('Browser service restarted during the refresh; retry the invocation');
     }
-    const migrated = { ...runtime, directory, browserEnv: { ...runtime.browserEnv,
+    const migrated = { ...ownership, directory, browserEnv: { ...ownership.browserEnv,
       BU_CDP_WS: websocket.href, BU_NAME: `disclaude-${identity}`,
       BH_RUNTIME_DIR: directory, BH_TMP_DIR: directory, BH_HOME: directory } };
     const temporary = `${path}.${runtime.instance}.refresh.tmp`;
@@ -184,6 +207,64 @@ export async function refreshBrowserRuntimeConnection({ env = process.env, fetch
     onEvent({ type: 'browser-connection-refreshed', from: runtime.browserEnv.BU_CDP_WS, to: websocket.href });
     return migrated;
   } finally { closeSync(ownerFd); }
+}
+
+// #5601: classify WHY the manifest is unusable instead of reporting a bare
+// "missing". A stale (dead owner) or corrupt manifest must keep its identity.
+function classifyRuntimeFailure(path, error) {
+  let raw;
+  try { raw = readFileSync(path, 'utf8'); }
+  catch (readError) {
+    if (readError?.code === 'ENOENT') return { code: 'missing',
+      detail: `runtime manifest does not exist at ${path}: no Disclaude service has published browser coordination for this configuration`,
+      remedy: 'Start or restart the Disclaude service with a Chromium CDP endpoint configured (installed chromium-cdp.json or BU_CDP_URL); it publishes the manifest at startup' };
+    return { code: 'unreadable', detail: `runtime manifest at ${path} cannot be read: ${readError.message}`,
+      remedy: 'Fix the manifest file permissions or ownership, then restart the Disclaude service' };
+  }
+  let parsed;
+  try { parsed = JSON.parse(raw); }
+  catch { return { code: 'corrupt', detail: `runtime manifest at ${path} is not valid JSON (truncated or replaced)`,
+    remedy: 'Restart the Disclaude service to rewrite the manifest, or remove the broken file first if the service is not running' }; }
+  if (parsed && Number.isSafeInteger(parsed.pid) && !processExists(parsed.pid)) {
+    return { code: 'stale', detail: `runtime manifest at ${path} is stale: the owning Disclaude service (pid ${parsed.pid}) is no longer running`,
+      remedy: 'Start or restart the Disclaude service to re-publish browser coordination' };
+  }
+  return { code: 'invalid', detail: `runtime manifest at ${path} is not usable: ${error.message}`,
+    remedy: 'Start or restart the Disclaude service to re-publish browser coordination' };
+}
+
+// #5601: one diagnosis source for `disclaude browser status --json` and the
+// skill launcher failure path. Endpoint sources normalize to runtime.json
+// (live manifest), env (BU_CDP_URL), container (installed chromium-cdp.json)
+// or none; lastError keeps the real failure cause, never a bare ENOENT.
+export function diagnoseBrowserRuntime(env = process.env) {
+  const runtimePath = env.DISCLAUDE_BROWSER_RUNTIME || resolveBrowserRuntimePath(env);
+  const notes = [];
+  if (Object.hasOwn(env, 'BU_CDP_URL') && !String(env.BU_CDP_URL ?? '').trim()) {
+    notes.push('BU_CDP_URL is set but empty; it is treated as unset');
+  }
+  let endpoint = null, endpointSource = 'none', endpointError;
+  try {
+    const resolved = resolveCdpConfiguration(env);
+    endpoint = resolved.endpoint;
+    endpointSource = resolved.endpointSource === 'BU_CDP_URL' ? 'env' : 'container';
+  } catch (error) { endpointError = error.message; }
+  let status;
+  try { status = browserStatus(runtimePath); }
+  catch (error) {
+    const failure = classifyRuntimeFailure(runtimePath, error);
+    const parts = [failure.detail];
+    if (endpointError) parts.push(endpointError);
+    let { remedy } = failure;
+    if (/chromium cdp configuration/i.test(endpointError || '')) {
+      remedy = 'Repair or regenerate the installed chromium-cdp.json (or remove it to fall back to BU_CDP_URL), then restart the Disclaude service';
+    }
+    return { available: false, state: 'unavailable', runtimePath, endpoint, endpointSource,
+      lastError: [...parts, ...notes].join('; '), remedy, ...(notes.length ? { notes } : {}) };
+  }
+  const runtime = readBrowserRuntime(runtimePath);
+  return { available: true, ...status, runtimePath, endpoint: runtime.browserEnv.BU_CDP_URL || endpoint,
+    endpointSource: 'runtime.json', lastError: null, remedy: null, ...(notes.length ? { notes } : {}) };
 }
 
 export async function prepareBrowserCommands({ env = process.env, fetchImpl = globalThis.fetch,
@@ -209,7 +290,15 @@ export async function prepareBrowserCommands({ env = process.env, fetchImpl = gl
   const ownerFd = openCommandLock(ownerLockPath(path));
   try {
     const previous = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : undefined;
-    if (!tryCommandLock(ownerFd) || (previous && previous.ownerLock !== 1 && legacyOwnerIsLive(previous, path))) {
+    // #5474: after service.lock inode drift the path lock is acquirable while
+    // the previous owner still lives. Acquisition alone must not hand a live
+    // owner's commands to a second service; a dead or PID-reused owner still
+    // fails the drift-aware evidence and remains reclaimable.
+    const acquired = tryCommandLock(ownerFd);
+    const previousOwnerLive = !acquired || Boolean(previous && (previous.ownerLock === 1
+      ? !acquiredLockProvesOwnerGone(previous, path, ownerFd)
+      : legacyOwnerIsLive(previous, path)));
+    if (previousOwnerLive) {
       throw new Error(`Browser commands already belong to service ${previous?.pid || 'another process'}`);
     }
     const fd = openCommandLock(join(directory, 'command.lock'));

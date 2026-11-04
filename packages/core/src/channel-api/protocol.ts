@@ -41,6 +41,13 @@ export interface ChannelApiRequestPayloads {
     chatId: string;
     filePath: string;
     threadId?: string;
+    /**
+     * Retry-dedup key (Issue #5630). The service joins an in-flight request
+     * with the same key and replays a recent same-key success instead of
+     * re-sending, so a retry after an ambiguous timeout cannot double-deliver.
+     * Generate once per logical send and reuse that key when retrying.
+     */
+    idempotencyKey?: string;
   };
   uploadImage: {
     filePath: string;
@@ -76,7 +83,15 @@ export interface ChannelApiResponsePayloads {
   ping: { pong: boolean };
   sendMessage: { success: boolean };
   sendCard: { success: boolean };
-  uploadFile: { success: boolean; fileKey: string; fileType: string; fileName: string; fileSize: number };
+  uploadFile: {
+    success: boolean;
+    fileKey: string;
+    fileType: string;
+    fileName: string;
+    fileSize: number;
+    /** Platform message_id of the delivered file message, when confirmed (Issue #5630). */
+    messageId?: string;
+  };
   uploadImage: { success: boolean; imageKey: string };
   sendInteractive: { success: boolean; messageId?: string };
   listTempChats: { success: boolean; chats: Array<{ chatId: string; createdAt: string; expiresAt: string; creatorChatId?: string; responded: boolean }> };

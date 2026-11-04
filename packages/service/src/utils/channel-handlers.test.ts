@@ -950,6 +950,26 @@ describe('createChannelApiHandlers', () => {
     expect(result.fileName).toBe('simple-file.txt');
   });
 
+  it('uploadFile should preserve the messageId the channel reports (#5630)', async () => {
+    const handlers = createChannelApiHandlers(channel, {
+      logger: mockLogger,
+      channelName: 'Test',
+    });
+    vi.mocked(channel.sendMessage).mockResolvedValueOnce('om_file_1');
+    const result = await handlers.uploadFile('chat-001', '/path/to/report.pdf');
+    // The message_id is the verifiable delivery conclusion for the REST response.
+    expect(result.messageId).toBe('om_file_1');
+  });
+
+  it('uploadFile should omit messageId when the channel reports none', async () => {
+    const handlers = createChannelApiHandlers(channel, {
+      logger: mockLogger,
+      channelName: 'Test',
+    });
+    const result = await handlers.uploadFile('chat-001', '/path/to/report.pdf');
+    expect(result.messageId).toBeUndefined();
+  });
+
   it('uploadFile should log debug about incomplete metadata', async () => {
     const handlers = createChannelApiHandlers(channel, {
       logger: mockLogger,

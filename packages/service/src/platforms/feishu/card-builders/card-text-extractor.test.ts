@@ -362,4 +362,66 @@ describe('extractFullCardContent', () => {
       expect(result).toBe('[Interactive Card]');
     });
   });
+
+  // Issue #5433: schema 2.0 cards carry elements under `body.elements` (the
+  // shape this repo's own builders send — streaming-card-builder,
+  // task-question-cards, agent-input — and the shape Feishu delivers for
+  // card content forwarded into a thread). The extractor previously read only
+  // the schema 1.0 root `elements`, so any 2.0 card degraded to the bare
+  // `[Interactive Card]` placeholder in thread context.
+  describe('Issue #5433: card schema 2.0 (body.elements) extraction', () => {
+    it('extracts a schema 2.0 card shaped like this repo own task-question card', () => {
+      // Fixture mirrors task-question-cards.ts card() output verbatim in shape:
+      // schema 2.0 + header.title(plain_text) + body.elements(div/form/button).
+      const card = {
+        schema: '2.0',
+        config: { enable_forward: false, update_multi: true },
+        header: { title: { tag: 'plain_text', content: '任务等待反馈' }, template: 'blue' },
+        body: {
+          elements: [
+            { tag: 'div', text: { tag: 'plain_text', content: '请补充这项任务需要的非私密信息' } },
+            { tag: 'div', text: { tag: 'plain_text', content: '报告需要的数据范围是？' } },
+            { tag: 'form', name: 'question-form-q1', elements: [
+              { tag: 'input', name: 'task-question:q1:answer', input_type: 'multiline_text', required: true, placeholder: { tag: 'plain_text', content: '填写非私密业务反馈' } },
+              { tag: 'button', name: 'task-question:q1:submit', type: 'primary_filled', text: { tag: 'plain_text', content: '提交回答' }, form_action_type: 'submit' },
+            ] },
+          ],
+        },
+      };
+      const result = extractFullCardContent(card);
+      expect(result).toContain('**任务等待反馈**');
+      expect(result).toContain('请补充这项任务需要的非私密信息');
+      expect(result).toContain('报告需要的数据范围是？');
+      expect(result).toContain('[提交回答]');
+      expect(result).not.toBe('[Interactive Card]');
+    });
+
+    it('extracts markdown body elements from a schema 2.0 streaming card', () => {
+      // Fixture mirrors streaming-card-builder.ts: schema '2.0', body.elements
+      // carrying markdown components.
+      const card = {
+        schema: '2.0',
+        config: { streaming_mode: true },
+        body: { elements: [{ tag: 'markdown', content: '正在分析转发的内容…' }] },
+      };
+      const result = extractFullCardContent(card);
+      expect(result).toBe('正在分析转发的内容…');
+    });
+
+    it('extracts both root and body elements when both are present (forwarded 1.0 card wrapped in a 2.0 container)', () => {
+      const card = {
+        schema: '2.0',
+        elements: [{ tag: 'markdown', content: '原 1.0 卡片正文' }],
+        body: { elements: [{ tag: 'div', text: { tag: 'plain_text', content: '转发附言' } }] },
+      };
+      const result = extractFullCardContent(card);
+      expect(result).toContain('原 1.0 卡片正文');
+      expect(result).toContain('转发附言');
+    });
+
+    it('keeps the generic placeholder for a schema 2.0 card with no extractable text', () => {
+      const card = { schema: '2.0', config: {}, body: { elements: [{ tag: 'hr' }] } };
+      expect(extractFullCardContent(card)).toBe('[Interactive Card]');
+    });
+  });
 });

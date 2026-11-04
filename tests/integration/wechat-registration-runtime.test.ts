@@ -1,6 +1,6 @@
 /** Real registry, lifecycle and REST; Tencent long polls are intercepted. */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import nock from 'nock';
@@ -94,7 +94,7 @@ describe('WeChat registration runtime', () => {
     } finally { await runtime.stop(); await rm(dir, { recursive: true, force: true }); }
   });
 
-  it('keeps REST available with an empty registry lock and resumes after its explicit repair', async () => {
+  it('auto-quarantines an empty registry lock on startup and recovers healthy (#5513)', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'wechat-registry-empty-lock-'));
     const { manager, lifecycle, runtime } = setup(dir);
     try {
@@ -106,11 +106,17 @@ describe('WeChat registration runtime', () => {
       await runtime.start();
       await lifecycle.startAll();
       expect(manager.get('rest')?.isHealthy()).toBe(true);
-      expect(runtime.getHealth().status).toBe('degraded');
-      expect(await readFile(join(guard, 'listener.lock'), 'utf8')).toBe('');
-      // Simulate an operator repairing only this known test-owned empty lock.
-      await unlink(join(guard, 'listener.lock'));
-      await vi.waitFor(() => expect(runtime.getHealth().status).toBe('healthy'));
+      // #5513 auto-recovery: the ENOSPC-emptied residue must not wedge the
+      // registry until an operator removes it — startup quarantines the residue
+      // (timestamped .corrupt sibling, never deleted) and rebuilds the lock, so
+      // health reaches healthy without manual repair and without a reboot.
+      expect(runtime.getHealth().status).toBe('healthy');
+      // The residue is renamed (never deleted) to a timestamped .corrupt sibling
+      // for inspection; the canonical lock path stays clean while idle because
+      // each transaction releases the rebuilt lock afterwards.
+      const quarantined = (await readdir(guard)).filter(name => name.startsWith('listener.lock.') && name.endsWith('.corrupt'));
+      expect(quarantined).toHaveLength(1);
+      expect((await readFile(join(guard, quarantined[0]!), 'utf8')).length).toBe(0);
       expect(manager.get('rest')?.isHealthy()).toBe(true);
     } finally { await runtime.stop(); await lifecycle.stopAll(); await rm(dir, { recursive: true, force: true }); }
   });

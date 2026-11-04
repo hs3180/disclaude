@@ -69,7 +69,9 @@ describe('send_file', () => {
         success: true, fileKey: 'key', fileType: 'txt', fileName: 'file.txt', fileSize: 1024,
       });
       await send_file({ filePath: 'file.txt', chatId: 'oc_test' });
-      expect(mockChannelApiClient.uploadFile).toHaveBeenCalledWith('oc_test', '/workspace/file.txt', undefined);
+      expect(mockChannelApiClient.uploadFile).toHaveBeenCalledWith(
+        'oc_test', '/workspace/file.txt', undefined, { idempotencyKey: expect.any(String) },
+      );
     });
 
     it('should use absolute paths directly', async () => {
@@ -77,7 +79,9 @@ describe('send_file', () => {
         success: true, fileKey: 'key', fileType: 'txt', fileName: 'file.txt', fileSize: 1024,
       });
       await send_file({ filePath: '/absolute/path/file.txt', chatId: 'oc_test' });
-      expect(mockChannelApiClient.uploadFile).toHaveBeenCalledWith('oc_test', '/absolute/path/file.txt', undefined);
+      expect(mockChannelApiClient.uploadFile).toHaveBeenCalledWith(
+        'oc_test', '/absolute/path/file.txt', undefined, { idempotencyKey: expect.any(String) },
+      );
     });
   });
 
@@ -243,7 +247,9 @@ describe('send_file', () => {
         success: true, fileKey: 'key', fileType: 'pdf', fileName: 'doc.pdf', fileSize: 2048,
       });
       await send_file({ filePath: '/test/doc.pdf', chatId: 'oc_test', parentMessageId: 'thread_123' });
-      expect(mockChannelApiClient.uploadFile).toHaveBeenCalledWith('oc_test', '/test/doc.pdf', 'thread_123');
+      expect(mockChannelApiClient.uploadFile).toHaveBeenCalledWith(
+        'oc_test', '/test/doc.pdf', 'thread_123', { idempotencyKey: expect.any(String) },
+      );
     });
 
     it('should pass undefined when parentMessageId is not provided', async () => {
@@ -251,7 +257,9 @@ describe('send_file', () => {
         success: true, fileKey: 'key', fileType: 'txt', fileName: 'file.txt', fileSize: 1024,
       });
       await send_file({ filePath: '/test/file.txt', chatId: 'oc_test' });
-      expect(mockChannelApiClient.uploadFile).toHaveBeenCalledWith('oc_test', '/test/file.txt', undefined);
+      expect(mockChannelApiClient.uploadFile).toHaveBeenCalledWith(
+        'oc_test', '/test/file.txt', undefined, { idempotencyKey: expect.any(String) },
+      );
     });
 
     it('should send file successfully with thread reply', async () => {
@@ -315,6 +323,81 @@ describe('send_file', () => {
       expect(result.success).toBe(true);
       expect(result.fileSize).toBe(0);
       expect(result.sizeMB).toBe('0.00');
+    });
+  });
+
+  // Issue #5630: a timed-out upload is an UNKNOWN outcome, not a failure —
+  // the service may still deliver. The result must say so and carry the
+  // retry-dedup idempotency key instead of inviting a blind resend.
+  describe('ambiguous timeout outcome (#5630)', () => {
+    it('reports the unknown outcome with retry guidance instead of a plain failure', async () => {
+      mockChannelApiClient.uploadFile.mockResolvedValue({
+        success: false,
+        error: 'CHANNEL_API_TIMEOUT: REST uploadFile (The operation was aborted due to timeout)',
+        errorType: 'channel_api_timeout' as const,
+        outcomeUnknown: true,
+        idempotencyKey: 'idem-timeout',
+      });
+      // A retry re-passes the key from the timed-out attempt (documented flow).
+      const result = await send_file({
+        filePath: '/test/slow.png', chatId: 'oc_test', idempotencyKey: 'idem-timeout',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.outcomeUnknown).toBe(true);
+      expect(result.idempotencyKey).toBe('idem-timeout');
+      expect(result.message).toContain('UNKNOWN');
+      expect(result.message).toContain('idempotencyKey "idem-timeout"');
+      expect(result.message).toContain('may still arrive');
+    });
+
+    it('reports a tool-generated key when the caller passed none', async () => {
+      mockChannelApiClient.uploadFile.mockResolvedValue({
+        success: false,
+        error: 'CHANNEL_API_TIMEOUT: REST uploadFile (The operation was aborted due to timeout)',
+        errorType: 'channel_api_timeout' as const,
+        outcomeUnknown: true,
+      });
+      const result = await send_file({ filePath: '/test/slow.png', chatId: 'oc_test' });
+
+      expect(result.outcomeUnknown).toBe(true);
+      expect(result.idempotencyKey).toMatch(/^send-file-/);
+      expect(result.message).toContain(`idempotencyKey "${result.idempotencyKey}"`);
+    });
+
+    it('generates a fresh dedup key per logical send', async () => {
+      mockChannelApiClient.uploadFile.mockResolvedValue({
+        success: true, fileKey: 'key', fileType: 'png', fileName: 'a.png', fileSize: 1024,
+      });
+      await send_file({ filePath: '/test/a.png', chatId: 'oc_test' });
+      await send_file({ filePath: '/test/a.png', chatId: 'oc_test' });
+
+      const firstKey = mockChannelApiClient.uploadFile.mock.calls[0][3]?.idempotencyKey;
+      const secondKey = mockChannelApiClient.uploadFile.mock.calls[1][3]?.idempotencyKey;
+      expect(firstKey).toMatch(/^send-file-/);
+      expect(secondKey).toMatch(/^send-file-/);
+      expect(firstKey).not.toBe(secondKey);
+    });
+
+    it('reuses an explicitly passed idempotencyKey (retry-safe call)', async () => {
+      mockChannelApiClient.uploadFile.mockResolvedValue({
+        success: true, fileKey: 'key', fileType: 'png', fileName: 'a.png', fileSize: 1024,
+      });
+      await send_file({ filePath: '/test/a.png', chatId: 'oc_test', idempotencyKey: 'idem-fixed' });
+
+      expect(mockChannelApiClient.uploadFile).toHaveBeenCalledWith(
+        'oc_test', '/test/a.png', undefined, { idempotencyKey: 'idem-fixed' },
+      );
+    });
+
+    it('surfaces the confirmed messageId on success', async () => {
+      mockChannelApiClient.uploadFile.mockResolvedValue({
+        success: true, fileKey: 'key', fileType: 'png', fileName: 'a.png', fileSize: 1024, messageId: 'om_ok',
+      });
+      const result = await send_file({ filePath: '/test/a.png', chatId: 'oc_test' });
+
+      expect(result.success).toBe(true);
+      expect(result.messageId).toBe('om_ok');
     });
   });
 });
