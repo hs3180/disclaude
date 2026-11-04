@@ -171,8 +171,14 @@ export interface AgentMessageMetadata {
   upstreamApiError?: boolean;
   /** The provider forbids automatic resubmission of this logical query. */
   automaticReplayBlocked?: string;
-  /** A local async input delivery failure, distinct from the native execution outcome. */
-  inputDeliveryFailure?: { nativeCompleted: boolean };
+  /**
+   * A local async input delivery failure, distinct from the native execution
+   * outcome. When `nativeCompleted` is true the turn itself finished and its
+   * outputs stand (#5526) — `reason` keeps the delivery failure (e.g. missing
+   * reply anchor, bounded channel diagnostic) traceable without reclassifying
+   * the turn as a provider failure.
+   */
+  inputDeliveryFailure?: { nativeCompleted: boolean; reason?: string };
   /** Machine-owned evidence is preferred to the legacy stderr signature. */
   upstreamApiErrorSource?: 'stream' | 'transcript' | 'stderr';
   upstreamApiErrorStatus?: number;

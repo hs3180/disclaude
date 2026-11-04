@@ -44,6 +44,10 @@ export function isPrivateWorkflowRequest(value: unknown): value is PrivateWorkfl
   );
 }
 
+/** #5411: report a consumed outcome back to the waiting session. Payload
+ * carries ids/outcome only; the private value never crosses this boundary. */
+export type PrivateOutcomeNotifier = (chatId: string, message: string) => Promise<void>;
+
 /** Each request freezes a task-selected consumer; form callbacks cannot replace it. */
 export class FeishuPrivateWorkflows {
   private readonly pending = new Map<
@@ -52,7 +56,11 @@ export class FeishuPrivateWorkflows {
   >();
   /** #5489: recently consumed one-shots whose replays re-assert the real terminal status. */
   private readonly completed = new Map<string, { status: string; timer: ReturnType<typeof setTimeout> }>();
+  private notifier?: PrivateOutcomeNotifier;
   constructor(private readonly send: ConstructorParameters<typeof FeishuPrivateInput>[1], private readonly update?: UpdatePrivateCard) {}
+
+  /** #5411: wire the session-resume path; set after construction, once the router exists. */
+  setNotifier(notify: PrivateOutcomeNotifier): void {this.notifier = notify;}
 
   async request(request: PrivateWorkflowRequest): Promise<{ actionId: string }> {
     if (!isPrivateWorkflowRequest(request)) {
@@ -109,6 +117,12 @@ export class FeishuPrivateWorkflows {
     if (outcome && outcome !== 'invalid') {
       this.remove(id);
       this.remember(id, outcome);
+      // #5411: a consumed submission resumes the waiting task on its own —
+      // no extra user message needed. Fire-and-forget: a routing hiccup must
+      // not repaint the terminal card or drop the one-shot finalization above.
+      if (this.notifier) {
+        void this.notifier(entry.chat, `private input ${id} ${outcome}`).catch(() => {});
+      }
     }
     return true;
   }

@@ -2,7 +2,7 @@
  * Tests for ChannelApiClient — the REST API channel-method client (Issue #4279 Phase 2).
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import { normalizeChannelApiBaseUrl, ChannelApiClient } from './client.js';
 
 describe('ChannelApiClient', () => {
@@ -159,6 +159,112 @@ describe('ChannelApiClient', () => {
       const result = await client.request('sendMessage', { chatId: 'oc_test', text: 'hi' });
 
       expect(result).toEqual({ success: true, messageId: 'om_456' });
+    });
+  });
+
+  // Issue #5630: upload routes cover the full upload+message-create chain in
+  // one request and need a chain-aware deadline. AbortSignal.timeout is native
+  // and invisible to fake timers, so these tests spy on it with a fake-timer
+  // driven AbortController — the timeout → abort → fetch-reject chain stays real.
+  describe('upload deadline (Issue #5630)', () => {
+    let timeoutCalls: number[];
+    let timeoutSpy: MockInstance;
+
+    /** fetch stub that resolves after `respondAfterMs` or rejects like undici on abort. */
+    function mockDeadlineFetch(respondAfterMs: number | null): void {
+      globalThis.fetch = ((_input: string, init?: RequestInit) => {
+        return new Promise<Response>((resolve, reject) => {
+          const timer = respondAfterMs === null
+            ? undefined
+            : setTimeout(() => {
+              resolve({
+                ok: true,
+                status: 200,
+                json: () => Promise.resolve({
+                  ok: true, success: true, fileKey: 'fk', fileType: 'file', fileName: 'a.pdf', fileSize: 10,
+                }),
+              } as Response);
+            }, respondAfterMs);
+          init?.signal?.addEventListener('abort', () => {
+            if (timer) { clearTimeout(timer); }
+            const err = new Error('The operation was aborted due to timeout');
+            err.name = 'TimeoutError';
+            reject(err);
+          });
+        });
+      }) as typeof fetch;
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      timeoutCalls = [];
+      timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockImplementation(((ms: number) => {
+        timeoutCalls.push(ms);
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(), ms);
+        return controller.signal;
+      }) as typeof AbortSignal.timeout);
+    });
+
+    afterEach(() => {
+      timeoutSpy.mockRestore();
+      vi.useRealTimers();
+    });
+
+    it('gives uploadFile the chain-aware deadline: a >30s response succeeds', async () => {
+      // Regression (#5630): 1.8MB PNG / 551KB JPEG died at the generic 30s.
+      // The upload default must outlive 30s handlers end-to-end.
+      mockDeadlineFetch(31_000);
+      const client = new ChannelApiClient({ baseUrl: 'http://localhost:19200' });
+
+      const pending = client.requestChannel('uploadFile', { chatId: 'oc_x', filePath: '/a.pdf' });
+      await vi.advanceTimersByTimeAsync(31_000);
+      await expect(pending).resolves.toEqual({
+        success: true, fileKey: 'fk', fileType: 'file', fileName: 'a.pdf', fileSize: 10,
+      });
+      expect(timeoutCalls).toEqual([120_000]);
+    });
+
+    it('still aborts uploadFile at its own deadline and maps to CHANNEL_API_TIMEOUT', async () => {
+      mockDeadlineFetch(null); // never responds — only the deadline ends it
+      const client = new ChannelApiClient({ baseUrl: 'http://localhost:19200' });
+
+      const pending = client.requestChannel('uploadFile', { chatId: 'oc_x', filePath: '/a.pdf' });
+      const captured = expect(pending).rejects.toThrow('CHANNEL_API_TIMEOUT: REST uploadFile');
+      await vi.advanceTimersByTimeAsync(120_000);
+      await captured;
+      expect(timeoutCalls).toEqual([120_000]);
+    });
+
+    it('an explicit timeoutMs overrides the chain-aware default', async () => {
+      mockDeadlineFetch(null);
+      const client = new ChannelApiClient({ baseUrl: 'http://localhost:19200' });
+
+      const pending = client.requestChannel('uploadFile', { chatId: 'oc_x', filePath: '/a.pdf' }, { timeoutMs: 5_000 });
+      const captured = expect(pending).rejects.toThrow('CHANNEL_API_TIMEOUT');
+      await vi.advanceTimersByTimeAsync(5_000);
+      await captured;
+      expect(timeoutCalls).toEqual([5_000]);
+    });
+
+    it('keeps the generic 30s default for non-upload routes', async () => {
+      mockDeadlineFetch(null);
+      const client = new ChannelApiClient({ baseUrl: 'http://localhost:19200' });
+
+      const pending = client.requestChannel('sendMessage', { chatId: 'oc_x', text: 'hi' });
+      const captured = expect(pending).rejects.toThrow('CHANNEL_API_TIMEOUT');
+      await vi.advanceTimersByTimeAsync(30_000);
+      await captured;
+      expect(timeoutCalls).toEqual([30_000]);
+    });
+
+    it('sends the idempotencyKey with the uploadFile payload', async () => {
+      const { calls } = mockFetch([{ json: { ok: true, success: true, fileKey: '', fileType: 'file', fileName: 'a.pdf', fileSize: 0 } }]);
+      const client = new ChannelApiClient({ baseUrl: 'http://localhost:19200' });
+
+      await client.requestChannel('uploadFile', { chatId: 'oc_x', filePath: '/a.pdf', idempotencyKey: 'idem-1' });
+
+      expect(JSON.parse(calls[0].init.body as string)).toMatchObject({ idempotencyKey: 'idem-1' });
     });
   });
 

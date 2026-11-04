@@ -7,7 +7,8 @@ import { tmpdir } from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { browserAgentEnv, resolveBrowserRuntimePath } from '@disclaude/core/browser-runtime';
-import { browserStatus, prepareBrowserCommands, refreshBrowserRuntimeConnection, resolveBrowserUse, resolveCdpEndpoint } from './service.mjs';
+import { browserStatus, diagnoseBrowserRuntime, prepareBrowserCommands, refreshBrowserRuntimeConnection, resolveBrowserUse, resolveCdpEndpoint } from './service.mjs';
+import { startBrowserRuntime } from './runtime.js';
 import { openCommandLock, tryCommandLock } from './command-lock.mjs';
 
 const roots = new Set<string>();
@@ -174,6 +175,46 @@ describe('transparent browser-use command coordination', () => {
     expect(browserStatus(recovered.path).state).toBe('idle');
   });
 
+  it('heals drifted service.lock ownership on refresh instead of fencing a live owner (#5474)', async () => {
+    const f = await fixture();
+    const lock = join(dirname(f.path), 'service.lock');
+    renameSync(lock, `${lock}.moved`);
+    writeFileSync(lock, '', { mode: 0o600 });
+    // The live owner still validates for reads; the refresh must not treat the
+    // fresh unlocked path file as proof the owner died.
+    const onEvent = vi.fn();
+    const refreshed = await refreshBrowserRuntimeConnection({ env: f.taskEnv, fetchImpl: f.fetchImpl, onEvent });
+    expect(refreshed.instance).toBe(f.data.instance);
+    const healed = JSON.parse(readFileSync(f.path, 'utf8'));
+    expect(healed.ownerLockInode).toBeNull();
+    expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'browser-owner-evidence-refreshed' }));
+    expect(browserStatus(f.path).state).toBe('idle');
+    // A browser id change (the real --reload outcome) migrates on the healed
+    // evidence instead of failing with "owner is not live".
+    const second = randomUUID();
+    f.setBrowserId(second);
+    expect((await f.run({}, ['--reload']).result).code).toBe(0);
+    const migrated = JSON.parse(readFileSync(f.path, 'utf8'));
+    expect(migrated.browserEnv.BU_CDP_WS).toContain(second);
+    expect(migrated.ownerLockInode).toBeNull();
+    roots.add(migrated.directory);
+    expect(browserStatus(f.path).state).toBe('idle');
+    await f.service.stop();
+    expect(() => browserStatus(f.path)).toThrow(/unavailable/);
+  });
+
+  it('does not let a second service steal commands after service.lock drift with a live owner (#5474)', async () => {
+    const f = await fixture();
+    const lock = join(dirname(f.path), 'service.lock');
+    renameSync(lock, `${lock}.moved`);
+    writeFileSync(lock, '', { mode: 0o600 });
+    await expect(f.start()).rejects.toThrow(/already belong/);
+    expect(browserStatus(f.path).state).toBe('idle');
+    await f.service.stop();
+    const recovered = await f.start();
+    expect(browserStatus(recovered.path).state).toBe('idle');
+  });
+
   it('releases service ownership when a startup write fails', async () => {
     const f = await fixture();
     await f.service.stop();
@@ -329,5 +370,92 @@ describe('transparent browser-use command coordination', () => {
     } finally { closeSync(busy); }
     await f.service.stop();
     await expect(refreshBrowserRuntimeConnection({ env: f.taskEnv, fetchImpl: f.fetchImpl })).rejects.toThrow(/unavailable/);
+  });
+});
+
+describe('browser runtime diagnosis (#5601)', () => {
+  it('reports an available runtime with the manifest endpoint and path', async () => {
+    const f = await fixture();
+    const diagnosis = diagnoseBrowserRuntime(f.env);
+    expect(diagnosis.available).toBe(true);
+    expect(diagnosis.state).toBe('idle');
+    expect(diagnosis.endpoint).toBe(f.data.browserEnv.BU_CDP_URL);
+    expect(diagnosis.endpointSource).toBe('runtime.json');
+    expect(diagnosis.runtimePath).toBe(f.path);
+    expect(diagnosis.lastError).toBeNull();
+    expect(diagnosis.remedy).toBeNull();
+  });
+
+  it('distinguishes corrupt, stale and missing manifests instead of a bare ENOENT', async () => {
+    const f = await fixture();
+    writeFileSync(f.path, '{not json');
+    const corrupt = diagnoseBrowserRuntime(f.env);
+    expect(corrupt.available).toBe(false);
+    expect(corrupt.state).toBe('unavailable');
+    expect(corrupt.lastError).toMatch(/not valid JSON/);
+    expect(corrupt.remedy).toMatch(/[Rr]estart/);
+    expect(corrupt.endpointSource).toBe('env'); // chromium config absent: BU_CDP_URL fallback
+    expect(corrupt.endpoint).toBe(f.env.BU_CDP_URL);
+    const exited = spawn(process.execPath, ['-e', 'process.exit(0)']);
+    const deadPid = exited.pid!;
+    await new Promise<void>(done => exited.once('close', () => done()));
+    writeFileSync(f.path, JSON.stringify({ ...f.data, pid: deadPid }));
+    const stale = diagnoseBrowserRuntime(f.env);
+    expect(stale.available).toBe(false);
+    expect(stale.lastError).toMatch(new RegExp(`pid ${deadPid}.*no longer running`));
+    expect(stale.remedy).toMatch(/[Rr]estart/);
+    rmSync(f.path);
+    const missing = diagnoseBrowserRuntime(f.env);
+    expect(missing.available).toBe(false);
+    expect(missing.lastError).toMatch(/does not exist/);
+    expect(missing.endpoint).toBe(f.env.BU_CDP_URL);
+    expect(missing.endpointSource).toBe('env');
+  });
+
+  it('explains a set-but-empty BU_CDP_URL and reports no endpoint', async () => {
+    const f = await fixture();
+    rmSync(f.path);
+    const diagnosis = diagnoseBrowserRuntime({ ...f.env, BU_CDP_URL: '' });
+    expect(diagnosis.available).toBe(false);
+    expect(diagnosis.endpointSource).toBe('none');
+    expect(diagnosis.endpoint).toBeNull();
+    expect(diagnosis.notes).toEqual(['BU_CDP_URL is set but empty; it is treated as unset']);
+    expect(diagnosis.lastError).toContain('BU_CDP_URL is set but empty');
+    expect(diagnosis.remedy).toMatch(/[Rr]estart/);
+  });
+
+  it('surfaces the installed chromium-cdp.json as the container endpoint source', async () => {
+    const f = await fixture();
+    rmSync(f.path);
+    writeFileSync(f.env.DISCLAUDE_CHROMIUM_CONFIG,
+      JSON.stringify({ version: 1, environment: { CHROMIUM_CDP_ADDRESS: '127.0.0.1', CHROMIUM_CDP_PORT: '4567' } }));
+    const configured = diagnoseBrowserRuntime(f.env);
+    expect(configured.endpointSource).toBe('container');
+    expect(configured.endpoint).toBe('http://127.0.0.1:4567');
+    expect(configured.lastError).not.toMatch(/BU_CDP_URL/);
+    writeFileSync(f.env.DISCLAUDE_CHROMIUM_CONFIG, '{}');
+    const invalid = diagnoseBrowserRuntime(f.env);
+    expect(invalid.endpointSource).toBe('none');
+    expect(invalid.lastError).toMatch(/configuration is invalid/i);
+    expect(invalid.remedy).toMatch(/chromium-cdp\.json/);
+  });
+
+  it('keeps the runtime pointer when BU_CDP_URL is set but empty', async () => {
+    const saved = ['BU_CDP_URL', 'DISCLAUDE_BROWSER_RUNTIME', 'DISCLAUDE_CHROMIUM_CONFIG']
+      .map(key => [key, process.env[key]] as const);
+    process.env.BU_CDP_URL = '';
+    process.env.DISCLAUDE_BROWSER_RUNTIME = '/tmp/ambient-runtime.json';
+    process.env.DISCLAUDE_CHROMIUM_CONFIG = join(tmpdir(), `dc-no-cdp-${randomUUID()}.json`);
+    try {
+      await expect(startBrowserRuntime(process.env)).resolves.toBeUndefined();
+      expect(process.env.DISCLAUDE_BROWSER_RUNTIME).toBe('/tmp/ambient-runtime.json');
+      delete process.env.BU_CDP_URL;
+      await expect(startBrowserRuntime(process.env)).resolves.toBeUndefined();
+      expect(process.env.DISCLAUDE_BROWSER_RUNTIME).toBeUndefined();
+    } finally {
+      for (const [key, value] of saved) {
+        if (value === undefined) { delete process.env[key]; } else { process.env[key] = value; }
+      }
+    }
   });
 });

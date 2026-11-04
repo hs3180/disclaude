@@ -7,7 +7,7 @@
  * @module channel-cli/tools/send-message
  */
 
-import { createLogger, sendMessage, type ChannelApiMethodResult } from '@disclaude/core';
+import { createLogger, sendMessage, type ChannelApiFailureDetails, type ChannelApiMethodResult } from '@disclaude/core';
 import { isChannelApiAvailable, getChannelApiErrorMessage, getChannelApiClient, buildChannelApiFallbackHint } from './channel-api-utils.js';
 import { invokeMessageSentCallback, setMessageSentCallback, getMessageSentCallback } from './callback-manager.js';
 import type { SendMessageResult } from './types.js';
@@ -44,7 +44,7 @@ export async function send_text(params: {
   chatId: string;
   parentMessageId?: string;
   mentions?: Array<{ openId: string; name?: string }>;
-}): Promise<SendMessageResult> {
+}): Promise<SendMessageResult & { diagnostic?: ChannelApiFailureDetails }> {
   const { text, chatId, parentMessageId, mentions } = params;
 
   logger.info({
@@ -83,6 +83,9 @@ export async function send_text(params: {
         success: false,
         error: result.error ?? 'Failed to send message via REST API',
         message: errorMsg,
+        // #5616: safe structured diagnostics (endpoint/ret/errmsg/errorKind +
+        // both diagnostic IDs) so the CLI JSON need not be string-parsed.
+        ...(result.failure ? { diagnostic: result.failure } : {}),
       };
     }
 

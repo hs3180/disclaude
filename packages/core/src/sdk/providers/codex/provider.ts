@@ -1595,7 +1595,13 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           asyncInputs.releaseDelivery(threadId as string, finishingTurn);
           if (stopped || activeTurnId !== finishingTurn) { return; }
           const status = event.turn?.status;
-          const failed = status === 'failed' || !!asyncDeliveryFailure;
+          // #5526: a locally failed question-card delivery must NOT rewrite a
+          // natively completed turn into a provider failure. The turn's work
+          // (and any already-delivered artifacts) stands; only the interaction
+          // failed. The failure rides the success result as structured
+          // metadata so the host can surface it as a local, traceable defect.
+          const nativeCompletedInputFailure = status === 'completed' && !!asyncDeliveryFailure;
+          const failed = status === 'failed' || (!!asyncDeliveryFailure && !nativeCompletedInputFailure);
           const interrupted = status === 'interrupted' || status === 'cancelled';
           const detail = [asyncDeliveryFailure?.message, event.turn?.error?.message].filter(Boolean).join('; ') || 'unknown error';
           // #5468: classify capacity even after progress — the post-progress
@@ -1641,8 +1647,20 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               ...(failed ? { metadata: { terminatedReason: 'turn_failed' as const, terminationDetail: `codex app-server turn failed: ${detail}; ${JSON.stringify({ threadId, turnId: finishingTurn })}`, messageId: finishingTurn,
                 ...(asyncDeliveryFailure ? { inputDeliveryFailure: { nativeCompleted: status === 'completed' },
                   automaticReplayBlocked: 'async-input-delivery-failed' } : {}) } }
-                : interrupted ? { metadata: { terminatedReason: 'interrupted' as const } } : {}),
+                : interrupted ? { metadata: { terminatedReason: 'interrupted' as const } }
+                // #5526: completed turn + failed card delivery = LOCAL failure.
+                // No terminatedReason: the native terminal state (and delivered
+                // artifacts) survive; the reason stays attached for the host.
+                : nativeCompletedInputFailure ? { metadata: { messageId: finishingTurn,
+                  inputDeliveryFailure: { nativeCompleted: true, reason: detail },
+                  automaticReplayBlocked: 'async-input-delivery-failed' } } : {}),
             });
+            if (nativeCompletedInputFailure) {
+              logger.warn({ threadId, turnId: finishingTurn, ...activeCorrelation,
+                event: 'async_input_delivery_failed', interactionStatus: 'delivery_failed',
+                nativeCompleted: true, reason: detail },
+              'Codex turn completed but its async question card was not delivered (#5526)');
+            }
           }
           turnDone?.();
           turnDone = undefined;

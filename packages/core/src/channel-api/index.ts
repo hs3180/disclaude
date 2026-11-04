@@ -18,8 +18,10 @@ export {
 // REST API client (Issue #4279 Phase 2 — channel-method surface via HTTP)
 export {
   ChannelApiClient,
+  ChannelApiRequestError,
   normalizeChannelApiBaseUrl,
   type ChannelApiClientOptions,
+  type ChannelApiFailureDetails,
 } from './client.js';
 
 // Client facade (protocol convenience methods)

@@ -39,6 +39,19 @@ export function normalizeChannelApiBaseUrl(value: string): string {
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 /**
+ * Default deadline for upload routes (uploadFile/uploadImage) — Issue #5630.
+ *
+ * One upload request covers the FULL delivery chain server-side — Feishu
+ * im.file/im.image create (upload) plus im.message create/reply (message
+ * construction) — under a single REST roundtrip. The generic 30s deadline cut
+ * that chain mid-flight (#5630: a 1.8MB PNG and a 551KB JPEG both timed out at
+ * 30s with no delivery conclusion), so uploads get a chain-aware default.
+ * Provisional value; per-call `timeoutMs` overrides it. Which phase is slow
+ * (upload vs message create) is not yet measured — see server-side phase logs.
+ */
+export const DEFAULT_UPLOAD_TIMEOUT_MS = 120_000;
+
+/**
  * Default response shape: strip the `ok` REST envelope (REST responses are
  * `{ ok: true, ...ChannelApiResponsePayload }`; REST API payloads are just the inner fields).
  */
@@ -47,9 +60,32 @@ const stripOk = (body: Record<string, unknown>): Record<string, unknown> => {
   return rest;
 };
 
+/** Structured failure fields kept from a DisclaudeService REST error body (#5616). */
+export interface ChannelApiFailureDetails {
+  /** Host-layer diagnostic ID (the `(diagnostic ID …)` previously only embedded in the message). */
+  diagnosticId?: string;
+  upstreamStatus?: number;
+  upstreamCode?: number;
+  /** Channel-layer safe diagnostics (endpoint/ret/errmsg/errorKind/channelDiagnosticId…). */
+  diagnostics?: Record<string, unknown>;
+}
+
+/**
+ * `CHANNEL_API_REQUEST_FAILED` with the server's structured diagnostic fields
+ * preserved alongside the message string (#5616). The message is byte-for-byte
+ * the previous contract, so prefix-based classification keeps working.
+ */
+export class ChannelApiRequestError extends Error {
+  readonly failure: ChannelApiFailureDetails;
+  constructor(message: string, failure: ChannelApiFailureDetails) {
+    super(message);
+    this.name = 'ChannelApiRequestError';
+    this.failure = failure;
+  }
+}
+
 /** A route entry: REST endpoint + optional dynamic-path builder + response shaping. */
-interface Route {
-  method: 'GET' | 'POST';
+interface Route {  method: 'GET' | 'POST';
   /** Static path (e.g. `/api/send-message`). */
   path?: string;
   /** Dynamic path builder (e.g. for path-param routes). */
@@ -64,6 +100,13 @@ interface Route {
   success?: (json: Record<string, unknown>, res: Response) => boolean;
   /** Per-route response shaping (default: strip `ok`). */
   shape?: (body: Record<string, unknown>) => Record<string, unknown>;
+  /**
+   * Per-route default deadline (Issue #5630). Upload routes cover the whole
+   * upload+message-create chain in one request and default to the chain-aware
+   * `DEFAULT_UPLOAD_TIMEOUT_MS`; other routes keep the 30s generic default.
+   * An explicit `timeoutMs` option always wins.
+   */
+  timeoutMs?: number;
 }
 
 /** Default success: HTTP ok AND the REST `{ ok: true }` envelope. */
@@ -85,8 +128,8 @@ const ROUTES: Readonly<Record<string, Route>> = {
   sendMessage: { method: 'POST', path: '/api/send-message' },
   sendCard: { method: 'POST', path: '/api/send-card' },
   requestPrivateInput: { method: 'POST', path: '/api/private-workflows' },
-  uploadFile: { method: 'POST', path: '/api/upload-file' },
-  uploadImage: { method: 'POST', path: '/api/upload-image' },
+  uploadFile: { method: 'POST', path: '/api/upload-file', timeoutMs: DEFAULT_UPLOAD_TIMEOUT_MS },
+  uploadImage: { method: 'POST', path: '/api/upload-image', timeoutMs: DEFAULT_UPLOAD_TIMEOUT_MS },
   sendInteractive: { method: 'POST', path: '/api/send-interactive' },
   listTempChats: { method: 'GET', path: '/api/temp-chats' },
   markChatResponded: { method: 'POST', path: '/api/mark-chat-responded' },
@@ -142,7 +185,8 @@ export class ChannelApiClient implements ChannelApiClientLike {
       init.body = JSON.stringify(payload ?? {});
     }
 
-    const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    // Explicit per-call timeout > per-route default (upload chains, #5630) > 30s generic.
+    const timeoutMs = options?.timeoutMs ?? route.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     if (timeoutMs > 0) {
       init.signal = AbortSignal.timeout(timeoutMs);
     }
@@ -174,7 +218,15 @@ export class ChannelApiClient implements ChannelApiClientLike {
 
     if (!(route.success ?? defaultSuccess)(json, res)) {
       const msg = (json.message as string | undefined) ?? `${type} failed (HTTP ${res.status})`;
-      throw new Error(`CHANNEL_API_REQUEST_FAILED: REST ${type} (HTTP ${res.status}: ${msg})`);
+      // #5616: keep the failure body's safe structured fields on the thrown
+      // error so CLI layers can surface them without parsing the message.
+      const failure: ChannelApiFailureDetails = {
+        ...(typeof json.diagnosticId === 'string' ? { diagnosticId: json.diagnosticId } : {}),
+        ...(typeof json.upstreamStatus === 'number' ? { upstreamStatus: json.upstreamStatus } : {}),
+        ...(typeof json.upstreamCode === 'number' ? { upstreamCode: json.upstreamCode } : {}),
+        ...(json.diagnostics && typeof json.diagnostics === 'object' ? { diagnostics: json.diagnostics as Record<string, unknown> } : {}),
+      };
+      throw new ChannelApiRequestError(`CHANNEL_API_REQUEST_FAILED: REST ${type} (HTTP ${res.status}: ${msg})`, failure);
     }
 
     // Apply per-route response shaping (default: strip the `ok` envelope).

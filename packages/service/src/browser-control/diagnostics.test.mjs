@@ -73,6 +73,32 @@ describe('browser HTTP failure provenance', () => {
     expect(error.message).not.toMatch(/secret-password|secret-token|secret-cookie/);
   });
 
+  it('maps each 404 stage to its own recovery guidance (#5352)', async () => {
+    const discoveryServer = await server((_req, res) => { res.writeHead(404); res.end('not found'); });
+    const discovery = await discoverCdp({ endpoint: discoveryServer.endpoint, endpointSource: 'BU_CDP_URL', env: {} }).catch(error => error);
+    expect(discovery.diagnostic).toMatchObject({ stage: 'http-discovery', status: 404, path: '/json/version', reason: 'http-error',
+      remedy: expect.stringMatching(/Verify the configured Chromium CDP endpoint/u) });
+
+    const attachServer = await cdpServer({ rejectUpgrade: true }), attachRecords = [];
+    const attachObserver = await observeBrowser({ websocket: attachServer.websocket, endpoint: attachServer.endpoint, endpointSource: 'BU_CDP_URL', env: {}, onDiagnostic: record => attachRecords.push(record) });
+    await attachObserver.stop();
+    expect(attachRecords[0]).toMatchObject({ stage: 'websocket-attach', status: 404, path: new URL(attachServer.websocket).pathname,
+      remedy: expect.stringMatching(/Re-run discovery to refresh the WebSocket URL/u) });
+
+    const navigationServer = await cdpServer(), navigationRecords = [];
+    const navigationObserver = await observeBrowser({ websocket: navigationServer.websocket, endpoint: navigationServer.endpoint, endpointSource: 'BU_CDP_URL', env: {}, onDiagnostic: record => navigationRecords.push(record) });
+    cleanup.push(() => navigationObserver.stop());
+    navigationServer.event('Network.responseReceived', { requestId: 'nav', type: 'Document', response: { status: 404, url: 'https://example.test/gone' } });
+    await vi.waitFor(() => expect(navigationRecords).toHaveLength(1));
+    expect(navigationRecords[0]).toMatchObject({ stage: 'page-navigation', status: 404, path: '/gone',
+      remedy: expect.stringMatching(/Check the target URL/u) });
+
+    // Every stage keeps distinct guidance instead of generic restart advice.
+    const remedies = [discovery.diagnostic.remedy, attachRecords[0].remedy, navigationRecords[0].remedy];
+    expect(new Set(remedies).size).toBe(3);
+    expect(navigationRecords[0].remedy).not.toMatch(/restart/iu);
+  });
+
   it('emits the startup diagnostic before refusing a bad discovery route', async () => {
     const root = mkdtempSync(join(tmpdir(), 'dc-browser-discovery-'));
     cleanup.push(() => rmSync(root, { recursive: true, force: true }));

@@ -15,7 +15,7 @@ function fixture() {
   const run = (env: NodeJS.ProcessEnv) => spawnSync('/bin/sh', [resolve('skills/browser-use/scripts/run.sh')], {
     env: { PATH: upstream, ...env }, input: 'python-input\n', encoding: 'utf8',
   });
-  return { root, managed, socket: join(root, 'runtime.json'), run };
+  return { root, managed, upstream, socket: join(root, 'runtime.json'), run };
 }
 describe('browser skill launcher', () => {
   it('uses the managed absolute launcher despite an upstream-only PATH and preserves stdin/guards', () => {
@@ -38,5 +38,18 @@ describe('browser skill launcher', () => {
     expect(result.status).not.toBe(0);
     expect(result.stdout).toBe('');
     expect(result.stderr).toMatch(/Browser runtime is unavailable/);
+  });
+  it('prints same-source diagnosis and a recovery hint when the launcher is unavailable (#5601)', () => {
+    const { root, upstream, run } = fixture();
+    const fake = join(root, 'fake-bin');
+    mkdirSync(fake);
+    // Same source as `disclaude browser status --json`: whatever the CLI
+    // prints is relayed on stderr, followed by one recovery line.
+    writeFileSync(join(fake, 'disclaude'), '#!/bin/sh\necho \'{"available":false,"state":"unavailable","endpointSource":"none"}\'\n', { mode: 0o700 });
+    const result = run({ PATH: `${fake}:${upstream}`, DISCLAUDE_BROWSER_RUNTIME: join(root, 'missing', 'runtime.json') });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('"available":false');
+    expect(result.stderr).toMatch(/[Rr]ecovery:.+disclaude browser status --json/);
+    expect(result.stderr).toMatch(/launcher is missing/);
   });
 });

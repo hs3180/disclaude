@@ -152,4 +152,25 @@ describe('dynamic registration CLI', () => {
       expect(report.next).toContain('disclaude wechat login --id ');
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
+
+  it('directs a completed scan to the first message the welcome needs (#5469)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'wechat-registration-cli-onboard-'));
+    try {
+      // A scan that completes before any reply context exists is not a
+      // delivered welcome: the report must ask for a first WeChat message and
+      // name the reply-context requirement, and no earlier stage line may read
+      // as welcome delivery.
+      const output = await cli(dir, ['login', '--qr-file', join(dir, 'fresh.png')], { bot: 'onboard-bot' });
+      const report = lastJson(output.stdout);
+      expect(report.registered).toBe(true);
+      expect(report.onboarding).toContain('send a first WeChat message');
+      expect(report.onboarding).toContain('valid reply context');
+      const stageLines = output.stdout.trim().split('\n')
+        .filter(line => line.startsWith('{') && line.endsWith('}'))
+        .map(line => JSON.parse(line) as { stage?: string })
+        .filter(entry => entry.stage)
+        .map(entry => JSON.stringify(entry));
+      expect(stageLines.some(line => line.toLowerCase().includes('welcome'))).toBe(false);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
 });

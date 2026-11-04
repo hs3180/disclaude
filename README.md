@@ -29,7 +29,9 @@ changes ship under a new version.
   upstream `browser-use` CLI calls per CDP browser; no separate Disclaude broker
   is required.
 - **Operations:** scheduled tasks, workspace-backed files, service diagnostics,
-  and source-checkout Docker Compose or macOS deployment.
+  read-only structured session history queries (`disclaude history query`,
+  [history skill](skills/history/SKILL.md)), and source-checkout Docker Compose
+  or macOS deployment.
 
 ## Documentation
 

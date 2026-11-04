@@ -118,6 +118,10 @@ vi.mock('../../utils/message-logger.js', () => ({
 // Import SUT after mocks
 // ---------------------------------------------------------------------------
 import { MessageHandler } from './message-handler.js';
+// Mocked at module level (see vi.mock below) — imported here so Issue #5433
+// tests can substitute the REAL extractor for individual calls via
+// mockImplementationOnce, without unmocking it for the rest of the file.
+import { extractFullCardContent } from '../../platforms/feishu/card-builders/card-text-extractor.js';
 import { bindVerifiedInputContext, getIncomingInputSource, readVerifiedInputSource } from '../../agents/input-provenance.js';
 import { TriggerModeManager } from './passive-mode.js';
 import { MentionDetector } from './mention-detector.js';
@@ -4422,6 +4426,232 @@ describe('MessageHandler', () => {
       // returns '' — only unparseable / unhandled content becomes a placeholder,
       // never a legitimately empty message.
       expect(ext('text', JSON.stringify({}))).toBe('');
+    });
+  });
+
+  // Issue #5433: a user forwards content into a topic thread; the agent's
+  // thread context degraded to `🤖 [Interactive Card]` while the same content
+  // was readable over the API with the bot's own identity. Three code-level
+  // gaps: (a) schema 2.0 cards put elements under body.elements, which
+  // extractFullCardContent never read; (b) merge_forward parents carry only a
+  // fixed marker string while the forwarded bodies arrive as sibling items of
+  // the SAME im.message.get response (upper_message_id → parent) and were
+  // discarded by the items[0] read; (c) when nothing could be extracted the
+  // agent got an opaque placeholder with no message_id / fetch hint.
+  describe('Issue #5433: forwarded / card messages in thread context', () => {
+    /** Use the REAL extractor for one call — the module-level mock would mask
+     * the extraction path under test (acceptance ③: auto context must match
+     * what the API actually returns). */
+    async function useRealExtractorOnce() {
+      const actual = await vi.importActual<typeof import('../../platforms/feishu/card-builders/card-text-extractor.js')>(
+        '../../platforms/feishu/card-builders/card-text-extractor.js',
+      );
+      vi.mocked(extractFullCardContent).mockImplementationOnce(actual.extractFullCardContent);
+    }
+
+    it('code-level repro: a forwarded schema 2.0 card in a thread yields its full text, not the placeholder', async () => {
+      // Card payload modeled on this repo's own schema 2.0 builders
+      // (task-question-cards.ts card()) — a real, verified structure.
+      const forwardCard = {
+        schema: '2.0',
+        config: { enable_forward: false, update_multi: true },
+        header: { title: { tag: 'plain_text', content: '被转发的卡片' }, template: 'blue' },
+        body: { elements: [
+          { tag: 'div', text: { tag: 'plain_text', content: '转发正文的全部内容应当出现在线程上下文里' } },
+          { tag: 'markdown', content: '以及卡片里的 markdown 部分' },
+        ] },
+      };
+      const mockClient = {
+        im: {
+          message: {
+            // Chain: forwarded card (parent, sender app → 🤖 label) → root text
+            get: vi.fn()
+              .mockResolvedValueOnce({
+                data: {
+                  items: [{
+                    msg_type: 'interactive',
+                    body: { content: JSON.stringify(forwardCard) },
+                    message_id: 'msg_card_fwd',
+                    parent_id: 'msg_root',
+                    sender: { sender_type: 'app', id: 'open_bot' },
+                  }],
+                },
+              })
+              .mockResolvedValueOnce({
+                data: {
+                  items: [{
+                    msg_type: 'text',
+                    body: { content: JSON.stringify({ text: '话题根消息' }) },
+                    message_id: 'msg_root',
+                    sender: { sender_type: 'user', id: 'open_user' },
+                  }],
+                },
+              }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+      await useRealExtractorOnce();
+
+      const result = await (handler as any).getThreadContext('msg_card_fwd');
+
+      expect(result).toBeDefined();
+      // Acceptance ③: every text unit the API exposes for this card appears
+      // in the auto-built context (header + div + markdown), and the bot-sent
+      // card is labeled 🤖 as before.
+      expect(result.text).toContain('🤖');
+      expect(result.text).toContain('**被转发的卡片**');
+      expect(result.text).toContain('转发正文的全部内容应当出现在线程上下文里');
+      expect(result.text).toContain('以及卡片里的 markdown 部分');
+      expect(result.text).not.toContain('[Interactive Card]');
+      // Sibling text node (the thread root) still extracted normally (④).
+      expect(result.text).toContain('话题根消息');
+    });
+
+    it('inlines merge_forward children that arrive in the same im.message.get items (no extra API calls)', async () => {
+      // Feishu merge_forward structure (docs + SDK types): the parent's content
+      // is the fixed marker string; the forwarded bodies come back as sibling
+      // items of the SAME GET /im/v1/messages/{parent_id} response, each with
+      // upper_message_id pointing at the parent. Assumption flagged in notes:
+      // constructed from documented behavior, not a captured sample.
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              .mockResolvedValueOnce({
+                data: {
+                  items: [
+                    {
+                      msg_type: 'merge_forward',
+                      body: { content: 'Merged and Forwarded Message' },
+                      message_id: 'msg_mf_parent',
+                      parent_id: 'msg_root',
+                      sender: { sender_type: 'user', id: 'open_user' },
+                    },
+                    {
+                      msg_type: 'text',
+                      body: { content: JSON.stringify({ text: '转发内容第一条：上线前的检查清单' }) },
+                      message_id: 'msg_mf_child_1',
+                      upper_message_id: 'msg_mf_parent',
+                      sender: { sender_type: 'user', id: 'open_user' },
+                    },
+                    {
+                      msg_type: 'post',
+                      body: { content: JSON.stringify({ title: '第二条', content: [[{ tag: 'text', text: '转发内容第二条：富文本部分' }]] }) },
+                      message_id: 'msg_mf_child_2',
+                      upper_message_id: 'msg_mf_parent',
+                      sender: { sender_type: 'user', id: 'open_user' },
+                    },
+                  ],
+                },
+              })
+              .mockResolvedValueOnce({
+                data: {
+                  items: [{
+                    msg_type: 'text',
+                    body: { content: JSON.stringify({ text: '话题根消息' }) },
+                    message_id: 'msg_root',
+                    sender: { sender_type: 'user', id: 'open_user' },
+                  }],
+                },
+              }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      const result = await (handler as any).getThreadContext('msg_mf_parent');
+
+      expect(result).toBeDefined();
+      expect(result.text).toContain('合并转发');
+      expect(result.text).toContain('转发内容第一条：上线前的检查清单');
+      expect(result.text).toContain('转发内容第二条：富文本部分');
+      // Not the opaque unexpanded marker alone
+      expect(result.text).not.toContain('[未解析的 merge_forward 消息]');
+      // Still read-only: exactly the walk's own fetches (parent+children in
+      // one response, then the root) — no extra calls to expand the forward.
+      expect(mockClient.im.message.get).toHaveBeenCalledTimes(2);
+      expect(result.text).toContain('话题根消息');
+    });
+
+    it('replaces the bare [Interactive Card] placeholder with an actionable reference when extraction fails', async () => {
+      // A card with no extractable text (e.g. unknown/unsupported component
+      // layout). The agent must still get an actionable reference — message
+      // id + sender + how to fetch the raw payload on demand — instead of the
+      // generic placeholder (acceptance ②).
+      const bareCard = { schema: '2.0', config: {}, body: { elements: [{ tag: 'hr' }] } };
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn().mockResolvedValue({
+              data: {
+                items: [{
+                  msg_type: 'interactive',
+                  body: { content: JSON.stringify(bareCard) },
+                  message_id: 'msg_opaque_card',
+                  parent_id: undefined,
+                  sender: { sender_type: 'app', id: 'open_bot' },
+                }],
+              },
+            }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+      await useRealExtractorOnce();
+
+      const result = await (handler as any).getThreadContext('msg_opaque_card');
+
+      expect(result).toBeDefined();
+      // Actionable reference: message id + sender identity surfaced…
+      expect(result.text).toContain('msg_opaque_card');
+      expect(result.text).toContain('open_bot');
+      // …plus a ready-to-run fetch command (same lark-cli surface the thread
+      // self-service guidance documents)…
+      expect(result.text).toContain('messages-mget');
+      expect(result.text).toContain('--message-ids msg_opaque_card');
+      // …and never the bare opaque placeholder as the whole content.
+      expect(result.text.trim()).not.toBe('🤖 [Interactive Card]');
+    });
+
+    it('gives the same actionable reference for a merge_forward parent whose children are not visible', async () => {
+      // Children can be absent from the items payload (visibility/permission
+      // or a future payload change). Fall back to the actionable reference
+      // instead of the misleading "[未解析的 …]" failure label.
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn().mockResolvedValue({
+              data: {
+                items: [{
+                  msg_type: 'merge_forward',
+                  body: { content: 'Merged and Forwarded Message' },
+                  message_id: 'msg_mf_no_children',
+                  parent_id: undefined,
+                  sender: { sender_type: 'user', id: 'open_user' },
+                }],
+              },
+            }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      const result = await (handler as any).getThreadContext('msg_mf_no_children');
+
+      expect(result).toBeDefined();
+      expect(result.text).toContain('msg_mf_no_children');
+      expect(result.text).toContain('open_user');
+      expect(result.text).toContain('messages-mget');
+      expect(result.text).not.toContain('[未解析的 merge_forward 消息]');
     });
   });
 });

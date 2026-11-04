@@ -5,6 +5,7 @@
  * Routes subcommands to the appropriate package CLI:
  *   disclaude start [options]  → @disclaude/service
  *   disclaude channel <command> → @disclaude/channel-cli
+ *   disclaude service <cmd>    → scripts/launchd.mjs application service (Issue #5619)
  *   disclaude chromium-cdp <cmd> → scripts/launchd.mjs chromium-cdp (Issue #4807)
  *
  * Issue #3928 (part 1): Provides a single `disclaude` command so users can
@@ -53,6 +54,7 @@ function showHelp() {
       '  plugins <cmd>      Install, update or remove optional first-party diagnostics',
       '  jupyter <command> Work with remote Notebooks; patch installs repairs; test verifies the configured server',
       '  chromium-cdp <cmd> Manage or diagnose the persistent Chromium CDP service (Issue #4807)',
+      '  service <cmd>      Manage the application service (install/start/stop/status; --dry-run, Issue #5619)',
       '',
       'Global Options:',
       '  --version, -v      Show version number',
@@ -117,6 +119,14 @@ const ROUTES = {
             ? 'scripts/chromium-systemd.mjs'
             : 'scripts/launchd.mjs'
     ),
+    keepCommand: true,
+  },
+  // Issue #5619: application-service lifecycle through the unified CLI.
+  // `disclaude service install|start|stop|restart|status|logs` forwards to
+  // scripts/launchd.mjs; --dry-run previews the plist and launchctl actions
+  // without touching any real service, so installs are verifiable offline.
+  service: {
+    file: resolve(ROOT, 'scripts/launchd.mjs'),
     keepCommand: true,
   },
 };

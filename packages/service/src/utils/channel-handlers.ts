@@ -391,8 +391,12 @@ export function createChannelApiHandlers(
         { chatId, filePath, channel: channelName },
         'uploadFile: using channel.sendMessage — file metadata may be incomplete'
       );
+      let messageId: string | void;
       try {
-        await channel.sendMessage({ chatId, type: 'file', filePath, threadId });
+        // Issue #5630: preserve the platform message_id — it is the verifiable
+        // delivery conclusion surfaced through the REST response. Channels whose
+        // sendMessage returns void simply omit it.
+        messageId = await channel.sendMessage({ chatId, type: 'file', filePath, threadId });
       } catch (error) {
         logger.error({ err: error, chatId, channel: channelName, handler: 'uploadFile' }, 'REST API handler failed');
         throw error;
@@ -405,6 +409,7 @@ export function createChannelApiHandlers(
         fileType: 'file',
         fileName: filePath.split('/').pop() || 'file',
         fileSize: 0,    // synthetic — not available via sendMessage
+        ...(typeof messageId === 'string' && messageId ? { messageId } : {}),
       };
     },
   };
