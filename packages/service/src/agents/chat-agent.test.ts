@@ -352,6 +352,30 @@ describe('ChatAgent (service)', () => {
       } finally { finish?.(); agent.reset(); ChatAgent.prototype.dispose.call(agent); }
     });
 
+    it('exports an async-question capability probe that tracks once-mode and session generation (#5467)', async () => {
+      const localCallbacks = { ...createMockCallbacks(), requestAgentInput: vi.fn().mockResolvedValue(undefined) };
+      const agent = new ChatAgent({ chatId: 'capable-chat', callbacks: localCallbacks, apiKey: 'test', model: 'test' });
+      let finish!: () => void;
+      const query = vi.fn((_input, _options) => ({ handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () { await new Promise<void>(resolve => { finish = resolve; }); })() }));
+      (agent as any).createQueryStream = query;
+      try {
+        await agent.processMessage({ chatId: 'capable-chat', payload: 'Original task', messageId: 'cap-1' });
+        const options = query.mock.calls[0][1] as import('@disclaude/core').AgentQueryOptions;
+        expect(options.asyncUserInputCapable).toBeTypeOf('function');
+        // Live session, not once-mode: capability on.
+        expect(options.asyncUserInputCapable!()).toBe(true);
+        // The same conditions that reject async answers at runtime (once-mode,
+        // superseded generation) must switch the probe off — the prompt note
+        // follows it instead of the model hitting a runtime rejection.
+        (agent as any).onceMode = true;
+        expect(options.asyncUserInputCapable!()).toBe(false);
+        (agent as any).onceMode = false;
+        (agent as any).sessionGeneration = (agent as any).sessionGeneration + 5;
+        expect(options.asyncUserInputCapable!()).toBe(false);
+      } finally { finish?.(); agent.reset(); ChatAgent.prototype.dispose.call(agent); }
+    });
+
     it.each([null, 'om-explicit-root'])('preserves an explicit native-input anchor through a delayed answer (%s)', async replyRootId => {
       const cb = { ...createMockCallbacks(), requestAgentInput: vi.fn().mockResolvedValue(undefined) };
       const agent = new ChatAgent({ chatId: 'anchor-chat', callbacks: cb, apiKey: 'test', model: 'test' });
