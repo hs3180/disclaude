@@ -137,6 +137,11 @@ interface TurnCompletionEntry {
   admitted?: boolean;
   userVisible?: boolean;
   terminalObserverAttached?: boolean;
+  // Issue #5470 remaining item ① (T-039): this input was admitted while a
+  // turn was already running, so its pickup by the next turn deserves an
+  // explicit user-visible consumption receipt instead of silence.
+  queuedBehindTurn?: boolean;
+  consumptionNotified?: boolean;
 }
 
 /**
@@ -1485,6 +1490,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.lastTurnMessage = params;
       enqueueTurnAnchor();
       const busyBeforePush = queuedBehindActiveTurn && this.isBusy;
+      // Issue #5470 remaining item ① (T-039): mark inputs that waited behind
+      // a running turn; the pickup notice at consumeTurnAnchor reads this.
+      turnEntry.queuedBehindTurn = busyBeforePush;
       // Issue #5394: a non-queued push starts the next turn — capture its
       // trigger line as the busy-notice summary baseline.
       if (!busyBeforePush) { this.activeTurnTriggerLine = this.summarizeForBusyNotice(text); }
@@ -1530,13 +1538,18 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         // running turn's summary, its elapsed time and the queue depth ahead
         // (this input's row was just pushed, so it is excluded from the count).
         const busyContext = this.describeBusyQueue(Math.max(0, this.pendingTurnMessageIds.length - 1));
+        // Issue #5470 remaining item ③ (T-039): file-class inputs get an
+        // explicit receipt that they are held with the queued input, so the
+        // sender knows the files were not silently dropped.
+        const attachmentReceipt = attachments?.length
+          ? `（含 ${attachments.length} 个附件，将随这条输入一起处理）` : '';
         void this.callbacks.sendMessage(
           chatId,
           (this.queryHandle?.capacityQueued
             ? '⏳ 这条消息已接收并排队；模型会话容量释放后会自动处理，无需重新发送。'
             : this.queryHandle?.inputDelivery === 'streaming'
             ? '💬 已送入当前会话的输入流；模型可在执行中接收补充信息，正在运行的工具会继续执行。'
-            : '⏳ 这条消息已排队，将在当前回合结束后处理。') + busyContext,
+            : '⏳ 这条消息已排队，将在当前回合结束后处理。') + attachmentReceipt + busyContext,
           threadRootId
         ).catch((error) => {
           this.logger.warn(
@@ -2438,6 +2451,24 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         turnResultTruncated = false;
         this.activeTurnMessageId = currentTurnMessageId;
         this.activityThreadRootId = currentTurnAnchor ?? undefined;
+        // Issue #5470 remaining item ① (T-039): the moment a QUEUED input is
+        // actually taken up by the next turn is user-visible. During long
+        // waits the sender otherwise cannot tell whether their input was
+        // consumed — the queue notice (#5394) covers admission only, and the
+        // model reply may arrive much later.
+        const consumedEntry = currentTurnMessageId !== undefined
+          ? this.turnCompletions.get(currentTurnMessageId) : undefined;
+        if (consumedEntry?.queuedBehindTurn && !consumedEntry.consumptionNotified) {
+          consumedEntry.consumptionNotified = true;
+          void this.callbacks.sendMessage(
+            chatId,
+            '▶️ 已取用你排队的这条输入，开始处理。',
+            currentTurnAnchor === null ? undefined : currentTurnAnchor ?? undefined
+          ).catch((error) => {
+            this.logger.warn({ err: error, chatId, messageId: currentTurnMessageId },
+              'Failed to send queued-input consumption notice');
+          });
+        }
         if (!this.isProcessingMessage) { this.turnStartedAtMsPrivate = Date.now(); }
         this.isProcessingMessage = true;
         // Issue #5394: narration belongs to the turn that produced it — a
