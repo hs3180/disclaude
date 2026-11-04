@@ -126,6 +126,43 @@ describe('Codex capacity continuation (#5468)', () => {
     expect(results[0].metadata?.terminationDetail).toContain('capacity_recovery_attempt_limit');
   });
 
+  it('spends only genuine waits of the recovery budget across long healthy work (#5514)', async () => {
+    // Production timeline of the issue: capacity failure -> recovery -> a long
+    // productive run (far beyond the whole budget) -> a second independent
+    // capacity fluctuation. The budget must track only the real recovery
+    // waits, not the healthy wall clock, so the second fluctuation still
+    // continues. De-flaked: the budget deliberately sits far above any
+    // plausible timer overshoot of the jittered FAST waits (a ~48ms setTimeout
+    // firing a few ms late on a loaded runner used to deny the second
+    // recovery) yet far below the 240s injected per productive attempt — so
+    // the green path never depends on wall-clock precision while charging
+    // healthy work to the budget (the #5514 regression) still exhausts it and
+    // denies the second recovery. Waits keep charging cumulatively, but the
+    // nominal ~0.3s of waits cannot reach a 20s budget, so bounded
+    // termination falls to the attempt cap: 1 original + 6 recoveries.
+    const fx = fixture({ failures: 10, delayedFailure: true }, {
+      DISCLAUDE_CODEX_CAPACITY_RECOVERY_BUDGET_MS: '20000',
+    });
+    let elapsed = 0, recoveries = 0;
+    const realNow = Date.now.bind(Date);
+    vi.spyOn(Date, 'now').mockImplementation(() => realNow() + elapsed);
+    const messages: AgentMessage[] = [];
+    for await (const message of fx.query().iterator) {
+      messages.push(message);
+      if (message.type === 'status' && message.content.includes('自动续接')) { recoveries++; }
+      if (recoveries && message.type === 'tool_use') { elapsed += 240_000; }
+    }
+    expect(fx.attempts()).toBeGreaterThanOrEqual(3);
+    expect(fx.recoveryStatuses(messages)).toBeGreaterThanOrEqual(2);
+    expect(fx.inputs().filter(input => input.includes('Complete the capacity task'))).toHaveLength(1);
+    const results = messages.filter(message => message.type === 'result');
+    expect(results).toHaveLength(1);
+    expect(results[0].metadata?.terminatedReason).toBe('turn_failed');
+    expect(results[0].metadata?.terminationDetail).toMatch(/capacity_recovery_(budget_exhausted|attempt_limit)/);
+    // Bounded termination: 1 original attempt + the 6-recovery attempt cap.
+    expect(fx.attempts()).toBeLessThanOrEqual(7);
+  });
+
   it('keeps empty recovery failures on the continuation path without replaying the task', async () => {
     const fx = fixture({ failures: 4, noRecoveryWork: true }, { DISCLAUDE_CODEX_CAPACITY_RECOVERY_MAX_ATTEMPTS: '2' });
     const messages = await collect(fx.query());

@@ -312,9 +312,20 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       expect(onUserInput).toHaveBeenCalledOnce();
       expect(messages.filter(m => m.type === 'text').map(m => m.content)).toContain('Artifact is ready.');
       expect(messages.filter(m => m.type === 'tool_result')).toHaveLength(1);
-      expect(messages.filter(m => m.type === 'result')).toEqual([
-        expect.objectContaining({ metadata: expect.objectContaining({ terminatedReason: 'turn_failed', inputDeliveryFailure: { nativeCompleted: nativeStatus === 'completed' }, automaticReplayBlocked: 'async-input-delivery-failed' }) }),
-      ]);
+      const results = messages.filter(m => m.type === 'result');
+      expect(results).toHaveLength(1);
+      if (nativeStatus === 'completed') {
+        // #5526: the native completion stands — the card failure is a LOCAL
+        // defect carried as structured metadata, never a turn_failed rewrite.
+        expect(results[0].content).toBe('✅ Complete');
+        expect(results[0].metadata?.terminatedReason).toBeUndefined();
+        expect(results[0].metadata).toEqual(expect.objectContaining({
+          inputDeliveryFailure: { nativeCompleted: true, reason: expect.stringContaining('Async question was not delivered') },
+          automaticReplayBlocked: 'async-input-delivery-failed',
+        }));
+      } else {
+        expect(results[0]).toEqual(expect.objectContaining({ metadata: expect.objectContaining({ terminatedReason: 'turn_failed', inputDeliveryFailure: { nativeCompleted: false }, automaticReplayBlocked: 'async-input-delivery-failed' }) }));
+      }
       expect(messages.map(m => m.content).join('\n')).toContain('Async question');
       if (nativeStatus === 'failed') { expect(messages.find(m => m.type === 'result')?.metadata?.terminationDetail).toContain('native execution failed'); }
       expect(messages.map(m => m.content).join('\n')).not.toContain('private transport detail');

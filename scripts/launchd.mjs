@@ -8,7 +8,12 @@
  *
  * Usage:
  *   node scripts/launchd.mjs <command>           # application service
+ *   node scripts/launchd.mjs service <command>   # same, via `disclaude service ...`
  *   node scripts/launchd.mjs chromium-cdp <cmd>  # persistent Chromium CDP service
+ *
+ * Every application-service command accepts --dry-run (Issue #5619): prints
+ * the plist that would be written and the launchctl commands that would run,
+ * without touching the filesystem or any service.
  *
  * Service Commands:
  *   generate    Generate plist file (writes to ~/Library/LaunchAgents/)
@@ -46,6 +51,7 @@ import { resolve, dirname, relative, isAbsolute } from 'node:path';
 import { promisify } from 'node:util';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { load as loadYaml } from 'js-yaml';
 import { chromiumConfigPath, loadChromiumConfig, saveChromiumConfig, readChromiumConfig } from './chromium-config.mjs';
 import { replaceChromiumFile, transitionChromium, chromiumListenerPids, isDescendant, waitChromiumReady } from './browser-service-state.mjs';
 import { describeChromiumSelection } from './chromium-status.mjs';
@@ -149,22 +155,143 @@ const CLI_ENTRY = process.argv[2] === 'isolated' && process.env.DISCLAUDE_LAUNCH
 
 // Issue #4576: since #4280 Phase 3 the MCP tools' only transport is the
 // DisclaudeService REST API (GET /api/ping on the HTTP API server). A launchd
-// deployment started with bare `start` used to have no HTTP API. The plist
-// enables it on an OS-assigned port by default. The server binds
-// localhost only (HttpApiServerConfig.host default) and GET routes are
+// deployment started with bare `start` used to have no HTTP API. The server
+// binds localhost only (HttpApiServerConfig.host default) and GET routes are
 // token-exempt, so this matches the security posture of interactive runs.
 // Override with DISCLAUDE_LAUNCHD_API_PORT / DISCLAUDE_LAUNCHD_API_TOKEN.
-const DEFAULT_API_PORT = 0;
+//
+// Issue #5619: the plist must reproduce the production service, and a
+// port-0 default cannot — nobody (operator, MCP tools, monitoring) can
+// predict an OS-assigned port, so every regenerated plist diverges from the
+// running deployment. The default is therefore the fixed port the #4576
+// rollout used (19200); `launchd.apiPort` in the disclaude config or
+// DISCLAUDE_LAUNCHD_API_PORT=0 restores an OS-assigned port explicitly.
+const DEFAULT_API_PORT = 19200;
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /**
- * Resolve the --api-port value for the plist (Issue #4576).
+ * Read the launchd deployment settings from the `.disclaude` configuration
+ * (Issue #5619): the generated plist must take its entry path, API port and
+ * extra environment variables from the operator's config instead of pointing
+ * at the package checkout with a port-0 default.
  *
- * Reads DISCLAUDE_LAUNCHD_API_PORT; valid range 0-65535 (same bounds as the
- * CLI parser). Falls back to 0 so parallel services do not contend.
+ * Search order mirrors packages/core/src/config/discovery.ts: an explicit
+ * DISCLAUDE_LAUNCHD_CONFIG_PATH (isolated tests) or DISCLAUDE_CONFIG_PATH,
+ * then `<home>/.disclaude/disclaude.config.{yaml,yml}`, then the working
+ * directory. Recognized keys (all optional, safe defaults otherwise):
  *
+ *   launchd:
+ *     entry: /absolute/path/to/bin/disclaude.js   # service entry executable
+ *     apiPort: 19200                              # HTTP API port (not 0)
+ *     apiToken: $SECRET                           # --api-token value
+ *     env: { KEY: value }   # extra plist env, merged over the top-level env: block
+ *   env: { KEY: value }     # runtime env block — also mirrored into the plist
+ *
+ * The return value always carries human-readable `sources` so `generate`
+ * (and its dry-run) can state where every value came from.
+ *
+ * @param {NodeJS.ProcessEnv} env - environment to read override paths from
+ * @param {string} home - home directory for the `.disclaude` lookup
+ * @param {string} cwd - working directory for the project-root lookup
+ * @returns {{configPath: string | null, entry: string | undefined,
+ *   apiPort: number | undefined, apiToken: string | undefined,
+ *   env: Record<string, string>, sources: string[]}}
+ */
+export function readLaunchdDeploymentConfig(env = process.env, home = homedir(), cwd = process.cwd()) {
+  const sources = [];
+  const candidates = [];
+  const isolatedOnly = Boolean(env.DISCLAUDE_LAUNCHD_CONFIG_PATH);
+  if (isolatedOnly) {
+    // Isolated rehearsal: never fall through to the operator's real config.
+    candidates.push(env.DISCLAUDE_LAUNCHD_CONFIG_PATH);
+  } else {
+    if (env.DISCLAUDE_CONFIG_PATH) candidates.push(env.DISCLAUDE_CONFIG_PATH);
+    if (home) {
+      for (const name of ['disclaude.config.yaml', 'disclaude.config.yml']) {
+        candidates.push(resolve(home, '.disclaude', name));
+      }
+    }
+    for (const name of ['disclaude.config.yaml', 'disclaude.config.yml']) {
+      candidates.push(resolve(cwd, name));
+    }
+  }
+  let configPath = null;
+  if (isolatedOnly) {
+    // Keep the historical isolated contract: the override is passed through
+    // whether or not the file exists yet.
+    configPath = env.DISCLAUDE_LAUNCHD_CONFIG_PATH;
+    if (!existsSync(configPath)) {
+      sources.push(`warning: isolated config ${configPath} does not exist; entry/port/env use built-in defaults`);
+    }
+  } else {
+    configPath = candidates.find((p) => existsSync(p)) ?? null;
+  }
+  const result = { configPath, entry: undefined, apiPort: undefined, apiToken: undefined, env: {}, sources };
+  if (!configPath) {
+    sources.push('no disclaude config found (looked in $DISCLAUDE_LAUNCHD_CONFIG_PATH, $DISCLAUDE_CONFIG_PATH, ~/.disclaude/, working directory); using built-in defaults');
+    return result;
+  }
+  sources.push(`config: ${configPath}`);
+  let config = null;
+  try {
+    config = loadYaml(readFileSync(configPath, 'utf-8'));
+  } catch (error) {
+    sources.push(`warning: config is not parseable YAML (${error.message}); using built-in defaults`);
+    return result;
+  }
+  if (!isPlainObject(config)) {
+    sources.push('warning: config is not a YAML mapping; using built-in defaults');
+    return result;
+  }
+  const launchd = isPlainObject(config.launchd) ? config.launchd : null;
+  if (launchd) {
+    if (launchd.entry !== undefined) {
+      if (typeof launchd.entry === 'string' && isAbsolute(launchd.entry) && !/[\r\n\0]/.test(launchd.entry)) {
+        result.entry = launchd.entry;
+      } else {
+        sources.push('warning: launchd.entry must be an absolute path without control characters; ignored');
+      }
+    }
+    if (launchd.apiPort !== undefined) {
+      const port = Number(launchd.apiPort);
+      if (Number.isInteger(port) && port >= 1 && port <= 65535) {
+        result.apiPort = port;
+      } else {
+        sources.push(`warning: launchd.apiPort "${String(launchd.apiPort)}" is not an integer in 1-65535; ignored`);
+      }
+    }
+    if (typeof launchd.apiToken === 'string') result.apiToken = launchd.apiToken;
+  }
+  // Merge both env blocks (Issue #5619): the top-level `env:` entries the
+  // runtime Config would inject, plus `launchd.env` for plist-specific
+  // overrides. launchd.env wins on key collisions.
+  const mergedEnv = {};
+  if (isPlainObject(config.env)) Object.assign(mergedEnv, config.env);
+  if (launchd && isPlainObject(launchd.env)) Object.assign(mergedEnv, launchd.env);
+  for (const [key, value] of Object.entries(mergedEnv)) {
+    if (!ENV_NAME_RE.test(key) || value === undefined || value === null) continue;
+    result.env[key] = String(value);
+  }
+  return result;
+}
+
+/**
+ * Resolve the --api-port value for the plist (Issues #4576, #5619).
+ *
+ * Precedence: DISCLAUDE_LAUNCHD_API_PORT (0-65535; 0 explicitly asks the OS
+ * for a port) -> `launchd.apiPort` from the disclaude config -> the fixed
+ * production default 19200. A fixed default keeps regenerated plists
+ * reproducible instead of drifting behind an ephemeral OS-assigned port.
+ *
+ * @param {{apiPort?: number} | null} deployment - parsed deployment config
  * @returns {number} port for --api-port
  */
-export function resolveApiPort() {
+export function resolveApiPort(deployment = null) {
   const raw = process.env.DISCLAUDE_LAUNCHD_API_PORT;
   if (raw) {
     const port = parseInt(raw, 10);
@@ -172,8 +299,11 @@ export function resolveApiPort() {
       return port;
     }
     console.warn(
-      `Warning: invalid DISCLAUDE_LAUNCHD_API_PORT "${raw}", using default ${DEFAULT_API_PORT}`
+      `Warning: invalid DISCLAUDE_LAUNCHD_API_PORT "${raw}", falling back to config/default ${DEFAULT_API_PORT}`
     );
+  }
+  if (deployment?.apiPort !== undefined) {
+    return deployment.apiPort;
   }
   return DEFAULT_API_PORT;
 }
@@ -255,29 +385,42 @@ function getCaffeinatePath() {
  * service, caffeinate terminates automatically (along with the node child),
  * so no separate cleanup is needed.
  *
- * Issue #4576: appends --api-port (default 0) so the DisclaudeService HTTP API
- * server is up for the REST-only MCP tools; --api-token only when provided
- * via DISCLAUDE_LAUNCHD_API_TOKEN (mirrors the interactive-run posture — GET
- * routes stay token-exempt, write routes gain Bearer auth).
+ * Issue #4576: appends --api-port (fixed production default, see
+ * resolveApiPort) so the DisclaudeService HTTP API server is up for the
+ * REST-only MCP tools; --api-token only when provided via
+ * DISCLAUDE_LAUNCHD_API_TOKEN or launchd.apiToken (mirrors the
+ * interactive-run posture — GET routes stay token-exempt, write routes gain
+ * Bearer auth).
+ *
+ * Issue #5619: --config now defaults to the discovered disclaude config
+ * (from readLaunchdDeploymentConfig) so the plist reproduces exactly the
+ * configuration the production service runs, instead of relying on the
+ * checkout WorkingDirectory for config discovery. The isolated test
+ * override (DISCLAUDE_LAUNCHD_CONFIG_PATH) keeps priority.
  *
  * @param {string} cliPath - Absolute path to the unified executable
+ * @param {string | null} caffeinatePath - caffeinate binary or null
+ * @param {{configPath: string | null, apiToken?: string} | null} deployment -
+ *   parsed deployment config (config/apiToken sources)
  * @returns {string[]} ProgramArguments entries
  */
-export function buildProgramArguments(cliPath = CLI_ENTRY, caffeinatePath = getCaffeinatePath()) {
+export function buildProgramArguments(cliPath = CLI_ENTRY, caffeinatePath = getCaffeinatePath(), deployment = null) {
   const args = [];
 
   if (caffeinatePath) {
     args.push(caffeinatePath, '-s');
   }
 
-  args.push(cliPath, 'start', '--api-port', String(resolveApiPort()));
+  args.push(cliPath, 'start', '--api-port', String(resolveApiPort(deployment)));
 
-  const configPath = process.env.DISCLAUDE_LAUNCHD_CONFIG_PATH;
+  const configPath = process.env.DISCLAUDE_LAUNCHD_CONFIG_PATH
+    ?? deployment?.configPath
+    ?? undefined;
   if (configPath) {
     args.push('--config', configPath);
   }
 
-  const apiToken = process.env.DISCLAUDE_LAUNCHD_API_TOKEN;
+  const apiToken = process.env.DISCLAUDE_LAUNCHD_API_TOKEN ?? deployment?.apiToken;
   if (apiToken) {
     args.push('--api-token', apiToken);
   }
@@ -302,26 +445,73 @@ export function resolveRestChannelApiBaseUrl(apiPort) {
   return apiPort === 0 ? null : `http://127.0.0.1:${apiPort}`;
 }
 
-function generatePlist() {
-  assertServiceMigrationComplete(LAUNCHAGENTS_DIR);
-  const nodePath = getNodePath();
-  const caffeinatePath = getCaffeinatePath();
-  const programArgs = buildProgramArguments(CLI_ENTRY, caffeinatePath);
-  const apiPort = resolveApiPort();
-  const restChannelApiBaseUrl = resolveRestChannelApiBaseUrl(apiPort);
+/**
+ * Environment keys the plist itself owns (Issue #5619). Values from the
+ * config's `env:` block cannot override them — those describe service
+ * runtime, not how launchd runs the process.
+ */
+const PLIST_RESERVED_ENV_KEYS = new Set([
+  'PATH',
+  'HOME',
+  'NODE_ENV',
+  'LOG_TO_FILE',
+  'LOG_DIR',
+  'DISCLAUDE_API_BASE_URL',
+  'LOCKFILE_PATH',
+]);
 
-  // Issue #2934: Application logs go through pino file transport
-  // (triggered by LOG_TO_FILE env var). Issue #3416: pino-roll removed,
-  // rotation delegated to system-level tools (newsyslog / logrotate).
-  // Issue #3360: Added StandardOutPath as fallback — when pino file logging
-  // fails, console.log/stdout output is still captured.
-  // StandardErrorPath is kept for uncaught Node.js crash diagnostics.
-  const plist = `<?xml version="1.0" encoding="UTF-8"?>
+/**
+ * Render the application-service plist XML (Issue #5619).
+ *
+ * Pure function: builds the exact string `generate` writes (or prints in
+ * dry-run) without touching the filesystem, so tests can assert the
+ * production-relevant fields — entry path, fixed API port, environment —
+ * offline.
+ *
+ * @param {object} options
+ * @param {string} options.label - launchd label
+ * @param {string[]} options.programArgs - ProgramArguments entries
+ * @param {string} options.workingDirectory - WorkingDirectory
+ * @param {string} options.stdoutLog - StandardOutPath
+ * @param {string} options.stderrLog - StandardErrorPath
+ * @param {string} options.logDir - LOG_DIR env value
+ * @param {string} options.home - HOME env value
+ * @param {string} options.pathEnv - PATH env value
+ * @param {string | null} options.restChannelApiBaseUrl - DISCLAUDE_API_BASE_URL
+ * @param {Record<string, string>} options.extraEnv - config `env:` entries
+ * @param {string} [options.lockfilePath] - isolated-only LOCKFILE_PATH
+ * @returns {string} plist document
+ */
+export function buildServicePlist({
+  label,
+  programArgs,
+  workingDirectory,
+  stdoutLog,
+  stderrLog,
+  logDir,
+  home,
+  pathEnv,
+  restChannelApiBaseUrl,
+  extraEnv = {},
+  lockfilePath,
+}) {
+  const extraEnvLines = Object.keys(extraEnv)
+    .filter((key) => {
+      if (PLIST_RESERVED_ENV_KEYS.has(key)) {
+        console.warn(`Warning: config env key "${key}" is reserved by the launchd plist; skipped`);
+        return false;
+      }
+      return true;
+    })
+    .sort()
+    .map((key) => `    <key>${xmlEscape(key)}</key>\n    <string>${xmlEscape(extraEnv[key])}</string>\n`)
+    .join('');
+  return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>${LABEL}</string>
+  <string>${xmlEscape(label)}</string>
 
   <key>ProgramArguments</key>
   <array>
@@ -329,7 +519,7 @@ ${programArgs.map((a) => `    <string>${xmlEscape(a)}</string>`).join('\n')}
   </array>
 
   <key>WorkingDirectory</key>
-  <string>${PROJECT_ROOT}</string>
+  <string>${xmlEscape(workingDirectory)}</string>
 
   <key>RunAtLoad</key>
   <true/>
@@ -341,43 +531,111 @@ ${programArgs.map((a) => `    <string>${xmlEscape(a)}</string>`).join('\n')}
   <integer>5</integer>
 
   <key>StandardErrorPath</key>
-  <string>${STDERR_LOG}</string>
+  <string>${xmlEscape(stderrLog)}</string>
 
   <key>StandardOutPath</key>
-  <string>${STDOUT_LOG}</string>
+  <string>${xmlEscape(stdoutLog)}</string>
 
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>${xmlEscape(process.env.PATH ?? '')}</string>
+    <string>${xmlEscape(pathEnv)}</string>
 ${restChannelApiBaseUrl ? `    <key>DISCLAUDE_API_BASE_URL</key>\n    <string>${xmlEscape(restChannelApiBaseUrl)}</string>\n` : ''}    <key>HOME</key>
-    <string>${homedir()}</string>
-${process.argv[2] === 'isolated' ? `    <key>LOCKFILE_PATH</key>\n    <string>${xmlEscape(resolve(LAUNCHAGENTS_DIR, 'disclaude.pid'))}</string>\n` : ''}    <key>NODE_ENV</key>
+    <string>${xmlEscape(home)}</string>
+${lockfilePath ? `    <key>LOCKFILE_PATH</key>\n    <string>${xmlEscape(lockfilePath)}</string>\n` : ''}${extraEnvLines}    <key>NODE_ENV</key>
     <string>production</string>
     <key>LOG_TO_FILE</key>
     <string>true</string>
     <key>LOG_DIR</key>
-    <string>${LOG_DIR}</string>
+    <string>${xmlEscape(logDir)}</string>
   </dict>
 </dict>
 </plist>
 `;
+}
+
+/**
+ * Resolve the service entry executable for the plist (Issue #5619).
+ *
+ * Precedence: the isolated test override (DISCLAUDE_LAUNCHD_ENTRY) ->
+ * `launchd.entry` from the disclaude config -> the package checkout default.
+ * The returned `source` feeds the generate/dry-run output so operators can
+ * see where the entry came from instead of silently pinning the checkout.
+ *
+ * @param {{entry?: string} | null} deployment - parsed deployment config
+ * @returns {{entry: string, source: string}}
+ */
+export function resolveServiceEntry(deployment = null) {
+  if (process.argv[2] === 'isolated' && process.env.DISCLAUDE_LAUNCHD_ENTRY) {
+    return { entry: process.env.DISCLAUDE_LAUNCHD_ENTRY, source: 'DISCLAUDE_LAUNCHD_ENTRY (isolated override)' };
+  }
+  if (deployment?.entry) {
+    return { entry: deployment.entry, source: 'launchd.entry from the disclaude config' };
+  }
+  return { entry: CLI_ENTRY, source: 'package checkout default (bin/disclaude.js); set launchd.entry in the disclaude config to pin the production entry' };
+}
+
+function generatePlist({ dryRun = false } = {}) {
+  assertServiceMigrationComplete(LAUNCHAGENTS_DIR);
+  const nodePath = getNodePath();
+  const caffeinatePath = getCaffeinatePath();
+  // Issue #5619: entry/port/env come from the .disclaude config so the
+  // regenerated plist reproduces the production service.
+  const deployment = readLaunchdDeploymentConfig();
+  const { entry, source } = resolveServiceEntry(deployment);
+  const programArgs = buildProgramArguments(entry, caffeinatePath, deployment);
+  const apiPort = resolveApiPort(deployment);
+  const restChannelApiBaseUrl = resolveRestChannelApiBaseUrl(apiPort);
+
+  // Issue #2934: Application logs go through pino file transport
+  // (triggered by LOG_TO_FILE env var). Issue #3416: pino-roll removed,
+  // rotation delegated to system-level tools (newsyslog / logrotate).
+  // Issue #3360: Added StandardOutPath as fallback — when pino file logging
+  // fails, console.log/stdout output is still captured.
+  // StandardErrorPath is kept for uncaught Node.js crash diagnostics.
+  const plist = buildServicePlist({
+    label: LABEL,
+    programArgs,
+    workingDirectory: PROJECT_ROOT,
+    stdoutLog: STDOUT_LOG,
+    stderrLog: STDERR_LOG,
+    logDir: LOG_DIR,
+    home: homedir(),
+    pathEnv: process.env.PATH ?? '',
+    restChannelApiBaseUrl,
+    extraEnv: deployment.env,
+    lockfilePath: process.argv[2] === 'isolated' ? resolve(LAUNCHAGENTS_DIR, 'disclaude.pid') : undefined,
+  });
+
+  if (dryRun) {
+    console.log('[dry-run] plist target (NOT written):', PLIST_PATH);
+    console.log('[dry-run] config sources:');
+    for (const line of deployment.sources) console.log('[dry-run]  -', line);
+    console.log('[dry-run] entry:', entry, `(${source})`);
+    console.log('[dry-run] api port:', apiPort);
+    console.log('[dry-run] --- plist content ---');
+    console.log(plist);
+    console.log('[dry-run] --- end plist ---');
+    console.log('[dry-run] no files written; no launchctl commands executed');
+    return;
+  }
 
   ensureLaunchAgentsDir();
   ensureLogDir();
   writeFileSync(PLIST_PATH, plist, 'utf-8');
   console.log(`Plist generated: ${PLIST_PATH}`);
   console.log(`  Node: ${nodePath}`);
-  console.log(`  Entry: ${CLI_ENTRY}`);
+  console.log(`  Entry: ${entry} (${source})`);
+  for (const line of deployment.sources) console.log(`  ${line}`);
   console.log(
     `  Caffeinate: ${caffeinatePath ? `enabled (${caffeinatePath} -s)` : 'not available'}`
   );
-  console.log(`  API server: --api-port ${apiPort} (REST API for MCP tools; Issue #4576)`);
+  console.log(`  API server: --api-port ${apiPort} (REST API for MCP tools; Issues #4576/#5619)`);
   console.log(
     `  REST API base URL env: ${restChannelApiBaseUrl ? `${restChannelApiBaseUrl} (fixed override)` : 'set after dynamic HTTP listen readiness'}`
   );
   console.log(
-    `  API token: ${process.env.DISCLAUDE_LAUNCHD_API_TOKEN ? 'enabled (--api-token)' : 'not set (GET-only routes are token-exempt)'}`
+    `  API token: ${process.env.DISCLAUDE_LAUNCHD_API_TOKEN || deployment.apiToken ? 'enabled (--api-token)' : 'not set (GET-only routes are token-exempt)'}`
   );
   console.log(`  CWD: ${PROJECT_ROOT}`);
   console.log(`  App log: ${APP_LOG} (use newsyslog for rotation)`);
@@ -959,17 +1217,53 @@ function build() {
 // Public commands
 // ---------------------------------------------------------------------------
 
+// Issue #5619: `--dry-run` previews the exact actions (plist content,
+// launchctl command lines) without writing files or touching any service —
+// the verifiable install/update path for non-macOS environments.
+const DRY_RUN = process.argv.includes('--dry-run');
+
+/**
+ * Issue #5619: service-mutating commands are macOS-only. Outside darwin they
+ * fail closed (unless --dry-run) so a stray `install`/`stop` on Linux can
+ * never reach launchctl or alter a real service. The isolated rehearsal
+ * (`launchd.mjs isolated ...`) is exempt: it runs under a com.disclaude.test.*
+ * label with its own state directory and a fake launchctl on PATH, and never
+ * touches the production service.
+ */
+function assertDarwinServiceCommand(commandName) {
+  if (DRY_RUN || IS_ISOLATED) return;
+  if (process.platform !== 'darwin') {
+    throw new Error(
+      `launchd ${commandName} changes service state and requires macOS; rerun with --dry-run to preview (nothing was changed)`
+    );
+  }
+}
+
 function cmdGenerate() {
-  generatePlist();
+  generatePlist({ dryRun: DRY_RUN });
 }
 
 function cmdInstall() {
+  assertDarwinServiceCommand('install');
+  if (DRY_RUN) {
+    generatePlist({ dryRun: true });
+    console.log(`[dry-run] would run: launchctl load ${PLIST_PATH}`);
+    console.log('[dry-run] no launchctl commands executed');
+    return;
+  }
   generatePlist();
   loadPlist();
   console.log('\nService installed and started.');
 }
 
 function cmdUninstall() {
+  assertDarwinServiceCommand('uninstall');
+  if (DRY_RUN) {
+    console.log(`[dry-run] would run: launchctl unload ${PLIST_PATH}`);
+    console.log(`[dry-run] would remove plist: ${PLIST_PATH}`);
+    console.log('[dry-run] no launchctl commands executed');
+    return;
+  }
   unloadPlist();
   if (existsSync(PLIST_PATH)) {
     rmSync(PLIST_PATH);
@@ -979,6 +1273,14 @@ function cmdUninstall() {
 }
 
 function cmdStart() {
+  assertDarwinServiceCommand('start');
+  if (DRY_RUN) {
+    console.log(`[dry-run] would run: npm run build (cwd ${PROJECT_ROOT})`);
+    generatePlist({ dryRun: true });
+    console.log(`[dry-run] would run: launchctl load ${PLIST_PATH}`);
+    console.log('[dry-run] no launchctl commands executed');
+    return;
+  }
   build();
   generatePlist();
   loadPlist();
@@ -986,10 +1288,25 @@ function cmdStart() {
 }
 
 function cmdStop() {
+  assertDarwinServiceCommand('stop');
+  if (DRY_RUN) {
+    console.log(`[dry-run] would run: launchctl unload ${PLIST_PATH}`);
+    console.log('[dry-run] no launchctl commands executed');
+    return;
+  }
   unloadPlist();
 }
 
 function cmdRestart() {
+  assertDarwinServiceCommand('restart');
+  if (DRY_RUN) {
+    console.log(`[dry-run] would run: launchctl unload ${PLIST_PATH}`);
+    console.log(`[dry-run] would run: npm run build (cwd ${PROJECT_ROOT})`);
+    generatePlist({ dryRun: true });
+    console.log(`[dry-run] would run: launchctl load ${PLIST_PATH}`);
+    console.log('[dry-run] no launchctl commands executed');
+    return;
+  }
   unloadPlist();
   build();
   generatePlist();
@@ -1015,6 +1332,12 @@ function cmdLogs() {
 }
 
 function cmdStatus() {
+  if (DRY_RUN) {
+    console.log('[dry-run] would run: launchctl list | grep', LABEL);
+    console.log(`[dry-run] plist: ${PLIST_PATH}`);
+    console.log('[dry-run] no launchctl commands executed');
+    return;
+  }
   const result = run(`launchctl list | grep ${LABEL}`, { allowFail: true, silent: true });
   if (result) {
     console.log(result.trim());
@@ -1036,10 +1359,14 @@ function cmdStatus() {
 // <command>`) keeps the service service; `launchd.mjs chromium-cdp <command>`
 // (alias `chromium`) manages the headless-Chromium CDP service. This is how
 // `disclaude chromium-cdp ...` routes in (bin/disclaude.js prepends the selector).
+// Issue #5619: `launchd.mjs service <command>` is an explicit alias for the
+// application service so `disclaude service install|start|stop|status` maps
+// 1:1 onto this script; every command accepts --dry-run.
 const FIRST_ARG = process.argv[2];
 const IS_CHROMIUM = FIRST_ARG === 'chromium' || FIRST_ARG === 'chromium-cdp' || FIRST_ARG === 'chromium-isolated';
 const IS_ISOLATED = FIRST_ARG === 'isolated';
-const command = IS_CHROMIUM || IS_ISOLATED ? process.argv[3] : FIRST_ARG;
+const IS_SERVICE_SELECTOR = FIRST_ARG === 'service';
+const command = IS_CHROMIUM || IS_ISOLATED || IS_SERVICE_SELECTOR ? process.argv[3] : FIRST_ARG;
 
 const commands = {
   generate: cmdGenerate,
@@ -1101,10 +1428,11 @@ Commands:
       process.exit(1);
     }
     console.log(`Usage: node scripts/launchd.mjs <command>
+       node scripts/launchd.mjs service <command>
        node scripts/launchd.mjs isolated <command>
 
-Commands:
-  generate    Generate plist file
+Commands (add --dry-run to preview actions without running launchctl):
+  generate    Generate plist file (from the .disclaude config; Issue #5619)
   install     Generate + load (first-time setup)
   uninstall   Unload + remove plist
   start       Build + load
@@ -1112,6 +1440,11 @@ Commands:
   restart     Build + unload + load
   logs        Tail log files [--lines=N]
   status      Show service status
+
+The \`service\` form is what \`disclaude service <command>\` forwards to. The
+plist takes its entry path, API port and env block from the disclaude config
+(launchd.entry / launchd.apiPort / launchd.env or env:; defaults are the
+package checkout entry, port 19200, and no extra env).
 
 The isolated form requires the isolation flag, a test-only label, and an
 absolute state directory. Missing settings fail closed before launchctl runs.

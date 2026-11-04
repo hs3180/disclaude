@@ -38,6 +38,50 @@ describe('@disclaude/channel-cli', () => {
       expect(result.hint).toBeUndefined();
     } finally {fetchMock.mockRestore();}
   });
+
+  // #5616: a WeChat delivery failure arrives as a REST body whose safe
+  // structured fields must surface in the CLI JSON as `diagnostic` instead of
+  // forcing operators to grep the host logs for two embedded diagnostic IDs.
+  const wechatFailure = (diagnostics: Record<string, unknown>) => new Response(JSON.stringify({
+    ok: false, diagnosticId: '3f9e2c81-7b44-4d1e-9a2c-6b1d5f0e8a77',
+    message: 'Channel request failed: WeChat message NOT sent: the server rejected delivery (diagnostic ID 3f9e2c81-7b44-4d1e-9a2c-6b1d5f0e8a77)',
+    diagnostics,
+  }), { status: 500 });
+
+  it.each([
+    ['delivery-rejected', {
+      channel: 'wechat', errorKind: 'delivery-rejected', sessionState: 'unverified',
+      endpoint: '/ilink/bot/sendmessage', httpStatus: 200, ret: -2, errmsg: 'prepare failed', channelDiagnosticId: 'ab12cd34',
+    }],
+    ['login-expired', {
+      channel: 'wechat', errorKind: 'login-expired', sessionState: 'login-expired',
+      httpStatus: 401, ret: -14, channelDiagnosticId: 'ff001122',
+    }],
+    ['delivery-outcome-unknown', { channel: 'wechat', errorKind: 'delivery-outcome-unknown', sessionState: 'unverified' }],
+  ])('surfaces structured WeChat diagnostics for %s', async (errorKind, diagnostics) => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(url => Promise.resolve(String(url).endsWith('/api/ping') ? new Response(JSON.stringify({ ok: true, pong: true })) : wechatFailure(diagnostics)));
+    try {
+      const { code, writes } = await capture(['send_text', '--chat', 'oc_0123456789012345678901234567890123', '--text', 'probe', '--base-url', 'http://127.0.0.1:19200']);
+      expect(code).toBe(1);
+      const result = JSON.parse(writes[0]);
+      expect(result.ok).toBe(false);
+      // Both diagnostic layers: host REST + channel API client.
+      expect(result.diagnostic.diagnosticId).toBe('3f9e2c81-7b44-4d1e-9a2c-6b1d5f0e8a77');
+      expect(result.diagnostic.diagnostics).toEqual(diagnostics);
+      expect(result.diagnostic.diagnostics.errorKind).toBe(errorKind);
+    } finally {fetchMock.mockRestore();}
+  });
+
+  it('keeps the success path free of diagnostics', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(url => Promise.resolve(String(url).endsWith('/api/ping') ? new Response(JSON.stringify({ ok: true, pong: true })) : new Response(JSON.stringify({ ok: true, success: true, messageId: 'om_1' }))));
+    try {
+      const { code, writes } = await capture(['send_text', '--chat', 'oc_0123456789012345678901234567890123', '--text', 'probe', '--base-url', 'http://127.0.0.1:19200']);
+      expect(code).toBe(0);
+      const result = JSON.parse(writes[0]);
+      expect(result.ok).toBe(true);
+      expect(result.diagnostic).toBeUndefined();
+    } finally {fetchMock.mockRestore();}
+  });
   it('exposes the packaged command surface in help', () => {
     expect(HELP).toContain('send_interactive');
     expect(HELP).toContain('disclaude channel');

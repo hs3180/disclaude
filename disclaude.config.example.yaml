@@ -71,6 +71,25 @@ channels:
 workspace:
   dir: ./workspace
 
+# macOS launchd deployment settings (Issue #5619). Optional; consumed by
+# `disclaude service generate/install` (scripts/launchd.mjs) so the generated
+# plist reproduces the production service instead of pointing at the package
+# checkout with an OS-assigned port. Every key is optional:
+#   entry   absolute path to the service executable the plist launches
+#           (default: bin/disclaude.js inside the checkout running generate)
+#   apiPort fixed HTTP API port for --api-port (default: 19200; set
+#           DISCLAUDE_LAUNCHD_API_PORT=0 to explicitly request an OS-assigned port)
+#   apiToken passed as --api-token (Bearer auth on write routes)
+#   env     extra EnvironmentVariables merged into the plist on top of the
+#           runtime env: block below (cannot override
+#           PATH/HOME/NODE_ENV/LOG_TO_FILE/LOG_DIR/LOCKFILE_PATH)
+# launchd:
+#   entry: /opt/disclaude/bin/disclaude.js
+#   apiPort: 19200
+#   # apiToken: $DISCLAUDE_LAUNCHD_API_TOKEN
+#   env:
+#     FEISHU_REGION: cn
+
 # One-click GitHub issue reporting (Issue #5400). Optional; when absent the
 # /issue entry reports that reporting is not configured. The App needs read/write
 # access to issues on the repository. privateKey is a secret: it must reference

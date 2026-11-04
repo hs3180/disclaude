@@ -48,7 +48,10 @@ describe('dynamic registration CLI', () => {
       expect(JSON.parse((await cli(dir, ['status'])).stdout)).toMatchObject({ configured: false, authenticated: 'not-checked', accounts: [] });
       const firstOutput = await cli(dir, ['login', '--qr-file', join(dir, 'first.png')], { bot: 'first-bot' });
       const first = lastJson(firstOutput.stdout);
-      const second = lastJson((await cli(dir, ['login', '--qr-file', join(dir, 'second.png')], { bot: 'second-bot' })).stdout);
+      // #5480 (maintainer review on #5662): a second account needs a second
+      // WeChat user — the same user's fresh scan rebinds their registration
+      // by the server-provided user id instead of adding an account.
+      const second = lastJson((await cli(dir, ['login', '--qr-file', join(dir, 'second.png')], { bot: 'second-bot', user: 'second-operator@im.wechat' })).stdout);
       expect(first.registered && second.registered).toBe(true);
       expect(first.id).not.toBe(second.id);
       expect(first.channelId).toBe(`wechat:${first.id}`);
@@ -65,31 +68,50 @@ describe('dynamic registration CLI', () => {
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
-  it('does not register failed QR flows or overwrite an identity on mismatched reauthentication', async () => {
+  it('does not register failed QR flows; rebinds a returning user by the server-provided id and refuses anyone else', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'wechat-registration-cli-failure-'));
     try {
       await expect(cli(dir, ['login', '--qr-file', join(dir, 'failed.png')], { fail: true })).rejects.toThrow();
       const registry = new WeChatRegistry(dir);
       expect(await registry.list()).toEqual([]);
       const first = lastJson((await cli(dir, ['login', '--qr-file', join(dir, 'first.png')], { bot: 'original' })).stdout);
-      // Same user scanning a new bot identity (#5480): refuse the overwrite,
-      // explain the change, and point at a plain login as the continuation.
-      const mismatch = await cli(dir, ['login', '--id', first.id, '--force', '--qr-file', join(dir, 'wrong.png')], { bot: 'different' }).catch(error => error);
-      expect(mismatch.code).toBe(1);
-      const entries = mismatch.stdout.trim().split('\n')
-        .filter(line => line.startsWith('{') && line.endsWith('}')).map(line => JSON.parse(line));
-      expect(entries).toEqual(expect.arrayContaining([expect.objectContaining({ ok: false, stage: 'identity-changed',
-        saved: false, targetId: first.id, registeredBotId: 'original', scannedBotId: 'different', sameUser: true,
-        next: `disclaude wechat login --state-dir ${dir}` })]));
-      const [record] = await registry.list();
+      // #5480 (maintainer review on #5662): whether the newly scanned user
+      // already exists is judged by the WeChat-server-provided user id, not a
+      // command-line --id binding — the same user scanning a new bot identity
+      // rebinds their registration in place via a plain login.
+      const rebound = lastJson((await cli(dir, ['login', '--qr-file', join(dir, 'rebound.png')], { bot: 'different' })).stdout);
+      expect(rebound).toMatchObject({ ok: true, registered: true, rebound: true, reboundFromBotId: 'original' });
+      expect(rebound.id).toBe(first.id);
+      let [record] = await registry.list();
       expect(record.enabled).toBe(true);
-      expect((await new WeChatStateStore(registry.stateDir(record)).loadCredentials())?.botId).toBe('original');
-      // A scan from a different WeChat user reports the unexpected identity
-      // instead of offering the same-user continuation.
+      expect((await new WeChatStateStore(registry.stateDir(record)).loadCredentials())?.botId).toBe('different');
+      // The explicit reauthentication path accepts the same-user rebind too:
+      // --id only selects which account suspends; identity still comes from
+      // the server-provided user id.
+      const renewed = lastJson((await cli(dir, ['login', '--id', first.id, '--force', '--qr-file', join(dir, 'renew.png')], { bot: 'newer-bot' })).stdout);
+      expect(renewed).toMatchObject({ ok: true, registered: true, rebound: true, reboundFromBotId: 'different', id: first.id });
+      [record] = await registry.list();
+      expect(record.enabled).toBe(true);
+      expect((await new WeChatStateStore(registry.stateDir(record)).loadCredentials())?.botId).toBe('newer-bot');
+      // A scan from a different WeChat user is refused on the explicit target
+      // and guided to a plain login: the server-provided id — not --id —
+      // decides whether the scanned user already exists.
       const stranger = await cli(dir, ['login', '--id', first.id, '--force', '--qr-file', join(dir, 'stranger.png')],
-        { bot: 'different', user: 'someone-else@im.wechat' }).catch(error => error);
+        { bot: 'another-bot', user: 'someone-else@im.wechat' }).catch(error => error);
       expect(stranger.code).toBe(1);
       expect(stranger.stdout).toContain('"sameUser":false');
+      expect(stranger.stdout).toContain('"stage":"identity-changed"');
+      expect(stranger.stdout).toContain(`disclaude wechat login --state-dir ${dir}`);
+      [record] = await registry.list();
+      expect(record.enabled).toBe(true);
+      expect((await new WeChatStateStore(registry.stateDir(record)).loadCredentials())?.botId).toBe('newer-bot');
+      // The stranger's own plain login registers a separate account.
+      const separate = lastJson((await cli(dir, ['login', '--qr-file', join(dir, 'separate.png')], { bot: 'another-bot', user: 'someone-else@im.wechat' })).stdout);
+      expect(separate).toMatchObject({ ok: true, registered: true });
+      expect(separate.id).not.toBe(first.id);
+      const after = await new WeChatRegistry(dir).list();
+      expect(after.map(account => account.id)).toEqual(expect.arrayContaining([first.id, separate.id]));
+      expect(after).toHaveLength(2);
       await expect(cli(dir, ['status', '--id', 'unknown'])).rejects.toThrow('Unknown WeChat registration');
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
@@ -150,6 +172,27 @@ describe('dynamic registration CLI', () => {
       const report = lastJson(output.stdout);
       expect(report).toMatchObject({ ok: true, registered: true, verified: false, loginExpired: true });
       expect(report.next).toContain('disclaude wechat login --id ');
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it('directs a completed scan to the first message the welcome needs (#5469)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'wechat-registration-cli-onboard-'));
+    try {
+      // A scan that completes before any reply context exists is not a
+      // delivered welcome: the report must ask for a first WeChat message and
+      // name the reply-context requirement, and no earlier stage line may read
+      // as welcome delivery.
+      const output = await cli(dir, ['login', '--qr-file', join(dir, 'fresh.png')], { bot: 'onboard-bot' });
+      const report = lastJson(output.stdout);
+      expect(report.registered).toBe(true);
+      expect(report.onboarding).toContain('send a first WeChat message');
+      expect(report.onboarding).toContain('valid reply context');
+      const stageLines = output.stdout.trim().split('\n')
+        .filter(line => line.startsWith('{') && line.endsWith('}'))
+        .map(line => JSON.parse(line) as { stage?: string })
+        .filter(entry => entry.stage)
+        .map(entry => JSON.stringify(entry));
+      expect(stageLines.some(line => line.toLowerCase().includes('welcome'))).toBe(false);
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 });

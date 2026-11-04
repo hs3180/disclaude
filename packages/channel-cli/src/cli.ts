@@ -42,7 +42,7 @@ const COMMAND_FLAGS: Record<string, string[]> = {
 export const HELP = CHANNEL_CLI_HELP;
 
 type Args = { _: string[]; [key: string]: string | string[] | undefined };
-type ToolResult = { success?: boolean; error?: string; message?: string; actionId?: string };
+type ToolResult = { success?: boolean; error?: string; message?: string; actionId?: string; diagnostic?: unknown };
 let emitted = false;
 
 function writeResult(value: string): void {
@@ -52,11 +52,14 @@ function writeResult(value: string): void {
 function emitOk(payload: Record<string, unknown>): void {
   if (!emitted) { emitted = true; writeResult(`${JSON.stringify({ ok: true, ...payload })}\n`); }
 }
-function emitFail(command: string, error: string, hint?: string): void {
+function emitFail(command: string, error: string, hint?: string, diagnostic?: unknown): void {
   if (emitted) {return;}
   emitted = true;
   const result: Record<string, unknown> = { ok: false, command, error };
   if (hint) {result.hint = hint;}
+  // #5616: safe structured delivery diagnostics instead of string-parsing the
+  // error for endpoint/ret/errmsg and the two diagnostic IDs.
+  if (diagnostic !== undefined) {result.diagnostic = diagnostic;}
   writeResult(`${JSON.stringify(result)}\n`);
 }
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
@@ -346,7 +349,7 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
   }
   if (result.success) { emitOk({ command, chatId, result: result.message || 'sent', durationMs: 0, ...(result.actionId ? { actionId: result.actionId } : {}), ...(decodedPreview ? { decodedPreview } : {}) }); return 0; }
   const resultError = result.error || result.message || `${command} returned without success`;
-  emitFail(command, resultError, await failureHint(baseUrl, resultError));
+  emitFail(command, resultError, await failureHint(baseUrl, resultError), result.diagnostic);
   return 1;
 }
 

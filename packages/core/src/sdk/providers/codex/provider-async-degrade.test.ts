@@ -117,12 +117,17 @@ describe('Codex async-question capability degrade (#5467)', () => {
     expect(fx.prompts()).not.toContain('cannot receive asynchronous question forms');
   });
 
-  it('still surfaces genuine delivery accidents as turn failures', async () => {
+  it('still surfaces genuine delivery accidents as structured local failures (#5526)', async () => {
     const fx = fixture('accident');
     const messages = await collect(fx.query());
     expect(fx.hostInput).toHaveBeenCalledOnce();
     expect(messages.some(m => m.type === 'text' && m.content.includes('任务需要你的输入'))).toBe(false);
-    expect(messages.find(m => m.type === 'result')?.metadata?.terminatedReason).toBe('turn_failed');
+    // #5526: the native turn completed, so the accident must NOT rewrite the
+    // terminal state — it rides the success result as structured metadata.
+    const result = messages.find(m => m.type === 'result');
+    expect(result?.metadata?.terminatedReason).toBeUndefined();
+    expect(result?.metadata?.inputDeliveryFailure).toEqual({ nativeCompleted: true,
+      reason: expect.stringContaining('could not confirm card delivery') });
     // The raw private sender detail stays out; the class hint is visible.
     expect(messages.some(m => m.content.includes('private card explosion'))).toBe(false);
     expect(messages.some(m => m.content.includes('could not confirm card delivery'))).toBe(true);
