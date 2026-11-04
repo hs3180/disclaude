@@ -30,6 +30,18 @@ export interface CodexAgentGovernanceConfig {
   maxActiveSessions?: number;
   /** Max simultaneously-executing codex exec children. Default 2. */
   maxConcurrentRuns?: number;
+  /**
+   * Weekly-quota ledger (#5607): estimated weekly budget in tokens.
+   * > 0 enables tiered fresh-session admission (tighten/block); unset or 0
+   * = observe-only mode (default) — only REAL usage-limit hits gate.
+   */
+  weeklyBudgetTokens?: number;
+  /** Remaining ratio (0..1) at/below which non-interactive fresh sessions are skipped. Default 0.2. */
+  weeklyTightenThreshold?: number;
+  /** Remaining ratio (0..1) at/below which every fresh session degrades. Default 0.05. */
+  weeklyBlockThreshold?: number;
+  /** Conservative cooldown (ms) for a real limit hit without a parsable reset hint. Default 3600000. */
+  weeklyLimitCooldownMs?: number;
 }
 
 /** Codex CLI reasoning levels currently exposed by the model catalog. */

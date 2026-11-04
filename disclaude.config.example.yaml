@@ -6,6 +6,13 @@ agents:
     default: true
     codex:
       transport: app-server
+      # Weekly-quota admission (#5607). All optional; unset weeklyBudgetTokens
+      # (or 0) = observe-only default — only REAL usage-limit errors gate new
+      # sessions. > 0 enables estimated-balance admission on fresh sessions:
+      # weeklyBudgetTokens: 4_000_000   # estimated weekly budget (tokens)
+      # weeklyTightenThreshold: 0.2     # <=20% left: skip non-interactive fresh sessions
+      # weeklyBlockThreshold: 0.05     # <=5% left: every fresh session degrades
+      # weeklyLimitCooldownMs: 3600000  # fallback cooldown when a real limit hit has no parsable reset hint
   assistant:
     backend: claude
     llm: assistant

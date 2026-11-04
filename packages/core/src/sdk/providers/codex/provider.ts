@@ -75,6 +75,7 @@ import {
 } from './codex-runner.js';
 import { resolveCodexSandboxPolicy, type CodexSandboxLevel } from './sandbox-policy.js';
 import { CodexSessionGovernor, type SessionRegistration } from './session-governor.js';
+import { CodexWeeklyQuotaLedger, type CodexWeeklyQuotaConfig } from './weekly-quota.js';
 import { reserveLlmSession } from '../../llm-session-limit.js';
 import { CodexAppServerLifecycle, CodexNoActiveTurnError } from './app-server-lifecycle.js';
 import { LiveInputRejectedError } from '../../live-input.js';
@@ -273,6 +274,13 @@ export interface CodexAgentProviderOptions {
    */
   maxActiveSessions?: number;
   maxConcurrentRuns?: number;
+  /**
+   * Weekly-quota ledger (#5607): estimated budget + tiered fresh-session
+   * admission + real-limit calibration. Unset budget = observe-only.
+   */
+  weeklyQuota?: CodexWeeklyQuotaConfig;
+  /** Injectable clock for the weekly-quota ledger (tests). Default Date.now. */
+  quotaClock?: () => number;
   /** Override builtin resource root for tests/embedded deployments. */
   builtinsDir?: string;
 }
@@ -316,6 +324,12 @@ export class CodexAgentProvider implements IAgentSDKProvider {
    */
   private readonly governor: CodexSessionGovernor;
   private readonly llmGovernors = new Map<string, CodexSessionGovernor>();
+  /**
+   * Weekly-quota ledger + tiered fresh-session admission (#5607). Instance
+   * state on the process-cached provider, mirroring quota/governor — every
+   * chatId shares the same subscription windows.
+   */
+  private readonly weeklyQuota: CodexWeeklyQuotaLedger;
 
   private sessionGovernor(options: AgentQueryOptions): CodexSessionGovernor {
     const limit = options.llmSessionLimit;
@@ -362,6 +376,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       maxActiveSessions: options.maxActiveSessions,
       maxConcurrentRuns: options.maxConcurrentRuns,
     });
+    this.weeklyQuota = new CodexWeeklyQuotaLedger(options.weeklyQuota, options.quotaClock);
   }
 
   configureChat(hooks: ChatAgentHooks): ChatAgentHooks {
@@ -455,6 +470,16 @@ export class CodexAgentProvider implements IAgentSDKProvider {
   /** Runtime cap change (admin/test surface, Issue #4634). */
   setGovernanceLimits(limits: { maxActiveSessions?: number; maxConcurrentRuns?: number }): void {
     this.governor.setLimits(limits);
+  }
+
+  /**
+   * /status lines for the weekly-quota ledger (#5607) — labeled estimates:
+   * configured budget, this-process observed consumption, estimated
+   * remaining, and any latched real-limit calibration. Optional interface
+   * capability; other providers simply do not implement it.
+   */
+  getStatusExtra(): string[] {
+    return this.weeklyQuota.formatStatusLines();
   }
 
   /**
@@ -605,6 +630,9 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     };
     // Same capture for the S7 governor + stash (this: void closures below).
     const governorSink = this.governor;
+    // Same capture for the #5607 weekly-quota ledger (admission/calibration
+    // bridges below are `this: void` too).
+    const weeklyQuotaSink = this.weeklyQuota;
     const sessionGovernor = this.sessionGovernor(options);
     const stashSink = this.threadStash;
 
@@ -857,6 +885,11 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               quotaSink.cachedInputTokens += usage.cached_input_tokens ?? 0;
               quotaSink.outputTokens += usage.output_tokens ?? 0;
               quotaSink.reasoningOutputTokens += usage.reasoning_output_tokens ?? 0;
+              weeklyQuotaSink.recordUsage({
+                inputTokens: usage.input_tokens,
+                cachedInputTokens: usage.cached_input_tokens,
+                outputTokens: usage.output_tokens,
+              });
               logger.info(
                 {
                   threadId: latestSessionId,
@@ -953,7 +986,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       // S7 (#4634): each run holds a global lease — at most
       // maxConcurrentRuns codex exec children process-wide; excess turns
       // queue FIFO across chats with a backpressure notice.
-      const runInput = async (prompt: string, correlation?: UserInput['correlation'], continuationContext?: string): Promise<void> => {
+      const runInput = async (prompt: string, correlation?: UserInput['correlation'], continuationContext?: string, nonInteractive = false): Promise<void> => {
         if (stalled || aborted || terminated) { return; }
         // Item IDs are scoped to one exec invocation. Clear before every
         // run because older Codex versions (and test doubles) may omit
@@ -969,6 +1002,32 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             },
             'starting fresh codex session after resume input budget was reached'
           );
+        }
+        // #5607: weekly-quota admission sits at the fresh-session boundary
+        // ONLY — a new codex conversation (new chat, /reset, budget-triggered
+        // fresh) is the one place the plan's rolling windows can be protected
+        // without touching work: resumed turns and running runs always pass.
+        if (resumeTarget === undefined) {
+          const admission = weeklyQuotaSink.checkFreshSession({ nonInteractive });
+          if (admission.decision === 'skip') {
+            // Tighten tier: record the skip (log + visible notice), never silent.
+            logger.info(
+              { sessionKey, ...correlation, reason: admission.reason },
+              'codex fresh session skipped (weekly-quota tighten tier, #5607)'
+            );
+            pushSynthetic({ type: 'status', role: 'system', content: `⏭️ Codex 新会话未开启——${admission.reason}。` });
+            pushSynthetic({ type: 'result', content: '', role: 'assistant' });
+            return;
+          }
+          if (admission.decision === 'degrade') {
+            logger.warn(
+              { sessionKey, ...correlation, reason: admission.reason },
+              'codex fresh session degraded (weekly-quota admission, #5607)'
+            );
+            pushSynthetic({ type: 'error', role: 'assistant', content: `⛔️ ${admission.reason}` });
+            pushSynthetic({ type: 'result', content: '', role: 'assistant' });
+            return;
+          }
         }
         let retryWaitedMs = 0;
         for (let retryAttempt = 0; ; retryAttempt++) {
@@ -1109,6 +1168,10 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               const resetHint =
                 /try again (?:at|in) [^.\n]+/i.exec(runFailureText)?.[0] ??
                 /try again (?:at|in) [^.\n]+/i.exec(result.stderrTail)?.[0];
+              // #5607: calibrate the weekly-quota ledger from the REAL limit
+              // hit — parse the reset hint into a deadline that gates new
+              // sessions until the window resets (estimate-independent).
+              weeklyQuotaSink.recordLimitHit(`${runFailureText}\n${result.stderrTail}`);
               pushSynthetic({
                 type: 'error',
                 content: resetHint
@@ -1247,7 +1310,11 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             if (done || terminated) {
               return;
             }
-            await runInput(userInputText(value), value.correlation, value.continuationContext);
+            await runInput(userInputText(value), value.correlation, value.continuationContext,
+              // #5607 non-interactive proxy: dependent work that must not
+              // queue, or an input without a bound interactive context
+              // (machine pushes — schedule ticks arrive via /api/push).
+              value.inputContext === undefined || options.capacityAdmission === 'reject');
             if (stalled || aborted) { return; }
           }
         } finally {
@@ -1595,6 +1662,37 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           asyncInputs.releaseDelivery(threadId as string, finishingTurn);
           if (stopped || activeTurnId !== finishingTurn) { return; }
           const status = event.turn?.status;
+          // #5607/#4632 parity: app-server previously never accumulated
+          // usage — only the exec transport fed the quota counters. A
+          // completed turn's usage payload (bounded read, finite fields
+          // only) lands in the process-wide counters AND the weekly-quota
+          // ledger, with the same one structured line per turn as exec.
+          if (status === 'completed' && event.turn?.usage) {
+            const usage = readCodexOutputLimitUsage(event.turn.usage);
+            if (usage) {
+              this.quota.turnsCompleted += 1;
+              this.quota.inputTokens += usage.inputTokens ?? 0;
+              this.quota.cachedInputTokens += usage.cachedInputTokens ?? 0;
+              this.quota.outputTokens += usage.outputTokens ?? 0;
+              this.quota.reasoningOutputTokens += usage.reasoningOutputTokens ?? 0;
+              this.weeklyQuota.recordUsage({
+                inputTokens: usage.inputTokens,
+                cachedInputTokens: usage.cachedInputTokens,
+                outputTokens: usage.outputTokens,
+              });
+              logger.info(
+                {
+                  threadId,
+                  inputTokens: usage.inputTokens,
+                  cachedInputTokens: usage.cachedInputTokens,
+                  outputTokens: usage.outputTokens,
+                  reasoningOutputTokens: usage.reasoningOutputTokens,
+                  cumulative: { ...this.quota },
+                },
+                'codex quota usage (turn/completed)'
+              );
+            }
+          }
           // #5526: a locally failed question-card delivery must NOT rewrite a
           // natively completed turn into a provider failure. The turn's work
           // (and any already-delivered artifacts) stands; only the interaction
@@ -1640,6 +1738,23 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             });
           }
           else {
+            // #5607/#4632 parity: app-server had NO usage-limit branch — a
+            // spent plan window surfaced as a generic ❌ turn failure and
+            // calibrated nothing. Detect the native signature
+            // (codexErrorInfo 'usageLimitExceeded') or the text signature,
+            // calibrate the weekly-quota ledger (real evidence), and degrade
+            // with the friendly window-reset notice like exec does.
+            const failureText = event.turn?.error?.message ?? '';
+            const nativeCode = (event.turn?.error as { codexErrorInfo?: unknown } | undefined)?.codexErrorInfo;
+            if (failed && (nativeCode === 'usageLimitExceeded' || isCodexUsageLimit(failureText))) {
+              this.weeklyQuota.recordLimitHit(failureText);
+              const resetHint = /try again (?:at|in) [^.\n]+/i.exec(failureText)?.[0];
+              push({
+                type: 'error',
+                role: 'assistant',
+                content: resetHint ? `${USAGE_LIMIT_NOTICE}\n上游提示: ${resetHint}` : USAGE_LIMIT_NOTICE,
+              });
+            }
             push({
               type: 'result',
               content: failed ? `❌ Codex turn failed: ${detail}` : interrupted ? '⏹️ Codex turn interrupted' : '✅ Complete',
@@ -1729,6 +1844,34 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           };
           let capacityRecoveryNext = false;
           for (let retryAttempt = 0; ; retryAttempt++) {
+            // #5607: weekly-quota admission at the fresh-thread boundary
+            // only. threadId is undefined exactly before this stream's first
+            // ensureThread (or after a pre-thread failure); capacity-recovery
+            // retries resume the SAME thread and are never gated, and a
+            // running turn is untouchable by design.
+            if (!threadId) {
+              const admission = this.weeklyQuota.checkFreshSession({
+                nonInteractive: options.capacityAdmission === 'reject' || !next.value.inputContext,
+              });
+              if (admission.decision === 'skip') {
+                logger.info(
+                  { sessionKey, ...next.value.correlation, reason: admission.reason },
+                  'codex fresh session skipped (weekly-quota tighten tier, #5607)'
+                );
+                push({ type: 'status', role: 'system', content: `⏭️ Codex 新会话未开启——${admission.reason}。` });
+                push({ type: 'result', role: 'assistant', content: '' });
+                break;
+              }
+              if (admission.decision === 'degrade') {
+                logger.warn(
+                  { sessionKey, ...next.value.correlation, reason: admission.reason },
+                  'codex fresh session degraded (weekly-quota admission, #5607)'
+                );
+                push({ type: 'error', role: 'assistant', content: `⛔️ ${admission.reason}` });
+                push({ type: 'result', role: 'assistant', content: '' });
+                break;
+              }
+            }
             turnCanRetry = true;
             deferredTurnOverload = undefined;
             deferredFailedTurnId = undefined;

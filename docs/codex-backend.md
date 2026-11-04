@@ -93,6 +93,24 @@ The default `exec` transport runs non-interactive turns. Set
 Concurrency limits are per service process; extra work waits rather than
 starting unlimited Codex sessions or child processes.
 
+### Weekly-quota admission (#5607)
+
+The ChatGPT subscription has rolling 5-hour and weekly limits but exposes no
+balance or reset-time query, so Disclaude keeps a per-process ledger:
+configured estimate plus calibration from real limit errors. Set
+`agents.<name>.codex.weeklyBudgetTokens` (> 0) to enable estimated-balance
+admission on **fresh sessions only** — running turns are never killed, and
+resumed conversations are never gated. Below `weeklyTightenThreshold`
+remaining (default 0.2) non-interactive fresh sessions are skipped with a
+recorded reason; below `weeklyBlockThreshold` (default 0.05) every fresh
+session degrades with the estimated reset time and a backend-switch hint.
+Unset or 0 — the default — is observe-only: nothing gates on estimates, but
+REAL usage-limit errors still latch a friendly degrade until their parsed
+`try again at/in …` deadline (or `weeklyLimitCooldownMs` when unparsable) and
+restart the weekly window. `/status` reports the ledger, always labeled
+「估计」 (process-local estimate, not account truth). These caps are
+orthogonal to the concurrency limits above.
+
 ## Quiet turns and liveness
 
 `DISCLAUDE_STALL_TIMEOUT_MS` defaults to 180,000 ms. For Codex it schedules a

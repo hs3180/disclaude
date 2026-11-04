@@ -236,6 +236,15 @@ export class Config {
   static readonly CODEX_MAX_ACTIVE_SESSIONS = defaultAgent?.codex?.maxActiveSessions;
   static readonly CODEX_MAX_CONCURRENT_RUNS = defaultAgent?.codex?.maxConcurrentRuns;
   static readonly CODEX_TRANSPORT = defaultAgent?.codex?.transport ?? 'exec';
+  /** #5607 weekly-quota ledger settings (observe-only unless a budget > 0 is set). */
+  static readonly CODEX_WEEKLY_QUOTA = defaultAgent?.codex
+    ? {
+      weeklyBudgetTokens: defaultAgent.codex.weeklyBudgetTokens,
+      weeklyTightenThreshold: defaultAgent.codex.weeklyTightenThreshold,
+      weeklyBlockThreshold: defaultAgent.codex.weeklyBlockThreshold,
+      weeklyLimitCooldownMs: defaultAgent.codex.weeklyLimitCooldownMs,
+    }
+    : undefined;
 
   // Logging configuration
   static readonly LOG_LEVEL = fileConfigOnly.logging?.level || 'info';
