@@ -20,11 +20,13 @@
  *
  * Bindings are scoped by the bot operator's WeChat user id (saved credentials
  * `userId`, already treated as stable across re-logins by #5480), so accounts
- * of different operators never share peers. Two concurrently-serving
- * registrations of one operator converge a shared peer onto the first-bound
- * conversation; that is the continuation this module exists to provide, but
- * operators running parallel bots for one WeChat user should inject a
- * resolver that distinguishes them.
+ * of different operators never share peers. While the registration that bound
+ * a conversation is still serving in this process, another concurrently-live
+ * registration of the same operator keeps its conversations isolated instead
+ * of converging onto the bound chatId; continuation applies once the original
+ * stops serving — the re-registration scenario this module exists for. Liveness
+ * is per-process: operators running parallel bots for one WeChat user in
+ * separate processes should inject a resolver that distinguishes them.
  *
  * @module channels/wechat/peer-identity
  * @see Issue #5600 - bind session identity to a stable WeChat user id
@@ -157,6 +159,14 @@ export class WeChatPeerIdentityStore {
         return { result: { chatId: natural, continued: false }, dirty: true };
       }
       if (binding.chatId === natural) { return { result: { chatId: natural, continued: false }, dirty: false }; }
+      // The bound conversation is still served by a concurrently-live
+      // registration: keep this account's conversations isolated instead of
+      // converging two live conversations onto one chatId. Continuation is
+      // for re-registration (the original registration is gone), not for
+      // accounts serving side by side.
+      if (binding.channelId !== args.channelId && servingChannels.get(this.dir)?.has(binding.channelId)) {
+        return { result: { chatId: natural, continued: false }, dirty: false };
+      }
       return { result: { chatId: binding.chatId, continued: true, previousRegistrationId: binding.registrationId }, dirty: false };
     });
   }
@@ -170,3 +180,29 @@ export class WeChatPeerIdentityStore {
 }
 
 const updateChains = new Map<string, Promise<unknown>>();
+
+/**
+ * Channels currently serving conversations per store directory, in this
+ * process. A binding whose channel is still serving must not be continued by
+ * another concurrently-live registration: the two accounts keep isolated
+ * conversations (#5634 CI regression — two live accounts converged one peer
+ * onto a single chatId whenever the first binding hit disk first). Channels
+ * serving in *other* processes are not visible here; per-process liveness is
+ * the strongest signal available offline.
+ */
+const servingChannels = new Map<string, Set<string>>();
+
+/** Record that `channelId` is actively serving conversations under `dir`. */
+export function markWeChatChannelServing(dir: string, channelId: string): void {
+  let channels = servingChannels.get(dir);
+  if (!channels) { channels = new Set(); servingChannels.set(dir, channels); }
+  channels.add(channelId);
+}
+
+/** Record that `channelId` stopped serving under `dir` (idempotent). */
+export function unmarkWeChatChannelServing(dir: string, channelId: string): void {
+  const channels = servingChannels.get(dir);
+  if (!channels) { return; }
+  channels.delete(channelId);
+  if (channels.size === 0) { servingChannels.delete(dir); }
+}

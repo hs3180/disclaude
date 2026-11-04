@@ -26,7 +26,7 @@ import { WeChatAuth } from './auth.js';
 import { WeChatMessageListener, type MessageProcessor } from './message-listener.js';
 import type { WeChatChannelConfig } from './types.js';
 import { WeChatStateStore, type WeChatSessionState } from './state-store.js';
-import { WeChatPeerIdentityStore, WECHAT_PEER_SHARED_SCOPE, type WeChatPeerContinuation } from './peer-identity.js';
+import { WeChatPeerIdentityStore, WECHAT_PEER_SHARED_SCOPE, markWeChatChannelServing, unmarkWeChatChannelServing, type WeChatPeerContinuation } from './peer-identity.js';
 import { wechatChannelId, wechatPeer, lockWeChatIdentity } from './identity.js';
 import { downloadWeChatMedia, WECHAT_MEDIA_MAX_BYTES } from './media.js';
 import { tmpdir } from 'node:os';
@@ -60,6 +60,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
   /** Canonical chatId → peer on this account (#5600 continuation aliases). */
   private readonly peerAliases = new Map<string, string>();
   private peerIdentities?: WeChatPeerIdentityStore;
+  private peerIdentityDir?: string;
   private peerIdentityScope = 'shared';
   private welcome?: WeChatWelcome;
   private releaseAccount?: () => Promise<void>;
@@ -103,6 +104,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
         this.peerIdentities = this.config.registrationId
           ? new WeChatPeerIdentityStore(this.config.peerIdentityDir ?? dirname(this.config.stateDir))
           : undefined;
+        this.peerIdentityDir = this.peerIdentities?.dir;
         this.peerIdentityScope = credentials.userId ?? WECHAT_PEER_SHARED_SCOPE;
         // Warm aliases for persisted peers so a restarted channel already owns
         // its continued (old-prefix) chatIds before the next poll arrives.
@@ -186,6 +188,11 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
       // waiting for the first long poll to answer (or reject with -14).
       await this.probeAuthState(credentials?.userId);
 
+      // #5600/#5634: this registration is now serving; while it lives, its
+      // bound conversations must not be continued (hijacked) by another
+      // concurrently-live account of the same operator.
+      if (this.peerIdentities && this.peerIdentityDir) { markWeChatChannelServing(this.peerIdentityDir, this.id); }
+
       logger.info('WeChat channel started with message listening');
     } catch (error) { await Promise.all([this.typing?.close(), this.welcome?.close()]); this.typing = undefined; this.welcome = undefined; await this.releaseIdentity?.(); this.releaseIdentity = undefined; await this.releaseAccount?.(); this.releaseAccount = undefined; throw error; }
   }
@@ -220,6 +227,8 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
   protected async doStop(): Promise<void> {
     const closingTyping = this.typing?.close();
     const closingWelcome = this.welcome?.close();
+    // Stopped registrations release their conversations to a successor (#5600).
+    if (this.peerIdentityDir) { unmarkWeChatChannelServing(this.peerIdentityDir, this.id); }
     try {
       // Stop message listener first
       if (this.messageListener) {

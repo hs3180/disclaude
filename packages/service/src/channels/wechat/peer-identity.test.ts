@@ -12,7 +12,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { WeChatPeerIdentityStore } from './peer-identity.js';
+import { WeChatPeerIdentityStore, markWeChatChannelServing, unmarkWeChatChannelServing } from './peer-identity.js';
 
 const OLD_ID = '11111111-1111-4111-8111-111111111111';
 const NEW_ID = '22222222-2222-4222-8222-222222222222';
@@ -50,6 +50,29 @@ describe('WeChatPeerIdentityStore', () => {
     // The re-registration must not rebind the conversation to its own prefix.
     expect(await new WeChatPeerIdentityStore(dir).loadBinding(PEER, 'operator-1'))
       .toMatchObject({ chatId: `wechat:${OLD_ID}:${PEER}` });
+  });
+
+  it('isolates a concurrently-serving registration and continues only after it stops (#5634 CI regression)', async () => {
+    const dir = await tempRoot();
+    const store = new WeChatPeerIdentityStore(dir);
+    const bound = await store.continuePeer({ peer: PEER, channelId: `wechat:${OLD_ID}`, registrationId: OLD_ID, scope: 'operator-1' });
+    expect(bound.continued).toBe(false);
+    try {
+      // The binding's registration is still serving in this process: a second
+      // live account of the same operator must keep its own chatId instead of
+      // converging both conversations onto one chatId.
+      markWeChatChannelServing(dir, `wechat:${OLD_ID}`);
+      const concurrent = await store.continuePeer({
+        peer: PEER, channelId: `wechat:${NEW_ID}`, registrationId: NEW_ID, scope: 'operator-1',
+      });
+      expect(concurrent).toEqual({ chatId: `wechat:${NEW_ID}:${PEER}`, continued: false });
+    } finally { unmarkWeChatChannelServing(dir, `wechat:${OLD_ID}`); }
+    // Once the original stops serving (re-registration scenario), a later
+    // registration continues the originally bound conversation.
+    const reregistered = await store.continuePeer({
+      peer: PEER, channelId: 'wechat:33333333-3333-4333-8333-333333333333', registrationId: '33333333-3333-4333-8333-333333333333', scope: 'operator-1',
+    });
+    expect(reregistered).toMatchObject({ chatId: bound.chatId, continued: true, previousRegistrationId: OLD_ID });
   });
 
   it('keeps behavior unchanged when no stable id is available', async () => {
