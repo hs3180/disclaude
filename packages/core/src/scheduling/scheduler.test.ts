@@ -91,6 +91,25 @@ const flushPending = async (rounds = 4) => {
   }
 };
 
+/**
+ * Issue #4648 residual ⑧ / #5656: executeTask runs fire-and-forget from the
+ * cron onTick, so any rejection escaping it becomes an unhandledRejection.
+ * Assert a run completes without surfacing one.
+ */
+async function expectNoUnhandledRejection(run: () => Promise<void>): Promise<void> {
+  const unhandled: unknown[] = [];
+  const onUnhandled = (err: unknown) => unhandled.push(err);
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    await run();
+    // Give an escaped rejection a few macrotask turns to surface.
+    await flushPending(6);
+    expect(unhandled).toEqual([]);
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
+}
+
 describe('Scheduler', () => {
   let mockScheduleManager: ScheduleManager;
   let mockCallbacks: SchedulerCallbacks;
@@ -1414,22 +1433,8 @@ describe('Scheduler', () => {
        * window) becomes an unhandledRejection — potentially crashing the
        * process over a NOTIFICATION, after the failure was already handled
        * and logged. These tests capture process-level unhandled rejections
-       * to pin the containment.
+       * to pin the containment (helper hoisted to module scope for #5656).
        */
-      async function expectNoUnhandledRejection(run: () => Promise<void>): Promise<void> {
-        const unhandled: unknown[] = [];
-        const onUnhandled = (err: unknown) => unhandled.push(err);
-        process.on('unhandledRejection', onUnhandled);
-        try {
-          await run();
-          // Give an escaped rejection a few macrotask turns to surface.
-          await flushPending(6);
-          expect(unhandled).toEqual([]);
-        } finally {
-          process.off('unhandledRejection', onUnhandled);
-        }
-      }
-
       /** Replace the shared sendMessage mock: succeed except for `marker`. */
       function rejectSendOn(marker: string): void {
         mockCallbacks.sendMessage = vi.fn((_chatId: string, text: string) =>
@@ -1479,6 +1484,89 @@ describe('Scheduler', () => {
         });
       });
     });
+
+    describe('Issue #5656: informational notifications are best-effort, never task failures', () => {
+      /**
+       * The incident: a transient Feishu 500 rejected the ⏰ start
+       * notification (the endpoint recovered 0.56s later). The awaited send
+       * lived in executeTask's main try, so the catch treated it as the task
+       * itself failing: the prompt never routed, the agent never started,
+       * and the run was counted toward the chronic-failure alert. Fix:
+       * informational notices go through sendInformationalNotification —
+       * one attempt, warn on failure, execution continues. No retry (#507:
+       * a retry after a slow success would double-deliver).
+       */
+
+      it('⏰ start notification failing still routes the task — no ❌, no streak', async () => {
+        vi.mocked(mockCallbacks.sendMessage).mockRejectedValueOnce(new Error('feishu transient 500'));
+        scheduler.addTask(createTask({ id: 'start-notify-fail' }));
+
+        await expectNoUnhandledRejection(async () => {
+          fireJob(scheduler.getActiveJobs());
+          await vi.waitFor(() => expect(mockRouterAsMock.route).toHaveBeenCalledOnce(), { timeout: 2000 });
+
+          // The run was healthy: no failure streak entry…
+          expect(
+            (scheduler as unknown as { consecutiveTaskFailures: Map<string, number> })
+              .consecutiveTaskFailures.has('start-notify-fail'),
+          ).toBe(false);
+          // …no ❌ failure notice (the task did NOT fail)…
+          expect(
+            vi.mocked(mockCallbacks.sendMessage).mock.calls.some(([, text]) => text.startsWith('❌')),
+          ).toBe(false);
+          // …and the message routed without a reply root.
+          expect(getRoutedMessage().replyRootId).toBeNull();
+        });
+      });
+
+      it('command start notification failing still executes the command', async () => {
+        const commandRunner = vi.fn<CommandRunner>().mockResolvedValue({
+          stdout: 'ok', stderr: '', stdoutTruncated: false, stderrTruncated: false,
+        });
+        const commandScheduler = new Scheduler({
+          scheduleManager: mockScheduleManager, callbacks: mockCallbacks,
+          inputMessageRouter: mockRouter, commandRunner, jobFactory: testJobFactory,
+        });
+        vi.mocked(mockCallbacks.sendMessage).mockRejectedValueOnce(new Error('channel down'));
+        const task = createTask({ id: 'cmd-start-notify-fail', prompt: undefined, command: 'echo ok' });
+
+        await expectNoUnhandledRejection(async () => {
+          commandScheduler.addTask(task);
+          fireJob(commandScheduler.getActiveJobs());
+          await vi.waitFor(() => expect(commandRunner).toHaveBeenCalledOnce(), { timeout: 2000 });
+          // Command succeeded: not counted as a failure despite the lost notice.
+          expect(
+            (commandScheduler as unknown as { consecutiveTaskFailures: Map<string, number> })
+              .consecutiveTaskFailures.has('cmd-start-notify-fail'),
+          ).toBe(false);
+          expect(
+            vi.mocked(mockCallbacks.sendMessage).mock.calls.some(([, text]) => text.startsWith('❌')),
+          ).toBe(false);
+        });
+      });
+
+      it('a real task-body failure still counts even when the start notice was lost', async () => {
+        vi.mocked(mockCallbacks.sendMessage).mockImplementation((_chatId: string, text: string) =>
+          String(text).includes('开始执行')
+            ? Promise.reject(new Error('channel down'))
+            : Promise.resolve(undefined),
+        );
+        mockRouterAsMock.route.mockRejectedValue(new Error('turn died'));
+        scheduler.addTask(createTask({ id: 'start-lost-body-died' }));
+
+        fireJob(scheduler.getActiveJobs());
+        await vi.waitFor(() => {
+          expect(
+            (scheduler as unknown as { consecutiveTaskFailures: Map<string, number> })
+              .consecutiveTaskFailures.get('start-lost-body-died'),
+          ).toBe(1);
+        }, { timeout: 2000 });
+        // The ❌ notice for the REAL failure still goes out.
+        expect(
+          vi.mocked(mockCallbacks.sendMessage).mock.calls.some(([, text]) => text.startsWith('❌')),
+        ).toBe(true);
+      });
+    });
   });
 
   describe('executeTask with cooldown', () => {
@@ -1516,6 +1604,42 @@ describe('Scheduler', () => {
       }, { timeout: 2000 });
 
       // Router should NOT be called when in cooldown
+      expect(mockRouterAsMock.route).not.toHaveBeenCalled();
+    });
+
+    it('cooldown-skip notification failing does not reject executeTask (#5656)', async () => {
+      const mockCooldownManager = {
+        isInCooldown: vi.fn().mockResolvedValue(true),
+        recordExecution: vi.fn().mockResolvedValue(undefined),
+        getCooldownStatus: vi.fn().mockResolvedValue({
+          isInCooldown: true,
+          lastExecutionTime: new Date('2026-01-01T12:00:00'),
+          cooldownEndsAt: new Date('2026-01-01T13:00:00'),
+          remainingMs: 3600000,
+        }),
+        clearCooldown: vi.fn().mockResolvedValue(true),
+      } as unknown as CooldownManager;
+
+      vi.mocked(mockCallbacks.sendMessage).mockRejectedValueOnce(new Error('channel down'));
+      const cooldownScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        cooldownManager: mockCooldownManager,
+        inputMessageRouter: mockRouter,
+        jobFactory: testJobFactory,
+      });
+
+      const task = createTask({ id: 'cooldown-notify-fail', cooldownPeriod: 3600000 });
+      cooldownScheduler.addTask(task);
+
+      await expectNoUnhandledRejection(async () => {
+        void cooldownScheduler.getActiveJobs()[0].job.fireOnTick();
+        // The skip notice was attempted (and lost)…
+        await vi.waitFor(() => {
+          expect(mockCallbacks.sendMessage).toHaveBeenCalledWith('oc_test', expect.stringContaining('冷静期'));
+        }, { timeout: 2000 });
+      });
+      // …and the skip decision itself stands.
       expect(mockRouterAsMock.route).not.toHaveBeenCalled();
     });
 

@@ -7104,6 +7104,45 @@ describe('Issue #4907: completion feedback belongs to delivered output', () => {
     expect(cb.finalizeStreaming.mock.calls).toEqual([['card-1'], ['card-2']]);
     expect(cb.addReaction.mock.calls).toEqual([['om-answer-1', 'DONE'], ['om-answer-2', 'DONE']]);
   });
+
+  it('shows queue, attachment and consumption receipts for a queued input (#5470 remaining items)', async () => {
+    const cb = { ...createMockCallbacks() };
+    const agent = new ChatAgent({ chatId: 'oc_consume', callbacks: cb, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    async function* events() {
+      await gate;
+      for (const content of ['first answer', 'second answer']) {
+        yield { parsed: { type: 'text', content }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete' }, raw: {} };
+      }
+    }
+    (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: events() });
+    (agent as any).isAgentTeamsEnabled = () => false;
+    try {
+      const first = agent.processMessage({
+        chatId: 'oc_consume', payload: 'first', messageId: 'c-user-1', threadRootId: 'c-user-1', chatType: 'p2p',
+      });
+      await first;
+      // The running turn keeps the session busy, so this input (with a file)
+      // waits in the queue: receipt at admission must mention both the queue
+      // and the attachment.
+      await agent.processMessage({
+        chatId: 'oc_consume', payload: 'second', messageId: 'c-user-2', threadRootId: 'c-user-2', chatType: 'p2p',
+        attachments: [{ fileId: 'f1', fileName: 'a.png' }] as any,
+      });
+      const queuedNotice = cb.sendMessage.mock.calls.map((call: unknown[]) => String(call[1]))
+        .find((text: string) => text.includes('已排队'));
+      expect(queuedNotice).toContain('1 个附件');
+      release();
+      await agent.turnCompleteFor('c-user-2');
+      // Receipt at the moment the queued input is actually taken up.
+      expect(cb.sendMessage.mock.calls.map((call: unknown[]) => String(call[1]))
+        .some((text: string) => text.includes('已取用你排队的这条输入'))).toBe(true);
+    } finally {
+      agent.dispose();
+    }
+  });
 });
 
 
