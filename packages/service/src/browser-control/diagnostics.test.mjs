@@ -26,8 +26,21 @@ async function server(handler = (_req, res) => res.end('{}')) {
 
 async function cdpServer({ rejectUpgrade = false } = {}) {
   const seen = [], sockets = new Set();
-  const s = await server();
+  // #5427: a wrapper invocation re-runs HTTP discovery against the recorded
+  // endpoint before attaching, so the listener must serve /json/version with
+  // the CURRENT browser identity (an in-process fetchImpl is unreachable from
+  // the spawned wrapper). Answering with the same identity the manifest pinned
+  // keeps the connection unchanged — no migration, no refresh diagnostics.
+  let identity = null;
+  const s = await server((req, res) => {
+    if (req.url === '/json/version' && identity !== null) {
+      res.end(JSON.stringify({ webSocketDebuggerUrl: identity }));
+      return;
+    }
+    res.end('{}');
+  });
   const websocket = `${s.endpoint.replace('http:', 'ws:')}/devtools/browser/${randomUUID()}`;
+  identity = websocket;
   const wss = new WebSocketServer({ noServer: true });
   cleanup.push(() => { for (const socket of sockets) socket.terminate(); wss.close(); });
   s.http.on('upgrade', (req, socket, head) => {

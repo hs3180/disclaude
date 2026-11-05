@@ -7,8 +7,10 @@ import { browserAgentEnv } from '../../../utils/browser-env.js';
  */
 
 import type { AgentQueryOptions, UserInput } from '../../types.js';
+import type { AgentInputContext } from '../../user-input.js';
 import type { ClaudeQueryOptions } from './provider.js';
 import { createClaudeToolServer, claudeToolNames, CLAUDE_HOST_SERVER } from './tool-adapter.js';
+import { createAskUserQuestionPermission } from './ask-user-question.js';
 import * as path from 'node:path';
 import { Config } from '../../../config/index.js';
 import { installedDiagnosticsPlugin } from '../../../skills/diagnostics-plugin.js';
@@ -17,11 +19,19 @@ import { installedDiagnosticsPlugin } from '../../../skills/diagnostics-plugin.j
  * 适配统一选项为 Claude SDK 选项
  *
  * @param options - 统一的查询选项
+ * @param permissions - Claude 特有的工具权限
+ * @param host - 查询宿主状态。提供且配置了 onUserInput 时，AskUserQuestion
+ *   不再被禁用，而是经 canUseTool 桥接到宿主输入通道（T-057 / #5613）
  * @returns Claude SDK 选项对象
  */
 export function adaptOptions(
   options: AgentQueryOptions,
-  permissions: Pick<ClaudeQueryOptions, 'allowedTools' | 'disallowedTools'> = {}
+  permissions: Pick<ClaudeQueryOptions, 'allowedTools' | 'disallowedTools'> = {},
+  host?: {
+    inputContext: () => AgentInputContext | undefined;
+    sessionKey?: string;
+    queryId: string;
+  }
 ): Record<string, unknown> {
   assertToolOptions(options);
   const sdkOptions: Record<string, unknown> = {};
@@ -78,6 +88,24 @@ export function adaptOptions(
 
   if (permissions.disallowedTools) {
     sdkOptions.disallowedTools = claudeToolNames(permissions.disallowedTools, options.tools);
+  }
+
+  // T-057 (#5613): with a host input channel (onUserInput → channel's
+  // requestAgentInput, e.g. Feishu's interactive card), AskUserQuestion
+  // becomes answerable — re-enable it and attach the permission bridge that
+  // maps the tool call to an AgentInputRequest. Fail-closed inside the
+  // bridge: without an input context the call is denied with guidance.
+  if (options.onUserInput && host) {
+    const disallowed = Array.isArray(sdkOptions.disallowedTools)
+      ? (sdkOptions.disallowedTools as string[])
+      : [];
+    sdkOptions.disallowedTools = disallowed.filter((name) => name !== 'AskUserQuestion');
+    sdkOptions.canUseTool = createAskUserQuestionPermission({
+      onUserInput: options.onUserInput,
+      inputContext: host.inputContext,
+      sessionKey: host.sessionKey ?? 'claude',
+      queryId: host.queryId,
+    });
   }
 
   if (options.tools?.length) {

@@ -90,6 +90,38 @@ describe('adaptOptions', () => {
     expect(result.disallowedTools).toEqual(['tool3']);
   });
 
+  it('re-enables AskUserQuestion with the permission bridge when a host input channel exists (T-057)', () => {
+    const onUserInput = vi.fn(async () => {});
+    const result = adaptOptions({
+      settingSources: [],
+      onUserInput,
+    }, {
+      disallowedTools: ['EnterPlanMode', 'AskUserQuestion'],
+    }, {
+      inputContext: () => undefined,
+      sessionKey: 'sess',
+      queryId: 'q-1',
+    });
+
+    expect(result.disallowedTools).toEqual(['EnterPlanMode']);
+    expect(typeof result.canUseTool).toBe('function');
+  });
+
+  it('keeps AskUserQuestion disallowed and attaches no bridge without onUserInput', () => {
+    const withHost = adaptOptions({ settingSources: [] }, {
+      disallowedTools: ['EnterPlanMode', 'AskUserQuestion'],
+    }, { inputContext: () => undefined, queryId: 'q-1' });
+    const withoutHost = adaptOptions(
+      { settingSources: [], onUserInput: async () => {} } as Parameters<typeof adaptOptions>[0],
+      { disallowedTools: ['EnterPlanMode', 'AskUserQuestion'] },
+    );
+
+    expect(withHost.disallowedTools).toEqual(['EnterPlanMode', 'AskUserQuestion']);
+    expect(withHost.canUseTool).toBeUndefined();
+    expect(withoutHost.disallowedTools).toEqual(['EnterPlanMode', 'AskUserQuestion']);
+    expect(withoutHost.canUseTool).toBeUndefined();
+  });
+
   it('strips coordinator-private discovery at the Claude SDK boundary', () => {
     const env = {
       DISCLAUDE_BROWSER_RUNTIME: '/tmp/browser.sock', BU_CDP_URL: 'http://stale.invalid',

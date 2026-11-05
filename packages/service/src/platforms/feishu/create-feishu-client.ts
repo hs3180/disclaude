@@ -14,9 +14,96 @@
 
 import * as lark from '@larksuiteoapi/node-sdk';
 import axios, { AxiosInstance, AxiosError } from 'axios';
-import { FEISHU_API, RETRYABLE_ERROR_CODES, createLogger } from '@disclaude/core';
+import { FEISHU_API, RETRYABLE_ERROR_CODES, createLogger, sanitizeDiagnosticText } from '@disclaude/core';
 
 const logger = createLogger('FeishuClient');
+
+/**
+ * Structured forensics for failed channel HTTP calls (#5655).
+ *
+ * Message-type POSTs are never retried on 5xx (#507 ambiguous-delivery rule),
+ * so the failure branch of requestWithRetry is the only place a transient Feishu
+ * error body (code/msg — the sole evidence for classifying the failure) can be
+ * preserved. Everything below is allowlisted and truncated before it reaches logs.
+ */
+
+/** Response headers worth keeping for Feishu support escalations (allowlist). */
+const DIAGNOSTIC_HEADER_ALLOWLIST = new Set([
+  'x-request-id', // Feishu support asks for this first
+  'x-ogw-lbnet', 'x-ogw-traceid', // gateway routing/trace
+  'retry-after', // rate-limit context
+]);
+
+/** Error bodies are provider diagnostics, not user content: ~2KB is far beyond
+ * any observed Feishu code/msg payload while staying a single log line. */
+const RESPONSE_BODY_LOG_LIMIT = 2048;
+/** Request bodies carry chat content: keep only the envelope shape (receive_id
+ * type, msg_type, truncated content prefix), never the full text. 512 chars is
+ * enough to identify the payload shape without persisting whole conversations. */
+const REQUEST_BODY_LOG_LIMIT = 512;
+
+function truncateForLog(value: unknown, limit: number): string | undefined {
+  if (value === undefined || value === null) { return undefined; }
+  let raw: string | undefined;
+  if (typeof value === 'string') {
+    raw = value;
+  } else {
+    try { raw = JSON.stringify(value); } catch { return undefined; }
+  }
+  return raw.length > limit ? `${raw.slice(0, limit)}…[truncated ${raw.length - limit} chars]` : raw;
+}
+
+function diagnosticHeaderSubset(headers: unknown): Record<string, string> | undefined {
+  if (!headers || typeof headers !== 'object') { return undefined; }
+  const subset: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headers as Record<string, unknown>)) {
+    if (DIAGNOSTIC_HEADER_ALLOWLIST.has(name.toLowerCase()) &&
+        (typeof value === 'string' || typeof value === 'number')) {
+      subset[name] = String(value).slice(0, 128);
+    }
+  }
+  return Object.keys(subset).length > 0 ? subset : undefined;
+}
+
+/**
+ * Method/URL/status + allowlisted response headers + truncated-and-sanitized
+ * request/response bodies, ready to spread into a pino log field.
+ */
+function feishuHttpFailureDetail(error: unknown): Record<string, unknown> {
+  if (!axios.isAxiosError(error)) { return {}; }
+  const axiosError = error as AxiosError;
+  const config = axiosError.config as { method?: unknown; url?: unknown; data?: unknown } | undefined;
+  const {response} = axiosError;
+  const detail: Record<string, unknown> = {
+    method: typeof config?.method === 'string' ? config.method.toUpperCase() : undefined,
+    url: typeof config?.url === 'string' ? config.url : undefined,
+    status: response?.status,
+  };
+  const headers = diagnosticHeaderSubset(response?.headers);
+  if (headers) { detail.responseHeaders = headers; }
+  const responseBody = truncateForLog(response?.data, RESPONSE_BODY_LOG_LIMIT);
+  if (responseBody !== undefined) { detail.responseBody = sanitizeDiagnosticText(responseBody); }
+  const requestBody = truncateForLog(config?.data, REQUEST_BODY_LOG_LIMIT);
+  if (requestBody !== undefined) { detail.requestBody = sanitizeDiagnosticText(requestBody); }
+  return detail;
+}
+
+/**
+ * Append the Feishu business error (response body code/msg) to the axios
+ * message so downstream consumers that only see `error.message` — ❌ user
+ * notifications and the scheduler pass-through path — carry the Feishu
+ * internal error code instead of a bare "Request failed with status code 500".
+ */
+function annotateFeishuBusinessError(error: unknown): void {
+  if (!axios.isAxiosError(error)) { return; }
+  const data = (error as AxiosError).response?.data as { code?: unknown; msg?: unknown } | undefined;
+  if (!data || (data.code === undefined && data.msg === undefined)) { return; }
+  if (error.message.includes('feishu code ')) { return; }
+  const codePart = data.code !== undefined ? String(data.code) : '?';
+  const msgPart = typeof data.msg === 'string' && data.msg.trim()
+    ? `: ${sanitizeDiagnosticText(data.msg).slice(0, 200)}` : '';
+  error.message = `${error.message} (feishu code ${codePart}${msgPart})`;
+}
 
 /**
  * Check if an error is retryable (transient network error).
@@ -83,6 +170,17 @@ async function requestWithRetry<T>(
       // Check if we should retry
       if (!isRetryableError(error) ||
           (!retryAmbiguousFailure && (error as AxiosError).response?.status !== 429)) {
+        annotateFeishuBusinessError(error);
+        // #5655: message POSTs get no retry (and no retry warn) on 5xx, so this
+        // branch is their only forensic trace — keep method/URL/status/headers
+        // subset/bodies in one structured record instead of a bare axios line.
+        const status = (error as AxiosError).response?.status;
+        const failure = { context, ...feishuHttpFailureDetail(error) };
+        if (status === undefined || status >= 500) {
+          logger.error(failure, 'Feishu channel HTTP request failed (no retry)');
+        } else {
+          logger.warn(failure, 'Feishu channel HTTP request failed (no retry)');
+        }
         throw error;
       }
 
@@ -98,6 +196,7 @@ async function requestWithRetry<T>(
             delayMs: delay,
             errorCode: axiosError.code,
             errorMessage: axiosError.message,
+            status: axiosError.response?.status,
           },
           'Request failed, retrying...'
         );
@@ -108,12 +207,14 @@ async function requestWithRetry<T>(
 
   // All retries exhausted
   const axiosError = lastError as AxiosError;
+  annotateFeishuBusinessError(lastError);
   logger.error(
     {
       context,
       maxRetries: MAX_RETRIES,
       errorCode: axiosError?.code,
       errorMessage: axiosError?.message,
+      ...feishuHttpFailureDetail(lastError),
     },
     'All retry attempts exhausted'
   );
