@@ -1316,3 +1316,120 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     } finally { stream.handle.close(); await collecting; provider.dispose(); }
   }, 20_000);
 });
+
+describe('Issue #5429: thread writer-lock conflict is a wait-able occupied state', () => {
+  /**
+   * Fake app-server: thread/resume answers the writer-lock rejection family
+   * for the first `conflicts` resumes, then succeeds. Every accepted turn
+   * delivers exactly one agentMessage + turn/completed, so a double
+   * submission (the thing #5429 must NOT do blindly) would double the texts.
+   */
+  const writerBinary = (conflicts: number): string => `#!${process.execPath}
+const fs=require('node:fs');const send=m=>console.log(JSON.stringify(m));
+const home=process.env.CODEX_HOME;
+const count=name=>{try{return fs.readFileSync(home+'/'+name,'utf8').trim().split('\\n').filter(Boolean).length;}catch{return 0;}};
+const bump=name=>fs.appendFileSync(home+'/'+name,'x\\n');
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);
+ if(m.method==='initialize')send({id:m.id,result:{}});
+ else if(m.method==='model/list')send({id:m.id,result:{data:[]}});
+ else if(m.method==='thread/start'){bump('starts');send({id:m.id,result:{thread:{id:'writer-thread'}}});}
+ else if(m.method==='thread/resume'){
+  bump('resumes');
+  if(count('resumes')<=${conflicts})send({id:m.id,error:{code:-32000,message:'failed to acquire thread writer lock: thread writer-thread already has an active writer'}});
+  else send({id:m.id,result:{thread:{id:'writer-thread'}}});
+ }
+ else if(m.method==='turn/start'){
+  bump('turns');fs.appendFileSync(home+'/inputs',JSON.stringify(m.params.input)+'\\n');
+  const turn='writer-turn-'+count('turns');
+  send({id:m.id,result:{turn:{id:turn}}});
+  send({method:'item/completed',params:{threadId:'writer-thread',turnId:turn,item:{id:'msg-'+turn,type:'agentMessage',text:'writer ok '+count('turns')}}});
+  send({method:'turn/completed',params:{threadId:'writer-thread',turn:{id:turn,status:'completed'}}});
+ }
+ else if(m.method==='turn/interrupt')send({id:m.id,result:{}});
+});`;
+
+  const FAST_WRITER_WAIT = {
+    DISCLAUDE_CODEX_WRITER_CONFLICT_INITIAL_DELAY_MS: '40',
+    DISCLAUDE_CODEX_WRITER_CONFLICT_MAX_DELAY_MS: '40',
+  };
+
+  it('holds the request through the occupied wait and replays it once released, exactly once', async () => {
+    const { provider, dir } = providerFixture('exit 0', 'app-server', FAST_WRITER_WAIT);
+    writeFileSync(join(dir, 'bin', 'codex'), writerBinary(1));
+    chmodSync(join(dir, 'bin', 'codex'), 0o755);
+    const stream = provider.queryStream((async function* () {
+      yield { role: 'user', content: 'first ask' } as UserInput;
+      yield { role: 'user', content: 'second ask' } as UserInput;
+    })(), { sessionKey: 'writer-5429', settingSources: [] });
+    const messages: AgentMessage[] = [];
+    const collecting = (async () => { for await (const message of stream.iterator) { messages.push(message); } })();
+    try {
+      await collecting;
+      const texts = messages.filter(m => m.type === 'text').map(m => m.content);
+      expect(texts).toEqual(['writer ok 1', 'writer ok 2']);
+      // One visible occupied-state warning while the lock was held.
+      expect(messages.filter(m => m.type === 'status' && m.content.includes('被另一个写入方占用'))).toHaveLength(1);
+      // The rejected resume was retried; the held input reached turn/start
+      // exactly once (the rejection happened before any submission).
+      expect(readFileSync(join(dir, 'home/resumes'), 'utf8').trim().split('\n')).toHaveLength(2);
+      expect(readFileSync(join(dir, 'home/inputs'), 'utf8').trim().split('\n')
+        .filter(input => input.includes('second ask'))).toHaveLength(1);
+      expect(messages.some(m => m.type === 'error')).toBe(false);
+    } finally { stream.handle.close(); await collecting; provider.dispose(); }
+  }, 20_000);
+
+  it('cancels the occupied wait on stop without a late submission', async () => {
+    const { provider, dir } = providerFixture('exit 0', 'app-server', {
+      DISCLAUDE_CODEX_WRITER_CONFLICT_INITIAL_DELAY_MS: '300',
+    });
+    writeFileSync(join(dir, 'bin', 'codex'), writerBinary(99));
+    chmodSync(join(dir, 'bin', 'codex'), 0o755);
+    const stream = provider.queryStream((async function* () {
+      yield { role: 'user', content: 'first ask' } as UserInput;
+      yield { role: 'user', content: 'second ask' } as UserInput;
+    })(), { sessionKey: 'writer-5429-cancel', settingSources: [] });
+    const messages: AgentMessage[] = [];
+    try {
+      for await (const message of stream.iterator) {
+        messages.push(message);
+        if (message.type === 'status' && message.content.includes('被另一个写入方占用')) {
+          stream.handle.cancel();
+        }
+      }
+      expect(messages.filter(m => m.type === 'text')).toEqual([expect.objectContaining({ content: 'writer ok 1' })]);
+      // Exactly one rejected resume and one accepted turn: the canceled
+      // request never executes late.
+      expect(readFileSync(join(dir, 'home/resumes'), 'utf8').trim().split('\n')).toHaveLength(1);
+      expect(readFileSync(join(dir, 'home/turns'), 'utf8').trim().split('\n')).toHaveLength(1);
+      expect(readFileSync(join(dir, 'home/inputs'), 'utf8')).not.toContain('second ask');
+    } finally { stream.handle.close(); provider.dispose(); }
+  }, 20_000);
+
+  it('surfaces the original rejection once the wait budget is spent, without replay', async () => {
+    const { provider, dir } = providerFixture('exit 0', 'app-server', {
+      DISCLAUDE_CODEX_WRITER_CONFLICT_MAX_RETRIES: '0',
+    });
+    writeFileSync(join(dir, 'bin', 'codex'), writerBinary(1));
+    chmodSync(join(dir, 'bin', 'codex'), 0o755);
+    const stream = provider.queryStream((async function* () {
+      yield { role: 'user', content: 'first ask' } as UserInput;
+      yield { role: 'user', content: 'second ask' } as UserInput;
+    })(), { sessionKey: 'writer-5429-exhausted', settingSources: [] });
+    const messages: AgentMessage[] = [];
+    const collecting = (async () => { for await (const message of stream.iterator) { messages.push(message); } })();
+    try {
+      await collecting;
+      // The original RPC error surfaces once, structured — never a blind
+      // replay of the held request.
+      const errors = messages.filter(m => m.type === 'error');
+      expect(errors).toHaveLength(1);
+      expect(errors[0].content).toContain('already has an active writer');
+      expect(errors[0].metadata?.error).toMatchObject({
+        kind: 'CodexAppServerRpcError', stage: 'ensure-thread',
+      });
+      expect(messages.filter(m => m.type === 'text')).toEqual([expect.objectContaining({ content: 'writer ok 1' })]);
+      expect(readFileSync(join(dir, 'home/inputs'), 'utf8')).not.toContain('second ask');
+    } finally { stream.handle.close(); await collecting; provider.dispose(); }
+  }, 20_000);
+});

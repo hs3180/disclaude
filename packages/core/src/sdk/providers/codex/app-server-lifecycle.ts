@@ -285,8 +285,15 @@ export class CodexAppServerLifecycle {
       }
       return turnId;
     } catch (error) {
-      // The request may have reached Codex before the transport failed.
-      // Keep `uncertain`: callers must reconcile, never replay silently.
+      // The request may have reached Codex before the transport failed, so
+      // the commit state stays `uncertain`: callers must reconcile, never
+      // replay silently. Exception (#5429): a DETERMINISTIC RPC error
+      // response (CodexAppServerRpcError — the app-server received the call
+      // and explicitly rejected it, e.g. the thread writer lock is held by
+      // another live writer) proves nothing was submitted; the provider's
+      // writer-conflict arm replays exactly that rejection class after a
+      // bounded wait, which does not violate this contract. Timeouts, process
+      // exits and every other failure keep the uncertain no-replay rule.
       throw error;
     }
   }

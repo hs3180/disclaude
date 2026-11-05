@@ -191,3 +191,60 @@ export async function waitForCodexOverloadRetry(delayMs: number, signal: AbortSi
   try { await delay(delayMs, undefined, { signal }); return true; }
   catch (error) { if (signal.aborted) { return false; } throw error; }
 }
+
+/**
+ * #5429: thread writer-lock conflict pacing. Distinct from overload/throttle:
+ * the failure is local occupancy (another live writer holds the thread), the
+ * request was deterministically rejected BEFORE any work, and the remedy is to
+ * hold the original request and retry the same submission once the holder's
+ * turn has likely finished. Waits reuse the abortable
+ * `waitForCodexOverloadRetry` primitive and share the caller's per-turn
+ * attempt/wait accounting, so a mixed overload+conflict sequence stays bounded.
+ * No filesystem polling and no lock probing — the next real attempt IS the
+ * probe, which keeps the wait itself low-overhead. Defaults: at most 5
+ * conflict waits (nominal 2/4/8/15/15s, jittered down to half) within a
+ * cumulative 60s budget; beyond that the original error surfaces. The env
+ * overrides exist for tests and operational tuning, mirroring
+ * readCodexCapacityRecoveryPolicy.
+ */
+export const CODEX_WRITER_CONFLICT_MAX_RETRIES = 5;
+export const CODEX_WRITER_CONFLICT_MAX_WAIT_MS = 60_000;
+export interface CodexWriterConflictPolicy {
+  maxRetries: number;
+  budgetMs: number;
+  initialDelayMs: number;
+  backoffMultiplier: number;
+  maxDelayMs: number;
+}
+export function readCodexWriterConflictPolicy(
+  env: Record<string, string | undefined> = process.env,
+): CodexWriterConflictPolicy {
+  const override = (name: string): number | undefined => {
+    const parsed = Number(env[name]);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+  };
+  return {
+    maxRetries: override('DISCLAUDE_CODEX_WRITER_CONFLICT_MAX_RETRIES') ?? CODEX_WRITER_CONFLICT_MAX_RETRIES,
+    budgetMs: override('DISCLAUDE_CODEX_WRITER_CONFLICT_BUDGET_MS') ?? CODEX_WRITER_CONFLICT_MAX_WAIT_MS,
+    initialDelayMs: override('DISCLAUDE_CODEX_WRITER_CONFLICT_INITIAL_DELAY_MS') ?? 2000,
+    backoffMultiplier: 2,
+    maxDelayMs: override('DISCLAUDE_CODEX_WRITER_CONFLICT_MAX_DELAY_MS') ?? 15_000,
+  };
+}
+/**
+ * Wait before replaying the still-held original request, or undefined when
+ * the attempt cap is hit or the wait would exceed the remaining cumulative
+ * budget — the caller then surfaces the original error instead of replaying.
+ */
+export function codexWriterConflictRetryDelay(
+  attempt: number,
+  waitedMs: number,
+  policy: CodexWriterConflictPolicy = readCodexWriterConflictPolicy(),
+  random: () => number = Math.random,
+): number | undefined {
+  if (attempt >= policy.maxRetries) { return undefined; }
+  const delayMs = computeBackoffDelay(attempt, {
+    initialDelayMs: policy.initialDelayMs, backoffMultiplier: policy.backoffMultiplier, maxDelayMs: policy.maxDelayMs, jitter: true,
+  }, random);
+  return Number.isFinite(delayMs) && waitedMs + delayMs <= policy.budgetMs ? delayMs : undefined;
+}
