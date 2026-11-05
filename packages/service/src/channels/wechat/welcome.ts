@@ -1,4 +1,6 @@
-export const WECHAT_WELCOME_TEXT = '👋 我是 Disclaude。把问题、任务或相关文件发给我，并说明你希望得到的结果。需要用法说明，直接说「怎么用」。';
+import { buildWelcomeMessage } from '@disclaude/core';
+
+export const WECHAT_WELCOME_TEXT = buildWelcomeMessage('wechat');
 interface WelcomeReceipt { phase: 'attempted' | 'accepted'; startedAt: string; acceptedAt?: string; messageId?: string }
 export interface WeChatWelcomeState { version: 1; botId: string; peers: Record<string, WelcomeReceipt> }
 export function emptyWelcomeState(botId: string): WeChatWelcomeState { return { version: 1, botId, peers: {} }; }
