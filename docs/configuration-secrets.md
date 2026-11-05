@@ -59,7 +59,7 @@ agents:
     default: true
 llms:
   analysis:
-    model: glm-5.3
+    model: your-model-id
     api:
       protocol: anthropic
       baseUrl: https://your-api.example
