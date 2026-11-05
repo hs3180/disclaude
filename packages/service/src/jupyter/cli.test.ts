@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { DatalayerJupyterClient } from '@disclaude/core/jupyter';
+import { JupyterDiagnosticError, type DatalayerJupyterClient } from '@disclaude/core/jupyter';
 import { SkillsRegistry } from '../../../core/src/skills/skills-registry.js';
 import {
   parseNotebookOptions,
@@ -42,8 +42,12 @@ function connection() {
     interruptKernel: vi.fn((kernelId: string) =>
       Promise.resolve({ kernelId, state: 'accepted', executionState: 'unknown', httpStatus: 204 })
     ),
-    response: vi.fn(() => Promise.resolve(new Response('{}', { status: 404 }))),
-    json: vi.fn(() => Promise.resolve({})),
+    response: vi.fn((_route: string, _method = 'GET', _body?: Record<string, unknown>) =>
+      Promise.resolve(new Response('{}', { status: 404 }))
+    ),
+    json: vi.fn((_route: string, _method = 'GET', _body?: Record<string, unknown>) =>
+      Promise.resolve({})
+    ),
     notebookEntry: () => 'https://remote.invalid/lab/tree/research.ipynb',
   };
   const resolve = vi.fn(() =>
@@ -279,31 +283,35 @@ describe('Optional Jupyter CLI boundary', () => {
     ).rejects.toThrow('Invalid Notebook command input');
   });
 
-  it('links a stable remote identity, closes its RTC socket, then unlinks locally', async () => {
-    const directory = root();
-    const f = connection();
-    const linked = await runNotebookCommand(
-      parseNotebookOptions(['link', '--path', 'research.ipynb', '--project-dir', directory]),
-      f.resolve,
-      signal
-    );
-    expect(linked).toMatchObject({
-      documentId: 'document-1',
-      serverNamespace: 'endpoint-fingerprint',
-    });
-    expect(f.doc.close).toHaveBeenCalledOnce();
-    expect(f.client.json).not.toHaveBeenCalled();
-    f.resolve.mockClear();
-    expect(
-      await runNotebookCommand(
-        parseNotebookOptions(['unlink', '--path', 'research.ipynb', '--project-dir', directory]),
+  it.each(['research.ipynb', 'research/nested.ipynb'])(
+    'links a stable remote identity without creating parent directories: %s',
+    async (contentPath) => {
+      const directory = root();
+      const f = connection();
+      const linked = await runNotebookCommand(
+        parseNotebookOptions(['link', '--path', contentPath, '--project-dir', directory]),
         f.resolve,
         signal
-      )
-    ).toEqual({ removed: true });
-    expect(f.resolve).not.toHaveBeenCalled();
-    expect(fs.existsSync(path.join(directory, '.jupyter', 'cli.lock'))).toBe(false);
-  });
+      );
+      expect(linked).toMatchObject({
+        documentId: 'document-1',
+        serverNamespace: 'endpoint-fingerprint',
+      });
+      expect(f.doc.close).toHaveBeenCalledOnce();
+      expect(f.client.response).not.toHaveBeenCalled();
+      expect(f.client.json).not.toHaveBeenCalled();
+      f.resolve.mockClear();
+      expect(
+        await runNotebookCommand(
+          parseNotebookOptions(['unlink', '--path', contentPath, '--project-dir', directory]),
+          f.resolve,
+          signal
+        )
+      ).toEqual({ removed: true });
+      expect(f.resolve).not.toHaveBeenCalled();
+      expect(fs.existsSync(path.join(directory, '.jupyter', 'cli.lock'))).toBe(false);
+    }
+  );
 
   it('creates only the selected remote path and refuses a subsequent overwrite', async () => {
     const directory = root();
@@ -324,6 +332,99 @@ describe('Optional Jupyter CLI boundary', () => {
     f.client.response.mockResolvedValue(new Response('{}', { status: 200 }));
     await expect(runNotebookCommand(options, f.resolve, signal)).rejects.toThrow('already exists');
     expect(f.client.json).toHaveBeenCalledOnce();
+  });
+
+  it('creates each missing remote parent before a nested Notebook', async () => {
+    const directory = root();
+    const f = connection();
+    await runNotebookCommand(
+      parseNotebookOptions(['create', '--path', 'a/b/c.ipynb', '--project-dir', directory]),
+      f.resolve,
+      signal
+    );
+    expect(f.client.json.mock.calls).toEqual([
+      ['api/contents/a', 'PUT', { type: 'directory' }],
+      ['api/contents/a/b', 'PUT', { type: 'directory' }],
+      [
+        'api/contents/a/b/c.ipynb',
+        'PUT',
+        {
+          type: 'notebook',
+          format: 'json',
+          content: { nbformat: 4, nbformat_minor: 5, metadata: {}, cells: [] },
+        },
+      ],
+    ]);
+    expect(f.client.openDocument).toHaveBeenCalledExactlyOnceWith('a/b/c.ipynb');
+  });
+
+  it('treats existing remote parents as idempotent and writes only the Notebook', async () => {
+    const directory = root();
+    const f = connection();
+    f.client.response.mockImplementation((route) =>
+      Promise.resolve(
+        new Response('{}', {
+          status: ['api/contents/a?content=0', 'api/contents/a/b?content=0'].includes(route)
+            ? 200
+            : 404,
+        })
+      )
+    );
+    await runNotebookCommand(
+      parseNotebookOptions(['create', '--path', 'a/b/c.ipynb', '--project-dir', directory]),
+      f.resolve,
+      signal
+    );
+    expect(f.client.json).toHaveBeenCalledExactlyOnceWith(
+      'api/contents/a/b/c.ipynb',
+      'PUT',
+      expect.objectContaining({ type: 'notebook' })
+    );
+  });
+
+  it('reports the rejected parent path and server reason without creating the Notebook', async () => {
+    const directory = root();
+    const f = connection();
+    f.client.response.mockImplementation((route) =>
+      Promise.resolve(
+        new Response('{}', { status: route === 'api/contents/a?content=0' ? 200 : 404 })
+      )
+    );
+    f.client.json.mockImplementation((route) =>
+      route === 'api/contents/a/b'
+        ? Promise.reject(
+            new JupyterDiagnosticError({
+              layer: 'auth',
+              code: 'authentication_rejected',
+              phase: 'request',
+              status: 403,
+              serverBody: '{"reason":"read-only"}',
+              message: 'Jupyter API returned HTTP 403',
+              hint: 'Verify permissions.',
+              outcome: 'rejected',
+            })
+          )
+        : Promise.resolve({})
+    );
+    await expect(
+      runNotebookCommand(
+        parseNotebookOptions(['create', '--path', 'a/b/c.ipynb', '--project-dir', directory]),
+        f.resolve,
+        signal
+      )
+    ).rejects.toMatchObject({
+      diagnostic: {
+        layer: 'auth',
+        status: 403,
+        phase: 'create-parent:a/b',
+        message: expect.stringContaining('a/b'),
+        serverBody: expect.stringContaining('read-only'),
+      },
+    });
+    expect(f.client.json).toHaveBeenCalledExactlyOnceWith('api/contents/a/b', 'PUT', {
+      type: 'directory',
+    });
+    expect(f.client.openDocument).not.toHaveBeenCalled();
   });
 
   it('rejects traversal before credentials or remote writes, preserving malformed config', async () => {
