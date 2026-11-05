@@ -590,4 +590,98 @@ describe('named runtime and LLM configuration', () => {
     }
     expect(result.errors.join('\n')).toContain('aliases are not auto-resolved');
   });
+
+  describe('shared bindings across harnesses (Issue #5679)', () => {
+    it('serves one wire model to Claude and DSH from a single binding', () => {
+      const config = configuration();
+      config.llms!.proxy.model = 'group/hq-degrade';
+      config.llms!.proxy.behavesAs = 'claude-sonnet-4-5';
+      config.agents!.research = { backend: 'dsh', llm: 'proxy' };
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        return;
+      }
+      // The wire model is identical for both providers; only the Claude
+      // preset carries the capability mapping.
+      expect(result.presets.assistant).toMatchObject({
+        agentBackend: 'claude',
+        model: 'group/hq-degrade',
+        modelOverrides: { 'claude-sonnet-4-5': 'group/hq-degrade' },
+      });
+      expect(result.presets.research).toMatchObject({
+        agentBackend: 'dsh',
+        model: 'group/hq-degrade',
+      });
+    });
+
+    it('serves Pi from the same shared binding', () => {
+      const config = configuration();
+      config.llms!.other.behavesAs = 'claude-sonnet-4-5';
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        return;
+      }
+      expect(result.presets.other).toMatchObject({
+        agentBackend: 'pi',
+        model: 'other-model',
+        modelOverrides: { 'claude-sonnet-4-5': 'other-model' },
+      });
+    });
+
+    it('keeps native Codex on the behavesAs boundary', () => {
+      const config = configuration();
+      config.llms!.daily.behavesAs = 'claude-opus-5';
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        return;
+      }
+      expect(result.errors.join('\n')).toContain(
+        'llms.daily.behavesAs is Claude-side capability metadata'
+      );
+    });
+
+    it('rejects a bare Claude alias shared across the harness boundary', () => {
+      const config = configuration();
+      config.llms!.proxy.model = 'sonnet';
+      config.agents!.research = { backend: 'dsh', llm: 'proxy' };
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        return;
+      }
+      expect(result.errors.join('\n')).toContain(
+        'llms.proxy.model "sonnet" is a bare Claude alias'
+      );
+      expect(result.errors.join('\n')).toContain('dsh');
+    });
+
+    it('keeps a bare alias model on a DSH-only binding', () => {
+      const config = configuration();
+      config.agents!.research = { backend: 'dsh', llm: 'aliasonly' };
+      config.llms!.aliasonly = {
+        model: 'sonnet',
+        api: { protocol: 'anthropic', baseUrl: 'https://gateway.example', apiKey: '$GW_KEY' },
+      };
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(true);
+    });
+
+    it('passes explicit canonical model IDs through unchanged without mappings', () => {
+      const config = configuration();
+      config.llms!.proxy.model = 'claude-sonnet-4-5';
+      config.agents!.research = { backend: 'dsh', llm: 'proxy' };
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        return;
+      }
+      expect(result.presets.assistant.model).toBe('claude-sonnet-4-5');
+      expect(result.presets.assistant.modelOverrides).toBeUndefined();
+      expect(result.presets.research.model).toBe('claude-sonnet-4-5');
+      expect(result.presets.research.modelOverrides).toBeUndefined();
+    });
+  });
 });

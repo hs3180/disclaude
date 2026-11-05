@@ -102,6 +102,24 @@ is older. For multi-slot mappings set `llms.<name>.modelOverrides` directly —
 a raw Claude Code `modelOverrides` map (full Claude model ID → provider ID),
 mutually exclusive with `behavesAs`.
 
+One binding can serve several harnesses (Issue #5679): bind both
+`backend: claude` and `backend: dsh` (or `pi`) agents to the same `llms` entry
+and `model` is the wire model for every one of them — the deployment-level
+alias is configured once. `behavesAs`/`modelOverrides` are Claude-side
+capability metadata that ride along on the shared binding and simply do not
+apply to DSH/Pi, which send `model` verbatim; changing the default model
+means editing `llms.<name>.model` in that one place. Two boundaries keep the
+wire models honest: a bare Claude alias (`sonnet`, `opus`, …) as `model` is
+rejected when the binding is shared with DSH/Pi/Codex, because Claude Code
+resolves aliases internally while the other harnesses would put the alias
+string itself on the wire — pin the wire model and use `behavesAs`; and
+native Codex cannot reference an LLM that sets `behavesAs`/`modelOverrides`
+(Codex owns its model catalog and forbids bound API connections). Explicit
+canonical model IDs (`claude-sonnet-4-5`, `gpt-6-luna`, `group/hq-degrade`)
+pass through to every backend unchanged. Configuration errors surface at
+startup, before `/agent use` can replace a session; failed switch preflight
+preserves the existing session and never falls back to another binding.
+
 Use one `default: true` marker (or the reserved name `default`); without a marker,
 the first declaration is the default. `/agent use <name>` validates the selected
 connection before replacing the current chat's session. Failed preflight preserves

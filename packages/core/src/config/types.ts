@@ -109,11 +109,16 @@ export interface LlmConfig {
    * and effort defaults — Claude Code applies to `model` while still sending
    * `model` on the wire. Aliases are not auto-resolved; pin the ID per
    * deployment so a Claude Code upgrade cannot silently re-target it.
+   *
+   * Issue #5679: `model` stays the wire model for every backend sharing the
+   * binding; behavesAs is ride-along metadata that Claude runtimes apply and
+   * Pi/DSH ignore. Codex-bound LLMs may not set it.
    */
   behavesAs?: string;
   /**
    * Raw Claude Code modelOverrides map (Anthropic model ID → provider ID) for
-   * multi-slot mappings. Mutually exclusive with behavesAs.
+   * multi-slot mappings. Mutually exclusive with behavesAs. Claude-side only
+   * (see behavesAs for shared-binding semantics, Issue #5679).
    */
   modelOverrides?: Record<string, string>;
   /** Native runtime settings, including ANTHROPIC_DEFAULT_*_MODEL aliases. */
@@ -142,7 +147,7 @@ export interface AgentPreset extends AgentConfig {
   llm: string;
   reasoningEffort?: CodexReasoningEffort;
   maxConcurrentSessions?: number;
-  /** Resolved Claude Code modelOverrides map (Issue #5410); claude runtimes only. */
+  /** Resolved Claude Code modelOverrides map (Issues #5410, #5679); compiled for every preset sharing the binding, applied by Claude runtimes only. */
   modelOverrides?: Record<string, string>;
 }
 export type AgentPresets = Record<string, AgentPreset>;

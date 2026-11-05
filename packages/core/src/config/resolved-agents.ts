@@ -29,6 +29,12 @@ const BACKENDS = new Set(['claude', 'pi', 'codex', 'dsh']);
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 /** Full Claude model IDs as modelOverrides keys (Issue #5410); bare aliases are rejected below. */
 const CLAUDE_MODEL_ID = /^claude-[a-z0-9]+(?:-[a-z0-9]+)*$/;
+/**
+ * Bare Claude Code model aliases (Issue #5679). Claude resolves these to its
+ * current catalog ID before the wire; DSH/Pi/Codex send `model` verbatim, so a
+ * shared binding must pin the wire model and keep the alias out of `model`.
+ */
+const BARE_CLAUDE_ALIAS = /^(opus|sonnet|haiku|fable|default)$/i;
 const mapping = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -168,6 +174,8 @@ export function resolveConfiguredAgents(
     return { ok: false, errors };
   }
   const presets: AgentPresets = {};
+  // Issue #5679: backends referencing each binding, for cross-harness checks.
+  const backendsByLlm = new Map<string, Set<string>>();
   for (const [name, raw] of Object.entries(config.agents as Record<string, unknown>)) {
     const field = `agents.${name}`;
     if (!mapping(raw)) {
@@ -211,6 +219,9 @@ export function resolveConfiguredAgents(
       errors.push(`${field}.llm must reference a defined llms entry`);
       continue;
     }
+    const referenced = backendsByLlm.get(agent.llm) ?? new Set<string>();
+    referenced.add(agent.backend);
+    backendsByLlm.set(agent.llm, referenced);
     for (const key of [
       'fullAccess',
       'codexNetworkAccess',
@@ -296,12 +307,17 @@ export function resolveConfiguredAgents(
     if (llm.reasoningEffort !== undefined && !['codex', 'dsh'].includes(agent.backend)) {
       errors.push(`llms.${agent.llm}.reasoningEffort requires a Codex or DSH native runtime`);
     }
+    // Issue #5679: `model` is the wire model for every backend sharing the
+    // binding; behavesAs/modelOverrides are Claude-side capability metadata
+    // that simply does not apply to other runtimes. Native Codex owns its
+    // model catalog and forbids bound API connections, so Claude capability
+    // metadata on a Codex-bound LLM is always dead configuration.
     if (
       (llm.behavesAs !== undefined || llm.modelOverrides !== undefined) &&
-      agent.backend !== 'claude'
+      agent.backend === 'codex'
     ) {
       errors.push(
-        `llms.${agent.llm}.behavesAs requires a Claude-bound runtime; other backends own their model catalogs`
+        `llms.${agent.llm}.behavesAs is Claude-side capability metadata; native Codex owns its model catalog and never applies it`
       );
     }
     if (agent.backend === 'codex' && llm.api !== undefined) {
@@ -338,6 +354,23 @@ export function resolveConfiguredAgents(
       }),
       credentialEnvKeys: [...credentialEnvKeys],
     };
+  }
+  // Issue #5679: a bare Claude alias resolves only inside Claude Code; every
+  // other backend would put the alias string itself on the wire. A binding
+  // shared across that boundary must pin the wire model and use behavesAs for
+  // the Claude capability slot, so both providers send the same model ID.
+  for (const [llmName, backends] of backendsByLlm) {
+    if (backends.size < 2 || !backends.has('claude')) {
+      continue;
+    }
+    const llm = llms[llmName];
+    const model = llm.model.trim();
+    if (BARE_CLAUDE_ALIAS.test(model)) {
+      const others = [...backends].filter((backend) => backend !== 'claude').join('/');
+      errors.push(
+        `llms.${llmName}.model "${model}" is a bare Claude alias; Claude resolves it internally while ${others} send it literally. Pin the wire model (for example group/hq-degrade) in llms.${llmName}.model and the Claude capability slot in behavesAs`
+      );
+    }
   }
   if (!errors.length) {
     const validation = validateAgentPresets(presets);

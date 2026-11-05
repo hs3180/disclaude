@@ -48,6 +48,12 @@ llms:
     # modelOverrides:
     #   claude-opus-5: kimi-k3
     #   claude-sonnet-4-5: kimi-k3-flash
+    # One binding may serve several harnesses (Issue #5679): backend: claude,
+    # dsh and pi agents bound to the same llms entry all send `model` as the
+    # wire model; behavesAs/modelOverrides only shape Claude's client side.
+    # Do not share a bare Claude alias (e.g. model: sonnet) across that
+    # boundary — pin the wire model and use behavesAs instead. Native Codex
+    # cannot use an LLM that sets behavesAs/modelOverrides.
 
 channels:
   # Personal WeChat via Tencent iLink. First run: disclaude wechat login

@@ -155,3 +155,50 @@ describe('Claude modelOverrides identity (Issue #5410)', () => {
     expect(options.modelOverrides).toEqual({ 'claude-opus-4-7': 'kimi-k3' });
   });
 });
+
+describe('shared bindings across harnesses (Issue #5679)', () => {
+  beforeEach(() => {
+    vi.stubEnv('SHARED_GATEWAY_KEY', 'shared-test-key');
+    fixture.value = {
+      workspace: { dir: '/shared-binding-test' },
+      logging: { sdkDebug: false },
+      agents: {
+        assistant: { backend: 'claude', llm: 'shared', default: true },
+        research: { backend: 'dsh', llm: 'shared', mode: 'minimal' },
+      },
+      llms: {
+        shared: {
+          model: 'group/hq-degrade',
+          behavesAs: 'claude-sonnet-4-5',
+          api: {
+            protocol: 'anthropic',
+            baseUrl: 'https://gateway.example',
+            apiKey: '$SHARED_GATEWAY_KEY',
+          },
+        },
+      },
+    };
+  });
+
+  it('passes the identical wire model to both harness option paths', async () => {
+    const { BaseAgent } = await import('./base-agent.js');
+    const { Config } = await import('../config/index.js');
+    class BoundAgent extends BaseAgent {
+      protected getAgentName() {
+        return 'SharedBoundAgent';
+      }
+      options() {
+        return this.createSdkOptions();
+      }
+    }
+    const presets = Config.getAgentPresets()!;
+    // Claude gets the wire model plus the capability mapping.
+    const claude = new BoundAgent({ ...presets.assistant, settings: presets.assistant }).options();
+    expect(claude.model).toBe('group/hq-degrade');
+    expect(claude.modelOverrides).toEqual({ 'claude-sonnet-4-5': 'group/hq-degrade' });
+    // DSH gets the same wire model verbatim and no Claude-side mapping.
+    const dsh = new BoundAgent({ ...presets.research, settings: presets.research }).options();
+    expect(dsh.model).toBe('group/hq-degrade');
+    expect(dsh.modelOverrides).toBeUndefined();
+  });
+});
