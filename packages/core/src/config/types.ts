@@ -44,7 +44,14 @@ export interface CodexAgentGovernanceConfig {
 }
 
 /** Codex CLI reasoning levels currently exposed by the model catalog. */
-export type CodexReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
+export type CodexReasoningEffort =
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+  | 'max'
+  | 'ultra';
 
 export interface AgentConfig {
   /** Agent runtime. */
@@ -161,7 +168,18 @@ export type AgentPresets = Record<string, AgentPreset>;
 /**
  * Feishu/Lark platform configuration section.
  */
+export interface FeishuAppConfig {
+  /** Public application ID: literal or whole $VARIABLE / ${VARIABLE} reference. */
+  appId: string;
+  /** Secret: whole $VARIABLE / ${VARIABLE} reference to the service environment. */
+  appSecret: string;
+  /** Named `agents` preset used when this app's chat has no `/agent use` override. */
+  agent?: string;
+}
+
 export interface FeishuConfig {
+  /** Named applications. When present, legacy appId/appSecret credentials are not allowed alongside it. */
+  apps?: Record<string, FeishuAppConfig>;
   /** Public application ID: literal or whole $VARIABLE / ${VARIABLE} reference. */
   appId?: string;
   /** Secret: whole $VARIABLE / ${VARIABLE} reference to the external service environment. */

@@ -67,6 +67,19 @@ channels:
     appId: $FEISHU_APP_ID
     appSecret: $FEISHU_APP_SECRET
     streamingCard: false
+    # Multiple named Feishu apps in one instance (#5254). Setting apps replaces
+    # the shared appId/appSecret above; each app keeps its own tenant token and
+    # lark-cli credentials. agent is an optional named `agents` preset used as
+    # that app's default (an explicit /agent use still wins).
+    # apps:
+    #   personal:
+    #     appId: $FEISHU_PERSONAL_APP_ID
+    #     appSecret: $FEISHU_PERSONAL_APP_SECRET
+    #     agent: assistant
+    #   work:
+    #     appId: $FEISHU_WORK_APP_ID
+    #     appSecret: $FEISHU_WORK_APP_SECRET
+    #     agent: daily
   rest:
     enabled: false
     host: 127.0.0.1
