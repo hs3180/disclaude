@@ -63,7 +63,7 @@ function assertNothingWritten(home: string) {
 }
 
 describe('launchd service commands with --dry-run (#5619)', () => {
-  it('install --dry-run prints the config-driven plist and the load command, writing nothing', async () => {
+  it('install --dry-run prints the config-driven plist and the bootstrap command, writing nothing', async () => {
     const { home, configPath } = isolatedHome();
     try {
       const { code, stdout } = await runServiceCommand(
@@ -73,7 +73,7 @@ describe('launchd service commands with --dry-run (#5619)', () => {
       );
       expect(code, stdout).toBe(0);
       expect(stdout).toContain('[dry-run]');
-      expect(stdout).toContain(`would run: launchctl load ${join(home, 'Library', 'LaunchAgents', 'com.disclaude.service.plist')}`);
+      expect(stdout).toContain(`would run: launchctl bootstrap gui/${process.getuid()} ${join(home, 'Library', 'LaunchAgents', 'com.disclaude.service.plist')}`);
       // Plist reproduces the production service: configured entry, fixed
       // port from the config, explicit --config, config env block.
       expect(stdout).toContain('<string>/opt/disclaude/bin/disclaude.js</string>');
@@ -89,7 +89,7 @@ describe('launchd service commands with --dry-run (#5619)', () => {
     } finally { rmSync(home, { recursive: true, force: true }); }
   });
 
-  it('stop --dry-run prints the unload command and executes nothing', async () => {
+  it('stop --dry-run prints the bootout command and executes nothing', async () => {
     const { home } = isolatedHome();
     try {
       const { code, stdout } = await runServiceCommand(
@@ -98,7 +98,7 @@ describe('launchd service commands with --dry-run (#5619)', () => {
         { HOME: home }
       );
       expect(code, stdout).toBe(0);
-      expect(stdout).toContain('would run: launchctl unload');
+      expect(stdout).toContain(`would run: launchctl bootout gui/${process.getuid()}/com.disclaude.service`);
       expect(stdout).toContain('no launchctl commands executed');
       assertNothingWritten(home);
     } finally { rmSync(home, { recursive: true, force: true }); }
@@ -113,7 +113,7 @@ describe('launchd service commands with --dry-run (#5619)', () => {
         { HOME: home }
       );
       expect(code, stdout).toBe(0);
-      expect(stdout).toContain('would run: launchctl list | grep com.disclaude.service');
+      expect(stdout).toContain(`would run: launchctl print gui/${process.getuid()}/com.disclaude.service`);
       expect(stdout).toContain('com.disclaude.service.plist');
       assertNothingWritten(home);
     } finally { rmSync(home, { recursive: true, force: true }); }
@@ -128,7 +128,7 @@ describe('launchd service commands with --dry-run (#5619)', () => {
         { HOME: home }
       );
       expect(code, stderr).toBe(0);
-      expect(stdout).toContain('would run: launchctl list | grep com.disclaude.service');
+      expect(stdout).toContain(`would run: launchctl print gui/${process.getuid()}/com.disclaude.service`);
       assertNothingWritten(home);
     } finally { rmSync(home, { recursive: true, force: true }); }
   });
@@ -144,7 +144,7 @@ describe('launchd service commands with --dry-run (#5619)', () => {
       expect(code).not.toBe(0);
       expect(stderr).toContain('requires macOS');
       expect(stderr).toContain('--dry-run');
-      expect(stdout).not.toContain('launchctl load');
+      expect(stdout).not.toContain('launchctl bootstrap');
       assertNothingWritten(home);
       expect(readdirSync(home).sort()).toEqual(['.disclaude']);
     } finally { rmSync(home, { recursive: true, force: true }); }
