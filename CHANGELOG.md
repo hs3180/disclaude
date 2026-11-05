@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.12] - 2026-11-05
+
+### Fixed
+
+- Enable software WebGL in the headed Chromium container through SwiftShader
+  and ANGLE Vulkan, restore the previous browser session so session cookies
+  survive container recreation when the profile volume is retained, and align
+  the browser UI language with the first `CHROMIUM_ACCEPT_LANG` segment
+  (#5653; #5657).
+- Keep the Chromium profile on a declared volume and allow Compose deployments
+  to select either the managed named volume or an operator-provided host
+  directory through `CHROMIUM_PROFILE_VOLUME` (#5653; #5657).
+
 ## [0.6.11] - 2026-11-05
 
 ### Added

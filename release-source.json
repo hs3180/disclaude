@@ -1,7 +1,7 @@
 {
-  "sourceCommit": "733ee0cb8ecfb734ba143adb02a697d6e1169c15",
-  "sourceFingerprint": "65dac8f963c5c723effd2f7a01e15df52af721eca033cb6fbc29e678a623e02f",
-  "version": "0.6.11",
+  "sourceCommit": "b26d74e90c0563ab99e2eb99e423b8baba06fb9a",
+  "sourceFingerprint": "4c57a11093454acda0bbd934b83fdb714344815992fff62367364a8e9656169d",
+  "version": "0.6.12",
   "generator": "scripts/build-git-release.mjs",
   "build": {
     "command": "tsc --build --force",
