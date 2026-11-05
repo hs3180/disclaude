@@ -17,6 +17,7 @@ import { AgentFactory } from './agents/factory.js';
 import type { ChatAgentCallbacks } from './agents/types.js';
 import type { ChatAgent } from './agents/chat-agent.js';
 import type { ServiceTurnRecoveryStore } from './service-turn-recovery.js';
+import type { AgentBinding, AgentBindingStore } from './agent-binding-store.js';
 
 /**
  * Options for ChatSessionPool initialization.
@@ -29,6 +30,10 @@ export interface ChatSessionPoolOptions {
   configureQueryOptions?: (options: AgentQueryOptions, chatId: string) => AgentQueryOptions;
   /** Named runtime presets. Defaults to Config.getAgentPresets(). */
   agentPresets?: AgentPresets;
+  /** Durable chat-wide preset bindings, below explicit /agent use selection. */
+  agentBindings?: AgentBindingStore;
+  /** Per-application default, below durable chat bindings and above the global default. */
+  defaultAgentPresetForChat?: (chatId: string) => string | undefined;
   /** Backend availability probe; injectable for deterministic tests. */
   validatePresetBackend?: (backend: AgentPreset['agentBackend'], config: BaseAgentConfig) =>
     { available: boolean; unavailableReason?: string };
@@ -211,11 +216,63 @@ export class ChatSessionPool {
     }));
   }
 
-  getActiveAgentPreset(chatId: string, threadRootId?: string): ActiveAgentPreset | undefined {
+  private resolvePreset(chatId: string, sessionKey: string) {
     if (!this.presets) { return undefined; }
-    const sessionKey = this.sessionKeyOf(chatId, threadRootId);
-    const resolved = resolveAgentPreset(this.presets, this.selectedPresetBySession.get(sessionKey));
-    return resolved.ok
+    const requested = this.selectedPresetBySession.get(sessionKey)
+      ?? this.options.agentBindings?.get(chatId)?.presetName
+      ?? this.options.defaultAgentPresetForChat?.(chatId);
+    return resolveAgentPreset(this.presets, requested);
+  }
+
+  getAgentBinding(chatId: string): AgentBinding | undefined {
+    return this.options.agentBindings?.get(chatId);
+  }
+
+  setAgentBinding(chatId: string, presetName: string, actorId: string):
+    { ok: true; binding: AgentBinding } | { ok: false; error: string } {
+    if (!this.presets || !this.options.agentBindings) {
+      return { ok: false, error: 'Agent bindings are not available on this node.' };
+    }
+    const resolved = resolveAgentPreset(this.presets, presetName);
+    if (!resolved.ok) { return resolved; }
+    const busy = this.bindingChangeBusy(chatId);
+    if (busy) { return { ok: false, error: 'The target chat is busy; wait for its response or use /stop before binding.' }; }
+    const binding = this.options.agentBindings.set(chatId, resolved.name, actorId);
+    this.resetBoundAgents(chatId);
+    return { ok: true, binding };
+  }
+
+  clearAgentBinding(chatId: string): { ok: true; binding?: AgentBinding } | { ok: false; error: string } {
+    if (!this.options.agentBindings) { return { ok: false, error: 'Agent bindings are not available on this node.' }; }
+    if (this.bindingChangeBusy(chatId)) {
+      return { ok: false, error: 'The target chat is busy; wait for its response or use /stop before unbinding.' };
+    }
+    const binding = this.options.agentBindings.clear(chatId);
+    this.resetBoundAgents(chatId);
+    return { ok: true, ...(binding ? { binding } : {}) };
+  }
+
+  private bindingChangeBusy(chatId: string): boolean {
+    return [...this.projectSessions.values()].some(scope => {
+      if (scope.chatId !== chatId) { return false; }
+      const key = this.sessionKeyOf(scope.chatId, scope.threadRootId);
+      if (this.selectedPresetBySession.has(key)) { return false; }
+      const agent = this.agents.get(key);
+      return agent?.isBusy === true || agent?.hasPendingWork === true;
+    });
+  }
+
+  private resetBoundAgents(chatId: string): void {
+    for (const scope of this.projectSessions.values()) {
+      if (scope.chatId !== chatId) { continue; }
+      const key = this.sessionKeyOf(scope.chatId, scope.threadRootId);
+      if (!this.selectedPresetBySession.has(key)) { this.reset(scope.chatId, undefined, scope.threadRootId); }
+    }
+  }
+
+  getActiveAgentPreset(chatId: string, threadRootId?: string): ActiveAgentPreset | undefined {
+    const resolved = this.resolvePreset(chatId, this.sessionKeyOf(chatId, threadRootId));
+    return resolved?.ok
       ? { name: resolved.name, agentBackend: resolved.preset.agentBackend, model: resolved.preset.model }
       : undefined;
   }
@@ -428,9 +485,7 @@ export class ChatSessionPool {
     }
     if (!agent) {
       const skipHistory = session?.skipHistory ?? this.skipHistoryChatIds.has(sessionKey);
-      const selected = this.presets
-        ? resolveAgentPreset(this.presets, this.selectedPresetBySession.get(sessionKey))
-        : undefined;
+      const selected = this.resolvePreset(chatId, sessionKey);
       agent = this.createAgent(
         chatId,
         callbacks,
@@ -540,9 +595,7 @@ export class ChatSessionPool {
     // it must fire even when no ChatAgent instance exists (the chat may have
     // been idle-evicted from this pool while its codex stash lived on). Keyed
     // by the same scoped native session key used during construction.
-    const selected = this.presets
-      ? resolveAgentPreset(this.presets, this.selectedPresetBySession.get(sessionKey))
-      : undefined;
+    const selected = this.resolvePreset(chatId, sessionKey);
     if (selected?.ok) {
       getProvider(selected.preset.agentBackend, selected.preset).forgetSession?.(sessionKey);
     } else {

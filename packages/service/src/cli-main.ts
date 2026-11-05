@@ -44,6 +44,7 @@ import crypto from 'node:crypto';
 import { DisclaudeService } from './service.js';
 import { HttpApiServer } from './http-api-server.js';
 import { ChatSessionPool } from './chat-session-pool.js';
+import { AgentBindingStore } from './agent-binding-store.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
 import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
@@ -527,8 +528,30 @@ export async function main(): Promise<void> {
   // recorded by ChatAgent for the /issue feedback entry.
   const failureRegistry = new ChatFailureRegistry();
 
+  let agentBindings: AgentBindingStore;
+  try {
+    agentBindings = new AgentBindingStore(path.join(workspaceDir, '.disclaude', 'agent-bindings.json'));
+  } catch (error) {
+    logger.fatal({ err: error, bindingPath: path.join(workspaceDir, '.disclaude', 'agent-bindings.json') },
+      'Cannot safely start with an invalid agent binding store (#5476)');
+    processLock?.release();
+    process.exit(1);
+  }
+  const configuredChannels = Config.getRawConfig().channels ?? {};
+  const perAppAgent = (chatId: string): string | undefined => {
+    const channelId = service.getChannelManager().resolveChannelForChatId(chatId)?.id;
+    if (!channelId) { return undefined; }
+    const exact = configuredChannels[channelId] as { agent?: unknown } | undefined;
+    const fallback = channelId === 'wechat' || channelId.startsWith('wechat:')
+      ? configuredChannels.wechat as { agent?: unknown } | undefined
+      : undefined;
+    const value = exact?.agent ?? fallback?.agent;
+    return typeof value === 'string' && value.trim() ? value : undefined;
+  };
   const agentPool = new ChatSessionPool({
     agentPresets: Config.getAgentPresets(),
+    agentBindings,
+    defaultAgentPresetForChat: perAppAgent,
     turnRecovery,
     // Issue #5400: per-chat last-failure registry backing the /issue entry.
     failureRecorder: (failure) => failureRegistry.record(failure),
@@ -573,8 +596,19 @@ export async function main(): Promise<void> {
         agentPool.getActiveAgentPreset(chatId, threadRootId),
       switchAgentPreset: (chatId, presetName, threadRootId) =>
         agentPool.switchAgentPreset(chatId, presetName, threadRootId),
+      getAgentBinding: chatId => agentPool.getAgentBinding(chatId),
+      setAgentBinding: (chatId, presetName, actorId) => agentPool.setAgentBinding(chatId, presetName, actorId),
+      clearAgentBinding: chatId => agentPool.clearAgentBinding(chatId),
       steer: (chatId, prompt, threadRootId) => agentPool.steer(chatId, prompt, threadRootId),
       canSteer: (chatId, threadRootId) => agentPool.canSteer(chatId, threadRootId),
+    },
+    // Issue #5476: explicit actor allowlist; absent/false denies all binding
+    // operations. messaging.admin.chatId remains delivery-only.
+    agentBindingAdmin: {
+      isAdminActor: actorId => {
+        const actorIds = Config.getRawConfig().messaging?.admin?.actorIds ?? [];
+        return typeof actorId === 'string' && !!actorId.trim() && actorIds.includes(actorId);
+      },
     },
     debugGroups: {
       getDebugGroup: () => service.getDebugGroupService().getDebugGroup(),

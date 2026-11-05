@@ -62,4 +62,47 @@ describe('/agent', () => {
     expect(result.message).toContain('service maintainer');
     expect(result.message).not.toMatch(/\/agent|claude-sonnet|glm-fast/);
   });
+  it('requires an explicitly configured admin actor for binding queries and records denials', async () => {
+    const ctx = context({
+      getAgentBinding: vi.fn(() => ({ chatId: 'target', presetName: 'fast', updatedBy: 'ou_admin', updatedAt: '2026-11-05T00:00:00Z' })),
+    });
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    ctx.logger = logger as never;
+    const result = await handleAgent({
+      type: 'agent', chatId: 'admin-chat', actorId: 'ou_other', data: { subcommand: 'binding', targetChatId: 'target' },
+    }, ctx);
+    expect(result.success).toBe(false);
+    expect(result.message).toContain('messaging.admin.actorIds');
+    expect(ctx.agentPool.getAgentBinding).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({
+      audit: 'agent-binding', action: 'binding', allowed: false, outcome: 'denied', actorId: 'ou_other', targetChatId: 'target',
+    }), expect.any(String));
+  });
+
+  it('binds, queries and clears durable chat bindings with an actor audit', async () => {
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const setBinding = vi.fn((): { ok: true; binding: { chatId: string; presetName: string; updatedBy: string; updatedAt: string } } => ({ ok: true, binding: { chatId: 'target', presetName: 'fast', updatedBy: 'ou_admin', updatedAt: '2026-11-05T00:00:00Z' } }));
+    const clearBinding = vi.fn((): { ok: true; binding: { chatId: string; presetName: string; updatedBy: string; updatedAt: string } } => ({ ok: true, binding: { chatId: 'target', presetName: 'fast', updatedBy: 'ou_admin', updatedAt: '2026-11-05T00:00:00Z' } }));
+    const ctx = context({
+      setAgentBinding: setBinding,
+      clearAgentBinding: clearBinding,
+      getAgentBinding: vi.fn(() => ({ chatId: 'target', presetName: 'fast', updatedBy: 'ou_admin', updatedAt: '2026-11-05T00:00:00Z' })),
+    });
+    ctx.agentBindingAdmin = { isAdminActor: actorId => actorId === 'ou_admin' };
+    ctx.logger = logger as never;
+    const bind = await handleAgent({
+      type: 'agent', chatId: 'admin-chat', actorId: 'ou_admin', data: { subcommand: 'bind', targetChatId: 'target', preset: 'fast' },
+    }, ctx);
+    expect(bind.success).toBe(true);
+    expect(bind.message).toContain('next message');
+    expect(setBinding).toHaveBeenCalledWith('target', 'fast', 'ou_admin');
+    const query = await handleAgent({ type: 'agent', chatId: 'admin-chat', actorId: 'ou_admin', data: { subcommand: 'binding', targetChatId: 'target' } }, ctx);
+    expect(query.message).toContain('**fast**');
+    const clear = await handleAgent({ type: 'agent', chatId: 'admin-chat', actorId: 'ou_admin', data: { subcommand: 'unbind', targetChatId: 'target' } }, ctx);
+    expect(clear.success).toBe(true);
+    expect(clearBinding).toHaveBeenCalledWith('target');
+    expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({
+      audit: 'agent-binding', action: 'bind', allowed: true, outcome: 'applied', targetChatId: 'target', presetName: 'fast',
+    }), expect.any(String));
+  });
 });

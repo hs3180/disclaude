@@ -51,9 +51,13 @@ export function normalizeCommandData<T extends ControlCommandType>(
     case 'agent': {
       const args = Array.isArray(rawData.args) ? rawData.args as string[] : [];
       const subcommand = (args[0] ?? 'current').toLowerCase();
+      const bindArgs = subcommand === 'bind' && args.length >= 3;
+      const targetChatId = bindArgs ? args[1] : subcommand !== 'bind' ? args[1] : undefined;
+      const preset = bindArgs ? args[2] : subcommand === 'use' ? args[1] : undefined;
       return {
         subcommand,
-        ...(args[1] ? { preset: args[1] } : {}),
+        ...(preset ? { preset } : {}),
+        ...(targetChatId ? { targetChatId } : {}),
       };
     }
     case 'steer': {

@@ -157,8 +157,8 @@ export interface CommandDataMap {
   project: { subcommand: string; workingDir?: string };
   /** /reset — reset agent, optionally skip history loading (Issue #3696) */
   reset: { skipContext?: boolean };
-  /** /agent — inspect or select a named runtime preset */
-  agent: { subcommand: string; preset?: string };
+  /** /agent — inspect/select presets or manage durable chat bindings (#5476) */
+  agent: { subcommand: string; preset?: string; targetChatId?: string };
   steer: { prompt?: string };
   /** Explicit Goal record commands; execution is a separate capability. */
   goal: { args?: string[] };

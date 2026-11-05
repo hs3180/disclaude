@@ -339,6 +339,11 @@ export interface MessagingConfig {
     chatId?: string;
     /** Enable/disable admin chat routing */
     enabled?: boolean;
+    /**
+     * Explicit actor ids allowed to query/mutate durable agent bindings
+     * (#5476). This is authorization, unlike chatId which only routes output.
+     */
+    actorIds?: string[];
   };
   /** Message routing configuration */
   routing?: {
