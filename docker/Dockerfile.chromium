@@ -11,5 +11,11 @@ COPY start-chromium.sh /usr/local/bin/disclaude-chromium
 RUN chmod 755 /usr/local/bin/disclaude-chromium \
     && node -e 'if (typeof WebSocket !== "function") process.exit(1)'
 ENV CHROMIUM_HEADLESS=0 CHROMIUM_CDP_PROFILE_DIR=/data/chrome-profile LANG=C.UTF-8
+# The browser profile lives on its own volume (#5653 review 6646239269):
+# declaring it keeps profile data (cookies, logins) out of the container
+# layer even under plain `docker run`. Compose mounts the managed
+# `chromium_profile` volume — or a host bind via CHROMIUM_PROFILE_VOLUME —
+# at CHROMIUM_CDP_PROFILE_DIR (same default path).
+VOLUME ["/data/chrome-profile"]
 EXPOSE 6080
 ENTRYPOINT ["/usr/local/bin/disclaude-chromium"]

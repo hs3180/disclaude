@@ -65,7 +65,11 @@ fi
 sed "s/__CDP_HOST__/$CDP_HOST/g; s/__GATEWAY__/$GATEWAY/g; s/__CDP_PORT__/$CDP_PORT/g; s/__CDP_INTERNAL_PORT__/$CDP_INTERNAL_PORT/g" \
     /etc/nginx/cdp-proxy.conf.template > /tmp/cdp-nginx.conf
 mkdir -p "$CHROMIUM_CDP_PROFILE_DIR"
-chmod 700 "$CHROMIUM_CDP_PROFILE_DIR"
+# A bind-mounted profile directory (#5653 review 6646239269) may be read-only
+# or carry host-owned permissions; keep the 700 default but do not brick
+# startup on a mount whose mode we cannot change.
+chmod 700 "$CHROMIUM_CDP_PROFILE_DIR" 2>/dev/null \
+    || echo "WARN: could not tighten permissions on $CHROMIUM_CDP_PROFILE_DIR (mounted volume?)" >&2
 children=()
 browser_pid=""
 vnc_password_file=""
@@ -91,10 +95,17 @@ trap cleanup EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
 
+# Software WebGL (no GPU): Chrome 132+ needs explicit SwiftShader via the ANGLE
+# Vulkan backend or canvas WebGL contexts come back null; the gles backend blanks on Xvfb.
 args=(--no-sandbox --no-first-run --no-default-browser-check
       --disable-blink-features=AutomationControlled
       "--remote-debugging-port=$CDP_INTERNAL_PORT" "--user-data-dir=$CHROMIUM_CDP_PROFILE_DIR"
-      --window-size=1920,1080 "--accept-lang=$CHROMIUM_ACCEPT_LANG")
+      --window-size=1920,1080 "--accept-lang=$CHROMIUM_ACCEPT_LANG"
+      --enable-unsafe-swiftshader --use-gl=angle --use-angle=vulkan
+      # Session restore keeps session cookies across full container rebuild+recreate.
+      --restore-last-session
+      # --accept-lang alone leaves the UI locale en-US; align it to the first segment.
+      "--lang=${CHROMIUM_ACCEPT_LANG%%,*}")
 if [[ "$CHROMIUM_HEADLESS" == 1 ]]; then
     args+=(--headless=new)
 else
