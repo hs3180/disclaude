@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.14] - 2026-11-05
+
+### Added
+
+- Lock in the WeChat dynamic multi-account invariants with a
+  cross-component integration regression: two dynamically registered
+  accounts run through the real registry, registration runtime, lifecycle
+  manager and service wiring, asserting inbound isolation (qualified
+  chat/message ids, private context tokens kept out of routing payloads),
+  per-account outbound routing with reply context, on-disk state isolation
+  (per-account `accounts/<id>` directory, `auth.json`, `session.json`
+  cursor/dedup/reply-context), and restart recovery (accounts healthy
+  again, replayed gateway messages deduplicated, no duplicate welcome,
+  reply context restored). Production behavior is unchanged; the test
+  guards the already-merged dynamic registration semantics (#5451; #5685).
+
 ## [0.6.13] - 2026-11-05
 
 ### Added
