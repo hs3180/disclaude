@@ -1,6 +1,7 @@
 import { buildWelcomeMessage } from '@disclaude/core';
 
-export const WECHAT_WELCOME_TEXT = buildWelcomeMessage('wechat');
+/** Build on first use so importing listener modules does not require the core help surface. */
+export function getWeChatWelcomeText(): string { return buildWelcomeMessage('wechat'); }
 interface WelcomeReceipt { phase: 'attempted' | 'accepted'; startedAt: string; acceptedAt?: string; messageId?: string }
 export interface WeChatWelcomeState { version: 1; botId: string; peers: Record<string, WelcomeReceipt> }
 export function emptyWelcomeState(botId: string): WeChatWelcomeState { return { version: 1, botId, peers: {} }; }
