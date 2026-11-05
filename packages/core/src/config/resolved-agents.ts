@@ -80,13 +80,15 @@ export function resolveConfiguredAgents(
       continue;
     }
     for (const key of Object.keys(raw)) {
-      if (!['model', 'reasoningEffort', 'maxConcurrentSessions', 'api', 'behavesAs', 'modelOverrides', 'env'].includes(key)) {
+      if (key === 'behavesAs' || key === 'modelOverrides') {
+        errors.push(`${field}.${key} has moved to agents.<name>.claude.${key}; llms contains provider settings only`);
+      } else if (!['model', 'reasoningEffort', 'maxConcurrentSessions', 'api', 'env'].includes(key)) {
         errors.push(`${field}.${key} is unsupported`);
       }
     }
     const llm = raw as LlmConfig;
-    if (typeof llm.model !== 'string' || !llm.model.trim()) {
-      errors.push(`${field}.model must be an explicit non-empty string; set this LLM model before upgrading (docs/agent-configuration.md)`);
+    if (llm.model !== undefined && (typeof llm.model !== 'string' || !llm.model.trim())) {
+      errors.push(`${field}.model must be a non-empty string when set`);
     }
     if (llm.reasoningEffort !== undefined && !isCodexReasoningEffort(llm.reasoningEffort)) {
       errors.push(`${field}.reasoningEffort is invalid`);
@@ -106,30 +108,10 @@ export function resolveConfiguredAgents(
     ) {
       errors.push(`${field}.env must map environment variable names to strings`);
     }
-    if (llm.behavesAs !== undefined) {
-      if (typeof llm.behavesAs !== 'string' || !CLAUDE_MODEL_ID.test(llm.behavesAs)) {
-        errors.push(
-          /^(opus|sonnet|haiku|fable|default)$/i.test(String(llm.behavesAs))
-            ? `${field}.behavesAs must be a full Claude model ID such as claude-opus-5; aliases are not auto-resolved, pin the running version's catalog ID`
-            : `${field}.behavesAs must be a full Claude model ID such as claude-opus-5`
-        );
+    for (const key of Object.keys(llm.env ?? {})) {
+      if (/^ANTHROPIC_DEFAULT_(OPUS|SONNET|HAIKU)_MODEL$/.test(key)) {
+        errors.push(`${field}.env.${key} has moved to agents.<name>.claude.env.${key}`);
       }
-      if (llm.modelOverrides !== undefined) {
-        errors.push(`${field}.behavesAs and modelOverrides are mutually exclusive`);
-      }
-    }
-    if (
-      llm.modelOverrides !== undefined &&
-      (!mapping(llm.modelOverrides) ||
-        !Object.keys(llm.modelOverrides).length ||
-        Object.entries(llm.modelOverrides).some(
-          ([key, value]) =>
-            !CLAUDE_MODEL_ID.test(key) || typeof value !== 'string' || !value.trim()
-        ))
-    ) {
-      errors.push(
-        `${field}.modelOverrides must map full Claude model IDs to non-empty provider model IDs`
-      );
     }
     if (llm.api !== undefined) {
       if (!mapping(llm.api)) {
@@ -198,6 +180,7 @@ export function resolveConfiguredAgents(
       'enableAgentTeams',
       'autoCompactWindow',
       'sdkTimeoutMs',
+      'claude',
     ]);
     for (const key of Object.keys(raw)) {
       if (!allowed.has(key)) {
@@ -311,6 +294,40 @@ export function resolveConfiguredAgents(
         errors.push(`${field}.dshHome must be a non-empty string`);
       }
     }
+    if (agent.claude !== undefined) {
+      if (agent.backend !== 'claude') {
+        errors.push(`${field}.claude requires backend: claude`);
+      } else if (!mapping(agent.claude as unknown)) {
+        errors.push(`${field}.claude must be a mapping`);
+      } else {
+        for (const key of Object.keys(agent.claude)) {
+          if (!['behavesAs', 'modelOverrides', 'env'].includes(key)) {
+            errors.push(`${field}.claude.${key} is unsupported`);
+          }
+        }
+        if (agent.claude.behavesAs !== undefined) {
+          if (typeof agent.claude.behavesAs !== 'string' || !CLAUDE_MODEL_ID.test(agent.claude.behavesAs)) {
+            errors.push(`${field}.claude.behavesAs must be a full Claude model ID such as claude-opus-5; aliases are not auto-resolved`);
+          }
+          if (agent.claude.modelOverrides !== undefined) {
+            errors.push(`${field}.claude.behavesAs and modelOverrides are mutually exclusive`);
+          }
+          if (!llms[agent.llm]?.model?.trim()) {
+            errors.push(`${field}.claude.behavesAs requires a provider default model at llms.${agent.llm}.model`);
+          }
+        }
+        if (agent.claude.modelOverrides !== undefined &&
+          (!mapping(agent.claude.modelOverrides) || !Object.keys(agent.claude.modelOverrides).length ||
+            Object.entries(agent.claude.modelOverrides).some(([key, value]) =>
+              !CLAUDE_MODEL_ID.test(key) || typeof value !== 'string' || !value.trim()))) {
+          errors.push(`${field}.claude.modelOverrides must map full Claude model IDs to non-empty provider model IDs`);
+        }
+        if (agent.claude.env !== undefined && (!mapping(agent.claude.env) ||
+          Object.entries(agent.claude.env).some(([key, value]) => !ENV_NAME.test(key) || typeof value !== 'string'))) {
+          errors.push(`${field}.claude.env must map environment variable names to strings`);
+        }
+      }
+    }
     const llm = llms[agent.llm];
     if (!llm || typeof llm !== 'object') {
       continue;
@@ -320,19 +337,6 @@ export function resolveConfiguredAgents(
     }
     if (llm.reasoningEffort !== undefined && !['codex', 'dsh'].includes(agent.backend)) {
       errors.push(`llms.${agent.llm}.reasoningEffort requires a Codex or DSH native runtime`);
-    }
-    // Issue #5679: `model` is the wire model for every backend sharing the
-    // binding; behavesAs/modelOverrides are Claude-side capability metadata
-    // that simply does not apply to other runtimes. Native Codex owns its
-    // model catalog and forbids bound API connections, so Claude capability
-    // metadata on a Codex-bound LLM is always dead configuration.
-    if (
-      (llm.behavesAs !== undefined || llm.modelOverrides !== undefined) &&
-      agent.backend === 'codex'
-    ) {
-      errors.push(
-        `llms.${agent.llm}.behavesAs is Claude-side capability metadata; native Codex owns its model catalog and never applies it`
-      );
     }
     if (agent.backend === 'codex' && llm.api !== undefined) {
       errors.push(
@@ -352,19 +356,23 @@ export function resolveConfiguredAgents(
       agentBackend: backend,
       reasoningEffort: llm.reasoningEffort,
       maxConcurrentSessions: llm.maxConcurrentSessions,
-      // Issue #5410: behavesAs compiles to a single-entry map; a raw map passes through verbatim.
-      modelOverrides:
-        llm.behavesAs !== undefined
-          ? { [llm.behavesAs]: llm.model.trim() }
-          : llm.modelOverrides,
-      model: llm.model.trim(),
+      // Claude owns its model names; other runtimes never receive this metadata.
+      modelOverrides: backend === 'claude'
+        ? agent.claude?.behavesAs !== undefined && llm.model
+          ? { [agent.claude.behavesAs]: llm.model.trim() }
+          : agent.claude?.modelOverrides
+        : undefined,
+      model: llm.model?.trim() ?? '',
       apiKey: keyEnv ? (process.env[keyEnv] ?? '') : '',
       apiProtocol: protocol,
       apiBaseUrl: llm.api?.baseUrl,
-      env: resolveLlmEnvironment(llm.env),
-      missingEnvReferences: Object.entries(llm.env ?? {}).flatMap(([key, value]) => {
+      env: resolveLlmEnvironment({ ...llm.env, ...(backend === 'claude' ? agent.claude?.env : {}) }),
+      missingEnvReferences: [
+        ...Object.entries(llm.env ?? {}).map(([key, value]) => [`llms.${agent.llm}.env.${key}`, value] as const),
+        ...Object.entries(backend === 'claude' ? agent.claude?.env ?? {} : {}).map(([key, value]) => [`${field}.claude.env.${key}`, value] as const),
+      ].flatMap(([path, value]) => {
         const reference = credentialEnvName(value);
-        return reference && !process.env[reference]?.trim() ? [`llms.${agent.llm}.env.${key} (${reference})`] : [];
+        return reference && !process.env[reference]?.trim() ? [`${path} (${reference})`] : [];
       }),
       credentialEnvKeys: [...credentialEnvKeys],
     };
@@ -378,11 +386,11 @@ export function resolveConfiguredAgents(
       continue;
     }
     const llm = llms[llmName];
-    const model = llm.model.trim();
-    if (BARE_CLAUDE_ALIAS.test(model)) {
+    const model = llm.model?.trim();
+    if (model && BARE_CLAUDE_ALIAS.test(model)) {
       const others = [...backends].filter((backend) => backend !== 'claude').join('/');
       errors.push(
-        `llms.${llmName}.model "${model}" is a bare Claude alias; Claude resolves it internally while ${others} send it literally. Pin the wire model (for example group/hq-degrade) in llms.${llmName}.model and the Claude capability slot in behavesAs`
+        `llms.${llmName}.model "${model}" is a bare Claude alias; Claude resolves it internally while ${others} send it literally. Pin the wire model in llms.${llmName}.model and the Claude capability slot in agents.<name>.claude.behavesAs`
       );
     }
   }
@@ -406,8 +414,8 @@ export function resolveConfiguredAgents(
 
 /** Validate only the selected runtime's secrets; dormant entries need no credentials. */
 export function validateResolvedAgent(preset: AgentPreset): string | undefined {
-  if (typeof preset.model !== 'string' || !preset.model.trim()) {
-    return `llms.${preset.llm}.model must be an explicit non-empty string`;
+  if (typeof preset.model !== 'string') {
+    return `llms.${preset.llm}.model must be a string when set`;
   }
   if (preset.missingEnvReferences?.length) {
     return `External environment references are missing or empty: ${preset.missingEnvReferences.join(', ')}`;

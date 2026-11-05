@@ -369,32 +369,31 @@ describe('named runtime and LLM configuration', () => {
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env.OPENAI_BASE_URL).toBeUndefined();
   });
-  it.each([undefined, '', '   '])('requires an explicit Codex model (%j)', (model) => {
+  it('allows an omitted provider default model without environment fallback', () => {
     vi.stubEnv('CODEX_MODEL', 'gpt-6-luna');
     const config = configuration();
-    Object.assign(config.llms!.daily, { model });
-    const result = resolveConfiguredAgents(config);
-    expect(result).toEqual({ ok: false, errors: [
-      'llms.daily.model must be an explicit non-empty string; set this LLM model before upgrading (docs/agent-configuration.md)',
+    delete config.llms!.daily.model;
+    expect(resolveConfiguredAgents(config)).toMatchObject({ ok: true, presets: { daily: { model: '' } } });
+  });
+  it.each(['', '   '])('rejects a blank provider default model (%j)', (model) => {
+    const config = configuration();
+    config.llms!.daily.model = model;
+    expect(resolveConfiguredAgents(config)).toEqual({ ok: false, errors: [
+      'llms.daily.model must be a non-empty string when set',
     ] });
-    expect(validateRequiredConfig(config).valid).toBe(false);
   });
   it.each([
     ['proxy', 'ANTHROPIC_MODEL'],
     ['other', 'OPENAI_MODEL'],
-  ])('does not fill llms.%s.model from %s', (name, variable) => {
+  ])('does not fill an omitted llms.%s.model from %s', (name, variable) => {
     vi.stubEnv(variable, 'inherited-model');
     const config = configuration();
     config.env = { [variable]: 'global-model' };
-    Object.assign(config.llms![name], { model: undefined });
-    expect(resolveConfiguredAgents(config)).toEqual({ ok: false, errors: [
-      `llms.${name}.model must be an explicit non-empty string; set this LLM model before upgrading (docs/agent-configuration.md)`,
-    ] });
-    config.llms![name].model = 'explicit-model';
+    delete config.llms![name].model;
     const result = resolveConfiguredAgents(config);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.presets[name === 'proxy' ? 'assistant' : 'other'].model).toBe('explicit-model');
+      expect(result.presets[name === 'proxy' ? 'assistant' : 'other'].model).toBe('');
     }
   });
   it('keeps explicit models independent for two agents on the same backend', () => {
@@ -410,11 +409,11 @@ describe('named runtime and LLM configuration', () => {
       second: { agentBackend: 'claude', model: 'second-explicit-model', apiBaseUrl: 'https://second.example' },
     } });
   });
-  it('rejects an empty resolved Codex model before its native credential exemption', () => {
+  it('accepts an empty resolved model as the runtime default', () => {
     const result = resolveConfiguredAgents(configuration());
     if (!result.ok) { throw new Error(result.errors.join('\n')); }
     result.presets.daily.model = '';
-    expect(validateResolvedAgent(result.presets.daily)).toBe('llms.daily.model must be an explicit non-empty string');
+    expect(validateResolvedAgent(result.presets.daily)).toBeUndefined();
   });
   it('resolves braced references and never expands embedded or shell expressions', () => {
     const config = configuration();
@@ -519,7 +518,7 @@ describe('named runtime and LLM configuration', () => {
   });
   it('compiles behavesAs into a single-entry modelOverrides map (Issue #5410)', () => {
     const config = configuration();
-    config.llms!.proxy.behavesAs = 'claude-opus-5';
+    config.agents!.assistant.claude = { ...config.agents!.assistant.claude, behavesAs: 'claude-opus-5' };
     const result = resolveConfiguredAgents(config);
     expect(result.ok).toBe(true);
     if (!result.ok) {
@@ -529,7 +528,7 @@ describe('named runtime and LLM configuration', () => {
   });
   it('projects a raw multi-slot modelOverrides map verbatim', () => {
     const config = configuration();
-    config.llms!.proxy.modelOverrides = { 'claude-opus-5': 'kimi-k3', 'claude-sonnet-4-5': 'kimi-k3-flash' };
+    config.agents!.assistant.claude = { ...config.agents!.assistant.claude, modelOverrides: { 'claude-opus-5': 'kimi-k3', 'claude-sonnet-4-5': 'kimi-k3-flash' } };
     const result = resolveConfiguredAgents(config);
     expect(result.ok).toBe(true);
     if (!result.ok) {
@@ -542,32 +541,31 @@ describe('named runtime and LLM configuration', () => {
   });
   it.each([
     (c: DisclaudeConfig) => {
-      c.llms!.proxy.behavesAs = 'opus';
+      c.agents!.assistant.claude = { behavesAs: 'opus' };
     },
     (c: DisclaudeConfig) => {
-      c.llms!.proxy.behavesAs = 'claude_OPUS';
+      c.agents!.assistant.claude = { behavesAs: 'claude_OPUS' };
     },
     (c: DisclaudeConfig) => {
-      c.llms!.proxy.behavesAs = '';
+      c.agents!.assistant.claude = { behavesAs: '' };
     },
     (c: DisclaudeConfig) => {
-      c.llms!.proxy.behavesAs = 'claude-opus-5';
-      c.llms!.proxy.modelOverrides = { 'claude-opus-5': 'kimi-k3' };
+      c.agents!.assistant.claude = { behavesAs: 'claude-opus-5', modelOverrides: { 'claude-opus-5': 'kimi-k3' } };
     },
     (c: DisclaudeConfig) => {
-      c.llms!.proxy.modelOverrides = { opus: 'kimi-k3' };
+      c.agents!.assistant.claude = { modelOverrides: { opus: 'kimi-k3' } };
     },
     (c: DisclaudeConfig) => {
-      c.llms!.proxy.modelOverrides = { 'claude-opus-5': '  ' };
+      c.agents!.assistant.claude = { modelOverrides: { 'claude-opus-5': '  ' } };
     },
     (c: DisclaudeConfig) => {
-      c.llms!.proxy.modelOverrides = {};
+      c.agents!.assistant.claude = { modelOverrides: {} };
     },
     (c: DisclaudeConfig) => {
-      c.llms!.proxy.modelOverrides = 'claude-opus-5' as unknown as Record<string, string>;
+      c.agents!.assistant.claude = { modelOverrides: 'claude-opus-5' as unknown as Record<string, string> };
     },
     (c: DisclaudeConfig) => {
-      c.llms!.daily.behavesAs = 'claude-opus-5';
+      (c.llms!.daily as unknown as Record<string, unknown>).behavesAs = 'claude-opus-5';
     },
   ])('rejects malformed or mis-scoped model override declarations', (mutate) => {
     const config = configuration();
@@ -582,7 +580,7 @@ describe('named runtime and LLM configuration', () => {
   });
   it('rejects the bare alias with explicit pinning guidance', () => {
     const config = configuration();
-    config.llms!.proxy.behavesAs = 'opus';
+    config.agents!.assistant.claude = { ...config.agents!.assistant.claude, behavesAs: 'opus' };
     const result = resolveConfiguredAgents(config);
     expect(result.ok).toBe(false);
     if (result.ok) {
@@ -595,7 +593,7 @@ describe('named runtime and LLM configuration', () => {
     it('serves one wire model to Claude and DSH from a single binding', () => {
       const config = configuration();
       config.llms!.proxy.model = 'group/hq-degrade';
-      config.llms!.proxy.behavesAs = 'claude-sonnet-4-5';
+      config.agents!.assistant.claude = { ...config.agents!.assistant.claude, behavesAs: 'claude-sonnet-4-5' };
       config.agents!.research = { backend: 'dsh', llm: 'proxy' };
       const result = resolveConfiguredAgents(config);
       expect(result.ok).toBe(true);
@@ -615,9 +613,9 @@ describe('named runtime and LLM configuration', () => {
       });
     });
 
-    it('serves Pi from the same shared binding', () => {
+    it('keeps Claude mappings off a Pi-only agent', () => {
       const config = configuration();
-      config.llms!.other.behavesAs = 'claude-sonnet-4-5';
+      config.agents!.assistant.claude = { behavesAs: 'claude-sonnet-4-5' };
       const result = resolveConfiguredAgents(config);
       expect(result.ok).toBe(true);
       if (!result.ok) {
@@ -626,20 +624,55 @@ describe('named runtime and LLM configuration', () => {
       expect(result.presets.other).toMatchObject({
         agentBackend: 'pi',
         model: 'other-model',
-        modelOverrides: { 'claude-sonnet-4-5': 'other-model' },
+        modelOverrides: undefined,
       });
     });
 
-    it('keeps native Codex on the behavesAs boundary', () => {
+    it('rejects the old provider-level Claude mapping with migration guidance', () => {
       const config = configuration();
-      config.llms!.daily.behavesAs = 'claude-opus-5';
+      (config.llms!.daily as unknown as Record<string, unknown>).behavesAs = 'claude-opus-5';
       const result = resolveConfiguredAgents(config);
       expect(result.ok).toBe(false);
       if (result.ok) {
         return;
       }
       expect(result.errors.join('\n')).toContain(
-        'llms.daily.behavesAs is Claude-side capability metadata'
+        'has moved to agents.<name>.claude.behavesAs'
+      );
+    });
+
+    it('projects Claude model-name settings from the agent, not the provider', () => {
+      const config = configuration();
+      config.agents!.assistant.claude = {
+        modelOverrides: { 'claude-opus-5': 'kimi-k3', 'claude-sonnet-4-5': 'kimi-k3-flash' },
+        env: { ANTHROPIC_DEFAULT_OPUS_MODEL: 'endpoint-large', ANTHROPIC_DEFAULT_SONNET_MODEL: 'endpoint-main', ANTHROPIC_DEFAULT_HAIKU_MODEL: 'endpoint-fast' },
+      };
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        return;
+      }
+      expect(result.presets.assistant).toMatchObject({
+        modelOverrides: { 'claude-opus-5': 'kimi-k3', 'claude-sonnet-4-5': 'kimi-k3-flash' },
+        env: {
+          ANTHROPIC_DEFAULT_OPUS_MODEL: 'endpoint-large',
+          ANTHROPIC_DEFAULT_SONNET_MODEL: 'endpoint-main',
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: 'endpoint-fast',
+        },
+      });
+      expect(result.presets.other.modelOverrides).toBeUndefined();
+    });
+
+    it('rejects the old Claude alias environment placement with migration guidance', () => {
+      const config = configuration();
+      config.llms!.proxy.env = { ANTHROPIC_DEFAULT_SONNET_MODEL: 'endpoint-main' };
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        return;
+      }
+      expect(result.errors.join('\n')).toContain(
+        'llms.proxy.env.ANTHROPIC_DEFAULT_SONNET_MODEL has moved to agents.<name>.claude.env'
       );
     });
 
@@ -682,6 +715,78 @@ describe('named runtime and LLM configuration', () => {
       expect(result.presets.assistant.modelOverrides).toBeUndefined();
       expect(result.presets.research.model).toBe('claude-sonnet-4-5');
       expect(result.presets.research.modelOverrides).toBeUndefined();
+    });
+
+    it('rejects Claude model settings on a non-Claude agent', () => {
+      const config = configuration();
+      config.agents!.other.claude = { behavesAs: 'claude-opus-5' };
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        return;
+      }
+      expect(result.errors.join('\n')).toContain('agents.other.claude requires backend: claude');
+    });
+
+    it('rejects a malformed or unknown Claude settings block', () => {
+      const config = configuration();
+      config.agents!.assistant.claude = 'claude-opus-5' as never;
+      const malformed = resolveConfiguredAgents(config);
+      expect(malformed.ok).toBe(false);
+      if (malformed.ok) {
+        return;
+      }
+      expect(malformed.errors.join('\n')).toContain('agents.assistant.claude must be a mapping');
+
+      const unknown = configuration();
+      unknown.agents!.assistant.claude = { tiers: { opus: 'kimi-k3' } } as never;
+      const rejected = resolveConfiguredAgents(unknown);
+      expect(rejected.ok).toBe(false);
+      if (rejected.ok) {
+        return;
+      }
+      expect(rejected.errors.join('\n')).toContain('agents.assistant.claude.tiers is unsupported');
+    });
+
+    it('rejects combining behavesAs with modelOverrides and malformed mappings', () => {
+      const config = configuration();
+      config.agents!.assistant.claude = {
+        behavesAs: 'claude-opus-5',
+        modelOverrides: { 'claude-opus-5': 'kimi-k3' },
+      };
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        return;
+      }
+      expect(result.errors.join('\n')).toContain(
+        'agents.assistant.claude.behavesAs and modelOverrides are mutually exclusive'
+      );
+
+      const aliased = configuration();
+      aliased.agents!.assistant.claude = { modelOverrides: { sonnet: 'kimi-k3' } };
+      const aliasResult = resolveConfiguredAgents(aliased);
+      expect(aliasResult.ok).toBe(false);
+      if (aliasResult.ok) {
+        return;
+      }
+      expect(aliasResult.errors.join('\n')).toContain(
+        'agents.assistant.claude.modelOverrides must map full Claude model IDs to non-empty provider model IDs'
+      );
+    });
+
+    it('requires a provider default model when behavesAs carries the capability slot', () => {
+      const config = configuration();
+      delete config.llms!.proxy.model;
+      config.agents!.assistant.claude = { behavesAs: 'claude-opus-5' };
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        return;
+      }
+      expect(result.errors.join('\n')).toContain(
+        'agents.assistant.claude.behavesAs requires a provider default model at llms.proxy.model'
+      );
     });
   });
 });

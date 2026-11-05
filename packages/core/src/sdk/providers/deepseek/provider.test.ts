@@ -294,13 +294,15 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
     const { dshOptions } = await import('../../factory.js');
     const resolved = resolveConfiguredAgents({
       agents: {
-        assistant: { backend: 'claude', llm: 'shared', default: true },
+        assistant: {
+          backend: 'claude', llm: 'shared', default: true,
+          claude: { behavesAs: 'claude-sonnet-4-5' },
+        },
         research: { backend: 'dsh', llm: 'shared', mode: 'minimal' },
       },
       llms: {
         shared: {
           model: 'group/hq-degrade',
-          behavesAs: 'claude-sonnet-4-5',
           api: {
             protocol: 'anthropic',
             baseUrl: 'https://gateway.example',

@@ -46,7 +46,18 @@ export interface CodexAgentGovernanceConfig {
 /** Codex CLI reasoning levels currently exposed by the model catalog. */
 export type CodexReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
 
+export interface ClaudeAgentConfig {
+  /** Full Claude catalog identity used for the provider default model. */
+  behavesAs?: string;
+  /** Claude model names (including Opus/Sonnet/Haiku slots) mapped to provider IDs. */
+  modelOverrides?: Record<string, string>;
+  /** Claude-specific environment, including ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL. */
+  env?: Record<string, string>;
+}
+
 export interface AgentConfig {
+  /** Claude-only model and environment settings. */
+  claude?: ClaudeAgentConfig;
   /** Agent runtime. */
   agentBackend?: 'claude' | 'pi' | 'codex' | 'dsh';
   /** DSH composition. Changes apply after service restart. Default: standard. */
@@ -99,10 +110,10 @@ export interface AgentConfig {
 /** Supported LLM wire formats, independent of model vendor. */
 export type ApiProtocol = 'anthropic' | 'openai';
 
-/** A model and its API connection. Codex account bindings may omit api. */
+/** An LLM provider connection with an optional default model. */
 export interface LlmConfig {
-  /** Explicit model for every public named binding, including native Codex. */
-  model: string;
+  /** Provider default model; an agent runtime may use its native default when omitted. */
+  model?: string;
   /** Native Codex/DSH reasoning effort; omission keeps the model's default. */
   reasoningEffort?: CodexReasoningEffort;
   /** Maximum live host sessions sharing this LLM, across named agents. */
@@ -113,26 +124,7 @@ export interface LlmConfig {
     /** Explicit environment reference: $VARIABLE or ${VARIABLE}. */
     apiKey?: string;
   };
-  /**
-   * Claude-side model identity for an ID Claude Code does not know (gateway
-   * or provider-specific IDs, Issue #5410). A full Claude model ID (for
-   * example claude-opus-5) whose catalog entry — context window, capability
-   * and effort defaults — Claude Code applies to `model` while still sending
-   * `model` on the wire. Aliases are not auto-resolved; pin the ID per
-   * deployment so a Claude Code upgrade cannot silently re-target it.
-   *
-   * Issue #5679: `model` stays the wire model for every backend sharing the
-   * binding; behavesAs is ride-along metadata that Claude runtimes apply and
-   * Pi/DSH ignore. Codex-bound LLMs may not set it.
-   */
-  behavesAs?: string;
-  /**
-   * Raw Claude Code modelOverrides map (Anthropic model ID → provider ID) for
-   * multi-slot mappings. Mutually exclusive with behavesAs. Claude-side only
-   * (see behavesAs for shared-binding semantics, Issue #5679).
-   */
-  modelOverrides?: Record<string, string>;
-  /** Native runtime settings, including ANTHROPIC_DEFAULT_*_MODEL aliases. */
+  /** Provider-level native runtime settings. Claude model names belong in agent.claude. */
   env?: Record<string, string>;
 }
 

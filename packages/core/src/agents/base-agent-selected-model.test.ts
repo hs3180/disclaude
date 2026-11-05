@@ -142,7 +142,7 @@ describe('Claude modelOverrides identity (Issue #5410)', () => {
       llm: 'gateway',
       modelOverrides: { 'claude-opus-5': 'kimi-k3' },
       agentBackend: 'claude',
-    })).toThrow(/requires Claude Code >= 2\.1\.200.*llms\.gateway/);
+    })).toThrow(/requires Claude Code >= 2\.1\.200.*claude\.modelOverrides/);
   });
   it('keeps overrides working when the bundled CLI version cannot be resolved', async () => {
     vi.doMock('../sdk/providers/claude/version.js', async (importOriginal) => ({
@@ -163,13 +163,15 @@ describe('shared bindings across harnesses (Issue #5679)', () => {
       workspace: { dir: '/shared-binding-test' },
       logging: { sdkDebug: false },
       agents: {
-        assistant: { backend: 'claude', llm: 'shared', default: true },
+        assistant: {
+          backend: 'claude', llm: 'shared', default: true,
+          claude: { behavesAs: 'claude-sonnet-4-5' },
+        },
         research: { backend: 'dsh', llm: 'shared', mode: 'minimal' },
       },
       llms: {
         shared: {
           model: 'group/hq-degrade',
-          behavesAs: 'claude-sonnet-4-5',
           api: {
             protocol: 'anthropic',
             baseUrl: 'https://gateway.example',

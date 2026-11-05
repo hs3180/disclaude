@@ -16,6 +16,16 @@ agents:
   assistant:
     backend: claude
     llm: assistant
+    # Claude-only model names (agent/claude; provider settings stay in llms).
+    # claude:
+    #   behavesAs: claude-opus-5
+    #   modelOverrides:
+    #     claude-opus-5: kimi-k3
+    #     claude-sonnet-4-5: kimi-k3-flash
+    #   env:
+    #     ANTHROPIC_DEFAULT_OPUS_MODEL: your-opus-model
+    #     ANTHROPIC_DEFAULT_SONNET_MODEL: your-sonnet-model
+    #     ANTHROPIC_DEFAULT_HAIKU_MODEL: your-haiku-model
   # Optional DSH runtime; its API connection belongs in the named LLM below.
   # dsh:
   #   backend: dsh
@@ -42,25 +52,12 @@ llms:
       protocol: anthropic # anthropic or openai (Pi and DSH support both)
       apiKey: $ASSISTANT_API_KEY # $NAME or ${NAME}, from the service environment
       # baseUrl: https://your-api.example # Omit for the protocol's default endpoint
-    # Native Claude aliases; use actual model IDs exposed by your endpoint.
-    # env:
-    #   ANTHROPIC_DEFAULT_OPUS_MODEL: your-opus-model
-    #   ANTHROPIC_DEFAULT_SONNET_MODEL: your-sonnet-model
-    #   ANTHROPIC_DEFAULT_HAIKU_MODEL: your-haiku-model
-    # Gateway model Claude Code does not know: pin the catalog entry (window,
-    # capabilities, effort defaults) it should inherit. Opus-line IDs are the
-    # only 1M-context keys; requires Claude Code >= v2.1.200 (Issue #5410).
-    # behavesAs: claude-opus-5
-    # Or a raw multi-slot map (mutually exclusive with behavesAs):
-    # modelOverrides:
-    #   claude-opus-5: kimi-k3
-    #   claude-sonnet-4-5: kimi-k3-flash
     # One binding may serve several harnesses (Issue #5679): backend: claude,
     # dsh and pi agents bound to the same llms entry all send `model` as the
-    # wire model; behavesAs/modelOverrides only shape Claude's client side.
+    # wire model; Claude model names live in agents.<name>.claude above.
     # Do not share a bare Claude alias (e.g. model: sonnet) across that
-    # boundary — pin the wire model and use behavesAs instead. Native Codex
-    # cannot use an LLM that sets behavesAs/modelOverrides.
+    # boundary — pin the wire model and set claude.behavesAs on the Claude
+    # agent instead.
 
 channels:
   # Personal WeChat via Tencent iLink. First run: disclaude wechat login
