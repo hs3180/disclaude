@@ -11,7 +11,7 @@ agents:
     default: true
 llms:
   proxy:
-    model: glm-5.3
+    model: your-model-id
     api:
       protocol: anthropic
       baseUrl: https://your-anthropic-api.example
@@ -58,7 +58,7 @@ See [DSH runtime modes](dsh-backend.md) for minimal mode and native provider rou
 
 Set `llms.<name>.maxConcurrentSessions` to a positive integer to cap live host
 sessions using that LLM across all agents and backends in this service process.
-For example, `llms.daily: {model: gpt-6-luna, reasoningEffort: max, maxConcurrentSessions: 3}`.
+For example, `llms.daily: {model: your-model-id, reasoningEffort: your-supported-effort, maxConcurrentSessions: 3}`.
 Idle open sessions still count for stream-scoped runtimes; native subagents are
 outside this host budget. Codex app-server reserves this shared budget per native
 connection and releases it after transport shutdown, preserving the input stream
@@ -174,9 +174,8 @@ Override the values through the bound LLM's existing `env` mapping (or the servi
 ```yaml
 llms:
   assistant:
-    model: sonnet
-  # claude:
-  #   env:
+    model: your-claude-model
+    env:
       BASH_DEFAULT_TIMEOUT_MS: "600000"
       BASH_MAX_TIMEOUT_MS: "1800000"
 ```

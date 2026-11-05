@@ -318,6 +318,15 @@ export interface AgentQueryOptions {
   onUserInput?: (request: AgentInputRequest, context: AgentInputContext | undefined) => Promise<void>;
   /** Admit a delayed, non-secret async answer as new input in its original conversation. */
   onAsyncUserInputAnswer?: (request: AgentInputRequest, text: string, context: AgentInputContext) => Promise<void>;
+  /**
+   * Per-turn probe for #5467: wiring flags alone cannot express capabilities
+   * that change between turns of the same session (e.g. once-mode or a stale
+   * generation on the host side). When provided and it returns false, the
+   * provider treats the turn as unable to receive async question forms —
+   * the prompt says so up-front and an async question is rejected as a
+   * structured "unsupported" error instead of reaching host wiring.
+   */
+  asyncUserInputCapable?: () => boolean;
   /** 工作目录 */
   cwd?: string;
   /**
