@@ -21,7 +21,7 @@ import { WeChatRegistrationRuntime } from '../../packages/service/src/channels/w
 import { DisclaudeService } from '../../packages/service/src/service.js';
 import { ChannelLifecycleManager } from '../../packages/service/src/channel-lifecycle-manager.js';
 import { WECHAT_WIRED_DESCRIPTOR } from '../../packages/service/src/channels/wired-descriptors.js';
-import { getWeChatWelcomeText } from '../../packages/service/src/channels/wechat/welcome.js';
+import { buildWelcomeMessage } from '@disclaude/core';
 
 const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 /** Same peer and same raw message id on every account: isolation must namespace both. */
@@ -60,7 +60,7 @@ function interceptAccount(fixture: AccountFixture): void {
   nock(fixture.host).persist().post('/ilink/bot/sendtyping').reply(200, { ret: 0 });
   nock(fixture.host).persist().post('/ilink/bot/sendmessage', body =>
     body.msg.to_user_id === peer && body.msg.context_token === `ctx-${fixture.suffix}`
-      && body.msg.item_list[0].text_item.text === getWeChatWelcomeText())
+      && body.msg.item_list[0].text_item.text === buildWelcomeMessage('wechat'))
     .reply(() => { fixture.welcomes++; return [200, { ret: 0, message_id: `welcome-${fixture.suffix}` }]; });
   // Reply routing: persist so pre- and post-restart sends both match; the
   // per-account context_token filter makes any cross-account misroute fail loudly.

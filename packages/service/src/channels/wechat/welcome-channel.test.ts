@@ -2,11 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { IncomingMessage } from '@disclaude/core';
+import { buildWelcomeMessage, type IncomingMessage } from '@disclaude/core';
 import { WeChatChannel } from './wechat-channel.js';
 import { WeChatStateStore } from './state-store.js';
 import { WeChatApiClient } from './api-client.js';
-import { getWeChatWelcomeText, type WeChatWelcome } from './welcome.js';
+import { type WeChatWelcome } from './welcome.js';
 
 const listeners = vi.hoisted(() => [] as Array<{ processor: (message: IncomingMessage) => Promise<unknown>; onContext: (peer: string, token: string) => void }>);
 vi.mock('./identity.js', async original => ({ ...await original<typeof import('./identity.js')>(), lockWeChatIdentity: () => Promise.resolve(() => Promise.resolve()) }));
@@ -79,7 +79,7 @@ describe('actual WeChat welcome wiring (#5469)', () => {
       current.listener.onContext('peer@im.wechat', 'private-context');
       await current.listener.processor(message('first-valid')); await sending;
       expect(f.tasks).toHaveBeenCalledTimes(2);
-      expect(send).toHaveBeenCalledWith({ to: 'peer@im.wechat', content: getWeChatWelcomeText(), contextToken: 'private-context' });
+      expect(send).toHaveBeenCalledWith({ to: 'peer@im.wechat', content: buildWelcomeMessage('wechat'), contextToken: 'private-context' });
       expect((await f.store.loadWelcome('bot-fixture')).peers['peer@im.wechat'].phase).toBe('attempted');
       current.listener.onContext('peer@im.wechat', 'new-context'); await current.listener.processor(message('another'));
       finish('welcome-ack'); await welcomeOf(current.channel)!.idle(); await current.channel.stop();

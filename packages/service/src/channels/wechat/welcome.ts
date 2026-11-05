@@ -1,7 +1,7 @@
-import { buildWelcomeMessage } from '@disclaude/core';
-
-/** Build on first use so importing listener modules does not require the core help surface. */
-export function getWeChatWelcomeText(): string { return buildWelcomeMessage('wechat'); }
+// Keep this module free of runtime imports: the registration CLI evaluates it
+// (cli.ts -> registry -> state-store -> welcome), and importing @disclaude/core here
+// would run the eager config load whose info log pollutes the CLI's JSON stdout (#5704).
+// The welcome copy is built at send time by WeChatChannel via buildWelcomeMessage('wechat').
 interface WelcomeReceipt { phase: 'attempted' | 'accepted'; startedAt: string; acceptedAt?: string; messageId?: string }
 export interface WeChatWelcomeState { version: 1; botId: string; peers: Record<string, WelcomeReceipt> }
 export function emptyWelcomeState(botId: string): WeChatWelcomeState { return { version: 1, botId, peers: {} }; }

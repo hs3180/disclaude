@@ -8,7 +8,7 @@ import type { IncomingMessage } from '@disclaude/core';
 import { WeChatRegistry } from '../../packages/service/src/channels/wechat/registry.js';
 import { WeChatChannel } from '../../packages/service/src/channels/wechat/wechat-channel.js';
 import { WeChatStateStore } from '../../packages/service/src/channels/wechat/state-store.js';
-import { getWeChatWelcomeText } from '../../packages/service/src/channels/wechat/welcome.js';
+import { buildWelcomeMessage } from '@disclaude/core';
 import { wechatPeer, lockWeChatIdentity } from '../../packages/service/src/channels/wechat/identity.js';
 import { DisclaudeService } from '../../packages/service/src/service.js';
 import { createChannelApiHandlers } from '../../packages/service/src/utils/channel-handlers.js';
@@ -40,7 +40,7 @@ describe('registered WeChat account identity and routing', () => {
         nock(baseUrl).persist().post('/ilink/bot/getconfig').reply(200, { ret: 0, typing_ticket: 'ticket' });
         nock(baseUrl).persist().post('/ilink/bot/sendtyping').reply(200, { ret: 0 });
         welcomes.push(nock(baseUrl).post('/ilink/bot/sendmessage', body => body.msg.to_user_id === peer
-          && body.msg.context_token === `private-context-${suffix}` && body.msg.item_list[0].text_item.text === getWeChatWelcomeText())
+          && body.msg.context_token === `private-context-${suffix}` && body.msg.item_list[0].text_item.text === buildWelcomeMessage('wechat'))
           .reply(200, { ret: 0, message_id: `welcome-${suffix}` }));
         const channel = new WeChatChannel({ registrationId: account.id, stateDir: registry.stateDir(account) });
         channels.push(channel);
