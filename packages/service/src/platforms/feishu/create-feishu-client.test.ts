@@ -40,16 +40,20 @@ const mockAxiosInstance = {
   options: vi.fn(),
 };
 
+// Shared logger mock so failure-path tests can assert on the structured record
+const MOCK_LOGGER = vi.hoisted(() => ({
+  warn: vi.fn(),
+  error: vi.fn(),
+  info: vi.fn(),
+  debug: vi.fn(),
+}));
+
 // Mock @disclaude/core
 vi.mock('@disclaude/core', () => ({
   FEISHU_API: MOCK_FEISHU_API,
   RETRYABLE_ERROR_CODES: ['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN'],
-  createLogger: () => ({
-    warn: vi.fn(),
-    error: vi.fn(),
-    info: vi.fn(),
-    debug: vi.fn(),
-  }),
+  createLogger: () => MOCK_LOGGER,
+  sanitizeDiagnosticText: (text: string) => text,
 }));
 
 describe('createFeishuClient', () => {
@@ -311,6 +315,122 @@ describe('createFeishuClient', () => {
 
       // Verify it attempted multiple times (exponential backoff would cause delays)
       expect(mockAxiosInstance.get).toHaveBeenCalledTimes(1 + MOCK_FEISHU_API.RETRY.MAX_RETRIES);
+    });
+  });
+
+  describe('HTTP failure forensics (#5655)', () => {
+    const feishu500Error = () => ({
+      isAxiosError: true,
+      code: 'ERR_BAD_RESPONSE',
+      message: 'Request failed with status code 500',
+      config: {
+        method: 'post',
+        url: 'https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id',
+        data: { receive_id: 'oc_test', content: JSON.stringify({ text: `chat content ${'x'.repeat(3000)}` }) },
+      },
+      response: {
+        status: 500,
+        headers: {
+          'x-request-id': 'req-1682389753AbCdEf',
+          'content-type': 'application/json',
+          'set-cookie': 'secret-cookie-value',
+        },
+        data: { code: 99991663, msg: 'Internal app server error' },
+      },
+    });
+
+    it('logs one structured record (method/URL/status/headers subset/bodies) for an unretried message POST 5xx', async () => {
+      const error = feishu500Error();
+      mockAxiosInstance.post.mockReset().mockRejectedValueOnce(error).mockResolvedValue({ data: 'duplicate' });
+
+      const client = createFeishuClient('test-app-id', 'test-app-secret');
+      const http = (client as unknown as { httpInstance: { post: (url: string, data: unknown) => Promise<unknown> } }).httpInstance;
+
+      await expect(http.post('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id', error.config.data))
+        .rejects.toBe(error);
+
+      // #507 semantics preserved: message POST 5xx is never replayed
+      expect(mockAxiosInstance.post).toHaveBeenCalledOnce();
+
+      expect(MOCK_LOGGER.error).toHaveBeenCalledTimes(1);
+      expect(MOCK_LOGGER.error.mock.calls[0]).toMatchObject([
+        expect.objectContaining({
+          method: 'POST',
+          url: error.config.url,
+          status: 500,
+          // Allowlisted response headers only, never cookies
+          responseHeaders: { 'x-request-id': 'req-1682389753AbCdEf' },
+          // Feishu error structure survives into the body log
+          responseBody: expect.stringContaining('99991663'),
+        }),
+        'Feishu channel HTTP request failed (no retry)',
+      ]);
+      expect(MOCK_LOGGER.error.mock.calls[0][0].context).toContain('/im/v1/messages');
+      expect(String(MOCK_LOGGER.error.mock.calls[0][0].responseBody)).toContain('Internal app server error');
+      // Request body is truncated well before the 3000-char chat content ends
+      const loggedRequestBody = String(MOCK_LOGGER.error.mock.calls[0][0].requestBody);
+      expect(loggedRequestBody.length).toBeLessThanOrEqual(600);
+      expect(loggedRequestBody).toContain('[truncated');
+    });
+
+    it('appends the Feishu business code/msg to the thrown error message for ❌ notifications and scheduler pass-through', async () => {
+      const error = feishu500Error();
+      mockAxiosInstance.post.mockReset().mockRejectedValueOnce(error);
+
+      const client = createFeishuClient('test-app-id', 'test-app-secret');
+      const http = (client as unknown as { httpInstance: { post: (url: string, data: unknown) => Promise<unknown> } }).httpInstance;
+
+      await expect(http.post('https://open.feishu.cn/open-apis/im/v1/messages', {})).rejects.toThrow(
+        /feishu code 99991663: Internal app server error/
+      );
+    });
+
+    it('keeps the full forensic record on the all-retries-exhausted path (GET 5xx)', async () => {
+      const error = { ...feishu500Error(), config: { method: 'get', url: 'https://open.feishu.cn/open-apis/im/v1/chats', data: undefined } };
+      mockAxiosInstance.get.mockReset().mockRejectedValue(error);
+
+      const client = createFeishuClient('test-app-id', 'test-app-secret');
+      const http = (client as unknown as { httpInstance: { get: (url: string) => Promise<unknown> } }).httpInstance;
+
+      vi.useFakeTimers();
+      const resultPromise = http.get('https://open.feishu.cn/open-apis/im/v1/chats').catch(e => e);
+      await vi.runAllTimersAsync();
+      const thrown = await resultPromise;
+      vi.useRealTimers();
+
+      expect(mockAxiosInstance.get).toHaveBeenCalledTimes(1 + MOCK_FEISHU_API.RETRY.MAX_RETRIES);
+      expect(MOCK_LOGGER.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          context: expect.stringContaining('get'),
+          status: 500,
+          method: 'GET',
+          responseHeaders: { 'x-request-id': 'req-1682389753AbCdEf' },
+        }),
+        'All retry attempts exhausted'
+      );
+      expect((thrown as Error).message).toContain('feishu code 99991663');
+    });
+
+    it('does not annotate or mislabel non-Feishu-body errors', async () => {
+      const error = {
+        isAxiosError: true,
+        code: 'ETIMEDOUT',
+        message: 'timeout of 30000ms exceeded',
+        config: { method: 'get', url: 'https://open.feishu.cn/open-apis/im/v1/chats' },
+        response: undefined,
+      };
+      mockAxiosInstance.get.mockReset().mockRejectedValueOnce(error).mockResolvedValueOnce({ data: 'ok' });
+
+      const client = createFeishuClient('test-app-id', 'test-app-secret');
+      const http = (client as unknown as { httpInstance: { get: (url: string) => Promise<unknown> } }).httpInstance;
+
+      vi.useFakeTimers();
+      const resultPromise = http.get('https://open.feishu.cn/open-apis/im/v1/chats');
+      await vi.runAllTimersAsync();
+      await resultPromise;
+      vi.useRealTimers();
+
+      expect(error.message).toBe('timeout of 30000ms exceeded');
     });
   });
 });
