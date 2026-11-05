@@ -30,6 +30,17 @@ export interface CodexAgentGovernanceConfig {
   maxActiveSessions?: number;
   /** Max simultaneously-executing codex exec children. Default 2. */
   maxConcurrentRuns?: number;
+  /**
+   * Weekly-quota admission (#5607): `'observe'` (default) records and
+   * reports the upstream rate-limit readings without gating; `'enforce'`
+   * blocks NEW sessions while the quota usage progress exceeds the
+   * weekly-window time progress (reset-time progress). Running turns,
+   * resumed conversations and capacity-recovery retries are never gated;
+   * a REAL usage-limit failure gates in both modes.
+   */
+  weeklyQuotaAdmission?: 'observe' | 'enforce';
+  /** Conservative cooldown (ms) for a real limit hit without a parsable reset hint. Default 3600000. */
+  weeklyLimitCooldownMs?: number;
 }
 
 /** Codex CLI reasoning levels currently exposed by the model catalog. */

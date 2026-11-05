@@ -43,8 +43,15 @@ pnpm run format:check     # prettier --check (format auto-fixes)
 
 # macOS launchd service (scripts/launchd.mjs)
 pnpm run launchd:start|stop|restart|logs|status|install|uninstall|generate
-pnpm run launchd:chromium:start|stop|restart|logs|status   # Chromium CDP sidecar
+pnpm run launchd:chromium:start|stop|restart|logs|status|install|uninstall   # Chromium CDP sidecar
 #   launchd:restart = build + reload plist. launchd:logs tails combined/stdout/stderr (--lines=N).
+#   T-038 (#5619): install/start are idempotent — an already-loaded service with the same
+#   plist is a no-op success, a changed one is reloaded explicitly; stop/uninstall on a
+#   not-loaded service stay no-ops; concurrent commands queue on a bounded activation lock
+#   (DISCLAUDE_LAUNCHD_LOCK_TIMEOUT_MS). Both plists are written temp+lint(plutil)+rename.
+#   Service uninstall removes owned logs only (operator config/workspace stay); chromium
+#   uninstall removes plist/saved-selection/logs and RETAINS the profile (user data) unless
+#   `node scripts/launchd.mjs chromium-cdp uninstall --purge-profile` is passed.
 
 # Docker (production, recommended) — builds inside the container, no local build needed
 docker compose up -d --build    # build + start (Dockerfile.service; Debian node:22-trixie-slim)

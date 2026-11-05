@@ -20,6 +20,7 @@ import {
   isCodexAuthFailure,
   isCodexResumeTargetMissing,
   isCodexUsageLimit,
+  isCodexWriterConflict,
   userInputText,
 } from './exec-adapter.js';
 
@@ -337,6 +338,47 @@ describe('isCodexResumeTargetMissing (Issue #4628)', () => {
   it('does not match unrelated failures', () => {
     expect(isCodexResumeTargetMissing('HTTP error: 401 Unauthorized')).toBe(false);
     expect(isCodexResumeTargetMissing('')).toBe(false);
+  });
+});
+
+describe('isCodexWriterConflict (Issue #5429)', () => {
+  // Both message families exist in the codex-cli 0.151.0 binary
+  // (thread-store/src/local/writer_lock.rs and live_writer.rs); the issue's
+  // diagnostic quoted the "active writer" form.
+  it('matches the writer_lock.rs family ("active writer")', () => {
+    expect(isCodexWriterConflict(
+      'Error: failed to acquire thread writer lock: thread 00000000-0000-0000-0000-000000000001 already has an active writer',
+    )).toBe(true);
+  });
+
+  it('matches the live_writer.rs family ("live local writer")', () => {
+    expect(isCodexWriterConflict(
+      'thread/resume failed: thread abc-123 already has a live local writer',
+    )).toBe(true);
+  });
+
+  it('matches the lock-path family only with contention wording beside it', () => {
+    expect(isCodexWriterConflict(
+      'failed to lock file /root/.codex/thread-writer-locks/t-1/.coordination.lock: resource temporarily unavailable',
+    )).toBe(true);
+    expect(isCodexWriterConflict('failed to lock .coordination.lock: would block')).toBe(true);
+    // A bare path mention (e.g. a debug/telemetry line) is not a conflict.
+    expect(isCodexWriterConflict('using lock dir /root/.codex/thread-writer-locks/t-1')).toBe(false);
+  });
+
+  it('does not match unrelated failures or other lock wording', () => {
+    expect(isCodexWriterConflict('no rollout found for thread id t-abc')).toBe(false);
+    expect(isCodexWriterConflict('Error: database is locked')).toBe(false);
+    expect(isCodexWriterConflict('already has an active turn t-1')).toBe(false);
+    expect(isCodexWriterConflict('')).toBe(false);
+  });
+
+  it('matches through the app-server RPC error wrapper', () => {
+    // CodexAppServerRpcError renders `Codex app-server error <code>: <text>`;
+    // the classifier sees the wrapped form, not the bare message.
+    expect(isCodexWriterConflict(
+      'Codex app-server error -32000: failed to acquire thread writer lock: thread t-9 already has an active writer',
+    )).toBe(true);
   });
 });
 

@@ -47,7 +47,7 @@ Exactly one mode is required: `command` XOR a non-empty Markdown body. Never con
 ```markdown
 ---
 name: Refresh cache
-cron: "*/15 * * * *"
+cron: "7-59/15 * * * *"
 enabled: true
 chatId: oc_xxx
 command: "node /absolute/workspace/scripts/refresh-cache.mjs"
@@ -62,7 +62,7 @@ The command receives `DISCLAUDE_SCHEDULE_ID`, `DISCLAUDE_SCHEDULE_NAME`, and `DI
 ```markdown
 ---
 name: Daily metrics review
-cron: "0 9 * * 1-5"
+cron: "7 9 * * 1-5"
 enabled: true
 chatId: oc_xxx
 freshSession: true
@@ -121,7 +121,7 @@ echo "${DISCLAUDE_WORKSPACE_DIR:-$(pwd)}/schedules"
 1. Collect schedule info:
    - Name (short description)
    - Slug (filesystem-safe directory name, lowercase with hyphens)
-   - Cron expression (cron format or natural language)
+   - Cron expression (cron format or natural language; if the user did not specify an exact minute, avoid minute 0 and stagger from other schedules in the same chat — see "Choosing the minute")
    - Execution mode (`command` or agent prompt; see the mode table above)
    - The command string or the complete prompt body, never both
 
@@ -139,7 +139,7 @@ echo "${DISCLAUDE_WORKSPACE_DIR:-$(pwd)}/schedules"
 ```markdown
 ---
 name: Schedule Name
-cron: "0 9 * * *"
+cron: "23 9 * * *"
 enabled: true
 chatId: oc_xxx
 createdAt: 2024-01-01T00:00:00.000Z
@@ -247,6 +247,10 @@ enabled: false
 5. Verify exactly one mode remains: `command` field XOR non-empty prompt body
 6. **SEND FEEDBACK** showing before/after
 
+**Time changes**: only change `cron` when the user asks for a different time
+(Issue #5606). Never re-time an existing schedule away from minute 0 on your
+own initiative — existing schedules are not migrated.
+
 ---
 
 ### 4. List Schedules
@@ -264,8 +268,8 @@ Schedules:
 
 | Name | Cron | Status |
 |------|------|--------|
-| Daily Report | Daily 9:00 | Enabled |
-| Weekly Summary | Fri 14:00 | Disabled |
+| Daily Report | Daily 09:07 | Enabled |
+| Weekly Summary | Fri 14:30 | Disabled |
 ```
 
 **No Schedules:**
@@ -283,12 +287,31 @@ minute hour day month weekday
 ```
 
 **Examples:**
-- `"0 9 * * *"` - Daily at 9:00
+- `"7 9 * * *"` - Daily at 09:07
 - `"30 14 * * 5"` - Friday 14:30
-- `"0 10 1 * *"` - 1st of month 10:00
-- `"*/15 * * * *"` - Every 15 minutes
-- `"0 * * * *"` - Hourly
-- `"0 0 * * *"` - Daily at midnight
+- `"12 10 1 * *"` - 1st of month 10:12
+- `"*/15 * * * *"` - Every 15 minutes (includes minute 0)
+- `"7-59/15 * * * *"` - Every 15 minutes at :07/:22/:37/:52 (skips minute 0)
+- `"23 * * * *"` - Hourly at minute 23
+- `"11 0 * * *"` - Daily at 00:11
+
+### Choosing the minute (Issue #5606)
+
+Unless the user explicitly specified the minute, **avoid minute 0** (on-the-hour).
+On-the-hour schedules in the same chat all fire in the same tick window (chat
+execution is serial per chat), and they synchronize bursts into external APIs
+and their rate limits. When the user has not pinned a minute:
+
+- Pick a non-zero minute (e.g. daily 09:07 via `7 9 * * *` instead of 09:00).
+- Stagger multiple tasks in the same chat onto different minutes (e.g. one at
+  `:07`, another at `:23`) so their ticks do not queue behind each other.
+- `*/N` intervals include minute 0; to offset them use a stepped range such as
+  `7-59/15 * * * *` (fires :07, :22, :37, :52). The scheduler's cron parser
+  (`cron@3.5.0`) accepts `N-M/step` in any field.
+
+Always keep the exact minute when the user explicitly specified one ("9:00
+sharp" means minute 0 is correct). Existing schedules are never migrated: when
+editing a schedule, change its time only if the user asks for a time change.
 
 ---
 
@@ -315,7 +338,7 @@ Use `command` in frontmatter when a task should run a shell command directly, wi
 ```markdown
 ---
 name: Refresh cache
-cron: "*/5 * * * *"
+cron: "4-59/5 * * * *"
 enabled: true
 chatId: oc_xxx
 command: "node scripts/refresh-cache.js"
@@ -451,7 +474,7 @@ Create `$DISCLAUDE_WORKSPACE_DIR/schedules/daily-soul-question/SCHEDULE.md`:
 ```markdown
 ---
 name: 每日灵魂拷问
-cron: "0 21 * * *"
+cron: "19 21 * * *"
 enabled: true
 # Replace with your topic group's chatId
 chatId: oc_your_topic_group_chat_id

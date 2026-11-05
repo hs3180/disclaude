@@ -75,6 +75,7 @@ import {
 } from './codex-runner.js';
 import { resolveCodexSandboxPolicy, type CodexSandboxLevel } from './sandbox-policy.js';
 import { CodexSessionGovernor, type SessionRegistration } from './session-governor.js';
+import { CodexWeeklyQuotaLedger, type CodexWeeklyQuotaConfig } from './weekly-quota.js';
 import { reserveLlmSession } from '../../llm-session-limit.js';
 import { CodexAppServerLifecycle, CodexNoActiveTurnError } from './app-server-lifecycle.js';
 import { LiveInputRejectedError } from '../../live-input.js';
@@ -93,12 +94,14 @@ import {
   isCodexAuthFailure,
   isCodexResumeTargetMissing,
   isCodexUsageLimit,
+  isCodexWriterConflict,
   userInputText,
   type CodexThreadEvent,
 } from './exec-adapter.js';
 import { codexNativeSkillRoots } from './skill-sources.js';
 import { CODEX_OVERLOAD_MAX_RETRIES, CODEX_OVERLOAD_MAX_WAIT_MS, codexOverloadRetryDelay, readCodexOverloadFailure,
   waitForCodexOverloadRetry, codexCapacityRecoveryDelay, readCodexCapacityRecoveryPolicy,
+  codexWriterConflictRetryDelay, readCodexWriterConflictPolicy,
   isCodexCapacityFailure, alignCodexCapacityWait, recordCodexCapacityCooldown,
   type CodexOverloadFailure } from './overload-policy.js';
 
@@ -191,6 +194,16 @@ const RESUME_TARGET_GONE_NOTICE =
   '⚠️ Codex 会话记录已不存在（可能被清理），已自动切换新会话——请重发你的问题，将从全新上下文开始（无此前对话内容）。';
 
 /**
+ * Occupied-state notice (#5429): another live writer holds this thread's
+ * writer lock. The bridge NEVER deletes the lock or signals the holder
+ * (teardown touches only processes it spawned itself); it can only hold the
+ * request, wait, and — once the bounded wait is spent — hand the original
+ * error back so the human decides (close the other window, or resend later).
+ */
+const WRITER_CONFLICT_NOTICE =
+  '🔒 Codex 会话正被另一个写入方占用（线程写入锁被其他窗口/进程持有，已自动等待仍未释放）。本次请求未被执行、对话上下文未受影响——请稍后重发，或先结束占用该会话的窗口。原始错误：';
+
+/**
  * Friendly usage-limit degrade (#4632, S5): the ChatGPT plan's rolling
  * window (5h + weekly) is spent. Recovers WITHOUT a restart — the failed
  * turn latches nothing, the conversation anchor survives, and the next
@@ -272,6 +285,13 @@ export interface CodexAgentProviderOptions {
    */
   maxActiveSessions?: number;
   maxConcurrentRuns?: number;
+  /**
+   * Weekly-quota ledger (#5607): estimated budget + tiered fresh-session
+   * admission + real-limit calibration. Unset budget = observe-only.
+   */
+  weeklyQuota?: CodexWeeklyQuotaConfig;
+  /** Injectable clock for the weekly-quota ledger (tests). Default Date.now. */
+  quotaClock?: () => number;
   /** Override builtin resource root for tests/embedded deployments. */
   builtinsDir?: string;
 }
@@ -315,6 +335,12 @@ export class CodexAgentProvider implements IAgentSDKProvider {
    */
   private readonly governor: CodexSessionGovernor;
   private readonly llmGovernors = new Map<string, CodexSessionGovernor>();
+  /**
+   * Weekly-quota ledger + tiered fresh-session admission (#5607). Instance
+   * state on the process-cached provider, mirroring quota/governor — every
+   * chatId shares the same subscription windows.
+   */
+  private readonly weeklyQuota: CodexWeeklyQuotaLedger;
 
   private sessionGovernor(options: AgentQueryOptions): CodexSessionGovernor {
     const limit = options.llmSessionLimit;
@@ -359,6 +385,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       maxActiveSessions: options.maxActiveSessions,
       maxConcurrentRuns: options.maxConcurrentRuns,
     });
+    this.weeklyQuota = new CodexWeeklyQuotaLedger(options.weeklyQuota, options.quotaClock);
   }
 
   configureChat(hooks: ChatAgentHooks): ChatAgentHooks {
@@ -434,6 +461,17 @@ export class CodexAgentProvider implements IAgentSDKProvider {
   /** Runtime cap change (admin/test surface, Issue #4634). */
   setGovernanceLimits(limits: { maxActiveSessions?: number; maxConcurrentRuns?: number }): void {
     this.governor.setLimits(limits);
+  }
+
+  /**
+   * /status lines for the weekly-quota ledger (#5607 rework) — upstream
+   * rate-limit window readings (used_percent vs window time progress),
+   * admission mode/verdict, and any latched real-limit calibration.
+   * Readings are upstream facts; only their freshness is process-local.
+   * Optional interface capability; other providers do not implement it.
+   */
+  getStatusExtra(): string[] {
+    return this.weeklyQuota.formatStatusLines();
   }
 
   /**
@@ -598,6 +636,9 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     };
     // Same capture for the S7 governor + stash (this: void closures below).
     const governorSink = this.governor;
+    // Same capture for the #5607 weekly-quota ledger (admission/calibration
+    // bridges below are `this: void` too).
+    const weeklyQuotaSink = this.weeklyQuota;
     const sessionGovernor = this.sessionGovernor(options);
     const stashSink = this.threadStash;
 
@@ -698,6 +739,11 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       // receive one terminal failure with the original input correlation.
       // Env knob DISCLAUDE_STALL_TIMEOUT_MS matches the Claude/pi bridges.
       const { timeoutMs: STALL_TIMEOUT_MS, graceMs: STALL_FORCE_CLOSE_GRACE_MS } = readStallPolicy({
+        ...process.env, ...providerEnv, ...options.env,
+      });
+      // #5429: writer-lock conflict waits honor the same env merge as the
+      // stall policy (tests tune it; ops can bound it per deployment).
+      const writerConflictPolicy = readCodexWriterConflictPolicy({
         ...process.env, ...providerEnv, ...options.env,
       });
       let stalled = false;
@@ -834,6 +880,12 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           if (t === 'command_execution' || t === 'mcp_tool_call') {
             openToolItems = Math.max(0, openToolItems - 1);
           }
+        } else if (event.type === 'token_count') {
+          // #5607 rework: the exec transport surfaces the plan's real
+          // rate-limit windows (used_percent/window_minutes/resets_at) on
+          // token_count events — the queryable quota ratio this ledger is
+          // built on. Whole-event feed: the extractor tolerates nesting.
+          weeklyQuotaSink.recordRateLimits(event, 'exec token_count');
         } else if (event.type === 'turn.completed' || event.type === 'turn.failed') {
           sawTurnTerminator = true;
           if (event.type === 'turn.completed') {
@@ -963,6 +1015,25 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             'starting fresh codex session after resume input budget was reached'
           );
         }
+        // #5607: weekly-quota admission sits at the fresh-session boundary
+        // ONLY — a new codex conversation (new chat, /reset, budget-triggered
+        // fresh) is the one place the plan's rolling windows can be protected
+        // without touching work: resumed turns and running runs always pass.
+        // Rework 1: the decision compares the upstream-observed quota usage
+        // progress against the weekly window's time progress (reset-time
+        // progress); observe mode records without blocking.
+        if (resumeTarget === undefined) {
+          const admission = weeklyQuotaSink.checkFreshSession();
+          if (admission.decision === 'block') {
+            logger.warn(
+              { sessionKey, ...correlation, reason: admission.reason },
+              'codex fresh session blocked (weekly-quota admission, #5607)'
+            );
+            pushSynthetic({ type: 'error', role: 'assistant', content: `⛔️ ${admission.reason}` });
+            pushSynthetic({ type: 'result', content: '', role: 'assistant' });
+            return;
+          }
+        }
         let retryWaitedMs = 0;
         for (let retryAttempt = 0; ; retryAttempt++) {
           deliveredEventKeys.clear();
@@ -1063,6 +1134,18 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               resumeTarget !== undefined &&
               (isCodexResumeTargetMissing(runFailureText) ||
                 isCodexResumeTargetMissing(result.stderrTail));
+            // #5429: writer-lock conflict — only when RESUMING a known thread
+            // (a fresh thread cannot contend for a writer lock), the run
+            // actually failed, and it failed its own way (a runner timeout or
+            // spawn error is an uncertain outcome, never a clean rejection).
+            // runCanRetry in the arm below additionally proves no productive
+            // item was delivered, so the prompt was rejected before any work
+            // and replaying it is exact, not a blind resend.
+            const writerConflictText =
+              runFailed && resumeTarget !== undefined && !result.timedOut && !result.spawnError
+                ? (isCodexWriterConflict(runFailureText) ? runFailureText
+                  : isCodexWriterConflict(result.stderrTail) ? result.stderrTail : undefined)
+                : undefined;
             if (sawTurnFailed && failedOverload && runCanRetry && !result.timedOut && !result.spawnError) {
               let delayMs = codexOverloadRetryDelay(failedOverload, retryAttempt, retryWaitedMs);
               // #5494 review: capacity-class waits join the process-wide cooldown
@@ -1078,6 +1161,24 @@ export class CodexAgentProvider implements IAgentSDKProvider {
                 // #5408: distinguish a transient rate limit from a capacity overload in the user-visible wait notice.
                 const throttled = /\b429\b|too many requests|rate.?limit reached/i.test(failedOverload.message);
                 pushSynthetic({ type: 'status', role: 'system', content: `⏳ Codex ${throttled ? '触发临时限流（429）' : '服务暂时过载'}，将在 ${(delayMs / 1000).toFixed(1)} 秒后重试（${retryAttempt + 1}/${CODEX_OVERLOAD_MAX_RETRIES}）。` });
+                if (!await waitForCodexOverloadRetry(delayMs, retryAbort.signal)) { return; }
+                retryWaitedMs += delayMs;
+                continue;
+              }
+            }
+            // #5429: occupied-session arm — the thread's writer lock is held
+            // by another live writer. Never delete the lock, never signal the
+            // holder (it is not our process); hold the ORIGINAL request and
+            // retry the same submission after a bounded, abortable wait. A
+            // user /stop aborts retryAbort, ends this turn without a late
+            // replay, and the loop-top stalled/aborted guard keeps the
+            // post-wait re-entry from spawning a zombie run.
+            if (writerConflictText !== undefined && runCanRetry) {
+              const delayMs = codexWriterConflictRetryDelay(retryAttempt, retryWaitedMs, writerConflictPolicy);
+              if (delayMs !== undefined) {
+                clearStallTimers();
+                logger.warn({ sessionKey, threadId: resumeTarget, retryAttempt: retryAttempt + 1, delayMs, cause: writerConflictText.trim().slice(-300) }, 'Codex thread writer lock held by another writer; holding the request and waiting to retry (#5429)');
+                pushSynthetic({ type: 'status', role: 'system', content: `⏳ Codex 会话正被另一个写入方占用（线程写入锁未释放），原请求已保留，将在 ${(delayMs / 1000).toFixed(1)} 秒后自动重试（${retryAttempt + 1}/${writerConflictPolicy.maxRetries}）。` });
                 if (!await waitForCodexOverloadRetry(delayMs, retryAbort.signal)) { return; }
                 retryWaitedMs += delayMs;
                 continue;
@@ -1103,6 +1204,10 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               const resetHint =
                 /try again (?:at|in) [^.\n]+/i.exec(runFailureText)?.[0] ??
                 /try again (?:at|in) [^.\n]+/i.exec(result.stderrTail)?.[0];
+              // #5607: calibrate the weekly-quota ledger from the REAL limit
+              // hit — parse the reset hint into a deadline that gates new
+              // sessions until the window resets (estimate-independent).
+              weeklyQuotaSink.recordLimitHit(`${runFailureText}\n${result.stderrTail}`);
               pushSynthetic({
                 type: 'error',
                 content: resetHint
@@ -1136,6 +1241,17 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               pushSynthetic({
                 type: 'error',
                 content: RESUME_TARGET_GONE_NOTICE,
+                role: 'assistant',
+              });
+            } else if (writerConflictText !== undefined) {
+              // #5429: the bounded wait is spent and the holder still owns the
+              // lock. Surface the occupied state WITH codex's own wording —
+              // never delete the lock, never touch the holder.
+              pushSynthetic({
+                type: 'error',
+                content: `${WRITER_CONFLICT_NOTICE}${
+                  (isCodexWriterConflict(runFailureText) ? runFailureText : writerConflictText).trim().slice(-500)
+                }`,
                 role: 'assistant',
               });
             } else if (result.exitCode !== 0) {
@@ -1384,6 +1500,8 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     let probingLifecycle: CodexAppServerLifecycle | undefined;
     const { timeoutMs: stallTimeoutMs } = readStallPolicy({ ...process.env, ...this.env, ...options.env });
     const capacityRecoveryPolicy = readCodexCapacityRecoveryPolicy({ ...process.env, ...this.env, ...options.env });
+    // #5429: same env merge for the writer-lock conflict waits.
+    const writerConflictPolicy = readCodexWriterConflictPolicy({ ...process.env, ...this.env, ...options.env });
     let noteCapacityProgress = (): void => {};
     let turnCanRetry = true;
     // #5452: bounded probe of the latest tool item this turn (kind/status/input
@@ -1392,6 +1510,10 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     let outputLimitLastTool: NonNullable<AgentMessageMetadata['outputLimit']>['lastTool'];
     let deferredTurnOverload: CodexOverloadFailure | undefined;
     let deferredFailedTurnId: string | undefined;
+    // #5429: a deterministic RPC rejection carrying the writer-lock conflict
+    // family, caught in the attempt loop and decided by the wait gate below —
+    // the ORIGINAL request is held, never silently dropped or blind-replayed.
+    let writerConflictError: CodexAppServerRpcError | undefined;
     let interruptFlight: Promise<void> | undefined;
     // #5505: RPC lifecycle stage of the current turn attempt, plus the
     // lifecycle's own commit-state verdict read while the attempt unwinds —
@@ -1589,6 +1711,32 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           asyncInputs.releaseDelivery(threadId as string, finishingTurn);
           if (stopped || activeTurnId !== finishingTurn) { return; }
           const status = event.turn?.status;
+          // #5607/#4632 parity: app-server previously never accumulated
+          // usage — only the exec transport fed the quota counters. A
+          // completed turn's usage payload (bounded read, finite fields
+          // only) lands in the process-wide counters, with the same one
+          // structured line per turn as exec.
+          if (status === 'completed' && event.turn?.usage) {
+            const usage = readCodexOutputLimitUsage(event.turn.usage);
+            if (usage) {
+              this.quota.turnsCompleted += 1;
+              this.quota.inputTokens += usage.inputTokens ?? 0;
+              this.quota.cachedInputTokens += usage.cachedInputTokens ?? 0;
+              this.quota.outputTokens += usage.outputTokens ?? 0;
+              this.quota.reasoningOutputTokens += usage.reasoningOutputTokens ?? 0;
+              logger.info(
+                {
+                  threadId,
+                  inputTokens: usage.inputTokens,
+                  cachedInputTokens: usage.cachedInputTokens,
+                  outputTokens: usage.outputTokens,
+                  reasoningOutputTokens: usage.reasoningOutputTokens,
+                  cumulative: { ...this.quota },
+                },
+                'codex quota usage (turn/completed)'
+              );
+            }
+          }
           // #5526: a locally failed question-card delivery must NOT rewrite a
           // natively completed turn into a provider failure. The turn's work
           // (and any already-delivered artifacts) stands; only the interaction
@@ -1634,6 +1782,23 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             });
           }
           else {
+            // #5607/#4632 parity: app-server had NO usage-limit branch — a
+            // spent plan window surfaced as a generic ❌ turn failure and
+            // calibrated nothing. Detect the native signature
+            // (codexErrorInfo 'usageLimitExceeded') or the text signature,
+            // calibrate the weekly-quota ledger (real evidence), and degrade
+            // with the friendly window-reset notice like exec does.
+            const failureText = event.turn?.error?.message ?? '';
+            const nativeCode = (event.turn?.error as { codexErrorInfo?: unknown } | undefined)?.codexErrorInfo;
+            if (failed && (nativeCode === 'usageLimitExceeded' || isCodexUsageLimit(failureText))) {
+              this.weeklyQuota.recordLimitHit(failureText);
+              const resetHint = /try again (?:at|in) [^.\n]+/i.exec(failureText)?.[0];
+              push({
+                type: 'error',
+                role: 'assistant',
+                content: resetHint ? `${USAGE_LIMIT_NOTICE}\n上游提示: ${resetHint}` : USAGE_LIMIT_NOTICE,
+              });
+            }
             push({
               type: 'result',
               content: failed ? `❌ Codex turn failed: ${detail}` : interrupted ? '⏹️ Codex turn interrupted' : '✅ Complete',
@@ -1723,9 +1888,29 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           };
           let capacityRecoveryNext = false;
           for (let retryAttempt = 0; ; retryAttempt++) {
+            // #5607: weekly-quota admission at the fresh-thread boundary
+            // only. threadId is undefined exactly before this stream's first
+            // ensureThread (or after a pre-thread failure); capacity-recovery
+            // retries resume the SAME thread and are never gated, and a
+            // running turn is untouchable by design. Rework 1: the decision
+            // compares upstream-observed quota usage progress against the
+            // weekly window's time progress; observe mode never blocks.
+            if (!threadId) {
+              const admission = this.weeklyQuota.checkFreshSession();
+              if (admission.decision === 'block') {
+                logger.warn(
+                  { sessionKey, ...next.value.correlation, reason: admission.reason },
+                  'codex fresh session blocked (weekly-quota admission, #5607)'
+                );
+                push({ type: 'error', role: 'assistant', content: `⛔️ ${admission.reason}` });
+                push({ type: 'result', role: 'assistant', content: '' });
+                break;
+              }
+            }
             turnCanRetry = true;
             deferredTurnOverload = undefined;
             deferredFailedTurnId = undefined;
+            writerConflictError = undefined;
             outputLimitLastTool = undefined;
             capacityAcceptedAt = undefined;
             rpcStage = undefined;
@@ -1857,7 +2042,6 @@ export class CodexAgentProvider implements IAgentSDKProvider {
                 ? CODEX_CAPACITY_RECOVERY_INSTRUCTION
                 : next.value.continuationContext && (!requestedThreadId || requestedThreadId !== threadId)
                   ? `${next.value.continuationContext}\n${currentInput}` : currentInput;
-              capacityRecoveryNext = false;
               rpcStage = 'turn-start';
               activeTurnId = await lifecycle.startTurn(
                 sessionKey,
@@ -1881,6 +2065,11 @@ export class CodexAgentProvider implements IAgentSDKProvider {
                 }
               );
               bindTurn(activeTurnId);
+              // #5429: consume the recovery flag only once the turn was
+              // ACCEPTED. A writer-conflict rejection below must re-send the
+              // recovery instruction on retry, not replay the original input
+              // (its requirements already live in the thread).
+              capacityRecoveryNext = false;
               rpcStage = 'turn-active';
               if (capacityRecoveryAttempt > 0) { capacityAcceptedAt = Date.now(); }
               logger.debug({ sessionKey, threadId, turnId: activeTurnId }, 'Codex turn started');
@@ -1903,6 +2092,20 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               for (const event of earlyEvents.splice(0)) {onNotification(event.method, event.params);}
               await completed;
               sessionGovernor.touchSession(sessionKey);
+            } catch (error) {
+              // #5429: a deterministic RPC error RESPONSE — the app-server
+              // received the call and explicitly rejected it, as opposed to
+              // #5505's timeout/process uncertainty — carrying the writer-lock
+              // conflict family is a wait-able occupied state: nothing was
+              // submitted, so holding the original request and retrying after
+              // a bounded wait does NOT violate the uncertain-submission
+              // no-replay contract. Everything else keeps today's escape to
+              // the stream-level failure handler.
+              if (error instanceof CodexAppServerRpcError && isCodexWriterConflict(error.message)) {
+                writerConflictError = error;
+              } else {
+                throw error;
+              }
             } finally {
               bindTurn(undefined);
               // #5505: read the lifecycle's own verdict while it still owns the
@@ -1925,6 +2128,27 @@ export class CodexAgentProvider implements IAgentSDKProvider {
                 llmReservation?.release();
                 llmReservation = undefined;
               }
+            }
+            // #5429: occupied-session gate — the writer lock is held by
+            // another live writer. Never delete the lock, never signal the
+            // holder; hold the ORIGINAL request, warn visibly, and replay the
+            // same submission after a bounded, abortable wait (the rejection
+            // proved nothing was submitted, so replay is exact). /stop aborts
+            // the wait and ends the stream — the held request never executes
+            // late. Budget spent → the ORIGINAL error surfaces below via the
+            // stream-level handler instead of a blind replay.
+            if (writerConflictError !== undefined) {
+              const conflict = writerConflictError;
+              writerConflictError = undefined;
+              const delayMs = codexWriterConflictRetryDelay(retryAttempt, retryWaitedMs, writerConflictPolicy);
+              if (delayMs === undefined || !turnCanRetry) {
+                throw conflict;
+              }
+              logger.warn({ sessionKey, threadId, stage: rpcStage, code: conflict.code, retryAttempt: retryAttempt + 1, delayMs, cause: conflict.message }, 'Codex thread writer lock held by another writer; holding the request and waiting to retry (#5429)');
+              push({ type: 'status', role: 'system', content: `⏳ Codex 会话正被另一个写入方占用（线程写入锁未释放），原请求已保留，将在 ${(delayMs / 1000).toFixed(1)} 秒后自动重试（${retryAttempt + 1}/${writerConflictPolicy.maxRetries}）。` });
+              if (!await waitForCodexOverloadRetry(delayMs, admissionAbort.signal)) { break; }
+              retryWaitedMs += delayMs;
+              continue;
             }
             if (stopped || !deferredTurnOverload) { break; }
             const failure = deferredTurnOverload as CodexOverloadFailure;
@@ -1993,6 +2217,10 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             sessionKey,
             stage: rpcStage,
             errorKind: failure.name,
+            // #5429 (E6 gap): the root-cause text also belongs in the
+            // provider-level warn, not only the ChatAgent settlement —
+            // e.g. the writer-lock rejection wording stays searchable here.
+            message: failure.message,
             ...(rpcTimeout ? { method: rpcTimeout.method, timeoutMs: rpcTimeout.timeoutMs } : {}),
             uncertainSubmission: turnCloseUncertain,
             ...(failure.cause !== undefined ? { cause: failure.cause instanceof Error ? failure.cause.message : String(failure.cause) } : {}),
@@ -2098,6 +2326,14 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       onAsyncAnswer,
       env: environment ?? this.env,
       onNotification: (method, params) => {
+        // #5607 rework: the app-server surfaces the plan's real rate-limit
+        // windows through account/thread-level notifications that carry no
+        // turnId — the per-session router below would drop them. Feed the
+        // weekly-quota ledger first (defensive extraction; anything without
+        // window fields is a no-op), then route as before.
+        if (method === 'account/rateLimits/updated' || method === 'thread/tokenUsage/updated') {
+          this.weeklyQuota.recordRateLimits(params, `app-server ${method}`);
+        }
         const threadId = (params as { threadId?: string } | null)?.threadId;
         if (threadId) {this.appServerRoutes.get(threadId)?.(method, params);}
       },

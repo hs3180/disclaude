@@ -251,7 +251,7 @@ export function resolveConfiguredAgents(
         continue;
       }
       for (const key of Object.keys(agent.codex)) {
-        if (!['transport', 'maxActiveSessions', 'maxConcurrentRuns'].includes(key)) {
+        if (!['transport', 'maxActiveSessions', 'maxConcurrentRuns', 'weeklyQuotaAdmission', 'weeklyLimitCooldownMs'].includes(key)) {
           errors.push(`${field}.codex.${key} is unsupported`);
         }
       }
@@ -268,6 +268,20 @@ export function resolveConfiguredAgents(
         ) {
           errors.push(`${field}.codex.${key} must be a positive integer`);
         }
+      }
+      // #5607 rework: weekly-quota keys. Admission is a closed enum;
+      // the fallback cooldown keeps the positive-integer rule.
+      if (
+        agent.codex.weeklyQuotaAdmission !== undefined &&
+        !['observe', 'enforce'].includes(agent.codex.weeklyQuotaAdmission)
+      ) {
+        errors.push(`${field}.codex.weeklyQuotaAdmission must be observe or enforce`);
+      }
+      if (
+        agent.codex.weeklyLimitCooldownMs !== undefined &&
+        (!Number.isInteger(agent.codex.weeklyLimitCooldownMs) || (agent.codex.weeklyLimitCooldownMs as number) <= 0)
+      ) {
+        errors.push(`${field}.codex.weeklyLimitCooldownMs must be a positive integer`);
       }
     }
     if (agent.mode !== undefined) {

@@ -12,9 +12,12 @@ docker compose --profile chromium up -d chromium
 ```
 
 The image includes nginx, Xvfb, password-protected noVNC, and readiness
-utilities. `CHROMIUM_IMAGE_TAG` selects the official Playwright browser image
-used as its base. This starts Chromium; it does not install or select a
-Playwright agent.
+utilities. It ships exactly one browser: retail Google Chrome installed from a
+pinned deb (`GOOGLE_CHROME_VERSION` / `GOOGLE_CHROME_DEB_SHA256` build args;
+verify the current stable deb and its sha256 at deploy time). There is no
+Playwright Chromium fallback — the launcher fails closed when the retail
+binary is missing. This starts Chrome; it does not install or select a
+Playwright agent (external drivers may still attach over CDP).
 
 By default, Chromium runs with Xvfb at 1920×1080. Set `CHROMIUM_HEADLESS=1` for
 headless mode; VNC/noVNC is then skipped with an info log, even when

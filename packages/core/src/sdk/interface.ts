@@ -112,6 +112,17 @@ export interface IAgentSDKProvider {
    * @param sessionKey - 会话标识（ChatAgent 侧即 chatId，见 AgentQueryOptions.sessionKey）
    */
   forgetSession?(sessionKey: string): void;
+
+  /**
+   * 可选能力：面向 /status 的运行时补充行（#5607）。
+   *
+   * 返回预格式化的状态行（不含标题/空行分隔，由调用方排版）；未实现的
+   * provider（claude/pi 等）不输出额外内容。codex 语义：周额度账本快照
+   * ——上游实测的窗口读数（used_percent 对窗口时间进度）、准入模式与
+   * 当前判定、撞限校准状态与最近一次拦截记录。读数为上游事实，仅
+   * 新鲜度是进程本地的。
+   */
+  getStatusExtra?(): string[];
 }
 
 /**
