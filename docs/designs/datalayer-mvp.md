@@ -65,8 +65,9 @@ targeted lint、远端隔离测试进程 34 项回归通过；新增配置远端
 ## 真实飞书候选 Service 首轮（2026-10-06 05:08–05:18 UTC）
 
 冻结宿主 `588b44a20` 经真实用户飞书入站、唯一候选机器人 WebSocket、持久 Project
-和原生 DSH 接入配置远端。原生请求记录确认 `openai-codex/gpt-5.6-luna`；日常及
-候选默认仍为 `gpt-6-luna`。DSH 执行参数和分析 cell 后得到 `69`，实际观察 PNG
+和原生 DSH 接入配置远端。原生请求记录确认本轮显式验收路由为
+`openai-codex/gpt-5.6-luna`；该模型与 effort 仅属于本次历史验收，不改变部署配置。
+DSH 执行参数和分析 cell 后得到 `69`，实际观察 PNG
 并回复原话题。人工占位 Markdown 与未知 metadata 保留；这不是用户亲自修改
 Lab 的证据。实际 `/stop` 在宿主日志和远端原请求均确认 cancelled，随后相同
 kernel/incarnation 打印 `FEISHU_CONTINUE 58`，参数 execution_count 仍为 1。
@@ -359,7 +360,7 @@ nbmodel 的提交返回 HTTP 202、空 JSON 和原请求 `Location`。0.1.1a4 �
 - `datalayer-model-03/report.json`、`report.html`：真实 DSH 两轮续行和最终 HTML 导出，17 次工具调用。实际两轮路由均为 `openai-codex` / `gpt-5.6-luna` / low，原生 session 恢复、人工参数/正文保留、凭据不进入历史均通过。
 - 主仓库 `.local/063-jupyter/datalayer-mvp-notebook-test.json` 和 `datalayer-mvp-installed-source.json`：安装元数据、MCP 共享写入/执行、落盘读取滞后及任务接口调查。
 
-原有 9 个 kernel 和 9 个 session 在探针清理后仍在，日常飞书服务及模型默认配置未动。`gpt-5.6-luna` 仅作为 #5215/#5219 指定验收覆盖；日常/候选默认仍为 `gpt-6-luna`。
+原有 9 个 kernel 和 9 个 session 在探针清理后仍在，日常飞书服务及部署模型配置未动。`gpt-5.6-luna` 仅作为 #5215/#5219 该次指定验收覆盖，不构成后续运行或验收默认。
 
 前两轮探针暴露的 RTC 路径编码、旧版输出格式、DSH schema 子集和 HTML GET 的 XSRF 差异已经修正，失败证据保留。最终导出走官方 POST `/nbconvert/html`，不依赖手写 Notebook HTML 渲染。
 

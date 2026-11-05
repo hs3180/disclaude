@@ -1,8 +1,9 @@
 # DSH native tool component probe
 
 Build the workspace and install the pinned `dsh@0.1.2-rc.1` CLI before running.
-This opt-in script sends real model requests. The model must be selected explicitly;
-the #5215 acceptance model is `gpt-5.6-luna`, with `low` reasoning.
+This opt-in script sends real model requests. The model must be selected explicitly.
+For the historical #5215 acceptance only, the selected model was `gpt-5.6-luna`
+with `low` reasoning; this does not set a default for later runs or deployments.
 
 ```sh
 node tests/dsh/host-tools-probe.mjs \
@@ -26,7 +27,7 @@ the probe access credential. The report preserves phase outcomes and failures.
 
 These are synthetic marker tools. The probe does not open or execute a Notebook,
 contact Feishu, prove a kernel has stopped, or complete #5215 product acceptance.
-The daily model selection remains `gpt-6-luna`.
+It does not select or rewrite the deployment's model or reasoning effort.
 
 ## Official TypeScript SDK prototype
 

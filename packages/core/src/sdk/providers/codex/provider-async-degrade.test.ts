@@ -12,7 +12,7 @@ import { CodexAgentProvider } from './provider.js';
  * The unsupported class must degrade to a plain-text question and the turn
  * must complete normally; genuine delivery accidents keep failing.
  */
-type HostBehavior = 'absent' | 'unsupported-reject' | 'delivers' | 'accident';
+type HostBehavior = 'absent' | 'unsupported-reject' | 'delivers' | 'accident' | 'probe-off' | 'probe-on';
 const owned: Array<{ provider: CodexAgentProvider; dir: string }> = [];
 
 function fixture(behavior: HostBehavior) {
@@ -47,15 +47,19 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   const provider = new CodexAgentProvider({ transport: 'app-server', model: 'gpt-6-luna', reasoningEffort: 'low',
     builtinsDir: dir, env: { PATH: bin, CODEX_HOME: home, CODEX_REASONING_EFFORT: '' } });
   const resource = { provider, dir }; owned.push(resource);
+  // probe-off keeps a fully-delivering host so the ONLY incapability signal
+  // is the per-turn capability probe (once-mode / stale host session).
   const hostInput = behavior === 'unsupported-reject'
     ? vi.fn(() => Promise.reject(Object.assign(
       new Error('This channel cannot answer SDK input requests'),
       { code: 'AGENT_ASYNC_INPUT_UNSUPPORTED' },
     )))
-    : behavior === 'delivers' ? vi.fn(() => Promise.resolve())
+    : behavior === 'delivers' || behavior === 'probe-off' || behavior === 'probe-on' ? vi.fn(() => Promise.resolve())
       : behavior === 'accident' ? vi.fn(() => Promise.reject(new Error('private card explosion')))
         : undefined;
   const onAsyncUserInputAnswer = behavior === 'absent' ? undefined : vi.fn();
+  const asyncUserInputCapable = behavior === 'probe-off' ? vi.fn(() => false)
+    : behavior === 'probe-on' ? vi.fn(() => true) : undefined;
   const query = () => {
     const input: UserInput = {
       role: 'user', content: 'Proceed with the refinement',
@@ -65,7 +69,8 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       inputContext: { chatId: 'degrade-chat', actorId: 'degrade-actor', sourceMessageId: 'degrade-source' },
     };
     const extra: Partial<AgentQueryOptions> = hostInput
-      ? { onUserInput: hostInput, ...(onAsyncUserInputAnswer ? { onAsyncUserInputAnswer } : {}) }
+      ? { onUserInput: hostInput, ...(onAsyncUserInputAnswer ? { onAsyncUserInputAnswer } : {}),
+        ...(asyncUserInputCapable ? { asyncUserInputCapable } : {}) }
       : {};
     return provider.queryStream((async function* (): AsyncGenerator<UserInput> { yield input; })(),
       { sessionKey: 'degrade-session', settingSources: [], ...extra });
@@ -106,6 +111,33 @@ describe('Codex async-question capability degrade (#5467)', () => {
     expect(messages.find(m => m.type === 'result')?.metadata?.terminatedReason).toBeUndefined();
     // Capability was wired, so the prompt carries no blanket prohibition.
     expect(fx.prompts()).not.toContain('cannot receive asynchronous question forms');
+  });
+
+  it('announces the incapability in the prompt when the per-turn probe reports once-mode/stale (#5467)', async () => {
+    // Wiring is complete and the host would deliver — only the dynamic
+    // capability (once-mode / superseded generation) rules async forms out.
+    const fx = fixture('probe-off');
+    const messages = await collect(fx.query());
+    // The prompt note is linked to the capability switch, so the model is
+    // told up-front instead of discovering a runtime rejection.
+    expect(fx.prompts()).toContain('This conversation cannot receive asynchronous question forms');
+    // A question that is still initiated is rejected as a structured
+    // "unsupported" error at the provider layer, before host wiring runs,
+    // and degrades to a plain-text question with a normally completing turn.
+    expect(fx.hostInput).not.toHaveBeenCalled();
+    expect(messages.find(m => m.type === 'text' && m.content.includes('任务需要你的输入'))).toBeDefined();
+    expect(messages.some(m => m.type === 'error')).toBe(false);
+    expect(messages.some(m => m.content.includes('asynchronous answers are unsupported'))).toBe(false);
+    expect(messages.find(m => m.type === 'result')?.metadata?.terminatedReason).toBeUndefined();
+  });
+
+  it('keeps the prompt clean and delivers when the per-turn probe reports capability', async () => {
+    const fx = fixture('probe-on');
+    const messages = await collect(fx.query());
+    expect(fx.hostInput).toHaveBeenCalledOnce();
+    expect(fx.prompts()).not.toContain('cannot receive asynchronous question forms');
+    expect(messages.some(m => m.type === 'text' && m.content.includes('任务需要你的输入'))).toBe(false);
+    expect(messages.some(m => m.type === 'error')).toBe(false);
   });
 
   it('keeps delivering through a working interactive host', async () => {

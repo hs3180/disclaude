@@ -15,7 +15,20 @@ for the current JSON input schemas and [README.md](./README.md) for setup.
    `link --path research/analysis.ipynb` for an existing Notebook, or `create`
    for a new, explicitly selected remote path. Keep findings, code and conclusions
    in that remote Notebook. Project bindings remain managed by `/project`.
-2. Use `describe` and `read-cell` to read live shared cells by stable ID.
+2. Before GPU work on two existing kernels, run `runtime-probe` for each with
+   `--input-file -` and JSON `{"kernelId":"existing-kernel-id"}`. The command
+   uses only fixed host-owned probe code (`store_history:false`, no cell writeback);
+   callers cannot supply code and no kernel is created. Its stable
+   `disclaude.jupyter-runtime.v1` result contains only a SHA-256 host identifier
+   and sorted, unique GPU UUIDs. If both `host.state` and both `gpus.state` are
+   `available`, any UUID intersection means same-card work is mutually exclusive;
+   disjoint UUIDs may run in parallel. For example, A `["GPU-a"]` and B
+   `["GPU-a","GPU-b"]` must not run together, while A `["GPU-a"]` and B
+   `["GPU-b"]` may. Empty/missing/failed metadata returns `state:"unknown"` with
+   `uuids:null`, never a fabricated empty list; unknown is not permission to run.
+   Raw hostnames, GPU names, processes, utilization and environment values are
+   deliberately not exposed.
+3. Use `describe` and `read-cell` to read live shared cells by stable ID.
    Error previews expose `ename`, `evalue` and bounded `traceback[]`; inspect
    the recent traceback lines and any truncation flag before diagnosing code. Edit,
    move or delete only the intended cell, using its latest `sourceHash`.
