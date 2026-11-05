@@ -1256,6 +1256,11 @@ export class MessageHandler {
       // Issue #3702: Build metadata for file/image messages to pass chatType and threadContext,
       // ensuring intermediate message filtering works correctly in topic groups.
       const fileMetadata: Record<string, unknown> = {};
+      // Issue #5434: media uploads carry no user-authored text task. Marking
+      // them lets the agent side recognize an attachment-only input that a
+      // running request may already have consumed, so it never resurfaces as
+      // an independent "what do you want me to do?" turn.
+      fileMetadata.attachmentOnly = true;
       if (chat_type) {
         fileMetadata.chatType = chat_type;
       }

@@ -50,6 +50,13 @@ export interface UserMessageParams {
   chatHistoryContext?: string;
   /** True only for an empty text @mention that may refer to a pending request. */
   pendingQuestionEligible?: boolean;
+  /**
+   * True only for channel inputs that consist of attachments without any
+   * user-authored text task (e.g. a bare Feishu image/file upload). Lets the
+   * agent side tell an attachment that a running request may already have
+   * consumed apart from a genuine new request. Issue #5434.
+   */
+  attachmentOnly?: boolean;
   /** Optional chat type (e.g., 'p2p', 'group', 'topic'). Issue #3641. */
   chatType?: string;
   /** Optional thread context for topic groups. Issue #3641. */
@@ -213,6 +220,7 @@ export class MessageRouter {
       attachments: message.attachments,
       chatHistoryContext: message.chatHistoryContext,
       pendingQuestionEligible: message.pendingQuestionEligible,
+      attachmentOnly: message.attachmentOnly,
       chatType: message.chatType,
       threadContext: message.threadContext,
       threadRootId: message.threadRootId,

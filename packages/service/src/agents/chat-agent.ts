@@ -56,6 +56,7 @@ import {
   LiveInputRejectedError,
   type StreamingUserMessage,
   type QueryHandle,
+  type FileRef,
   type ChatAgent as ChatAgentInterface,
   type AgentUserInput,
   type AgentMessage,
@@ -1225,6 +1226,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       attachments,
       chatHistoryContext,
       pendingQuestionEligible,
+      attachmentOnly,
       chatType,
       threadContext,
       threadRootId,
@@ -1273,6 +1275,26 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.logger.warn({ event: 'agent_turn', state: 'failed', chatId, messageId, traceId: `${chatId}:${messageId}`,
         diagnosticId: crypto.randomUUID(), errorMessage: error.message, user_visible: userVisible,
       }, 'Message refused because the busy-input admission budget is full');
+      return;
+    }
+
+    // #5434: an attachment-only input (bare image/file upload, no user text
+    // task) that the running request has already consumed must not resurface
+    // as its own "what should I do with this?" Q&A turn. The consumption
+    // marker is keyed by the input's source message id and is one-shot, so a
+    // genuinely new user request (always a fresh message id) is never
+    // affected. Suppression is silent by design — the user already received
+    // the running request's delivery, another notice would be the very
+    // disturbance #5434 reports.
+    if (attachmentOnly && this.consumeSuppressedAttachmentInput(messageId)) {
+      this.createTurnCompletion(messageId);
+      this.resolveTurn(messageId);
+      try { await this.callbacks.onDone?.(chatId, threadRootId ?? messageId); }
+      catch (doneError) { this.logger.error({ err: doneError, chatId, messageId }, 'Failed to finish suppressed attachment-only input'); }
+      this.logger.info({ event: 'agent_turn', state: 'completed', chatId, messageId,
+        activeTurnMessageId: this.activeTurnMessageId, traceId: `${chatId}:${messageId}`,
+        runId: crypto.randomUUID(), user_visible: false,
+      }, 'Attachment-only input already consumed by the running turn; duplicate Q&A turn suppressed (#5434)');
       return;
     }
 
@@ -1584,6 +1606,16 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           });
         return;
       }
+      // #5434 (queued variant): this attachment-only input is queued behind
+      // the running turn (steer rejected or unavailable). Remember its
+      // attachment identities so the FIFO dequeue guard can swallow the
+      // queued copy if the running request turns out to have already
+      // consumed the attachment — the issue's "排队图片回合再次识图反问".
+      if (attachmentOnly && busyBeforePush) {
+        const attachmentKeys = (attachments ?? [])
+          .map(attachment => this.attachmentConsumptionKey(attachment));
+        if (attachmentKeys.length > 0) { this.noteQueuedAttachmentInput(messageId, attachmentKeys); }
+      }
       if (!text.trimStart().startsWith('/')) {
         if (includeStableContext) {
           this.deliveredMessageContext = {
@@ -1655,6 +1687,123 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
     const inputKey = params.replyRootId !== undefined ? params.replyRootId ?? undefined : params.threadRootId;
     return inputKey === this.turnStartThreadKeys.get(sourceMessageId);
+  }
+
+  /**
+   * Issue #5434: identities of attachments/inputs that a running request has
+   * already consumed (merged via a live-input steer into the running turn).
+   * Entries are BOTH source message ids and attachment identity keys (see
+   * attachmentConsumptionKey) — the queued variant of #5434 matches by
+   * attachment identity because its queued copy sits in the channel FIFO
+   * under the enqueueing message id. Bounded like every other per-session
+   * accounting map — a session cannot accumulate more than
+   * MAX_TURN_COMPLETIONS live inputs.
+   */
+  private readonly consumedAttachmentInputs = new Set<string>();
+
+  /**
+   * Issue #5434 (queued variant): attachment identity keys of attachment-only
+   * inputs queued behind the running turn (steer rejected/unavailable →
+   * channel.push FIFO), keyed by their source message id at enqueue time.
+   * Lets the FIFO dequeue guard reconcile a queued copy against consumption
+   * markers before the backend dequeues it as an independent Q&A turn.
+   */
+  private readonly queuedAttachmentInputs = new Map<string, string[]>();
+
+  /** Stable identity of an attachment for #5434 consumption markers. */
+  private attachmentConsumptionKey(ref: FileRef): string {
+    return ref.platformKey ?? ref.id;
+  }
+
+  /** Record an attachment-only input as consumed by the running turn (#5434). */
+  private markAttachmentInputConsumed(messageId: string): void {
+    this.consumedAttachmentInputs.add(messageId);
+    while (this.consumedAttachmentInputs.size > MAX_TURN_COMPLETIONS) {
+      const oldest = this.consumedAttachmentInputs.keys().next().value;
+      if (oldest === undefined) { break; }
+      this.consumedAttachmentInputs.delete(oldest);
+    }
+  }
+
+  /** Record a queued attachment-only input's attachment keys at enqueue (#5434). */
+  private noteQueuedAttachmentInput(messageId: string, attachmentKeys: string[]): void {
+    this.queuedAttachmentInputs.set(messageId, attachmentKeys);
+    while (this.queuedAttachmentInputs.size > MAX_TURN_COMPLETIONS) {
+      const oldest = this.queuedAttachmentInputs.keys().next().value;
+      if (oldest === undefined) { break; }
+      this.queuedAttachmentInputs.delete(oldest);
+    }
+  }
+
+  /**
+   * One-shot suppression check (#5434): true exactly once for an input whose
+   * attachments the running request already consumed. A re-sent or replayed
+   * copy of the same source message is suppressed once; any later, genuinely
+   * independent request arrives under a fresh message id and never matches.
+   */
+  private consumeSuppressedAttachmentInput(messageId: string): boolean {
+    return this.consumedAttachmentInputs.delete(messageId);
+  }
+
+  /**
+   * Issue #5434 (queued variant): guard the channel FIFO hand-off to the
+   * backend. A queued attachment-only input whose attachments the running
+   * request already consumed must never reach the backend — the FIFO dequeue
+   * would otherwise form an independent "what should I do with this?" Q&A
+   * turn after the running turn's delivery (the issue's 08:58 timeline:
+   * steer rejected → channel.push enqueue → queued turn re-recognizes the
+   * image and asks again). The dequeue path never re-enters admitMessage,
+   * so the one-shot check there is unreachable for it; this guard is the
+   * dequeue-side counterpart.
+   */
+  private async *guardChannelFifo(
+    stream: AsyncGenerator<StreamingUserMessage>,
+  ): AsyncGenerator<StreamingUserMessage> {
+    for await (const message of stream) {
+      if (await this.suppressConsumedQueuedAttachmentInput(message)) { continue; }
+      yield message;
+    }
+  }
+
+  /**
+   * One-shot FIFO dequeue interception (#5434 queued variant): settle and
+   * swallow a queued attachment-only input whose attachments were already
+   * consumed by the running request. Fresh, unconsumed attachments and every
+   * ordinary queued input pass through untouched; only inputs recorded at
+   * enqueue time (attachmentOnly, queued behind a running turn) with a live
+   * turn completion can ever be swallowed. Suppression is silent — the user
+   * already received the running request's delivery.
+   */
+  private async suppressConsumedQueuedAttachmentInput(message: StreamingUserMessage): Promise<boolean> {
+    const { correlation } = message;
+    const messageId = correlation?.sourceMessageId;
+    if (!correlation || !messageId) { return false; }
+    const attachmentKeys = this.queuedAttachmentInputs.get(messageId);
+    this.queuedAttachmentInputs.delete(messageId);
+    if (!attachmentKeys) { return false; }
+    const consumedKey = attachmentKeys.find(key => this.consumedAttachmentInputs.has(key)) ??
+      (this.consumedAttachmentInputs.has(messageId) ? messageId : undefined);
+    // Only a still-live completion is reconciled here: after a session
+    // replacement rejectTurn() already settled every queued row, and the
+    // drain must behave exactly as it did before this guard existed.
+    const entry = this.turnCompletions.get(messageId);
+    if (!consumedKey || !entry || entry.settled) { return false; }
+    if (consumedKey !== messageId) { this.consumedAttachmentInputs.delete(consumedKey); }
+    this.consumeSuppressedAttachmentInput(messageId);
+    const anchorIndex = this.pendingTurnMessageIds.indexOf(messageId);
+    const anchor = anchorIndex >= 0 ? this.pendingTurnAnchors[anchorIndex] : undefined;
+    this.removePendingTurn(correlation.runId);
+    this.resolveTurn(messageId);
+    this.completeRecoveryInput(messageId);
+    try { await this.callbacks.onDone?.(correlation.chatId, anchor ?? messageId); }
+    catch (doneError) {
+      this.logger.error({ err: doneError, chatId: correlation.chatId, messageId },
+        'Failed to finish suppressed queued attachment-only input (#5434)');
+    }
+    this.logger.info({ event: 'agent_turn', state: 'completed', ...correlation,
+      activeTurnMessageId: this.activeTurnMessageId, user_visible: false,
+    }, 'Queued attachment-only input already consumed by the running turn; duplicate Q&A turn suppressed at FIFO dequeue (#5434)');
+    return true;
   }
 
   /** Confirm a busy input once, or fall back only after confirmed non-acceptance. */
@@ -1750,6 +1899,18 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
     inputEntry.admitted = true;
     observeTerminal();
+    // #5434: the backend acknowledged this input for the running turn — its
+    // attachments are now consumed by that request. If the same source
+    // message is ever submitted again (redelivery/replay), it must not form
+    // an independent attachment Q&A turn after this turn ends. The
+    // attachment identity keys also cover the queued variant: a copy of the
+    // same attachment sitting in the channel FIFO is reconciled at dequeue.
+    if (params.attachmentOnly) {
+      this.markAttachmentInputConsumed(params.messageId);
+      for (const attachment of params.attachments ?? []) {
+        this.markAttachmentInputConsumed(this.attachmentConsumptionKey(attachment));
+      }
+    }
     // Capture the original completion before the RPC. A late successful ACK
     // still belongs to that turn, even if another turn has since started.
     void owner.promise.then(() => {
@@ -1964,7 +2125,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.noteActivity(type);
       existingActivityObserver?.(type);
     };
-    const { handle, iterator } = this.createQueryStream(this.channel.generator(), queryOptions);
+    // #5434 (queued variant): the backend receives the channel FIFO through
+    // the dequeue guard, which reconciles queued attachment-only inputs
+    // against #5434 consumption markers before they can form a turn.
+    const { handle, iterator } = this.createQueryStream(
+      this.guardChannelFifo(this.channel.generator()), queryOptions);
 
     this.queryHandle = handle;
     this.isSessionActive = true;
