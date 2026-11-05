@@ -253,8 +253,17 @@ export class ClaudeSDKProvider {
         const listenerSnapshot = snapshotProcessListeners();
         // Issue #2920: 创建 stderr 捕获器
         const stderrCapture = new StderrCapture();
-        const native = adaptOptions(commonOptions, { allowedTools, disallowedTools });
         const queryId = randomUUID();
+        // T-057 (#5613): latest verified input context for the AskUserQuestion
+        // permission bridge. canUseTool fires mid-turn, so the adapter reads the
+        // newest user message's context at call time (undefined until one arrives
+        // or for unverified sources — the bridge then denies with guidance).
+        let latestInputContext;
+        const native = adaptOptions(commonOptions, { allowedTools, disallowedTools }, {
+            inputContext: () => latestInputContext,
+            sessionKey: options.sessionKey,
+            queryId,
+        });
         let latestUsage = {};
         let usageLogged = false;
         const logQueryUsage = () => {
@@ -308,6 +317,7 @@ export class ClaudeSDKProvider {
                     return;
                 }
                 inputCount++;
+                latestInputContext = value.inputContext;
                 logger.info({ inputCount, contentLength: value.content?.length }, 'Input received');
                 yield adaptUserInput(value);
             }

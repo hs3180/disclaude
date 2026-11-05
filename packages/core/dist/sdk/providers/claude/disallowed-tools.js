@@ -20,6 +20,11 @@
  * @module sdk/providers/claude/disallowed-tools
  */
 /** Tools always disallowed for chat agents. */
+// `AskUserQuestion` stays in this base list, but is re-enabled per query by
+// the options adapter when the host provides an input channel (`onUserInput`
+// wired to the channel's requestAgentInput, e.g. Feishu's interactive card) —
+// see ask-user-question.ts (T-057 / #5613). Without that channel the tool is
+// unanswerable and MUST stay disallowed.
 const BASE_DISALLOWED_TOOLS = ['EnterPlanMode', 'AskUserQuestion'];
 /**
  * Built-in tools that create *session-only* (non-persistent) work items,

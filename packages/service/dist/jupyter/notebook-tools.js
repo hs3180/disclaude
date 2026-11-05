@@ -101,7 +101,7 @@ export class NotebookTools {
                     ...this.outputProvenance(cell.toJSON(), cell.source),
                 };
             }),
-            this.tool('notebook_insert_cell', 'Insert a code or Markdown cell in the shared document. Reusing the same cellId/source is safe. Empty beforeCellId appends.', {
+            this.tool('notebook_insert_cell', 'Insert a code or Markdown cell in the shared document. Reusing the same cellId/source is safe. Empty beforeCellId appends; a sole RTC-seeded empty code cell is then removed so delivered cells start with real content.', {
                 ...cellId,
                 beforeCellId: { type: 'string' },
                 cellType: { type: 'string', enum: ['code', 'markdown'] },
@@ -123,16 +123,33 @@ export class NotebookTools {
                 if (index < 0) {
                     throw new Error('Insertion target cell is missing');
                 }
+                // RTC servers seed one empty code cell when a stored notebook has no
+                // cells (#5548). Appends would otherwise leave that seed as the
+                // permanent first delivered cell. Insert the real content first, then
+                // drop the seed, so the document never holds zero cells.
+                const seed = !input.beforeCellId && bound.doc.notebook.cells.length === 1
+                    ? bound.doc.notebook.cells[0]
+                    : undefined;
+                const removedSeedCellId = seed &&
+                    seed.id !== input.cellId &&
+                    seed.cell_type === 'code' &&
+                    seed.source === ''
+                    ? seed.id
+                    : undefined;
                 insertNotebookCell(bound.doc.notebook, index, {
                     id: String(input.cellId),
                     cell_type: input.cellType,
                     source: String(input.source),
                 });
+                if (removedSeedCellId) {
+                    bound.doc.notebook.deleteCell(0);
+                }
                 await bound.doc.flush();
                 return {
                     state: 'inserted',
                     cellId: input.cellId,
                     sourceHash: hash(String(input.source)),
+                    ...(removedSeedCellId ? { removedSeedCellId } : {}),
                 };
             }),
             this.tool('notebook_edit_cell', 'Edit a live shared cell only after checking its last read sourceHash. This client-side check is not an atomic server CAS.', {

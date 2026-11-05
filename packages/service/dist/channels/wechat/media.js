@@ -1,5 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
 import * as fs from 'node:fs/promises';
+import { request as httpsRequest } from 'node:https';
 import { basename, join } from 'node:path';
 import { createLogger } from "../../../../core/dist/index.js";
 import { WeChatMediaError, safeMediaCause } from './media-error.js';
@@ -26,7 +27,11 @@ function cdnUrl(value) {
     catch {
         throw new Error('Invalid WeChat media URL');
     }
-    if (url.protocol !== 'https:' || !url.hostname.endsWith('.weixin.qq.com') || url.username || url.password || url.port) {
+    if (url.protocol !== 'https:' ||
+        !url.hostname.endsWith('.weixin.qq.com') ||
+        url.username ||
+        url.password ||
+        url.port) {
         throw new Error('Unsupported WeChat media host');
     }
     return url.href;
@@ -35,12 +40,67 @@ function mediaSignal(signal) {
     const deadline = AbortSignal.timeout(15_000);
     return signal ? AbortSignal.any([signal, deadline]) : deadline;
 }
+/**
+ * #5516 (T-032): uploads previously used global fetch (undici) under the
+ * fixed 15s `mediaSignal` abort deadline, so a ~15 MiB video had to finish
+ * DNS + TLS + body + receipt inside 15s regardless of payload size — and
+ * undici's happy-eyeballs connect race (see media-error.ts) added
+ * intermittent `fetch failed` on top. The 2026-11-02 repro showed
+ * https.request delivering the same payload where fetch failed, so the
+ * upload channel is now https.request with a size-aware deadline. A
+ * 0.004 ms/byte (4 µs/byte) budget is a 250 KiB/s worst-case uplink floor;
+ * 15 MiB thus gets 15s + 15,481,296 × 0.004ms ≈ 77s.
+ * Downloads keep fetch streaming with the unchanged 15s signal.
+ */
+export const UPLOAD_DEADLINE_BASE_MS = 15_000;
+export const UPLOAD_DEADLINE_MS_PER_BYTE = 0.004;
+export function uploadDeadlineMs(encryptedBytes) {
+    return UPLOAD_DEADLINE_BASE_MS + Math.max(0, encryptedBytes) * UPLOAD_DEADLINE_MS_PER_BYTE;
+}
+/** One POST via https.request; never follows redirects (fetch used redirect: 'error'). */
+function uploadPost(url, body, timeoutMs) {
+    return new Promise((resolve, reject) => {
+        const fail = (error) => {
+            clearTimeout(timer);
+            reject(error);
+        };
+        const req = httpsRequest(url, {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/octet-stream',
+                'content-length': String(body.length),
+            },
+        }, (res) => {
+            res.resume(); // Drain the tiny receipt body; only headers carry state.
+            res.on('end', () => {
+                clearTimeout(timer);
+                resolve({ status: res.statusCode ?? 0, headers: res.headers });
+            });
+            res.on('error', fail);
+        });
+        const timer = setTimeout(() => {
+            req.destroy(Object.assign(new Error('WeChat CDN upload exceeded its deadline'), {
+                name: 'TimeoutError',
+                code: 'ETIMEDOUT',
+            }));
+        }, timeoutMs);
+        req.on('error', fail);
+        req.end(body);
+    });
+}
 /** Current iLink upload: negotiate -> encrypted CDN POST -> reusable media ref. */
 export async function uploadEncryptedMedia(params) {
     const started = Date.now();
     let stage = 'validate';
     let encryptedBytes = 0;
-    const failure = (reason, httpStatus, error) => new WeChatMediaUploadError({ stage, reason, bytes: params.fileData.length, encryptedBytes, elapsedMs: Date.now() - started, httpStatus }, error);
+    const failure = (reason, httpStatus, error) => new WeChatMediaUploadError({
+        stage,
+        reason,
+        bytes: params.fileData.length,
+        encryptedBytes,
+        elapsedMs: Date.now() - started,
+        httpStatus,
+    }, error);
     try {
         if (params.fileData.length > WECHAT_MEDIA_MAX_BYTES) {
             throw failure('size');
@@ -53,27 +113,41 @@ export async function uploadEncryptedMedia(params) {
         encryptedBytes = encrypted.length;
         stage = 'negotiate';
         const spec = await params.requestUpload({
-            filekey, to_user_id: params.to, media_type: params.kind === 'image' ? 1 : params.kind === 'video' ? 2 : 3,
-            rawsize: params.fileData.length, rawfilemd5: createHash('md5').update(params.fileData).digest('hex'),
-            filesize: encrypted.length, no_need_thumb: true, aeskey: key.toString('hex'),
+            filekey,
+            to_user_id: params.to,
+            media_type: params.kind === 'image' ? 1 : params.kind === 'video' ? 2 : 3,
+            rawsize: params.fileData.length,
+            rawfilemd5: createHash('md5').update(params.fileData).digest('hex'),
+            filesize: encrypted.length,
+            no_need_thumb: true,
+            aeskey: key.toString('hex'),
         });
         stage = 'reference';
         if (!spec.upload_full_url && !spec.upload_param) {
             throw failure('reference');
         }
-        const url = cdnUrl(spec.upload_full_url || `${CDN_BASE}/upload?encrypted_query_param=${encodeURIComponent(spec.upload_param ?? '')}&filekey=${filekey}`);
+        const url = cdnUrl(spec.upload_full_url ||
+            `${CDN_BASE}/upload?encrypted_query_param=${encodeURIComponent(spec.upload_param ?? '')}&filekey=${filekey}`);
         stage = 'upload';
-        const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: new Uint8Array(encrypted), signal: mediaSignal(), redirect: 'error' });
-        const downloadParam = response.headers.get('x-encrypted-param');
-        await response.body?.cancel().catch(() => { });
-        if (!response.ok) {
+        const response = await uploadPost(url, encrypted, uploadDeadlineMs(encrypted.length));
+        const receiptHeader = response.headers['x-encrypted-param'];
+        const downloadParam = Array.isArray(receiptHeader) ? receiptHeader[0] : receiptHeader;
+        if (response.status < 200 || response.status >= 300) {
             throw failure('http', response.status);
         }
         stage = 'receipt';
         if (!downloadParam) {
             throw failure('receipt');
         }
-        return { media: { encrypt_query_param: downloadParam, aes_key: Buffer.from(key.toString('hex')).toString('base64'), encrypt_type: 1 }, size: params.fileData.length, encryptedSize: encrypted.length };
+        return {
+            media: {
+                encrypt_query_param: downloadParam,
+                aes_key: Buffer.from(key.toString('hex')).toString('base64'),
+                encrypt_type: 1,
+            },
+            size: params.fileData.length,
+            encryptedSize: encrypted.length,
+        };
     }
     catch (error) {
         if (error instanceof WeChatMediaUploadError) {
@@ -81,9 +155,19 @@ export async function uploadEncryptedMedia(params) {
             throw error;
         }
         const cause = safeMediaCause(error);
-        const reason = stage === 'reference' ? 'reference' : stage === 'negotiate' ? 'negotiate'
-            : stage !== 'upload' ? 'local' : cause?.name === 'TimeoutError' || cause?.code?.includes('TIMEOUT') || cause?.code === 'ETIMEDOUT' ? 'timeout'
-                : cause?.name === 'AbortError' ? 'cancelled' : 'network';
+        const reason = stage === 'reference'
+            ? 'reference'
+            : stage === 'negotiate'
+                ? 'negotiate'
+                : stage !== 'upload'
+                    ? 'local'
+                    : cause?.name === 'TimeoutError' ||
+                        cause?.code?.includes('TIMEOUT') ||
+                        cause?.code === 'ETIMEDOUT'
+                        ? 'timeout'
+                        : cause?.name === 'AbortError'
+                            ? 'cancelled'
+                            : 'network';
         const terminal = failure(reason, undefined, error);
         logUploadFailure(terminal);
         throw terminal;
@@ -110,7 +194,9 @@ async function pruneMedia(dir) {
         }
         bytes += entry.stat.size;
         count++;
-        if (count > 200 || bytes > 256 * 1024 * 1024 || entry.stat.mtimeMs < Date.now() - 7 * 86_400_000) {
+        if (count > 200 ||
+            bytes > 256 * 1024 * 1024 ||
+            entry.stat.mtimeMs < Date.now() - 7 * 86_400_000) {
             await fs.rm(join(dir, entry.name), { force: true });
         }
     }
@@ -124,14 +210,18 @@ export async function downloadWeChatMedia(item, dir, signal) {
     try {
         const payload = item.type === 2 ? item.image_item : item.file_item;
         const { media } = payload;
-        const source = media?.full_url || (media?.encrypt_query_param ? `${CDN_BASE}/download?encrypted_query_param=${encodeURIComponent(media.encrypt_query_param)}` : payload.url);
+        const source = media?.full_url ||
+            (media?.encrypt_query_param
+                ? `${CDN_BASE}/download?encrypted_query_param=${encodeURIComponent(media.encrypt_query_param)}`
+                : payload.url);
         if (!source) {
             throw failure('reference');
         }
         const url = cdnUrl(source);
         stage = 'fetch';
         const response = await fetch(url, { signal: mediaSignal(signal), redirect: 'error' });
-        if (!response.ok || Number(response.headers.get('content-length') ?? 0) > WECHAT_MEDIA_MAX_BYTES + 16) {
+        if (!response.ok ||
+            Number(response.headers.get('content-length') ?? 0) > WECHAT_MEDIA_MAX_BYTES + 16) {
             await response.body?.cancel();
             throw failure(response.ok ? 'size' : 'http', response.status);
         }
@@ -184,9 +274,17 @@ export async function downloadWeChatMedia(item, dir, signal) {
         if (data.length > WECHAT_MEDIA_MAX_BYTES) {
             throw failure('size');
         }
-        const imageMime = data.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex')) ? 'image/png' : data[0] === 0xff && data[1] === 0xd8 ? 'image/jpeg' : undefined;
-        const original = item.type === 4 ? item.file_item.file_name ?? 'file.bin' : `image.${imageMime === 'image/png' ? 'png' : imageMime === 'image/jpeg' ? 'jpg' : 'bin'}`;
-        const fileName = basename(original.replaceAll('\\', '/')).replace(/[\x00-\x1f]/g, '_').slice(-180) || 'file.bin';
+        const imageMime = data.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))
+            ? 'image/png'
+            : data[0] === 0xff && data[1] === 0xd8
+                ? 'image/jpeg'
+                : undefined;
+        const original = item.type === 4
+            ? (item.file_item.file_name ?? 'file.bin')
+            : `image.${imageMime === 'image/png' ? 'png' : imageMime === 'image/jpeg' ? 'jpg' : 'bin'}`;
+        const fileName = basename(original.replaceAll('\\', '/'))
+            .replace(/[\x00-\x1f]/g, '_')
+            .slice(-180) || 'file.bin';
         stage = 'write';
         await fs.mkdir(dir, { recursive: true, mode: 0o700 });
         if (!(await fs.lstat(dir)).isDirectory()) {
@@ -196,12 +294,25 @@ export async function downloadWeChatMedia(item, dir, signal) {
         const filePath = join(dir, `${randomUUID()}-${fileName}`);
         await fs.writeFile(filePath, data, { flag: 'wx', mode: 0o600 });
         await pruneMedia(dir);
-        return { fileName, filePath, size: data.length, mimeType: item.type === 2 ? imageMime : undefined };
+        return {
+            fileName,
+            filePath,
+            size: data.length,
+            mimeType: item.type === 2 ? imageMime : undefined,
+        };
     }
     catch (error) {
         if (error instanceof WeChatMediaError) {
             throw error;
         }
-        throw failure(signal?.aborted ? 'cancelled' : stage === 'reference' ? 'host' : stage === 'decrypt' ? 'decrypt' : stage === 'write' ? 'write' : 'network', undefined, error);
+        throw failure(signal?.aborted
+            ? 'cancelled'
+            : stage === 'reference'
+                ? 'host'
+                : stage === 'decrypt'
+                    ? 'decrypt'
+                    : stage === 'write'
+                        ? 'write'
+                        : 'network', undefined, error);
     }
 }

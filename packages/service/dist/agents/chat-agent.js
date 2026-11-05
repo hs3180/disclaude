@@ -101,6 +101,18 @@ function formatElapsedForNotice(ms) {
     }
     return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分钟`;
 }
+/**
+ * Issue #5654: narration-silence window for the platform-side progress
+ * heartbeat. Backends like dsh/glm-5.3 run 400+ tool calls per turn with
+ * almost no pre-tool text, so the #5377 narration pipeline gets no input and
+ * the user cannot tell "working" from "hung" without poking the bot. The
+ * heartbeat is platform text that only fires when BOTH hold: the model has
+ * narrated nothing user-visible for this long, and tool calls actually ran
+ * since the last heartbeat — so a narrating turn never sees one (#5377
+ * semantics untouched), a stalled stream never claims activity, and the
+ * reset-on-send silence clock bounds the rate to one per window.
+ */
+export const HEARTBEAT_SILENCE_MS = 5 * 60_000;
 // 2026-09-08: mid-stream 中断自动续跑(诊断见 ./docs 之外 —— ES 双侧证据:agent「同一
 // tool use 后中断」= 续写调用在 200 已锁后静默,proxy 只能补「看似成功」的收尾)。
 // MIDSTREAM_MARKER —— proxy(litellm custom_callbacks._MIDSTREAM_INTERRUPT_MARKER)在
@@ -190,6 +202,13 @@ export class ChatAgent extends BaseAgent {
     workSettlementError;
     workSettlementWaiters = new Set();
     hasBackgroundTaskSnapshot = false;
+    // Turn-sequence scoping for snapshot-vs-bookend conflicts: a snapshot taken
+    // mid-turn stays authoritative until that turn's result settles, so a same-
+    // turn terminal bookend (potentially stale/duplicate) must not clear it,
+    // while a terminal notification in a later turn is newer information than
+    // the snapshot and must be honored (#5330 killed-child release).
+    turnSequence = 0;
+    backgroundSnapshotTurnSeq = -1;
     releaseBackgroundIndicator;
     activityThreadRootId;
     // Provider stall (#3706, #5283): set when the provider's watchdog
@@ -317,6 +336,14 @@ export class ChatAgent extends BaseAgent {
     // recorded main-session turn (`undefined` value) from an unknown owner
     // (legacy/injected paths), which keeps the pre-#5464 steer behavior.
     turnStartThreadKeys = new Map();
+    // #5435: the DELIVERY anchor each turn's starter recorded (the value
+    // enqueueTurnAnchor pushed to pendingTurnAnchors — explicit identity, or
+    // the chat-level sticky root for a thread-less starter). Busy-input
+    // receipts reuse it so a supplement's receipt lands in the topic the
+    // running turn's own replies go to, instead of the bare main session.
+    // The sticky root itself cannot be read at receipt time: every accepted
+    // input (the supplement included) overwrites it with its own message id.
+    turnStartAnchors = new Map();
     // Issue #3124: One-shot mode & task completion
     // When onceMode is true, processIterator closes the channel after the first
     // `result` message and resolves the completion promise, enabling blocking
@@ -754,20 +781,42 @@ export class ChatAgent extends BaseAgent {
     observeBackgroundTasks(metadata) {
         if (metadata?.backgroundTaskIds !== undefined) {
             this.hasBackgroundTaskSnapshot = true;
+            this.backgroundSnapshotTurnSeq = this.turnSequence;
             this.backgroundTaskIds.clear();
             for (const id of metadata.backgroundTaskIds) {
                 this.backgroundTaskIds.add(id);
             }
         }
-        else if (metadata?.backgroundTask && !this.hasBackgroundTaskSnapshot) {
+        else if (metadata?.backgroundTask) {
             const { id, state } = metadata.backgroundTask;
+            // #5330: a snapshot has no per-task state, so it lists killed children as
+            // running. Terminal task_notification events must still be honored after
+            // a snapshot — dropping them keeps a dead child "running" forever, which
+            // holds the busy indicator, hasPendingWork and work settlement with no
+            // error anywhere (30-minute fake hang). Late 'running' events stay
+            // snapshot-guarded so a stale start cannot resurrect an evicted id.
+            // Same-turn bookends after a snapshot are the exception: the snapshot is
+            // the fresher full live-task list, so a mid-turn terminal bookend must
+            // not override it (stale bookend); only once the turn has settled
+            // (turnSequence advanced past the snapshot's turn) does the terminal
+            // event become newer information and delete the id.
             if (state === 'running') {
-                this.backgroundTaskIds.add(id);
+                if (!this.hasBackgroundTaskSnapshot) {
+                    this.backgroundTaskIds.add(id);
+                }
             }
-            else {
+            else if (this.turnSequence > this.backgroundSnapshotTurnSeq) {
                 this.backgroundTaskIds.delete(id);
             }
         }
+        // #5330: a terminal task_notification clears the live id set, but the
+        // pending continuation keeps latching until work settlement — a completed
+        // child still owes a resumed parent turn (its bookend is not that turn),
+        // and idle reclamation must retain the agent through it. Unlatching here
+        // made the agent evictable between the child's terminal event and the
+        // resumed turn, dropping retained real work; clearBackgroundWork() clears
+        // the latch when the query settles, which is also where a silently killed
+        // child (no resumed turn ever) releases the agent.
         if (this.backgroundTaskIds.size > 0) {
             this.backgroundContinuationPending = true;
         }
@@ -1041,7 +1090,7 @@ export class ChatAgent extends BaseAgent {
         return await admission;
     }
     async admitMessage(params) {
-        const { chatId, payload: text, messageId, senderOpenId, attachments, chatHistoryContext, pendingQuestionEligible, chatType, threadContext, threadRootId, replyRootId, } = params;
+        const { chatId, payload: text, messageId, senderOpenId, attachments, chatHistoryContext, pendingQuestionEligible, attachmentOnly, chatType, threadContext, threadRootId, replyRootId, } = params;
         // Issue #644: Verify chatId matches bound chatId
         if (chatId !== this.boundChatId) {
             this.logger.error({ boundChatId: this.boundChatId, receivedChatId: chatId }, 'processMessage called with wrong chatId - this should not happen');
@@ -1089,6 +1138,29 @@ export class ChatAgent extends BaseAgent {
             this.logger.warn({ event: 'agent_turn', state: 'failed', chatId, messageId, traceId: `${chatId}:${messageId}`,
                 diagnosticId: crypto.randomUUID(), errorMessage: error.message, user_visible: userVisible,
             }, 'Message refused because the busy-input admission budget is full');
+            return;
+        }
+        // #5434: an attachment-only input (bare image/file upload, no user text
+        // task) that the running request has already consumed must not resurface
+        // as its own "what should I do with this?" Q&A turn. The consumption
+        // marker is keyed by the input's source message id and is one-shot, so a
+        // genuinely new user request (always a fresh message id) is never
+        // affected. Suppression is silent by design — the user already received
+        // the running request's delivery, another notice would be the very
+        // disturbance #5434 reports.
+        if (attachmentOnly && this.consumeSuppressedAttachmentInput(messageId)) {
+            this.createTurnCompletion(messageId);
+            this.resolveTurn(messageId);
+            try {
+                await this.callbacks.onDone?.(chatId, threadRootId ?? messageId);
+            }
+            catch (doneError) {
+                this.logger.error({ err: doneError, chatId, messageId }, 'Failed to finish suppressed attachment-only input');
+            }
+            this.logger.info({ event: 'agent_turn', state: 'completed', chatId, messageId,
+                activeTurnMessageId: this.activeTurnMessageId, traceId: `${chatId}:${messageId}`,
+                runId: crypto.randomUUID(), user_visible: false,
+            }, 'Attachment-only input already consumed by the running turn; duplicate Q&A turn suppressed (#5434)');
             return;
         }
         // #5240: capable backends receive ordinary busy input through steer.
@@ -1217,7 +1289,16 @@ export class ChatAgent extends BaseAgent {
                 return;
             }
             anchorQueued = true;
-            this.pendingTurnAnchors.push(replyRootId !== undefined ? replyRootId : threadRootId ?? this.conversationOrchestrator.getThreadRoot(chatId));
+            const turnAnchor = replyRootId !== undefined ? replyRootId : threadRootId ?? this.conversationOrchestrator.getThreadRoot(chatId);
+            this.pendingTurnAnchors.push(turnAnchor);
+            // #5435: retain the turn's own delivery anchor for busy-input receipts.
+            this.turnStartAnchors.set(messageId, turnAnchor);
+            while (this.turnStartAnchors.size > MAX_TURN_COMPLETIONS) {
+                const oldest = this.turnStartAnchors.keys().next().value;
+                if (oldest !== undefined) {
+                    this.turnStartAnchors.delete(oldest);
+                }
+            }
             this.pendingTurnMessageIds.push(messageId);
             // Issue #5464: remember this turn starter's EXPLICIT thread identity so a
             // later busy input can tell whether it belongs to the running turn. The
@@ -1392,6 +1473,18 @@ export class ChatAgent extends BaseAgent {
                 });
                 return;
             }
+            // #5434 (queued variant): this attachment-only input is queued behind
+            // the running turn (steer rejected or unavailable). Remember its
+            // attachment identities so the FIFO dequeue guard can swallow the
+            // queued copy if the running request turns out to have already
+            // consumed the attachment — the issue's "排队图片回合再次识图反问".
+            if (attachmentOnly && busyBeforePush) {
+                const attachmentKeys = (attachments ?? [])
+                    .map(attachment => this.attachmentConsumptionKey(attachment));
+                if (attachmentKeys.length > 0) {
+                    this.noteQueuedAttachmentInput(messageId, attachmentKeys);
+                }
+            }
             if (!text.trimStart().startsWith('/')) {
                 if (includeStableContext) {
                     this.deliveredMessageContext = {
@@ -1454,6 +1547,128 @@ export class ChatAgent extends BaseAgent {
         const inputKey = params.replyRootId !== undefined ? params.replyRootId ?? undefined : params.threadRootId;
         return inputKey === this.turnStartThreadKeys.get(sourceMessageId);
     }
+    /**
+     * Issue #5434: identities of attachments/inputs that a running request has
+     * already consumed (merged via a live-input steer into the running turn).
+     * Entries are BOTH source message ids and attachment identity keys (see
+     * attachmentConsumptionKey) — the queued variant of #5434 matches by
+     * attachment identity because its queued copy sits in the channel FIFO
+     * under the enqueueing message id. Bounded like every other per-session
+     * accounting map — a session cannot accumulate more than
+     * MAX_TURN_COMPLETIONS live inputs.
+     */
+    consumedAttachmentInputs = new Set();
+    /**
+     * Issue #5434 (queued variant): attachment identity keys of attachment-only
+     * inputs queued behind the running turn (steer rejected/unavailable →
+     * channel.push FIFO), keyed by their source message id at enqueue time.
+     * Lets the FIFO dequeue guard reconcile a queued copy against consumption
+     * markers before the backend dequeues it as an independent Q&A turn.
+     */
+    queuedAttachmentInputs = new Map();
+    /** Stable identity of an attachment for #5434 consumption markers. */
+    attachmentConsumptionKey(ref) {
+        return ref.platformKey ?? ref.id;
+    }
+    /** Record an attachment-only input as consumed by the running turn (#5434). */
+    markAttachmentInputConsumed(messageId) {
+        this.consumedAttachmentInputs.add(messageId);
+        while (this.consumedAttachmentInputs.size > MAX_TURN_COMPLETIONS) {
+            const oldest = this.consumedAttachmentInputs.keys().next().value;
+            if (oldest === undefined) {
+                break;
+            }
+            this.consumedAttachmentInputs.delete(oldest);
+        }
+    }
+    /** Record a queued attachment-only input's attachment keys at enqueue (#5434). */
+    noteQueuedAttachmentInput(messageId, attachmentKeys) {
+        this.queuedAttachmentInputs.set(messageId, attachmentKeys);
+        while (this.queuedAttachmentInputs.size > MAX_TURN_COMPLETIONS) {
+            const oldest = this.queuedAttachmentInputs.keys().next().value;
+            if (oldest === undefined) {
+                break;
+            }
+            this.queuedAttachmentInputs.delete(oldest);
+        }
+    }
+    /**
+     * One-shot suppression check (#5434): true exactly once for an input whose
+     * attachments the running request already consumed. A re-sent or replayed
+     * copy of the same source message is suppressed once; any later, genuinely
+     * independent request arrives under a fresh message id and never matches.
+     */
+    consumeSuppressedAttachmentInput(messageId) {
+        return this.consumedAttachmentInputs.delete(messageId);
+    }
+    /**
+     * Issue #5434 (queued variant): guard the channel FIFO hand-off to the
+     * backend. A queued attachment-only input whose attachments the running
+     * request already consumed must never reach the backend — the FIFO dequeue
+     * would otherwise form an independent "what should I do with this?" Q&A
+     * turn after the running turn's delivery (the issue's 08:58 timeline:
+     * steer rejected → channel.push enqueue → queued turn re-recognizes the
+     * image and asks again). The dequeue path never re-enters admitMessage,
+     * so the one-shot check there is unreachable for it; this guard is the
+     * dequeue-side counterpart.
+     */
+    async *guardChannelFifo(stream) {
+        for await (const message of stream) {
+            if (await this.suppressConsumedQueuedAttachmentInput(message)) {
+                continue;
+            }
+            yield message;
+        }
+    }
+    /**
+     * One-shot FIFO dequeue interception (#5434 queued variant): settle and
+     * swallow a queued attachment-only input whose attachments were already
+     * consumed by the running request. Fresh, unconsumed attachments and every
+     * ordinary queued input pass through untouched; only inputs recorded at
+     * enqueue time (attachmentOnly, queued behind a running turn) with a live
+     * turn completion can ever be swallowed. Suppression is silent — the user
+     * already received the running request's delivery.
+     */
+    async suppressConsumedQueuedAttachmentInput(message) {
+        const { correlation } = message;
+        const messageId = correlation?.sourceMessageId;
+        if (!correlation || !messageId) {
+            return false;
+        }
+        const attachmentKeys = this.queuedAttachmentInputs.get(messageId);
+        this.queuedAttachmentInputs.delete(messageId);
+        if (!attachmentKeys) {
+            return false;
+        }
+        const consumedKey = attachmentKeys.find(key => this.consumedAttachmentInputs.has(key)) ??
+            (this.consumedAttachmentInputs.has(messageId) ? messageId : undefined);
+        // Only a still-live completion is reconciled here: after a session
+        // replacement rejectTurn() already settled every queued row, and the
+        // drain must behave exactly as it did before this guard existed.
+        const entry = this.turnCompletions.get(messageId);
+        if (!consumedKey || !entry || entry.settled) {
+            return false;
+        }
+        if (consumedKey !== messageId) {
+            this.consumedAttachmentInputs.delete(consumedKey);
+        }
+        this.consumeSuppressedAttachmentInput(messageId);
+        const anchorIndex = this.pendingTurnMessageIds.indexOf(messageId);
+        const anchor = anchorIndex >= 0 ? this.pendingTurnAnchors[anchorIndex] : undefined;
+        this.removePendingTurn(correlation.runId);
+        this.resolveTurn(messageId);
+        this.completeRecoveryInput(messageId);
+        try {
+            await this.callbacks.onDone?.(correlation.chatId, anchor ?? messageId);
+        }
+        catch (doneError) {
+            this.logger.error({ err: doneError, chatId: correlation.chatId, messageId }, 'Failed to finish suppressed queued attachment-only input (#5434)');
+        }
+        this.logger.info({ event: 'agent_turn', state: 'completed', ...correlation,
+            activeTurnMessageId: this.activeTurnMessageId, user_visible: false,
+        }, 'Queued attachment-only input already consumed by the running turn; duplicate Q&A turn suppressed at FIFO dequeue (#5434)');
+        return true;
+    }
     /** Confirm a busy input once, or fall back only after confirmed non-acceptance. */
     async tryLiveInput(params, content, lifecycleContext) {
         const handle = this.queryHandle;
@@ -1498,9 +1713,23 @@ export class ChatAgent extends BaseAgent {
             settleInput(error);
             observeTerminal();
         };
+        // #5435: the busy-input receipt must land where the running turn's own
+        // replies go, not in the bare main session. The input's explicit thread
+        // identity (`replyRootId ?? threadRootId`) already matched the turn's
+        // starter (activeTurnOwnsInput), so an explicit input anchor is exact.
+        // A thread-less supplement instead reuses the owner turn's recorded
+        // delivery anchor (turnStartAnchors) — the auto-opened topic its body
+        // replies into. `replyRootId: null` stays an explicit "no reply root"
+        // (main session); an owner whose anchor was never recorded (legacy or
+        // evicted) fails open to the pre-#5435 main-session receipt.
+        const noticeThreadRoot = params.replyRootId !== undefined
+            ? params.replyRootId ?? undefined
+            : params.threadRootId ?? (this.turnStartAnchors.has(sourceMessageId)
+                ? this.turnStartAnchors.get(sourceMessageId) ?? undefined
+                : undefined);
         const notify = async (text) => {
             try {
-                await this.callbacks.sendMessage(params.chatId, text, params.threadRootId);
+                await this.callbacks.sendMessage(params.chatId, text, noticeThreadRoot);
             }
             catch (error) {
                 this.logger.warn({ err: error, chatId: params.chatId, messageId: params.messageId }, 'Busy-input notice failed');
@@ -1540,6 +1769,18 @@ export class ChatAgent extends BaseAgent {
         }
         inputEntry.admitted = true;
         observeTerminal();
+        // #5434: the backend acknowledged this input for the running turn — its
+        // attachments are now consumed by that request. If the same source
+        // message is ever submitted again (redelivery/replay), it must not form
+        // an independent attachment Q&A turn after this turn ends. The
+        // attachment identity keys also cover the queued variant: a copy of the
+        // same attachment sitting in the channel FIFO is reconciled at dequeue.
+        if (params.attachmentOnly) {
+            this.markAttachmentInputConsumed(params.messageId);
+            for (const attachment of params.attachments ?? []) {
+                this.markAttachmentInputConsumed(this.attachmentConsumptionKey(attachment));
+            }
+        }
         // Capture the original completion before the RPC. A late successful ACK
         // still belongs to that turn, even if another turn has since started.
         void owner.promise.then(() => {
@@ -1732,6 +1973,7 @@ export class ChatAgent extends BaseAgent {
         this.clearBackgroundWork(new Error('Agent session replaced before work settled'));
         this.workSettlementError = undefined;
         this.hasBackgroundTaskSnapshot = false;
+        this.backgroundSnapshotTurnSeq = -1;
         this.noteActivity('session-start');
         const existingActivityObserver = queryOptions.onActivity;
         queryOptions.onActivity = (type) => {
@@ -1742,7 +1984,10 @@ export class ChatAgent extends BaseAgent {
             this.noteActivity(type);
             existingActivityObserver?.(type);
         };
-        const { handle, iterator } = this.createQueryStream(this.channel.generator(), queryOptions);
+        // #5434 (queued variant): the backend receives the channel FIFO through
+        // the dequeue guard, which reconciles queued attachment-only inputs
+        // against #5434 consumption markers before they can form a turn.
+        const { handle, iterator } = this.createQueryStream(this.guardChannelFifo(this.channel.generator()), queryOptions);
         this.queryHandle = handle;
         this.isSessionActive = true;
         // Issue #4626: fresh session generation — re-arm user-visible delivery.
@@ -2207,6 +2452,15 @@ export class ChatAgent extends BaseAgent {
         let firstMessageMs;
         let lastToolCallMs;
         let toolCallCount = 0;
+        // Issue #5654: per-turn heartbeat + side-effect receipt accounting. The
+        // silence clock starts at the turn's first event and is reset by every
+        // user-visible progress delivery (commentary, narration, buffered
+        // assistant flush, heartbeat itself); the platform heartbeat only ever
+        // fires inside that silence, so model-narrated turns are untouched.
+        let turnLastProgressAtMs = Date.now();
+        let turnToolsSinceHeartbeat = 0;
+        let turnHeartbeatsSent = 0;
+        const turnToolUsage = new Map();
         // Issue #4194: count substantive user-visible output sent this turn
         // (excludes the ✅ Complete result marker) so empty turns are detectable.
         let userVisibleOutputCount = 0;
@@ -2277,6 +2531,11 @@ export class ChatAgent extends BaseAgent {
                 // Issue #5394: narration belongs to the turn that produced it — a
                 // fresh turn's busy notices start from its own trigger line.
                 this.activeTurnNarration = '';
+                // Issue #5654: restart heartbeat/receipt accounting for the new
+                // turn; the silence window counts from its first event.
+                turnLastProgressAtMs = Date.now();
+                turnToolsSinceHeartbeat = 0;
+                turnToolUsage.clear();
                 turnFailedWithConnectivityIssue = false;
             }
             return currentTurnAnchor ?? undefined;
@@ -2287,6 +2546,66 @@ export class ChatAgent extends BaseAgent {
             return currentTurnAnchor === null ? undefined : currentTurnAnchor ?? this.conversationOrchestrator.getThreadRoot(chatId);
         };
         const failureContext = (context, anchor, failureClass, detail, sessionId = this.queryHandle?.sessionId) => this.createFailureContext(context, anchor, failureClass, detail, diagnosticId, sessionId);
+        // Issue #5654: any user-visible progress resets the heartbeat silence
+        // clock — commentary, decision narration, a flushed buffered reply, or a
+        // heartbeat itself. Only genuine silence can trigger the platform heartbeat.
+        const noteUserVisibleProgress = () => { turnLastProgressAtMs = Date.now(); };
+        /**
+         * Issue #5654: compact digest of this turn's tool activity for failure
+         * receipts. When a turn dies (context overflow, provider failure, stall),
+         * its already-performed side effects (created issues, modified files, …)
+         * must not vanish with the lost final reply: name the tool mix so the
+         * user knows what to verify. Bounded to tool names + counts — never tool
+         * inputs or outputs (#4774 keeps traces internal; payloads may be
+         * sensitive), never model claims.
+         */
+        const formatSideEffectReceipt = () => {
+            if (toolCallCount === 0 || turnToolUsage.size === 0) {
+                return '';
+            }
+            const ranked = [...turnToolUsage.entries()].sort((a, b) => b[1] - a[1]);
+            const shown = ranked.slice(0, 6).map(([name, count]) => `${name}×${count}`).join('、');
+            const rest = ranked.length - Math.min(ranked.length, 6);
+            const suffix = rest > 0 ? ` 等 ${ranked.length} 种` : '';
+            return `\n📋 本轮已执行 ${toolCallCount} 次工具调用（${shown}${suffix}），这些操作已实际发生；请据此核对产物（如已创建的 issue、已修改的文件），系统不会自动重放。`;
+        };
+        /**
+         * Issue #5654: platform-side progress heartbeat for narration-silent
+         * turns (dsh/glm-5.3 ran 50+ min / 455 tool calls with zero mid-turn
+         * messages). Checked on each tool call — the only proof of liveness that
+         * does not depend on model behavior. Fires when nothing user-visible was
+         * narrated for HEARTBEAT_SILENCE_MS AND tools ran since the last
+         * heartbeat; resets both clocks (delivered or not) so a broken channel
+         * cannot produce a retry burst. Delivery follows the commentary contract
+         * (#5288): isolated, best-effort, never fails the turn; excluded from
+         * turnResultText and finalReplyOnly workflows; never stored into
+         * activeTurnNarration (#5394 keeps resolving model wording only).
+         */
+        const maybeSendProgressHeartbeat = async () => {
+            if (this.callbacks.finalReplyOnly === true) {
+                return;
+            }
+            const now = Date.now();
+            const silenceMs = now - turnLastProgressAtMs;
+            if (silenceMs < HEARTBEAT_SILENCE_MS || turnToolsSinceHeartbeat === 0) {
+                return;
+            }
+            const toolsSinceLast = turnToolsSinceHeartbeat;
+            const summary = this.activeTurnNarration || this.activeTurnTriggerLine;
+            const elapsedMs = this.turnStartedAtMs > 0 ? now - this.turnStartedAtMs : now - startTime;
+            const text = `⏳ 本轮仍在执行：${summary ? `「${summary}」` : '当前任务'}已运行 ${formatElapsedForNotice(elapsedMs)}，` +
+                `最近 ${formatElapsedForNotice(silenceMs)} 无模型播报，期间完成 ${toolsSinceLast} 次工具调用（累计 ${toolCallCount} 次）。无需干预，结果产出后会自动回复。`;
+            try {
+                await this.callbacks.sendMessage(chatId, text, resolveReplyThreadRoot());
+            }
+            catch (error) {
+                this.logger.debug({ error, chatId }, 'Progress heartbeat delivery failed');
+            }
+            turnLastProgressAtMs = now;
+            turnToolsSinceHeartbeat = 0;
+            turnHeartbeatsSent++;
+            this.logger.info({ chatId, heartbeatIndex: turnHeartbeatsSent, silenceMs, toolsSinceLast, toolCallCount, elapsedMs }, 'Narration-silent progress heartbeat sent (#5654)');
+        };
         const finishUnexpectedTurns = async (error, startupCategory) => {
             if (this.sessionGeneration !== myGeneration || this.stoppedQueryGenerations.has(myGeneration)) {
                 return;
@@ -2326,9 +2645,13 @@ export class ChatAgent extends BaseAgent {
                 const failure = failureContext(context, anchor, startupCategory ? 'startup-failure'
                     : iteratorError ? 'iterator-error' : 'iterator-ended', error.message, sessionId);
                 const prefix = startupCategory ? `❌ Agent 启动失败（${startupCategory}）。` : '❌ 本次请求中断，结果可能不完整。';
+                // Issue #5654: an interrupted turn keeps its receipt — the tool mix
+                // already executed survives the lost final reply (e.g. a context
+                // overflow after side effects were performed).
+                const sideEffects = startupCategory ? '' : formatSideEffectReceipt();
                 const guidance = startupCategory ? '请检查配置、权限和运行环境，修复后发送 /reset。' :
                     '请先核对已经执行的操作，再决定是否重新提交或发送消息继续；系统没有自动重放工具。';
-                const notice = `${prefix}${guidance}\n${this.formatFailureDiagnostic(failure)}`;
+                const notice = `${prefix}${sideEffects}\n${guidance}\n${this.formatFailureDiagnostic(failure)}`;
                 const delivered = await this.deliverUserVisible(chatId, notice, anchor ?? undefined);
                 this.logger.warn({ ...failure, event: 'agent_turn',
                     state: startupCategory ? 'failed' : 'interrupted',
@@ -2352,6 +2675,10 @@ export class ChatAgent extends BaseAgent {
             if (!delivered) {
                 finalDeliveryId = undefined;
                 turnDeliveryFailed = true;
+            }
+            else {
+                // Issue #5654: a flushed buffered reply is user-visible progress.
+                noteUserVisibleProgress();
             }
             userVisibleOutputCount++;
         };
@@ -2458,6 +2785,8 @@ export class ChatAgent extends BaseAgent {
                                 this.logger.debug({ chatId, foldedBlocks: commentary.foldedBlocks, foldedLines: commentary.foldedLines }, 'Compacted commentary payload');
                             }
                             await this.callbacks.sendMessage(chatId, commentary.text, resolveReplyThreadRoot());
+                            // Issue #5654: commentary is user-visible progress.
+                            noteUserVisibleProgress();
                         }
                         catch (error) {
                             // Progress cannot fail or complete the turn.
@@ -2515,12 +2844,24 @@ export class ChatAgent extends BaseAgent {
                         // root consumes the turn anchor, which clears the per-turn
                         // narration slot for a turn's first output.
                         this.activeTurnNarration = this.summarizeForBusyNotice(narration.text);
+                        // Issue #5654: narration is user-visible progress; it resets the
+                        // heartbeat silence clock (the heartbeat below stays dormant for
+                        // narrating turns).
+                        noteUserVisibleProgress();
                     }
                     // Text preceding another tool call is intermediate commentary, not
                     // the terminal answer consumed by structured internal workflows.
                     turnResultText = '';
                     turnResultTruncated = false;
                     toolCallCount++;
+                    // Issue #5654: record the turn's tool mix for failure receipts and
+                    // probe the narration-silence heartbeat — the only liveness signal
+                    // that does not depend on model behavior.
+                    const heartbeatToolName = typeof parsed.metadata?.toolName === 'string' && parsed.metadata.toolName
+                        ? parsed.metadata.toolName : 'tool';
+                    turnToolUsage.set(heartbeatToolName, (turnToolUsage.get(heartbeatToolName) ?? 0) + 1);
+                    turnToolsSinceHeartbeat++;
+                    await maybeSendProgressHeartbeat();
                     const now = Date.now();
                     const sinceLastTool = lastToolCallMs ? now - lastToolCallMs : undefined;
                     lastToolCallMs = now;
@@ -2718,7 +3059,11 @@ export class ChatAgent extends BaseAgent {
                                 : `❌ 本轮 ${failure.provider} 执行失败。${turnFailedWithConnectivityIssue
                                     ? '请先核对已执行的操作；该失败特征指向出口网络（代理、DNS 或海外连通性），可先检查本机/路由器的代理与外网连通性，恢复后重试。'
                                     : '请先核对已执行的操作，再检查模型服务、凭据和超时配置。'}`;
-                        const delivered = await this.deliverUserVisible(chatId, `${outputLimitReceipt}\n${this.formatFailureDiagnostic(failure)}`, resolveReplyThreadRoot());
+                        const delivered = await this.deliverUserVisible(chatId, 
+                        // Issue #5654: the non-output-limit failure branches carry the
+                        // side-effect receipt (the output-limit branch already itemizes
+                        // its tool activity above).
+                        `${outputLimitReceipt}${outputLimit ? '' : formatSideEffectReceipt()}\n${this.formatFailureDiagnostic(failure)}`, resolveReplyThreadRoot());
                         this.logger.error({ ...failure, event: 'agent_turn_failure', user_visible: delivered,
                             ...(inputDeliveryFailure ? { interactionStatus: 'delivery_failed', nativeCompleted: inputDeliveryFailure.nativeCompleted } : {}),
                         }, 'Provider turn failed');
@@ -2731,7 +3076,9 @@ export class ChatAgent extends BaseAgent {
                         const lifecycleContext = this.activeLifecycleContext;
                         const failure = failureContext(lifecycleContext, resolveReplyThreadRoot(), 'provider-stall', parsed.terminationDetail ?? 'Provider stall watchdog terminated the turn', parsed.sessionId ?? this.queryHandle?.sessionId);
                         const providerNotice = sanitizeDiagnosticText(parsed.content?.trim() || `⚠️ ${this.sdkProvider.name} 响应已中断，结果可能不完整。`);
-                        const delivered = await this.deliverUserVisible(chatId, `${providerNotice}\n请先核对已经执行的操作，再决定是否继续；系统没有自动重放工具。\n${this.formatFailureDiagnostic(failure)}`, resolveReplyThreadRoot());
+                        const delivered = await this.deliverUserVisible(chatId, 
+                        // Issue #5654: a stalled turn keeps its side-effect receipt.
+                        `${providerNotice}${formatSideEffectReceipt()}\n请先核对已经执行的操作，再决定是否继续；系统没有自动重放工具。\n${this.formatFailureDiagnostic(failure)}`, resolveReplyThreadRoot());
                         if (!turnHasTerminal) {
                             this.logger.warn({ ...failure, messageCount, terminationDetail: failure.detail,
                                 event: 'agent_turn', state: 'failed', user_visible: delivered }, 'Provider stall: watchdog terminated the stream; recording failure, resolving turn');
@@ -3267,6 +3614,10 @@ export class ChatAgent extends BaseAgent {
                         turnResultText = '';
                         turnResultTruncated = false;
                         this.activeTurnMessageId = undefined;
+                        // Turn boundary: events after this point belong to a later turn,
+                        // so a terminal task_notification here outranks any snapshot the
+                        // settled turn observed (#5330 same-turn bookend scoping).
+                        this.turnSequence++;
                         const backgroundError = this.backgroundContinuationPending && !turnSucceeded
                             ? turnError ?? new Error('Native background continuation did not complete successfully') : undefined;
                         if (this.backgroundTaskIds.size === 0) {

@@ -107,6 +107,7 @@ export class MessageRouter {
             attachments: message.attachments,
             chatHistoryContext: message.chatHistoryContext,
             pendingQuestionEligible: message.pendingQuestionEligible,
+            attachmentOnly: message.attachmentOnly,
             chatType: message.chatType,
             threadContext: message.threadContext,
             threadRootId: message.threadRootId,

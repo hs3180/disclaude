@@ -153,6 +153,7 @@ export function createDefaultMessageHandler(channel, context, options) {
             const senderOpenId = userId;
             const chatHistoryContext = metadata?.chatHistoryContext;
             const pendingQuestionEligible = metadata?.pendingQuestionEligible === true;
+            const attachmentOnly = metadata?.attachmentOnly === true;
             const chatType = metadata?.chatType;
             const threadContext = metadata?.threadContext;
             // Issue #4587 (part 1): thread root for topic-group session keying (part 2)
@@ -169,6 +170,7 @@ export function createDefaultMessageHandler(channel, context, options) {
                 attachments: fileRefs,
                 chatHistoryContext,
                 pendingQuestionEligible,
+                attachmentOnly,
                 chatType,
                 threadContext,
                 threadRootId,
@@ -195,6 +197,7 @@ export function createDefaultMessageHandler(channel, context, options) {
         const senderOpenId = userId;
         const chatHistoryContext = metadata?.chatHistoryContext;
         const pendingQuestionEligible = metadata?.pendingQuestionEligible === true;
+        const attachmentOnly = metadata?.attachmentOnly === true;
         const chatType = metadata?.chatType;
         const threadContext = metadata?.threadContext;
         // Issue #4587 (part 2): thread root for per-thread session keying
@@ -204,7 +207,7 @@ export function createDefaultMessageHandler(channel, context, options) {
         // Convert attachments if the channel supports them
         const fileRefs = options.extractAttachments?.(message);
         try {
-            void agent.processMessage({ chatId, payload: content, messageId, senderOpenId, attachments: fileRefs, chatHistoryContext, pendingQuestionEligible, chatType, threadContext, threadRootId, ...provenance });
+            void agent.processMessage({ chatId, payload: content, messageId, senderOpenId, attachments: fileRefs, chatHistoryContext, pendingQuestionEligible, attachmentOnly, chatType, threadContext, threadRootId, ...provenance });
         }
         catch (error) {
             context.logger.error({ err: error, chatId, messageId }, 'Failed to process message');

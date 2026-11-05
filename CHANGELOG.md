@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.11] - 2026-11-05
+
+### Added
+
+- Explain WeChat re-login identity mismatches and how to continue safely:
+  a scan that lands on a new bot id now reports the old/new identity
+  difference and, when the WeChat-server user id matches, points at a
+  plain-login continuation path instead of a bare rejection (#5480; #5662).
+- Collapse delivered notebook code cells by default through the standard
+  `jupyter.source_hidden` metadata, so reports open on text and outputs
+  first; markdown cells, editing and export fidelity are unchanged
+  (#5615; #5663).
+- Keep long narration-silent turns observable: a platform heartbeat
+  reports lightweight progress once a turn has been silent for five
+  minutes despite real tool activity, and a failed turn ends with a receipt
+  of the tools it already ran (name and count only), so completed side
+  effects are no longer lost (#5654; #5671).
+- Bridge the claude backend's AskUserQuestion tool to the host input
+  channel, reusing the persisted task-question admission flow so claude
+  sessions can ask structured questions through channel cards (#5613;
+  #5676).
+
+### Fixed
+
+- Stop masking terminal notifications of background subagents behind the
+  task-snapshot path: a spawned background agent that finishes after
+  end_turn now delivers its completion, instead of leaving the session
+  fake-busy forever (#5330; #5631).
+- Remove the RTC-seeded empty first cell when a notebook append creates
+  the first user cell, so delivered notebooks no longer open on a blank
+  cell (#5548; #5633).
+- Validate the cached CDP WebSocket identity against the live
+  `/json/version` before each attach and re-discover on drift, so a
+  browser restart self-heals instead of leaving every call on persistent
+  404s (#5427; #5660).
+- Route busy-time supplemental receipts to the topic the running turn's
+  replies live in, so one task no longer splits between the thread and the
+  main chat (#5435; #5667).
+- Preserve structured forensics for channel HTTP failures: method, URL,
+  status, allowlisted headers and a truncated sanitized body are logged,
+  and Feishu business error codes/messages reach the error string and
+  notifications (#5655; #5670).
+- Upload WeChat media over a `node:https` channel with a size-derived
+  deadline, fixing intermittent CDN upload failures for ~15MB videos
+  (#5516; #5672).
+- Suppress duplicate question turns for attachments already consumed by a
+  running request, including the channel-FIFO queue path (#5434; #5674).
+
+### Changed
+
+- Name and document the WeChat typing refresh cadence constants together
+  with their trade-offs (#5471; #5647).
+- De-flake the goal-execution-service status-transition test by waiting
+  for the persisted terminal condition instead of a fixed timer drain
+  (#5675).
+
 ## [0.6.10] - 2026-11-04
 
 ### Fixed
