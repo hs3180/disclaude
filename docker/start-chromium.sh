@@ -65,7 +65,11 @@ fi
 sed "s/__CDP_HOST__/$CDP_HOST/g; s/__GATEWAY__/$GATEWAY/g; s/__CDP_PORT__/$CDP_PORT/g; s/__CDP_INTERNAL_PORT__/$CDP_INTERNAL_PORT/g" \
     /etc/nginx/cdp-proxy.conf.template > /tmp/cdp-nginx.conf
 mkdir -p "$CHROMIUM_CDP_PROFILE_DIR"
-chmod 700 "$CHROMIUM_CDP_PROFILE_DIR"
+# A bind-mounted profile directory (#5653 review 6646239269) may be read-only
+# or carry host-owned permissions; keep the 700 default but do not brick
+# startup on a mount whose mode we cannot change.
+chmod 700 "$CHROMIUM_CDP_PROFILE_DIR" 2>/dev/null \
+    || echo "WARN: could not tighten permissions on $CHROMIUM_CDP_PROFILE_DIR (mounted volume?)" >&2
 children=()
 browser_pid=""
 vnc_password_file=""

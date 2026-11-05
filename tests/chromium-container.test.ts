@@ -49,15 +49,22 @@ describe('container Chromium configuration', () => {
     const compose = yaml.load(readFileSync(resolve('docker-compose.yml'), 'utf8')) as any;
     const browser = compose.services.chromium;
     expect(browser.init).toBe(true);
-    expect(browser.volumes).toContainEqual({
-      type: 'volume', source: 'chromium_profile', target: '${CHROMIUM_CDP_PROFILE_DIR:-/data/chrome-profile}',
-    });
+    // #5653 review 6646239269: the profile mount source is user-selectable —
+    // an absolute host path via CHROMIUM_PROFILE_VOLUME, or the managed named
+    // volume by default; the target stays the profile dir Chromium uses.
+    expect(browser.volumes).toContainEqual(
+      '${CHROMIUM_PROFILE_VOLUME:-chromium_profile}:${CHROMIUM_CDP_PROFILE_DIR:-/data/chrome-profile}'
+    );
     expect(browser.environment).toContain('CHROMIUM_CDP_PROFILE_DIR=${CHROMIUM_CDP_PROFILE_DIR:-/data/chrome-profile}');
     expect(compose.volumes).toHaveProperty('chromium_profile');
     expect(readFileSync(join(browser.build.context, browser.build.dockerfile), 'utf8')).toContain('COPY start-chromium.sh');
+    expect(readFileSync(join(browser.build.context, browser.build.dockerfile), 'utf8')).toContain('VOLUME ["/data/chrome-profile"]');
     const launcher = readFileSync(resolve('docker/start-chromium.sh'), 'utf8');
     expect(launcher).toContain('CHROMIUM_CDP_PROFILE_DIR=${CHROMIUM_CDP_PROFILE_DIR:-/data/chrome-profile}');
     expect(launcher).toContain('"--user-data-dir=$CHROMIUM_CDP_PROFILE_DIR"');
+    // A bind-mounted profile dir may not permit chmod; startup must not brick.
+    expect(launcher).toContain('could not tighten permissions');
+    expect(readFileSync(resolve('docs/chromium-container.md'), 'utf8')).toContain('CHROMIUM_PROFILE_VOLUME');
     const acceptance = readFileSync(resolve('scripts/test-chromium-container.mjs'), 'utf8');
     expect(acceptance).toContain("'-v', `${volume}:${profilePath}`");
     expect(acceptance).toContain("'-e', `CHROMIUM_CDP_PROFILE_DIR=${profilePath}`");

@@ -25,7 +25,14 @@ the [service-internal CDP contract](cdp-endpoint.md).
 The `chromium_profile` volume is mounted at `CHROMIUM_CDP_PROFILE_DIR`, which
 defaults to `/data/chrome-profile`; Chromium receives the same path as its
 `--user-data-dir`. Set an absolute container path in the Compose `.env` file to
-change it. Restarts and container recreation preserve the volume at that path.
+change it. To keep the profile in a directory you manage instead of the managed
+named volume, set `CHROMIUM_PROFILE_VOLUME` to an absolute host path in the
+Compose `.env` file — Compose bind-mounts that directory at the same target.
+Leaving it unset keeps the named volume (the default). To run without a
+Compose-managed profile mount at all, drop the entry in an override file: the
+image itself declares `/data/chrome-profile` as a `VOLUME`, so the profile
+still lands on an anonymous Docker volume rather than the container layer.
+Restarts and container recreation preserve the volume at that path.
 Do not use `docker compose down -v` when retaining browser state. The profile
 belongs to the container browser and is not the host's daily Chrome profile.
 Changing the configured path selects a different profile; setup does not copy or
