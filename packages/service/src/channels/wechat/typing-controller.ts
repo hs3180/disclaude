@@ -7,6 +7,20 @@ interface PeerState {
   running?: Promise<void>;
 }
 
+/**
+ * Typing refresh cadence (#5471, behavior landed with #5544).
+ *
+ * Both the phone-side display TTL and Tencent-side typing rate limits are
+ * unmeasured, so these are conservative engineering defaults, not a
+ * discovered server contract: while work is running, reassert status 1
+ * every {@link TYPING_REFRESH_BASE_MS} so any plausible client TTL is
+ * outlived by the next pulse; on an unavailable pulse (missing typing
+ * ticket, network failure) double the interval per consecutive failure,
+ * capped at {@link TYPING_REFRESH_MAX_MS}, instead of hammering the API.
+ */
+export const TYPING_REFRESH_BASE_MS = 5_000;
+export const TYPING_REFRESH_MAX_MS = 30_000;
+
 /** One serialized indicator per account/peer; leases represent work and actual delivery. */
 export class WeChatTypingController {
   private readonly peers = new Map<string, PeerState>();
@@ -62,7 +76,7 @@ export class WeChatTypingController {
           return;
         }
         entry.failures = sent ? 0 : Math.min(entry.failures + 1, 3);
-        entry.timer = setTimeout(() => { entry.timer = undefined; void this.pump(entry); }, Math.min(5_000 * 2 ** entry.failures, 30_000));
+        entry.timer = setTimeout(() => { entry.timer = undefined; void this.pump(entry); }, Math.min(TYPING_REFRESH_BASE_MS * 2 ** entry.failures, TYPING_REFRESH_MAX_MS));
         entry.timer.unref?.();
         return;
       }

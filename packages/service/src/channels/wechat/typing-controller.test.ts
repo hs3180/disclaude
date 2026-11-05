@@ -1,9 +1,41 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { WeChatTypingController } from './typing-controller.js';
+import { WeChatTypingController, TYPING_REFRESH_BASE_MS, TYPING_REFRESH_MAX_MS } from './typing-controller.js';
 
 afterEach(() => vi.useRealTimers());
 const tick = () => vi.advanceTimersByTimeAsync(0);
 describe('account/peer typing leases (#5471)', () => {
+  it('derives the documented conservative cadence from the exported constants', async () => {
+    // Success cadence: one reassert per TYPING_REFRESH_BASE_MS while work runs.
+    vi.useFakeTimers(); const send = vi.fn().mockResolvedValue(true);
+    const controller = new WeChatTypingController(send);
+    const work = controller.begin('peer'); await tick();
+    expect(send).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(TYPING_REFRESH_BASE_MS - 1);
+    expect(send).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(send).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(TYPING_REFRESH_BASE_MS * 3);
+    expect(send).toHaveBeenCalledTimes(5);
+    work(); await tick(); expect(send.mock.calls.at(-1)?.[1]).toBe(2);
+    await controller.close();
+  });
+  it('caps the failure backoff at TYPING_REFRESH_MAX_MS and still cancels after failures', async () => {
+    // Each consecutive failure doubles the interval, capped at TYPING_REFRESH_MAX_MS.
+    vi.useFakeTimers(); const send = vi.fn().mockRejectedValue(new Error('ticket unavailable'));
+    const controller = new WeChatTypingController(send);
+    const work = controller.begin('peer'); await tick();
+    expect(send).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(TYPING_REFRESH_BASE_MS * 2 - 1); expect(send).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1); expect(send).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(TYPING_REFRESH_BASE_MS * 4 - 1); expect(send).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1); expect(send).toHaveBeenCalledTimes(3);
+    // Fourth consecutive failure waits the capped maximum, not a longer doubling.
+    await vi.advanceTimersByTimeAsync(TYPING_REFRESH_MAX_MS - 1); expect(send).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(1); expect(send).toHaveBeenCalledTimes(4);
+    work(); const closing = controller.close();
+    await tick(); await vi.advanceTimersByTimeAsync(0);
+    expect(send.mock.calls.at(-1)?.[1]).toBe(2); await closing;
+  });
   it('refreshes quiet work for multiple intervals, releasing only when all work/delivery owners finish', async () => {
     vi.useFakeTimers(); const send = vi.fn().mockResolvedValue(true);
     const controller = new WeChatTypingController(send);
