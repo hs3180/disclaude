@@ -43,8 +43,8 @@ agents:
       maxConcurrentRuns: 2
 llms:
   daily:
-    model: gpt-6-luna
-    reasoningEffort: max
+    model: your-codex-model
+    reasoningEffort: your-supported-effort
     maxConcurrentSessions: 3
 ```
 
