@@ -42,6 +42,10 @@ function connection() {
     interruptKernel: vi.fn((kernelId: string) =>
       Promise.resolve({ kernelId, state: 'accepted', executionState: 'unknown', httpStatus: 204 })
     ),
+    probeRuntime: vi.fn((kernelId: string) => Promise.resolve({
+      schema: 'disclaude.jupyter-runtime.v1', host: { state: 'available', id: `sha256:${'a'.repeat(64)}` },
+      gpus: { state: 'available', uuids: [`GPU-${'b'.repeat(8)}-aaaa-aaaa-aaaa-${'c'.repeat(12)}`] }, kernelId,
+    })),
     response: vi.fn((_route: string, _method = 'GET', _body?: Record<string, unknown>) =>
       Promise.resolve(new Response('{}', { status: 404 }))
     ),
@@ -89,6 +93,23 @@ describe('Optional Jupyter CLI boundary', () => {
         signal
       )
     ).toEqual({ state: 'reconciled', runs: [] });
+    expect(f.resolve).not.toHaveBeenCalled();
+  });
+
+  it('probes only an explicitly selected existing kernel without opening RTC', async () => {
+    const directory = root();
+    const f = connection();
+    const result = await runNotebookCommand(parseNotebookOptions(['runtime-probe', '--project-dir', directory, '--input-file', '-']),
+      f.resolve, signal, () => JSON.stringify({ kernelId: 'selected-kernel' }));
+    expect(result).toMatchObject({ schema: 'disclaude.jupyter-runtime.v1', gpus: { state: 'available' } });
+    expect(f.client.probeRuntime).toHaveBeenCalledExactlyOnceWith('selected-kernel', signal);
+    expect(f.client.openDocument).not.toHaveBeenCalled();
+  });
+
+  it.each([{}, { kernelId: '../other' }, { kernelId: 'kernel', code: 'arbitrary' }])('rejects custom or unsafe probe input before connection: %s', async (input) => {
+    const f = connection();
+    await expect(runNotebookCommand(parseNotebookOptions(['runtime-probe', '--project-dir', root(), '--input-file', '-']),
+      f.resolve, signal, () => JSON.stringify(input))).rejects.toThrow('runtime probe');
     expect(f.resolve).not.toHaveBeenCalled();
   });
 

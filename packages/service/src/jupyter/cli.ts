@@ -6,6 +6,7 @@ import { JupyterProjectConfigStore } from './project-config-store.js';
 
 const commands = [
   'list',
+  'runtime-probe',
   'describe',
   'read-cell',
   'insert-cell',
@@ -83,6 +84,19 @@ export interface NotebookCLIConnection {
   connectionId: string;
   namespace: string;
 }
+
+const runtimeProbeCommand = {
+  command: 'runtime-probe',
+  description: 'Probe an existing kernel with fixed host-owned code. Returns a hashed host ID and sorted GPU UUIDs; unknown never means safe to run. No Notebook writeback.',
+  inputSchema: {
+    type: 'object', properties: { kernelId: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,256}$' } },
+    required: ['kernelId'], additionalProperties: false,
+  },
+  outputSchema: {
+    type: 'object', required: ['schema', 'host', 'gpus'],
+    description: 'disclaude.jupyter-runtime.v1; host.id is sha256:<64 lowercase hex> or null; gpus.uuids is a sorted unique GPU-* list or null with state=unknown.',
+  },
+};
 
 const interruptCommand = {
   command: 'interrupt',
@@ -320,6 +334,7 @@ export async function runNotebookCommand(
           outputSchema,
         })),
         interruptCommand,
+        runtimeProbeCommand,
       ];
     }
     if (options.command === 'list') {
@@ -433,6 +448,15 @@ export async function runNotebookCommand(
       const input = notebookInput(options.inputFile, readInput);
       if (options.command === 'interrupt') {
         return interruptKernel(root, input, connection, signal);
+      }
+      if (options.command === 'runtime-probe') {
+        if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length !== 1 ||
+          typeof (input as { kernelId?: unknown }).kernelId !== 'string' ||
+          !/^[A-Za-z0-9_-]{1,256}$/.test((input as { kernelId: string }).kernelId)) {
+          throw new Error('Invalid runtime probe input; an existing kernelId is required');
+        }
+        signal.throwIfAborted();
+        return (await connection()).client.probeRuntime((input as { kernelId: string }).kernelId, signal);
       }
       const name = `notebook_${options.command.replaceAll('-', '_')}`;
       const tool = tools.tools.find((t) => t.name === name);

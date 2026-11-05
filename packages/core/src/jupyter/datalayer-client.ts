@@ -40,6 +40,56 @@ class DatalayerProtocolError extends Error {
   }
 }
 
+export interface JupyterRuntimeProbe {
+  schema: 'disclaude.jupyter-runtime.v1';
+  host: { state: 'available'; id: string } | { state: 'unknown'; id: null };
+  gpus:
+    | { state: 'available'; uuids: string[] }
+    | { state: 'unknown'; reason: 'no_gpu_or_unavailable' | 'probe_unavailable'; uuids: null };
+}
+
+const runtimeProbeSource = `def _disclaude_runtime_probe():
+    import hashlib, json, platform, subprocess
+    try:
+        host = 'sha256:' + hashlib.sha256(platform.node().encode('utf-8')).hexdigest()
+    except Exception:
+        host = None
+    try:
+        result = subprocess.run(['nvidia-smi', '--query-gpu=uuid', '--format=csv,noheader,nounits'], capture_output=True, text=True, timeout=5, check=False)
+        uuids = [line.strip() for line in result.stdout.splitlines() if line.strip()] if result.returncode == 0 else None
+    except Exception:
+        uuids = None
+    print('__DISCLAUDE_RUNTIME_V1__' + json.dumps({'host': host, 'uuids': uuids}, separators=(',', ':')))
+_disclaude_runtime_probe()
+del _disclaude_runtime_probe`;
+
+export function normalizeRuntimeProbe(payload: unknown): JupyterRuntimeProbe {
+  const value = payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? payload as { host?: unknown; uuids?: unknown }
+    : {};
+  const host = typeof value.host === 'string' && /^sha256:[a-f0-9]{64}$/.test(value.host)
+    ? { state: 'available' as const, id: value.host }
+    : { state: 'unknown' as const, id: null };
+  const gpuUuid = (uuid: unknown): uuid is string =>
+    typeof uuid === 'string' && /^GPU-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(uuid);
+  const uuids = Array.isArray(value.uuids)
+    ? [...new Set(value.uuids.filter(gpuUuid))].sort()
+    : [];
+  const complete = Array.isArray(value.uuids) && value.uuids.every(gpuUuid) && uuids.length > 0;
+  return {
+    schema: 'disclaude.jupyter-runtime.v1',
+    host,
+    gpus: complete
+      ? { state: 'available', uuids }
+      : { state: 'unknown', reason: 'no_gpu_or_unavailable', uuids: null },
+  };
+}
+
+function unavailableRuntimeProbe(): JupyterRuntimeProbe {
+  return { schema: 'disclaude.jupyter-runtime.v1', host: { state: 'unknown', id: null },
+    gpus: { state: 'unknown', reason: 'probe_unavailable', uuids: null } };
+}
+
 export interface DatalayerExecutionHandle {
   kernelId: string;
   requestId: string;
@@ -319,6 +369,52 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
         } catch {
           finish();
         }
+      });
+    });
+  }
+
+  /** Fixed host-owned probe; accepts no caller source and never writes a Notebook cell. */
+  async probeRuntime(kernelId: string, signal?: AbortSignal): Promise<JupyterRuntimeProbe> {
+    const { default: WebSocket } = await import('ws');
+    const session = randomUUID();
+    const messageId = randomUUID();
+    const options = await this.socket(`api/kernels/${id(kernelId)}/channels?session_id=${session}`);
+    return await new Promise((resolve) => {
+      const socket = new WebSocket(options.url, {
+        headers: options.headers, followRedirects: false, handshakeTimeout: 10000, maxPayload: 65536,
+      });
+      let settled = false;
+      const finish = (value = unavailableRuntimeProbe()): void => {
+        if (settled) {return;}
+        settled = true;
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', abort);
+        socket.close();
+        resolve(value);
+      };
+      const abort = (): void => finish();
+      const timer = setTimeout(() => finish(), 10000);
+      signal?.addEventListener('abort', abort, { once: true });
+      if (signal?.aborted) {return finish();}
+      socket.once('error', () => finish());
+      socket.once('close', () => finish());
+      socket.once('open', () => socket.send(JSON.stringify({
+        header: { msg_id: messageId, msg_type: 'execute_request', session, username: 'disclaude', version: '5.3', date: new Date().toISOString() },
+        parent_header: {}, metadata: {},
+        content: { code: runtimeProbeSource, silent: false, store_history: false, user_expressions: {}, allow_stdin: false, stop_on_error: true },
+        channel: 'shell',
+      })));
+      socket.on('message', (buffer) => {
+        try {
+          const message = JSON.parse(buffer.toString()) as {
+            header?: { msg_type?: string };
+            parent_header?: { msg_id?: string };
+            content?: { name?: string; text?: unknown };
+          };
+          if (message.parent_header?.msg_id !== messageId || message.header?.msg_type !== 'stream' || message.content?.name !== 'stdout') {return;}
+          const match = String(message.content.text).match(/__DISCLAUDE_RUNTIME_V1__([^\r\n]+)/);
+          if (match) {finish(normalizeRuntimeProbe(JSON.parse(match[1])));}
+        } catch { finish(); }
       });
     });
   }
