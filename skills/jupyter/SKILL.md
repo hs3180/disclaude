@@ -46,6 +46,19 @@ for the current JSON input schemas and [README.md](./README.md) for setup.
    it does not prove non-execution. Restore the configured connection, then
    use `reconcile` to query every nonterminal original handle without replay.
    Cached partial outputs are labelled `lastKnownResult`.
+   For bounded in-turn waiting add `--wait [--timeout S]` (execute/status
+   only): it returns on completed/failed/cancelled/rejected, or reports
+   `wait:{state:"timeout",runPreserved:true}` — a wait timeout stops only
+   this CLI wait and never the kernel run. Long runs: submit without
+   `--wait`, then arm exactly one background watcher (`status --wait
+   --timeout 86400` for the same runId) as a background shell task; the
+   harness's existing background-task notification delivers its exit once,
+   and `wait.state` distinguishes completion from a wait timeout — re-arm
+   only after a timeout and never run two live watchers on one runId (each
+   exit notifies). While waiting, plain `status` with the previous
+   `stdout.nextCursor` returns incremental stdout; the wait loop holds no
+   Project lock while sleeping, and a transient lock collision with an
+   in-flight poll is a retriable error, not a run-state change.
 4. Stop remote work with `stop` and its original `notebookId`/`runId`. Only
    `stopConfirmed: true` confirms cancellation. Chat `/stop` stops inference;
    remote executions remain independent. Do not claim the kernel stopped

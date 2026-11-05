@@ -69,7 +69,14 @@ failed, cancelled or rejected, or until the wait timeout; the wait timeout
 never cancels the kernel run — re-query status with the same runId and
 stdout.nextCursor. status stdout is incremental: omit stdoutCursor for the
 new-session tail, then pass stdout.nextCursor for duplicate-free, gap-free
-deltas of the same run.
+deltas of the same run. Long runs: submit without --wait and run at most one
+background watcher, status --wait --timeout 86400 for the same runId, as a
+background shell task — the harness notifies on its exit exactly once and
+wait.state distinguishes completion from a wait timeout (re-arm only then;
+two live watchers on one runId produce two notifications). The wait loop
+holds no lock while sleeping: other commands in the same Project keep
+working; a transient lock collision with an in-flight poll is a retriable
+error, not a run-state change.
 status labels source as live or local-journal; connection failures retain last-known facts.
 reconcile queries every nonterminal original handle after restoring credentials/connection.
 interrupt targets an existing kernelId, or a uniquely bound notebookId; no runId.
@@ -328,13 +335,20 @@ const waitTerminalStates = new Set(['completed', 'failed', 'cancelled', 'rejecte
  * it never calls stop/interrupt, so a wait timeout leaves the kernel run
  * untouched. Ambiguous unknown/loss observations keep polling until the
  * timeout instead of guessing a terminal outcome.
+ *
+ * `poll` wraps each status observation (the CLI passes withNotebookLock so
+ * every journal-writing query stays serialized) while the sleep between
+ * polls stays outside it — a long --wait must never hold the Project CLI
+ * lock, or concurrent commands (progress status, follow-up execute, stop)
+ * would fail for the whole wait.
  */
 export async function awaitNotebookTerminal(
   tools: NotebookTools,
   input: Record<string, unknown>,
   first: unknown,
   timeoutSeconds: number,
-  signal: AbortSignal
+  signal: AbortSignal,
+  poll?: (statusInput: Record<string, unknown>) => Promise<unknown>
 ): Promise<unknown> {
   const started = Date.now();
   const deadline = started + timeoutSeconds * 1000;
@@ -345,6 +359,8 @@ export async function awaitNotebookTerminal(
     throw new Error('Waiting needs the original notebookId and runId');
   }
   const delay = Math.max(50, Math.min(1000, (timeoutSeconds * 1000) / 8));
+  const observeStatus =
+    poll ?? ((statusInput: Record<string, unknown>) => status.execute(statusInput, { signal }));
   let last = first as Record<string, unknown>;
   let stdoutCursor: string | undefined;
   for (;;) {
@@ -373,9 +389,8 @@ export async function awaitNotebookTerminal(
     }
     await new Promise((resolve) => setTimeout(resolve, Math.min(delay, remaining)));
     signal.throwIfAborted();
-    last = (await status.execute(
-      { notebookId, runId, ...(stdoutCursor ? { stdoutCursor } : {}) },
-      { signal }
+    last = (await observeStatus(
+      { notebookId, runId, ...(stdoutCursor ? { stdoutCursor } : {}) }
     )) as Record<string, unknown>;
   }
 }
@@ -442,7 +457,8 @@ export async function runNotebookCommand(
     if (options.command === 'check') {
       return await (await connection()).client.inspectConnection();
     }
-    return await withNotebookLock(root, async () => {
+    let waitInput: Record<string, unknown> | undefined;
+    const initial = await withNotebookLock(root, async () => {
       signal.throwIfAborted();
       if (['link', 'create', 'unlink'].includes(options.command)) {
         if (!options.contentPath) {
@@ -519,6 +535,7 @@ export async function runNotebookCommand(
         }
       }
       const input = notebookInput(options.inputFile, readInput);
+      waitInput = input as Record<string, unknown>;
       if (options.command === 'interrupt') {
         return interruptKernel(root, input, connection, signal);
       }
@@ -537,20 +554,39 @@ export async function runNotebookCommand(
         throw new Error('Unknown Notebook operation');
       }
       const result = await tool.execute(input as Record<string, unknown>, { signal });
-      if (!options.wait) {
-        return materializeImages(root, result);
+      if (options.wait) {
+        return result;
       }
-      return materializeImages(
-        root,
-        await awaitNotebookTerminal(
-          tools,
-          input as Record<string, unknown>,
-          result,
-          options.timeoutSeconds ?? 600,
-          signal
-        )
-      );
+      return materializeImages(root, result);
     });
+    if (!options.wait) {
+      return initial;
+    }
+    // #5320: the wait loop runs outside the Project CLI lock and re-acquires
+    // it per status poll, so a long --wait (default 600s) never starves other
+    // commands in the same Project — progress `status`, follow-up `execute`
+    // and `stop` keep working while a backgrounded `status --wait` watcher
+    // bridges run completion through the harness's existing background-task
+    // notification. The lock stays fail-closed: a collision with an in-flight
+    // poll is a retriable error, never a run-state change.
+    const statusTool = tools.tools.find((candidate) => candidate.name === 'notebook_status');
+    return materializeImages(
+      root,
+      await awaitNotebookTerminal(
+        tools,
+        waitInput as Record<string, unknown>,
+        initial,
+        options.timeoutSeconds ?? 600,
+        signal,
+        (statusInput) =>
+          withNotebookLock(root, () => {
+            if (!statusTool) {
+              throw new Error('Waiting needs the notebook_status tool');
+            }
+            return statusTool.execute(statusInput, { signal });
+          })
+      )
+    );
   } finally {
     await tools.close();
   }

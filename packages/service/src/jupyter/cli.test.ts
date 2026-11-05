@@ -494,4 +494,91 @@ describe('Jupyter CLI wait options (#5320)', () => {
       /Invalid --timeout seconds/
     );
   });
+
+  it('status --wait holds the Project lock only per poll, never across the wait', async () => {
+    const directory = root();
+    const f = connection();
+    const reference = {
+      connectionId: 'configured',
+      serverNamespace: 'endpoint-fingerprint',
+      documentId: 'document-1',
+      contentPath: 'research.ipynb',
+    };
+    new JupyterProjectConfigStore(directory).linkNotebook(reference);
+    const journal = new DatalayerRunStore(directory);
+    journal.reserve('original', {
+      ...reference,
+      cellId: 'cell',
+      sourceHash: 'a'.repeat(64),
+      kernelId: 'kernel-1',
+    });
+    journal.update('original', {
+      state: 'running',
+      handle: { requestId: 'request-original' } as never,
+      observation: { state: 'running', httpStatus: 202, result: { outputs: [] } },
+    });
+    const gates: Array<(value: unknown) => void> = [];
+    let observations = 0;
+    const client = {
+      ...f.client,
+      observe: vi.fn(
+        () =>
+          new Promise((settled) => {
+            observations += 1;
+            gates.push(settled);
+          })
+      ),
+    };
+    const resolve = vi.fn((): Promise<NotebookCLIConnection> =>
+      Promise.resolve({
+        client: client as unknown as DatalayerJupyterClient,
+        connectionId: 'configured',
+        namespace: 'endpoint-fingerprint',
+      })
+    );
+    const options = parseNotebookOptions([
+      'status',
+      '--project-dir',
+      directory,
+      '--input-file',
+      '-',
+      '--wait',
+      '--timeout',
+      '12',
+    ]);
+    const waiting = runNotebookCommand(options, resolve, signal, () =>
+      JSON.stringify({ notebookId: notebookIdentifier(reference), runId: 'original' })
+    );
+    const running = { state: 'running', httpStatus: 202, result: { outputs: [] } };
+    // The initial status query runs under runNotebookCommand's lock.
+    await vi.waitFor(() => expect(observations).toBe(1));
+    await expect(withNotebookLock(directory, () => Promise.resolve())).rejects.toMatchObject({
+      code: 'EEXIST',
+    });
+    gates[0](running);
+    // Each wait poll re-acquires the lock for its own journal-writing query.
+    await vi.waitFor(() => expect(observations).toBe(2), { timeout: 4000 });
+    await expect(withNotebookLock(directory, () => Promise.resolve())).rejects.toMatchObject({
+      code: 'EEXIST',
+    });
+    gates[1]({
+      state: 'running',
+      httpStatus: 202,
+      result: { outputs: [{ output_type: 'stream', name: 'stdout', text: 'mid-run' }] },
+    });
+    // Between polls the lock is free: progress queries keep working mid-wait.
+    await vi.waitFor(() =>
+      expect(withNotebookLock(directory, () => Promise.resolve('free'))).resolves.toBe('free')
+    );
+    await vi.waitFor(() => expect(observations).toBe(3), { timeout: 4000 });
+    gates[2]({
+      state: 'completed',
+      httpStatus: 200,
+      result: { execution_count: 1, outputs: [] },
+    });
+    const result = (await waiting) as { state: string; wait: { state: string } };
+    expect(result.state).toBe('completed');
+    expect(result.wait.state).toBe('completed');
+    expect(fs.existsSync(path.join(directory, '.jupyter', 'cli.lock'))).toBe(false);
+  }, 15000);
 });
