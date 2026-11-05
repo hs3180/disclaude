@@ -173,6 +173,11 @@ describe('Optional Datalayer Notebook tools', () => {
       expect(f.notebook.cells).toHaveLength(22);
       expect(f.notebook.cells.slice(2).map(cell => cell.source))
         .toEqual(Array.from({ length: 20 }, (_, i) => `edited ${i}`));
+      // #5615: inserted code cells default to hidden source; markdown stays visible.
+      expect(f.notebook.cells.slice(2).map((cell) =>
+        (cell.toJSON() as unknown as { metadata: unknown }).metadata))
+        .toEqual(Array.from({ length: 20 }, (_, i) =>
+          i % 2 ? {} : { jupyter: { source_hidden: true } }));
       expect(warn).not.toHaveBeenCalled();
       expect(error).not.toHaveBeenCalled();
       f.doc.flush.mockRejectedValueOnce(new Error('Owned RTC synchronization failure'));
@@ -181,6 +186,81 @@ describe('Optional Datalayer Notebook tools', () => {
       })).rejects.toThrow('Owned RTC synchronization failure');
       expect(f.notebook.cells).toHaveLength(22);
     } finally { warn.mockRestore(); error.mockRestore(); }
+  });
+
+  it('drops the RTC-seeded empty first cell when appending real content after create (#5548)', async () => {
+    const f = await fixture();
+    // Opening a created zero-cell notebook through RTC makes the server seed
+    // exactly one empty code cell before any user content exists.
+    f.notebook.fromJSON({
+      nbformat: 4,
+      nbformat_minor: 5,
+      metadata: {},
+      cells: [
+        { id: 'rtc-seed', cell_type: 'code', metadata: {}, source: '', outputs: [], execution_count: null },
+      ],
+    });
+    const first = await f.call(f.session, 'notebook_insert_cell', {
+      notebookId: f.args.notebookId, cellId: 'intro', beforeCellId: '', cellType: 'markdown', source: '# Findings',
+    });
+    expect(first).toMatchObject({ state: 'inserted', cellId: 'intro', removedSeedCellId: 'rtc-seed' });
+    const second = await f.call(f.session, 'notebook_insert_cell', {
+      notebookId: f.args.notebookId, cellId: 'analysis', beforeCellId: '', cellType: 'code', source: 'print(42)',
+    }) as Record<string, unknown>;
+    expect(second).toMatchObject({ state: 'inserted', cellId: 'analysis' });
+    expect('removedSeedCellId' in second).toBe(false);
+    expect(f.notebook.cells.map((c) => [c.id, c.source])).toEqual([
+      ['intro', '# Findings'],
+      ['analysis', 'print(42)'],
+    ]);
+    // Delivered exports stay faithful: the snapshot's first cell is user content.
+    const saved = exportFixture(f);
+    const report = (await f.call(f.session, 'notebook_export', { notebookId: f.args.notebookId })) as {
+      revision: string;
+      notebookPath: string;
+    };
+    expect(report.revision).toBe(notebookSnapshotHash(f.notebook.toJSON()));
+    const content = saved.get(`api/contents/${report.notebookPath}`)!.content as {
+      cells: Array<{ id: string; source: unknown }>;
+    };
+    expect(content.cells.map((c) => c.id)).toEqual(['intro', 'analysis']);
+    expect(String(content.cells[0].source)).toBe('# Findings');
+  });
+
+  it('delivers code cells hidden by default without touching pre-existing or markdown cells (#5615)', async () => {
+    const f = await fixture();
+    const insert = (cellId: string, cellType: 'code' | 'markdown', source: string, beforeCellId = '') =>
+      f.call(f.session, 'notebook_insert_cell', {
+        notebookId: f.args.notebookId, cellId, beforeCellId, cellType, source,
+      });
+    expect(await insert('delivery-code', 'code', 'print(42)')).toMatchObject({
+      state: 'inserted', cellId: 'delivery-code',
+    });
+    expect(await insert('delivery-prose', 'markdown', 'Conclusion first.')).toMatchObject({
+      state: 'inserted', cellId: 'delivery-prose',
+    });
+    const cellMetadata = (index: number): unknown =>
+      (f.notebook.getCell(index) as unknown as { toJSON: () => { metadata: unknown } })
+        .toJSON().metadata;
+    expect(cellMetadata(2)).toEqual({ jupyter: { source_hidden: true } });
+    expect(cellMetadata(3)).toEqual({});
+    // Idempotent re-insert never rewrites the metadata of an existing cell,
+    // including human-created or previously unhidden code cells.
+    expect(await insert('code', 'code', 'print(42)')).toMatchObject({ state: 'existing' });
+    expect(cellMetadata(0)).toEqual({});
+    // The delivery export snapshot carries the default through ipynb verbatim.
+    exportFixture(f);
+    const report = (await f.call(f.session, 'notebook_download_report', {
+      notebookId: f.args.notebookId,
+    })) as { artifacts: Array<{ filePath: string; kind: string }> };
+    const ipynb = JSON.parse(fs.readFileSync(
+      report.artifacts.find((a) => a.kind === 'ipynb')!.filePath, 'utf8'
+    )) as { cells: Array<{ id: string; metadata: Record<string, unknown> }> };
+    expect(ipynb.cells.find((c) => c.id === 'delivery-code')?.metadata)
+      .toEqual({ jupyter: { source_hidden: true } });
+    expect(ipynb.cells.find((c) => c.id === 'delivery-prose')?.metadata).toEqual({});
+    expect(ipynb.cells.find((c) => c.id === 'code')?.metadata).toEqual({});
+    await f.session.close();
   });
 
   it('returns canonical error fields and one-release aliases that a Jupyter Notebook consumer can read', async () => {

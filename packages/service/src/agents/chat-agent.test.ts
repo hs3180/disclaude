@@ -155,7 +155,8 @@ import { ChatAgent } from './chat-agent.js';
 import { createChannelCallbacksFactory, createDefaultMessageHandler } from '../utils/channel-handlers.js';
 import { registerFeishuInputSource, readVerifiedInputSource } from './input-provenance.js';
 import type { WiredContext } from '../channel-lifecycle-manager.js';
-import { MessageRouter, TurnSupersededError, type IChannel, type OutgoingMessage, type IncomingMessage } from '@disclaude/core';
+import { MessageRouter, TurnSupersededError, LiveInputRejectedError,
+  type IChannel, type OutgoingMessage, type IncomingMessage, type StreamingUserMessage } from '@disclaude/core';
 import type { Logger } from 'pino';
 import { ServiceTurnRecoveryStore } from '../service-turn-recovery.js';
 import { AgentPoolMessageHandler } from '../messaging/agent-pool-handler.js';
@@ -275,6 +276,20 @@ describe('ChatAgent (service)', () => {
         await expect(chatAgent.turnCompleteFor('rejected-source')).rejects.toThrow('Channel closed');
         expect(chatAgent.hasAdmittedInput('rejected-source')).toBe(false);
       } finally { chatAgent.reset(); finish?.(); ChatAgent.prototype.dispose.call(chatAgent); }
+    });
+
+    it('hands the backend the #5434-guarded channel FIFO at session start', async () => {
+      const guard = vi.spyOn(ChatAgent.prototype as any, 'guardChannelFifo');
+      try {
+        await (chatAgent as any).startAgentLoop();
+        expect(guard).toHaveBeenCalledTimes(1);
+        expect((chatAgent as any).createQueryStream.mock.calls[0][0])
+          .toBe(guard.mock.results[0].value);
+      } finally {
+        guard.mockRestore();
+        chatAgent.reset();
+        ChatAgent.prototype.dispose.call(chatAgent);
+      }
     });
 
     it('settles a capacity rejection with a channel notice and lets a later retry start', async () => {
@@ -937,6 +952,137 @@ describe('ChatAgent (service)', () => {
       } finally { dispose(agent); }
     });
 
+    it('Issue #5434: suppresses a replayed attachment-only input the running turn already consumed', async () => {
+      const { agent, push, steer, callbacks } = owned();
+      // #5434: a proper inbound image FileRef (id/source/localPath per core type).
+      const tireImage = () => ({ id: 'att-image-k', fileName: 'image_k.png', source: 'user' as const,
+        localPath: '/tmp/image_k.png', createdAt: 1 });
+      const attachmentInput = (messageId = 'image-1-file') => ({ chatId: 'owned-steer', payload: '用户上传了一个图片：image_k',
+        messageId, attachments: [tireImage()], attachmentOnly: true });
+      try {
+        // Timeline step 1 (08:34): the bare image arrives while the main turn
+        // runs and steers into it — the running request consumes the attachment.
+        await agent.processMessage(attachmentInput());
+        expect(steer).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('用户上传了一个图片'));
+        expect(push).not.toHaveBeenCalled();
+        (agent as any).resolveTurn('owner-A');
+        await agent.turnCompleteFor('image-1-file');
+
+        // Timeline step 2 (08:58-08:59): the same source message resurfaces
+        // (redelivery/queue replay) after the main turn finished using the
+        // image — it must NOT form an independent "what should I do?" turn.
+        await agent.processMessage(attachmentInput());
+        expect(steer).toHaveBeenCalledTimes(1);
+        expect(push).not.toHaveBeenCalled();
+        await agent.turnCompleteFor('image-1-file');
+        expect((agent as any).logger.info.mock.calls.map(([record]: any[]) => record)
+          .some((record: any) => record?.event === 'agent_turn' && record.sourceMessageId === 'image-1-file'
+            && record.state === 'completed' && record.user_visible === false)).toBe(true);
+        // Suppression is silent: the user already got the delivery, so no
+        // additional notice may go out for the replayed copy.
+        expect(callbacks.sendMessage).toHaveBeenCalledTimes(1);
+
+        // Acceptance ②: a genuine later independent request carries a fresh
+        // message id and is never suppressed — it steers as ordinary input.
+        await agent.processMessage({ chatId: 'owned-steer', payload: '现在请单独处理这张图',
+          messageId: 'later-request-c', attachments: [tireImage()] });
+        expect(steer).toHaveBeenCalledTimes(2);
+      } finally { dispose(agent); }
+    });
+
+    // #5434 queued-variant harness: a real in-test channel FIFO (steer is
+    // rejected once, so the attachment-only input queues behind the running
+    // text turn exactly like the issue's 08:34 "图片已排队" timeline) plus the
+    // FIFO dequeue guard under test.
+    const queuedVariant = (steer: ReturnType<typeof vi.fn>) => {
+      const callbacks = createMockCallbacks();
+      const agent = new ChatAgent({ chatId: 'owned-steer', callbacks, agentBackend: 'codex' as any, apiKey: 'test', model: 'test' });
+      const fifo: StreamingUserMessage[] = [];
+      const waiting: (() => void)[] = [];
+      const channel = {
+        push: (message: StreamingUserMessage): boolean => {
+          fifo.push(message);
+          waiting.splice(0).forEach(resolve => { resolve(); });
+          return true;
+        },
+        close: vi.fn(),
+      };
+      Object.assign(agent as any, { channel, queryHandle: { close: vi.fn(), cancel: vi.fn(), steer },
+        isSessionActive: true, isProcessingMessage: true, activeTurnMessageId: 'owner-A',
+        isAgentTeamsEnabled: () => false,
+        lastTurnMessage: { chatId: 'owned-steer', payload: 'original', messageId: 'owner-A' } });
+      (agent as any).historyManager.firstMessageHistoryLoaded = true;
+      (agent as any).createTurnCompletion('owner-A');
+      const channelFifo = (async function* (): AsyncGenerator<StreamingUserMessage> {
+        while (true) {
+          while (fifo.length > 0) { yield fifo.shift()!; }
+          await new Promise<void>(resolve => { waiting.push(resolve); });
+        }
+      })();
+      const backendInputs: string[] = [];
+      const drainFifo = async (): Promise<void> => {
+        for await (const message of (agent as any).guardChannelFifo(channelFifo)) {
+          backendInputs.push(message.correlation?.sourceMessageId ?? 'unknown');
+        }
+      };
+      const imageInput = (messageId: string, attachmentId = 'att-tire-1') => ({
+        chatId: 'owned-steer', payload: '用户上传了一个图片：tire_1', messageId,
+        attachments: [{ id: attachmentId, fileName: 'tire_1.png', source: 'user' as const,
+          localPath: '/tmp/tire_1.png', createdAt: 1 }],
+        attachmentOnly: true, threadRootId: 'root-B' });
+      return { agent, callbacks, steer, drainFifo, backendInputs, imageInput };
+    };
+
+    it('Issue #5434 (queued variant): suppresses a queued image turn at FIFO dequeue when the running turn consumed its attachment', async () => {
+      const steer = vi.fn()
+        .mockRejectedValueOnce(new LiveInputRejectedError('backend cannot take live input now'))
+        .mockResolvedValue({ turnId: 'native-A' });
+      const { agent, callbacks, drainFifo, backendInputs, imageInput } = queuedVariant(steer);
+      try {
+        // 08:34:29 (#5434): the bare image arrives while the main text turn
+        // runs; the backend rejects the steer, so the input queues once
+        // behind it in the channel FIFO.
+        await agent.processMessage(imageInput('image-1-file'));
+        expect(steer).toHaveBeenCalledTimes(1);
+        expect(callbacks.sendMessage.mock.calls.some(([, text]) => text.includes('已排队'))).toBe(true);
+        // The running request consumes the attachment copy that reached it
+        // (steer ack) — the #5434 consumption marker is written.
+        await agent.processMessage(imageInput('image-1-copy'));
+        expect(steer).toHaveBeenCalledTimes(2);
+        // 08:58 (#5434): FIFO dequeue after the main turn delivered — the
+        // queued image turn must NOT reach the backend as an independent
+        // "what should I do with this?" Q&A turn.
+        void drainFifo();
+        await agent.turnCompleteFor('image-1-file');
+        expect(backendInputs).toEqual([]);
+        expect((agent as any).pendingTurnMessageIds).not.toContain('image-1-file');
+        expect((agent as any).queuedAttachmentInputs.has('image-1-file')).toBe(false);
+        await vi.waitFor(() => expect((agent as any).logger.info.mock.calls.map(([record]: any[]) => record)
+          .some((record: any) => record?.event === 'agent_turn' && record.sourceMessageId === 'image-1-file'
+            && record.state === 'completed' && record.user_visible === false)).toBe(true));
+        // Suppression is silent: only the queue notice and the steer-ack
+        // notice went out — no additional question for the queued copy.
+        expect(callbacks.sendMessage).toHaveBeenCalledTimes(2);
+        expect(callbacks.onDone).toHaveBeenCalledWith('owned-steer', 'root-B');
+      } finally { dispose(agent); }
+    });
+
+    it('Issue #5434 (queued variant): a queued image turn whose attachment was not consumed still runs its own turn', async () => {
+      const steer = vi.fn()
+        .mockRejectedValueOnce(new LiveInputRejectedError('backend cannot take live input now'));
+      const { agent, drainFifo, backendInputs, imageInput } = queuedVariant(steer);
+      try {
+        await agent.processMessage(imageInput('image-2-file', 'att-tire-2'));
+        expect(steer).toHaveBeenCalledTimes(1);
+        // Nothing consumed the attachment: the FIFO dequeue must hand the
+        // input to the backend so its own attachment turn runs normally.
+        void drainFifo();
+        await vi.waitFor(() => expect(backendInputs).toEqual(['image-2-file']));
+        expect((agent as any).pendingTurnMessageIds).toContain('image-2-file');
+        expect(agent.turnCompleteFor('image-2-file')).toBeDefined();
+      } finally { dispose(agent); }
+    });
+
     it.each([true, false])('settles the durable steered input with its original outcome (success=%s)', async success => {
       const directory = mkdtempSync(join(tmpdir(), 'steer-recovery-'));
       const journalPath = join(directory, 'turns.json');
@@ -1356,6 +1502,77 @@ describe('ChatAgent (service)', () => {
         await agent.processMessage(input('task-B'));
         expect(steer).not.toHaveBeenCalled();
         expect(push).toHaveBeenCalledTimes(1);
+      } finally { dispose(agent); }
+    });
+  });
+
+  describe('busy-input receipt topic routing (#5435)', () => {
+    /** Running thread-less turn whose body replies into the chat's sticky topic root. */
+    function stickyTopicTurn() {
+      const callbacks = createMockCallbacks();
+      const agent = new ChatAgent({ chatId: 'receipt-chat', callbacks, agentBackend: 'codex' as any, apiKey: 'test', model: 'test' });
+      const push = vi.fn().mockReturnValue(true);
+      const steer = vi.fn().mockResolvedValue({ turnId: 'native-A' });
+      Object.assign(agent as any, { channel: { push, close: vi.fn() }, queryHandle: { close: vi.fn(), cancel: vi.fn(), steer },
+        isSessionActive: true, isProcessingMessage: true, activeTurnMessageId: 'owner-A',
+        isAgentTeamsEnabled: () => false,
+        lastTurnMessage: { chatId: 'receipt-chat', payload: 'original', messageId: 'owner-A' } });
+      (agent as any).historyManager.firstMessageHistoryLoaded = true;
+      (agent as any).createTurnCompletion('owner-A');
+      (agent as any).turnStartThreadKeys.set('owner-A', undefined);
+      // Auto-opened topic: the delivery anchor the turn's enqueue recorded
+      // (sticky root at owner admission) — where the turn's body replies go.
+      (agent as any).turnStartAnchors.set('owner-A', 'topic-A');
+      return { agent, callbacks, push, steer };
+    }
+    const dispose = (agent: ChatAgent) => ChatAgent.prototype.dispose.call(agent);
+
+    it('anchors the steer receipt to the topic the running turn replies into', async () => {
+      const { agent, callbacks, steer } = stickyTopicTurn();
+      try {
+        await agent.processMessage({ chatId: 'receipt-chat', payload: 'supplement', messageId: 'follow-B' });
+        expect(steer).toHaveBeenCalledExactlyOnceWith('supplement');
+        expect(callbacks.sendMessage.mock.calls[0]?.[2]).toBe('topic-A');
+        expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('后端已确认接收');
+      } finally { dispose(agent); }
+    });
+
+    it('keeps an explicit input topic for the receipt', async () => {
+      const { agent, callbacks, steer } = stickyTopicTurn();
+      (agent as any).turnStartThreadKeys.set('owner-A', 'root-A');
+      try {
+        await agent.processMessage({ chatId: 'receipt-chat', payload: 'supplement', messageId: 'follow-B', threadRootId: 'root-A' });
+        expect(steer).toHaveBeenCalledExactlyOnceWith('supplement');
+        expect(callbacks.sendMessage.mock.calls[0]?.[2]).toBe('root-A');
+      } finally { dispose(agent); }
+    });
+
+    it('honors a reply-only anchor (replyRootId without threadRootId)', async () => {
+      const { agent, callbacks, steer } = stickyTopicTurn();
+      (agent as any).turnStartThreadKeys.set('owner-A', 'root-A');
+      try {
+        await agent.processMessage({ chatId: 'receipt-chat', payload: 'supplement', messageId: 'follow-B', replyRootId: 'root-A' });
+        expect(steer).toHaveBeenCalledExactlyOnceWith('supplement');
+        expect(callbacks.sendMessage.mock.calls[0]?.[2]).toBe('root-A');
+      } finally { dispose(agent); }
+    });
+
+    it('keeps replyRootId: null an explicit main-session notice', async () => {
+      const { agent, callbacks, steer } = stickyTopicTurn();
+      try {
+        await agent.processMessage({ chatId: 'receipt-chat', payload: 'supplement', messageId: 'follow-B', replyRootId: null });
+        expect(steer).toHaveBeenCalledExactlyOnceWith('supplement');
+        expect(callbacks.sendMessage.mock.calls[0]?.[2]).toBeUndefined();
+      } finally { dispose(agent); }
+    });
+
+    it('falls open to a main-session receipt when the owner anchor was never recorded', async () => {
+      const { agent, callbacks, steer } = stickyTopicTurn();
+      (agent as any).turnStartAnchors.delete('owner-A');
+      try {
+        await agent.processMessage({ chatId: 'receipt-chat', payload: 'supplement', messageId: 'follow-B' });
+        expect(steer).toHaveBeenCalledExactlyOnceWith('supplement');
+        expect(callbacks.sendMessage.mock.calls[0]?.[2]).toBeUndefined();
       } finally { dispose(agent); }
     });
   });
@@ -3357,6 +3574,76 @@ describe('ChatAgent (service)', () => {
           expect(callbacks.onTurnResult).toHaveBeenCalledTimes(3);
           expect(callbacks.onDone).toHaveBeenCalledTimes(3);
           expect(callbacks.sendMessage.mock.calls.some(([, text, root]) => String(text).includes('Independent follow-up.') && root === 'follow-root')).toBe(true);
+        } finally { parent.release(); child.release(); follow.release(); agent.dispose(); }
+      });
+
+      it.each(['failed', 'completed'] as const)('honors a terminal task_notification after a snapshot so a killed child cannot stay running (#5330, %s)', async state => {
+        const callbacks = { ...createMockCallbacks(), onTurnResult: vi.fn().mockResolvedValue(undefined) };
+        const agent = new ChatAgent({ chatId: 'background-snapshot', callbacks, apiKey: 'key', model: 'model' });
+        (agent as any).isAgentTeamsEnabled = () => false;
+        const parent = gate(), terminal = gate(), follow = gate();
+        (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(), cancel: vi.fn() },
+          iterator: (async function* () {
+            await parent.promise;
+            // background_tasks_changed snapshot: stateless id list that still
+            // contains the child the CLI silently killed after this turn.
+            yield { parsed: { type: 'text', content: '', metadata: { backgroundTaskIds: ['snap-child'] } } };
+            yield { parsed: { type: 'text', content: 'Parent dispatched the child.' } };
+            yield { parsed: { type: 'result', content: '' } };
+            await terminal.promise;
+            // Late task_notification: the only visible evidence the child died.
+            yield { parsed: { type: 'text', content: '', metadata: { backgroundTask: { id: 'snap-child', state } } } };
+            yield { parsed: { type: 'text', content: `Child settled (${state}).` } };
+            yield { parsed: { type: 'result', content: '' } };
+            await follow.promise;
+          })() });
+        try {
+          await agent.processMessage({ chatId: 'background-snapshot', payload: 'start a snapshotted child', messageId: 'parent-input' });
+          parent.release();
+          await agent.turnCompleteFor('parent-input');
+          await vi.waitFor(() => expect(callbacks.onDone).toHaveBeenCalledTimes(1));
+          expect(agent.activeBackgroundTaskCount).toBe(1);
+          expect(agent.hasPendingWork).toBe(true);
+          terminal.release();
+          await vi.waitFor(() => expect(callbacks.onDone).toHaveBeenCalledTimes(2));
+          expect(agent.activeBackgroundTaskCount).toBe(0);
+          // Session still live: pending work must drop with the terminal event,
+          // not latch until the query closes (#5330 busy-queue fake hang).
+          expect(agent.hasPendingWork).toBe(false);
+          expect(callbacks.sendMessage.mock.calls.some(([, text]) => String(text).includes(`Child settled (${state}).`))).toBe(true);
+        } finally { parent.release(); terminal.release(); follow.release(); agent.dispose(); }
+      });
+
+      it('drops background continuation pending once every native background task settles (#5330)', async () => {
+        const callbacks = { ...createMockCallbacks(), onTurnResult: vi.fn().mockResolvedValue(undefined) };
+        const agent = new ChatAgent({ chatId: 'background-unlatch', callbacks, apiKey: 'key', model: 'model' });
+        (agent as any).isAgentTeamsEnabled = () => false;
+        const parent = gate(), child = gate(), follow = gate();
+        (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(), cancel: vi.fn() },
+          iterator: (async function* () {
+            await parent.promise;
+            yield { parsed: { type: 'text', content: '', metadata: { backgroundTask: { id: 'owned-child', state: 'running' } } } };
+            yield { parsed: { type: 'text', content: 'Parent dispatched the child.' } };
+            yield { parsed: { type: 'result', content: '' } };
+            await child.promise;
+            yield { parsed: { type: 'text', content: '', metadata: { backgroundTask: { id: 'owned-child', state: 'completed' } } } };
+            yield { parsed: { type: 'text', content: 'Child completed.' } };
+            yield { parsed: { type: 'result', content: '' } };
+            await follow.promise;
+          })() });
+        try {
+          await agent.processMessage({ chatId: 'background-unlatch', payload: 'start a child', messageId: 'parent-input' });
+          parent.release();
+          await agent.turnCompleteFor('parent-input');
+          await vi.waitFor(() => expect(callbacks.onDone).toHaveBeenCalledTimes(1));
+          expect(agent.hasPendingWork).toBe(true);
+          child.release();
+          await vi.waitFor(() => expect(callbacks.onDone).toHaveBeenCalledTimes(2));
+          expect(agent.activeBackgroundTaskCount).toBe(0);
+          // No queued input, no active turn, no live background id: the agent
+          // must not keep reporting pending work (isProjectBusy busy-queue).
+          expect(agent.hasPendingWork).toBe(false);
+          await expect(agent.waitForWorkSettlement()).resolves.toBeUndefined();
         } finally { parent.release(); child.release(); follow.release(); agent.dispose(); }
       });
 
@@ -7532,5 +7819,118 @@ describe('Issue #5399: streaming busy-input admission budget', () => {
       (agent as any).resolveTurn('follow-1');
       await replacement;
     } finally { dispose(agent); }
+  });
+});
+
+describe('Issue #5654: narration-silent heartbeat and side-effect receipts', () => {
+  const makeAgent = () => {
+    const cb = createMockCallbacks();
+    const agent = new ChatAgent({
+      chatId: 'hb-chat',
+      callbacks: cb,
+      apiKey: 'test-key',
+      model: 'test-model',
+      apiProtocol: 'anthropic',
+      apiBaseUrl: 'https://api.example.com',
+    });
+    return { agent, cb };
+  };
+  const cleanup = (agent: ChatAgent) => {
+    agent.reset();
+    ChatAgent.prototype.dispose.call(agent);
+  };
+
+  it('sends a platform heartbeat after the narration-silence window with live tool activity, then receipts side effects on the abrupt end', async () => {
+    vi.useFakeTimers();
+    const { agent, cb } = makeAgent();
+    (agent as any).createQueryStream.mockReturnValue({
+      handle: { close: vi.fn(), cancel: vi.fn() },
+      // Fake-timer driven: the generator advances the clock between tool
+      // calls, simulating a narration-silent backend (455 calls / 50 min).
+      iterator: (async function* () {
+        yield { parsed: { type: 'tool_use', content: 'step 1', metadata: { toolName: 'gh' } } };
+        vi.setSystemTime(Date.now() + 3 * 60_000);
+        yield { parsed: { type: 'tool_use', content: 'step 2', metadata: { toolName: 'gh' } } };
+        vi.setSystemTime(Date.now() + 3 * 60_000);
+        yield { parsed: { type: 'tool_use', content: 'step 3', metadata: { toolName: 'Browser' } } };
+      })(),
+    });
+    try {
+      await agent.processMessage({ chatId: 'hb-chat', payload: '长任务', messageId: 'hb-1' });
+      await agent.turnCompleteFor('hb-1')?.catch(() => { /* iterator ends without a result */ });
+      const sent = cb.sendMessage.mock.calls.filter(([, text]: unknown[]) => typeof text === 'string');
+      const heartbeats = sent.filter(([, text]) => text.includes('⏳'));
+      // Exactly one heartbeat in the 6-minute window (rate-bounded by the
+      // reset silence clock), and none before the 5-minute threshold.
+      expect(heartbeats).toHaveLength(1);
+      const heartbeatText = String(heartbeats[0]?.[1] ?? '');
+      expect(heartbeatText).toContain('6 分钟');
+      // The in-flight (3rd) tool call counts too — it is what proved liveness.
+      expect(heartbeatText).toContain('期间完成 3 次工具调用');
+      // The abrupt (iterator-ended) settlement carries the side-effect receipt.
+      const receiptText = String(sent.find(([, text]) => text.includes('📋'))?.[1] ?? '');
+      expect(receiptText).toContain('📋');
+      expect(receiptText).toContain('❌ 本次请求中断');
+      expect(receiptText).toContain('3 次工具调用');
+      expect(receiptText).toContain('gh×2');
+      expect(receiptText).toContain('Browser×1');
+    } finally {
+      cleanup(agent);
+      await vi.runOnlyPendingTimersAsync();
+      vi.useRealTimers();
+    }
+  });
+
+  it('never sends a heartbeat while the model narrates (#5377 semantics intact)', async () => {
+    vi.useFakeTimers();
+    const { agent, cb } = makeAgent();
+    (agent as any).createQueryStream.mockReturnValue({
+      handle: { close: vi.fn(), cancel: vi.fn() },
+      iterator: (async function* () {
+        for (let i = 0; i < 3; i++) {
+          yield { parsed: { type: 'tool_use', content: `step ${i}`, metadata: { toolName: 'gh', narration: `第 ${i} 步` } } };
+          vi.setSystemTime(Date.now() + 4 * 60_000);
+        }
+      })(),
+    });
+    try {
+      await agent.processMessage({ chatId: 'hb-chat', payload: '会叙述的任务', messageId: 'hb-2' });
+      await agent.turnCompleteFor('hb-2')?.catch(() => { /* iterator ends without a result */ });
+      const sent = cb.sendMessage.mock.calls.filter(([, text]: unknown[]) => typeof text === 'string');
+      expect(sent.some(([, text]) => text.includes('⏳'))).toBe(false);
+      // Decision narration itself is still delivered live (#5377 untouched).
+      expect(sent.some(([, text]) => text === '第 0 步')).toBe(true);
+      expect(sent.some(([, text]) => text === '第 2 步')).toBe(true);
+    } finally {
+      cleanup(agent);
+      await vi.runOnlyPendingTimersAsync();
+      vi.useRealTimers();
+    }
+  });
+
+  it('receipts completed side effects when the turn dies mid-stream (iterator error, e.g. context overflow)', async () => {
+    const { agent, cb } = makeAgent();
+    (agent as any).createQueryStream.mockReturnValue({
+      handle: { close: vi.fn(), cancel: vi.fn() },
+      iterator: (async function* () {
+        yield { parsed: { type: 'tool_use', content: 'create issue', metadata: { toolName: 'gh' } } };
+        yield { parsed: { type: 'tool_use', content: 'edit file', metadata: { toolName: 'Edit' } } };
+        throw new Error('prompt is too long: context_length_exceeded');
+      })(),
+    });
+    try {
+      await agent.processMessage({ chatId: 'hb-chat', payload: 'build the issue', messageId: 'hb-3' });
+      await agent.turnCompleteFor('hb-3')?.catch(() => { /* expected turn failure */ });
+      const receipt = cb.sendMessage.mock.calls
+        .map(([, text]: unknown[]) => text)
+        .filter((text): text is string => typeof text === 'string' && text.includes('📋'));
+      expect(receipt).toHaveLength(1);
+      expect(String(receipt[0])).toContain('gh×1');
+      expect(String(receipt[0])).toContain('Edit×1');
+      expect(String(receipt[0])).toContain('2 次工具调用');
+      expect(String(receipt[0])).toContain('系统不会自动重放');
+    } finally {
+      cleanup(agent);
+    }
   });
 });

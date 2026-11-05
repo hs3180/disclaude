@@ -156,10 +156,18 @@ export class WeChatRegistry {
       const target = targetId ? value.accounts.find(account => account.id === targetId) : undefined;
       if (targetId) {
         if (!target) { throw new Error('Reauthentication must match the registered WeChat identity'); }
-        if (target.botId !== credentials.botId) { throw new WeChatIdentityMismatchError(targetId, target.botId, credentials.botId); }
+        if (target.botId !== credentials.botId) {
+          // #5480 (maintainer review on #5662): a registration's identity is
+          // its WeChat-server-provided user id, not the command-line --id
+          // binding. A confirmed scan from that same user rebinds the bot
+          // identity in place; any other scan still fails closed here.
+          const saved = credentials.userId ? await new WeChatStateStore(this.stateDir(target)).loadCredentials() : undefined;
+          if (!saved?.userId || saved.userId !== credentials.userId) { throw new WeChatIdentityMismatchError(targetId, target.botId, credentials.botId); }
+        }
       }
       if (expectedGeneration && target?.generation !== expectedGeneration) { throw new Error('Registration changed during login; retry'); }
-      const existing = target ?? value.accounts.find(account => account.botId === credentials.botId);
+      const existing = target ?? value.accounts.find(account => account.botId === credentials.botId)
+        ?? await this.findRegisteredUser(value.accounts, credentials.userId);
       const account: WeChatRegistration = { ...(existing ?? { id: randomUUID(), createdAt: new Date().toISOString() }),
         botId: credentials.botId, enabled: true, generation: randomUUID() };
       const store = new WeChatStateStore(this.stateDir(account));
@@ -173,6 +181,21 @@ export class WeChatRegistry {
         return account;
       } finally { await release(); }
     });
+  }
+
+  /**
+   * #5480 (maintainer review on #5662): whether a newly scanned user already
+   * exists is judged from the WeChat-server-provided user id, so a returning
+   * user's fresh scan lands on their registration instead of registering a
+   * parallel account. Registrations saved without a user id never match.
+   */
+  private async findRegisteredUser(accounts: WeChatRegistration[], userId?: string): Promise<WeChatRegistration | undefined> {
+    if (!userId) { return undefined; }
+    for (const account of accounts) {
+      const saved = await new WeChatStateStore(this.stateDir(account)).loadCredentials();
+      if (saved?.userId === userId) { return account; }
+    }
+    return undefined;
   }
 
   async setEnabled(id: string, enabled: boolean): Promise<WeChatRegistration> {

@@ -237,6 +237,7 @@ export function createDefaultMessageHandler(
       const senderOpenId = userId;
       const chatHistoryContext = metadata?.chatHistoryContext as string | undefined;
       const pendingQuestionEligible = metadata?.pendingQuestionEligible === true;
+      const attachmentOnly = metadata?.attachmentOnly === true;
       const chatType = metadata?.chatType as string | undefined;
       const threadContext = metadata?.threadContext as string | undefined;
       // Issue #4587 (part 1): thread root for topic-group session keying (part 2)
@@ -254,6 +255,7 @@ export function createDefaultMessageHandler(
         attachments: fileRefs,
         chatHistoryContext,
         pendingQuestionEligible,
+        attachmentOnly,
         chatType,
         threadContext,
         threadRootId,
@@ -281,6 +283,7 @@ export function createDefaultMessageHandler(
     const senderOpenId = userId;
     const chatHistoryContext = metadata?.chatHistoryContext as string | undefined;
     const pendingQuestionEligible = metadata?.pendingQuestionEligible === true;
+    const attachmentOnly = metadata?.attachmentOnly === true;
     const chatType = metadata?.chatType as string | undefined;
     const threadContext = metadata?.threadContext as string | undefined;
     // Issue #4587 (part 2): thread root for per-thread session keying
@@ -293,7 +296,7 @@ export function createDefaultMessageHandler(
     const fileRefs = options.extractAttachments?.(message);
 
     try {
-      void agent.processMessage({ chatId, payload: content, messageId, senderOpenId, attachments: fileRefs, chatHistoryContext, pendingQuestionEligible, chatType, threadContext, threadRootId, ...provenance });
+      void agent.processMessage({ chatId, payload: content, messageId, senderOpenId, attachments: fileRefs, chatHistoryContext, pendingQuestionEligible, attachmentOnly, chatType, threadContext, threadRootId, ...provenance });
     } catch (error) {
       context.logger.error({ err: error, chatId, messageId }, 'Failed to process message');
       const errorMsg = error instanceof Error ? error.message : String(error);

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { WeChatIdentityMismatchError, WeChatRegistry } from './registry.js';
 import { WeChatStateStore } from './state-store.js';
 
-const credentials = (botId = 'bot-a') => ({ botId, token: `private-${botId}`, baseUrl: 'https://ilinkai.weixin.qq.com', savedAt: new Date().toISOString() });
+const credentials = (botId = 'bot-a', userId?: string) => ({ botId, token: `private-${botId}`, baseUrl: 'https://ilinkai.weixin.qq.com', savedAt: new Date().toISOString(), ...(userId ? { userId } : {}) });
 let dir: string;
 beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'wechat-registry-')); });
 afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
@@ -52,14 +52,37 @@ describe('dynamic WeChat registry', () => {
     expect(next.id).toBe(first.id);
     expect(next.generation).not.toBe(first.generation);
     expect(next.enabled).toBe(true);
-    // #5480: a scanned new bot identity is a typed refusal carrying both
-    // identities, never an overwrite of the registered account.
+    // #5480 (maintainer review on #5662): without the WeChat-server-provided
+    // user id the rebind cannot be verified, so a scanned new bot identity
+    // stays a typed refusal carrying both identities, never an overwrite.
     const mismatch = await registry.register(credentials('another-bot'), first.id).catch(error => error);
     expect(mismatch).toBeInstanceOf(WeChatIdentityMismatchError);
     expect(mismatch).toMatchObject({ targetId: first.id, registeredBotId: 'bot-a', scannedBotId: 'another-bot' });
     expect(await registry.list()).toHaveLength(1);
     await registry.remove(first.id);
     expect(await new WeChatRegistry(dir).list()).toEqual([]);
+  });
+
+  it('rebinds a returning WeChat user by the server-provided id and refuses a different user (#5480 review)', async () => {
+    const registry = new WeChatRegistry(dir);
+    const first = await registry.register(credentials('bot-a', 'user@im.wechat'));
+    // A fresh scan from the same WeChat user with a new bot identity rebinds
+    // the registration in place — whether the scanned user already exists is
+    // judged by the WeChat-server-provided user id, not a command-line id.
+    const rebound = await registry.register(credentials('bot-new', 'user@im.wechat'), first.id);
+    expect(rebound).toMatchObject({ id: first.id, botId: 'bot-new', enabled: true });
+    expect((await new WeChatStateStore(registry.stateDir(rebound)).loadCredentials())?.botId).toBe('bot-new');
+    // A plain scan from the same user lands on the same registration instead
+    // of registering a parallel account.
+    expect((await registry.register(credentials('bot-next', 'user@im.wechat'))).id).toBe(first.id);
+    expect(await registry.list()).toHaveLength(1);
+    // A different WeChat user is refused on the explicit target and — without
+    // one — registers separately rather than touching the existing account.
+    const stranger = await registry.register(credentials('intruder', 'someone-else@im.wechat'), first.id).catch(error => error);
+    expect(stranger).toBeInstanceOf(WeChatIdentityMismatchError);
+    const separate = await registry.register(credentials('intruder', 'someone-else@im.wechat'));
+    expect(separate.id).not.toBe(first.id);
+    expect(await registry.list()).toHaveLength(2);
   });
 
   it('rejects duplicate registration while a listener owns the account, without changing credentials', async () => {
