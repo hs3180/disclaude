@@ -18,7 +18,7 @@ const mockState = vi.hoisted(() => ({
   isRunning: true,
   hasControlHandler: false,
   emitMessage: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
-  emitControl: vi.fn<() => Promise<{ success: boolean; message?: string }>>().mockResolvedValue({ success: false }),
+  emitControl: vi.fn<() => Promise<{ success: boolean; message?: string; error?: string }>>().mockResolvedValue({ success: false }),
   sendMessage: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
   resolveActionPrompt: vi.fn().mockReturnValue(undefined),
   resolveActionText: vi.fn().mockReturnValue(undefined),
@@ -966,17 +966,59 @@ describe('MessageHandler', () => {
       expect(cmd.type).toBe('debug');
     });
 
-    it('should relay control handler error messages', async () => {
+    it.each([
+      ['argument error', 'Usage: `/agent use <preset>`'],
+      ['permission denial', '当前权限不允许此命令。请联系服务维护者确认权限。'],
+      ['execution failure', '命令执行失败，请联系服务维护者核对配置与权限。'],
+    ])('consumes a registered command %s without forwarding it to the agent', async (_kind, message) => {
       mockState.hasControlHandler = true;
-      mockState.emitControl.mockResolvedValue({ success: false, message: 'Unknown command' });
+      mockState.emitControl.mockResolvedValue({ success: false, message });
       const { handler } = createHandler();
       handler.setControlHandler(true);
-      await handler.handleMessageReceive(textEvent('/unknown'));
+      await handler.handleMessageReceive(textEvent('/agent use "Missing"'));
 
-      expect(mockState.sendMessage).toHaveBeenCalledWith(
-        expect.objectContaining({ text: 'Unknown command' }),
+      expect(mockState.emitControl).toHaveBeenCalledTimes(1);
+      expect(mockState.sendMessage).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ text: message }),
       );
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
     });
+
+    it.each([false, true])(
+      'passes an unrecognized command through verbatim once in p2p, group mention, and topic contexts (control handler=%s)',
+      async (hasControlHandler) => {
+        const command = '/ExTeRnAl-CMD 参数 "Quoted Value" \'单引号\'\nSecond-Line MiXeD';
+        const cases = [
+          { event: textEvent(command), content: command, chatId: 'chat_001', threadRootId: undefined },
+          { event: topicReplyEvent(`@bot ${command}`, { chat_id: 'chat_group', chat_type: 'group' }),
+            content: `@bot ${command}`, chatId: 'chat_group', threadRootId: undefined },
+          { event: topicReplyEvent(command, { message_id: 'msg_topic', chat_id: 'chat_topic' }),
+            content: command, chatId: 'chat_topic', threadRootId: 'msg_topic' },
+        ];
+        for (const testCase of cases) {
+          mockState.emitMessage.mockClear();
+          mockState.emitControl.mockClear();
+          mockState.sendMessage.mockClear();
+          mockState.hasControlHandler = hasControlHandler;
+          mockState.isBotMentioned = testCase.chatId !== 'chat_001';
+          mockState.emitControl.mockResolvedValue({ success: false, error: 'Unknown command: external-cmd' });
+          mockState.stripLeadingMentions.mockImplementationOnce((text: string) =>
+            text.startsWith('@bot ') ? text.slice('@bot '.length) : text);
+          const { handler } = createHandler();
+          handler.setControlHandler(hasControlHandler);
+
+          await handler.handleMessageReceive(testCase.event);
+
+          expect(mockState.emitControl, testCase.chatId).toHaveBeenCalledTimes(hasControlHandler ? 1 : 0);
+          expect(mockState.sendMessage, testCase.chatId).not.toHaveBeenCalled();
+          expect(mockState.emitMessage, testCase.chatId).toHaveBeenCalledTimes(1);
+          expect(firstCallArg(mockState.emitMessage)).toMatchObject({
+            content: testCase.content, chatId: testCase.chatId, userId: 'user_001',
+          });
+          expect(firstCallArg(mockState.emitMessage).metadata?.threadRootId).toBe(testCase.threadRootId);
+        }
+      },
+    );
 
     it('should fall through when control handler returns no success and no message', async () => {
       mockState.hasControlHandler = true;
