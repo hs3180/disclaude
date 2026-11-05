@@ -28,6 +28,15 @@ ARG GH_INSTALL_MODE=apt-repo
 ARG GH_DEB_URL=
 ARG CODEX_VERSION=0.154.0
 ARG DSH_VERSION=0.1.2-rc.1
+# Issue #5168: declare which harness backends the image pre-installs at build
+# time. 'all' (default) or a comma-separated subset of: claude, pi, codex, dsh
+# (alias: deepseek). Unknown names fail the build with a clear error listing
+# the valid ones. Versions are pinned per backend; the defaults here, in
+# docker-compose.yml and in docker/install-backends.mjs (DEFAULT_VERSIONS) are
+# kept in sync by tests/docker-backends.test.ts. Never pass secrets as build
+# args — ARG values persist in the image history (none are needed here).
+ARG DISCLAUDE_BACKENDS=all
+ARG PI_VERSION=0.83.0
 # Issue #5481: minimum Node.js the service image may ship (baseline =
 # 2026-10-21 security release: 22.23.4, already live in the floating
 # node:22-trixie-slim tag). Asserted at the top of the builder stage; bump the
@@ -44,6 +53,9 @@ FROM ${DOCKER_IMAGE_PREFIX}library/node:22-trixie-slim AS builder
 ARG APT_MIRROR
 ARG NPM_REGISTRY
 ARG NODE_MIN_VERSION
+# Issue #5168: backend selection + pi runtime pin for the app-stage install below
+ARG DISCLAUDE_BACKENDS
+ARG PI_VERSION
 
 WORKDIR /app
 
@@ -104,6 +116,18 @@ COPY agents ./agents
 RUN --mount=type=cache,id=disclaude-pnpm,target=/pnpm/store \
     pnpm install --prod --frozen-lockfile --store-dir=/pnpm/store
 
+# Issue #5168: build-time harness backend install, app stage. Selected
+# 'app-modules' backends (pi runtime) install into /app/node_modules via an
+# isolated npm root (--no-save --no-package-lock: the pnpm-managed tree and
+# pnpm-lock.yaml stay untouched) plus @earendil-works symlinks, so the plain
+# node_modules COPY below ships them into the final image — the container
+# never installs at startup. Also verifies in-place resolution of bundled
+# backends (claude sdk) and writes /app/.backends-manifest.json recording the
+# resolved selection and pins.
+COPY docker/install-backends.mjs /tmp/install-backends.mjs
+RUN --mount=type=cache,id=disclaude-npm,target=/root/.npm \
+    node /tmp/install-backends.mjs --stage app --root /app
+
 # -----------------------------------------------------------------------------
 # Stage 2: Production Image
 # -----------------------------------------------------------------------------
@@ -117,6 +141,8 @@ ARG GH_INSTALL_MODE
 ARG GH_DEB_URL
 ARG CODEX_VERSION
 ARG DSH_VERSION
+# Issue #5168: backend selection for the globals-stage install below
+ARG DISCLAUDE_BACKENDS
 
 WORKDIR /app
 
@@ -186,10 +212,18 @@ RUN pip3 install --no-cache-dir --break-system-packages ${PIP_INDEX_URL:+--index
 # Image size cost: ~400 MB (browser-use + ~90 transitive deps, measured).
 RUN pip3 install --no-cache-dir --break-system-packages ${PIP_INDEX_URL:+--index-url $PIP_INDEX_URL} 'browser-use==0.13.8'
 
-# Install Feishu tooling and the supported CLI backends globally
+# Install Feishu tooling and the build-time-selected CLI backends globally
 # Issue #3888: @larksuite/cli needed by dissolve-group and lark-docs skills
+# (always installed — it is channel tooling, not a harness backend).
+# Issue #5168: harness CLI backends (codex, dsh) install per DISCLAUDE_BACKENDS
+# via docker/install-backends.mjs; the pi runtime is installed by the builder's
+# app stage and claude ships via the workspace's pinned
+# @anthropic-ai/claude-agent-sdk. Unknown backend names fail the build here
+# with a clear error listing the valid names.
+COPY docker/install-backends.mjs /tmp/install-backends.mjs
 RUN npm config set registry ${NPM_REGISTRY} && \
-    npm install -g "@larksuite/cli@>=1.0.0" "@openai/codex@${CODEX_VERSION}" "@deepseek-ai/dsh@${DSH_VERSION}"
+    node /tmp/install-backends.mjs --stage globals && \
+    npm install -g "@larksuite/cli@>=1.0.0"
 
 # Create non-root user for running the application
 RUN groupadd -g 1001 disclaude && \
@@ -226,6 +260,12 @@ COPY --from=builder --chown=disclaude:disclaude /app/agents ./agents
 # The global command links directly to the router, so agents in the container
 # can call `disclaude ...` without full paths.
 COPY --from=builder --chown=disclaude:disclaude /app/bin ./bin
+# Issue #5168: the backend manifest written by the builder's app stage records
+# the resolved DISCLAUDE_BACKENDS selection and version pins; the installer
+# script ships with it so the entrypoint diagnostic and the acceptance command
+# (`node /app/scripts/install-backends.mjs --verify`) share one source of truth.
+COPY --from=builder --chown=disclaude:disclaude /app/.backends-manifest.json ./.backends-manifest.json
+COPY --chown=disclaude:disclaude docker/install-backends.mjs ./scripts/install-backends.mjs
 
 # Copy entrypoint script (Issue #3987: auto-configure lark-cli auth)
 COPY --chown=disclaude:disclaude docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
