@@ -56,6 +56,26 @@ credentials use separate providers. An existing API adapter receives the selecte
 route instead of loading a duplicate adapter.
 See [DSH runtime modes](dsh-backend.md) for minimal mode and native provider routes.
 
+mini-swe-agent (`backend: miniswe`, Issue #5006) drives the open-source headless
+`mini` CLI as one subprocess per turn with LiteLLM/OpenAI-compatible model
+backends. It requires the mini-swe-agent CLI on PATH (`pipx install
+mini-swe-agent`); without it the backend reports a clear unavailable error and
+startup preflight fails. The bound LLM must declare `llms.<name>.api` (protocol,
+credential reference, and `baseUrl` for custom endpoints); the credential
+reaches the child only through the managed environment, and chat/log text is
+scrubbed against registered secret values. Use a LiteLLM-style
+provider-prefixed `model` (for example `openai/gpt-5.4`). The optional
+`agents.<name>.miniswe` block carries execution settings only: `binary`
+(default `mini`, the `mini-swe-agent` alias is probed), `executionEnvironment`
+(only `local` subprocess execution in the managed workspace is implemented —
+docker and SWE-ReX environments are explicitly out of scope and rejected at
+validation) and `timeoutMs` (per-run wall-clock timeout, 0 disables). The CLI
+has no session resume: multi-turn chats replay a bounded transcript of prior
+final answers as prompt context, and `/reset` starts the next turn fresh.
+`permissionMode: default` (ask) is rejected — the local environment executes
+without an approval axis. Real mini-swe-agent execution is unverified in this
+repository; the bridge is tested against fake executables.
+
 Set `llms.<name>.maxConcurrentSessions` to a positive integer to cap live host
 sessions using that LLM across all agents and backends in this service process.
 For example, `llms.daily: {model: your-model-id, reasoningEffort: your-supported-effort, maxConcurrentSessions: 3}`.

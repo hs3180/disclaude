@@ -22,6 +22,17 @@ agents:
   #   llm: glm-openai
   #   mode: minimal
   #   dshHome: /absolute/path/to/isolated-dsh-home
+  # Optional mini-swe-agent runtime (Issue #5006): headless `mini` subprocess
+  # with LiteLLM/OpenAI-compatible model backends. Requires the mini-swe-agent
+  # CLI on PATH (`pipx install mini-swe-agent`); without it the backend
+  # reports a clear unavailable error. Execution is local-subprocess only.
+  # miniswe:
+  #   backend: miniswe
+  #   llm: miniswe-openai
+  #   miniswe:
+  #     binary: mini # default; the packaged mini-swe-agent alias is probed too
+  #     executionEnvironment: local # the only supported policy; docker/SWE-ReX are out of scope
+  #     timeoutMs: 0 # per-run wall-clock timeout; 0 disables (default)
 
 # Every bound LLM requires an explicit model, including native Codex.
 # Codex uses the CLI's account; no API block is needed.
@@ -32,6 +43,12 @@ llms:
   #     protocol: openai
   #     baseUrl: https://your-openai-compatible-api.example/v1
   #     apiKey: $GLM_API_KEY
+  # miniswe-openai: # mini-swe-agent (Issue #5006): LiteLLM-style provider-prefixed model
+  #   model: openai/gpt-5.4
+  #   api:
+  #     protocol: openai
+  #     baseUrl: https://your-litellm-or-openai-compatible-api.example/v1
+  #     apiKey: $MINISWE_API_KEY
   daily:
     model: gpt-6-luna
     reasoningEffort: max

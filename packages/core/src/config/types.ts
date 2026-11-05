@@ -46,9 +46,33 @@ export interface CodexAgentGovernanceConfig {
 /** Codex CLI reasoning levels currently exposed by the model catalog. */
 export type CodexReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
 
+/**
+ * mini-swe-agent execution settings (Issue #5006).
+ *
+ * The optional `miniswe` backend drives the open-source mini-swe-agent CLI
+ * (LiteLLM / OpenAI-compatible model backends) as one headless subprocess per
+ * turn. Endpoint, model and credentials belong to the bound
+ * `llms.<name>.api` connection — never to this block.
+ */
+export interface MiniSweAgentConfig {
+  /**
+   * Executable name or absolute path. Default `mini`; the packaged
+   * `mini-swe-agent` alias is probed as a fallback for default installs.
+   */
+  binary?: string;
+  /**
+   * Execution environment policy. Only `'local'` (subprocess in the managed
+   * workspace cwd) is implemented; mini's docker / SWE-ReX environment
+   * classes are explicitly out of scope and rejected at validation.
+   */
+  executionEnvironment?: 'local';
+  /** Per-run wall-clock timeout in ms; 0 disables (default 0). */
+  timeoutMs?: number;
+}
+
 export interface AgentConfig {
   /** Agent runtime. */
-  agentBackend?: 'claude' | 'pi' | 'codex' | 'dsh';
+  agentBackend?: 'claude' | 'pi' | 'codex' | 'dsh' | 'miniswe';
   /** DSH composition. Changes apply after service restart. Default: standard. */
   mode?: 'minimal' | 'standard';
   /** Optional isolated DSH home directory (overrides DSH_HOME). */
@@ -69,6 +93,12 @@ export interface AgentConfig {
    * with `agentBackend: 'codex'`; caps are per process.
    */
   codex?: CodexAgentGovernanceConfig;
+  /**
+   * mini-swe-agent execution settings (Issue #5006). Only meaningful with
+   * `agentBackend: 'miniswe'`; endpoint/model/credentials stay on the bound
+   * `llms.<name>.api` connection.
+   */
+  miniswe?: MiniSweAgentConfig;
   /** Permission mode for SDK */
   permissionMode?: 'default' | 'bypassPermissions';
   /** Maximum concurrent tasks */
