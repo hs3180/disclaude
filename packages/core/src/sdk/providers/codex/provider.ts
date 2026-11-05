@@ -105,6 +105,12 @@ import { CODEX_OVERLOAD_MAX_RETRIES, CODEX_OVERLOAD_MAX_WAIT_MS, codexOverloadRe
   codexWriterConflictRetryDelay, readCodexWriterConflictPolicy,
   isCodexCapacityFailure, alignCodexCapacityWait, recordCodexCapacityCooldown,
   type CodexOverloadFailure } from './overload-policy.js';
+import {
+  CodexModerationRecoveryLimiter,
+  readCodexContentModerationFailure,
+  readCodexModerationRecoveryPolicy,
+  type CodexContentModerationFailure,
+} from './moderation-recovery.js';
 
 const logger = createLogger('CodexAgentProvider');
 
@@ -322,6 +328,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
   private readonly appServerStops = new Map<string, () => void>();
   private readonly appServerThreadIds = new Map<string, string>();
   private readonly appServerDynamicToolSignatures = new Map<string, string>();
+  private readonly moderationRecoveryLimiter = new CodexModerationRecoveryLimiter();
   /** Cumulative quota counters (S5, #4632) — see CodexQuotaStats. */
   private readonly quota: CodexQuotaStats = {
     turnsCompleted: 0,
@@ -1506,6 +1513,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     let probingLifecycle: CodexAppServerLifecycle | undefined;
     const { timeoutMs: stallTimeoutMs } = readStallPolicy({ ...process.env, ...this.env, ...options.env });
     const capacityRecoveryPolicy = readCodexCapacityRecoveryPolicy({ ...process.env, ...this.env, ...options.env });
+    const moderationRecoveryPolicy = readCodexModerationRecoveryPolicy({ ...process.env, ...this.env, ...options.env });
     // #5429: same env merge for the writer-lock conflict waits.
     const writerConflictPolicy = readCodexWriterConflictPolicy({ ...process.env, ...this.env, ...options.env });
     let noteCapacityProgress = (): void => {};
@@ -1515,7 +1523,16 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     // step looked like without carrying its text anywhere.
     let outputLimitLastTool: NonNullable<AgentMessageMetadata['outputLimit']>['lastTool'];
     let deferredTurnOverload: CodexOverloadFailure | undefined;
+    let deferredTurnModeration: CodexContentModerationFailure | undefined;
     let deferredFailedTurnId: string | undefined;
+    let activeModerationAttempt: { model: string | undefined } | undefined;
+    let moderationRecovery: {
+      nextModel: string | undefined;
+      inFallback: boolean;
+      fallbackIndex: number;
+      attemptedModels: string[];
+      cleanSessionAttempts: number;
+    } | undefined;
     // #5429: a deterministic RPC rejection carrying the writer-lock conflict
     // family, caught in the attempt loop and decided by the wait gate below —
     // the ORIGINAL request is held, never silently dropped or blind-replayed.
@@ -1754,14 +1771,22 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           const detail = [asyncDeliveryFailure?.message, event.turn?.error?.message].filter(Boolean).join('; ') || 'unknown error';
           // #5468: classify capacity even after progress — the post-progress
           // consumer is same-thread continuation, not the pre-work replay.
-          const overload = failed && !asyncDeliveryFailure
+          const moderation = failed && !asyncDeliveryFailure
+            ? readCodexContentModerationFailure(event.turn?.error) : undefined;
+          const overload = failed && !asyncDeliveryFailure && !moderation
             ? readCodexOverloadFailure(event.turn?.error) : undefined;
           // #5452: classify the output-cap failure regardless of turnCanRetry —
           // earlier tool calls having succeeded is precisely when the receipt
           // must separate "already done" from "never ran". Never retried.
           const outputLimit = failed && !asyncDeliveryFailure
             ? readCodexOutputLimitFailure(event.turn?.error) : undefined;
-          if (overload) { deferredTurnOverload = overload; deferredFailedTurnId = finishingTurn; }
+          if (moderation) {
+            deferredTurnModeration = moderation;
+            deferredFailedTurnId = finishingTurn;
+            logger.warn({ threadId, turnId: finishingTurn, ...activeCorrelation, code: moderation.code },
+              'codex turn rejected by upstream content review (#5463)');
+          }
+          else if (overload) { deferredTurnOverload = overload; deferredFailedTurnId = finishingTurn; }
           else if (outputLimit) {
             const telemetry = {
               threadId, turnId: finishingTurn, ...activeCorrelation,
@@ -1804,6 +1829,9 @@ export class CodexAgentProvider implements IAgentSDKProvider {
                 role: 'assistant',
                 content: resetHint ? `${USAGE_LIMIT_NOTICE}\n上游提示: ${resetHint}` : USAGE_LIMIT_NOTICE,
               });
+            }
+            if (status === 'completed' && activeModerationAttempt) {
+              push({ type: 'status', role: 'system', content: `✅ 上游内容审核未通过后的自动降级已完成：在干净一次性会话中使用模型 ${activeModerationAttempt.model ?? 'Codex 默认模型'} 正常交付；原聊天上下文保持不变。` });
             }
             push({
               type: 'result',
@@ -1880,6 +1908,8 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           ]);
           if (next.done || stopped) {break;}
           const toolInputContext = next.value.inputContext ? Object.freeze({ ...next.value.inputContext }) : undefined;
+          moderationRecovery = undefined;
+          activeModerationAttempt = undefined;
           let retryWaitedMs = 0;
           // #5514: charge recovery waits/unsuccessful requests cumulatively,
           // while proven productive runs do not spend later recovery eligibility.
@@ -1914,7 +1944,10 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               }
             }
             turnCanRetry = true;
+            const conversationThreadId = threadId;
+            activeModerationAttempt = moderationRecovery ? { model: moderationRecovery.nextModel } : undefined;
             deferredTurnOverload = undefined;
+            deferredTurnModeration = undefined;
             deferredFailedTurnId = undefined;
             writerConflictError = undefined;
             outputLimitLastTool = undefined;
@@ -2020,16 +2053,16 @@ export class CodexAgentProvider implements IAgentSDKProvider {
                 }
                 await options.onAsyncUserInputAnswer(request, text, context);
               }, options.env, codexNativeSkillRoots(options.projectRoot ?? options.cwd, this.builtinRoot));
-              const requestedThreadId = threadId;
+              const requestedThreadId = activeModerationAttempt ? undefined : threadId;
               rpcStage = 'ensure-thread';
               threadId = await lifecycle.ensureThread(sessionKey, {
-                threadId,
+                threadId: requestedThreadId,
                 cwd: options.cwd,
-                model: codexModel,
+                model: activeModerationAttempt?.model ?? codexModel,
                 sandbox,
                 dynamicTools: dynamicToolRegistry.specs,
               });
-              if (this.appServerLifecycles.get(sessionKey) === lifecycle) {
+              if (!activeModerationAttempt && this.appServerLifecycles.get(sessionKey) === lifecycle) {
                 this.appServerThreadIds.set(sessionKey, threadId);
                 this.appServerDynamicToolSignatures.set(sessionKey, dynamicToolSignature);
               }
@@ -2066,7 +2099,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
                 sandbox,
                 networkAccess: options.codexRuntime ? options.codexRuntime.networkAccess ?? true : this.networkAccess,
                 cwd: options.cwd,
-                model: codexModel,
+                model: activeModerationAttempt?.model ?? codexModel,
                 reasoningEffort,
                 }
               );
@@ -2135,6 +2168,12 @@ export class CodexAgentProvider implements IAgentSDKProvider {
                 llmReservation = undefined;
               }
             }
+            if (activeModerationAttempt) {
+              // A clean-session recovery thread is one-shot: restore the chat's
+              // conversation anchor before the moderation decision below.
+              threadId = conversationThreadId;
+              activeModerationAttempt = undefined;
+            }
             // #5429: occupied-session gate — the writer lock is held by
             // another live writer. Never delete the lock, never signal the
             // holder; hold the ORIGINAL request, warn visibly, and replay the
@@ -2155,6 +2194,76 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               if (!await waitForCodexOverloadRetry(delayMs, admissionAbort.signal)) { break; }
               retryWaitedMs += delayMs;
               continue;
+            }
+            if (deferredTurnModeration !== undefined) {
+              // #5463: a deterministic upstream review verdict is its own failure
+              // class. It never enters the overload backoff: the same request
+              // would fail identically ~40s later. The ladder below replays the
+              // ORIGINAL, unmodified input in a clean one-shot thread, then in the
+              // first configured fallback model; every replay passes the target
+              // model's own review. A second verdict settles at once — the ladder
+              // is containment, never a review bypass.
+              const failure = deferredTurnModeration as CodexContentModerationFailure;
+              deferredTurnModeration = undefined;
+              const diagnosticId = `${activeCorrelation?.traceId ?? sessionKey}:${deferredFailedTurnId ?? 'unknown-turn'}`;
+              const settleModeration = (reason: string): void => {
+                const attempted = moderationRecovery?.attemptedModels ?? [codexModel ?? 'codex-default'];
+                push({
+                  type: 'result',
+                  role: 'assistant',
+                  content:
+                    '🛡️ 上游内容审核未通过（可能误判）\n' +
+                    `- 诊断 ID: ${diagnosticId}\n` +
+                    `- 失败类别: content_moderation [${failure.code}]\n` +
+                    `- 终止原因: ${reason}\n` +
+                    `- 已尝试: 原会话${moderationRecovery?.cleanSessionAttempts ? ` + ${moderationRecovery.cleanSessionAttempts} 次干净会话重放（模型 ${attempted.join(' → ')}）` : ''}\n` +
+                    '- 建议: 尝试换一种表述重发，或稍后再试；原会话上下文已保留，无需 /reset。',
+                  metadata: {
+                    terminatedReason: 'turn_failed' as const,
+                    terminationDetail: `content moderation [${failure.code}]: ${reason}; diagnosticId=${diagnosticId}; cleanSessionAttempts=${moderationRecovery?.cleanSessionAttempts ?? 0}; attemptedModels=${JSON.stringify(attempted)}`,
+                  },
+                });
+              };
+              if (!turnCanRetry) {
+                settleModeration('已发生工具或输出，自动重放可能重复外部副作用，已停止降级');
+                moderationRecovery = undefined;
+              } else if (!moderationRecovery) {
+                if (!this.moderationRecoveryLimiter.tryAcquire(activeCorrelation?.chatId ?? sessionKey, moderationRecoveryPolicy)) {
+                  settleModeration(`本 chat 每小时自动降级次数已达上限 ${moderationRecoveryPolicy.maxPerChatPerHour}`);
+                } else {
+                  moderationRecovery = {
+                    nextModel: codexModel,
+                    inFallback: false,
+                    fallbackIndex: 0,
+                    attemptedModels: [codexModel ?? 'codex-default'],
+                    cleanSessionAttempts: 0,
+                  };
+                }
+              } else if (moderationRecovery.inFallback) {
+                settleModeration('回退模型再次命中同一内容审核判决，已立即终止');
+                moderationRecovery = undefined;
+              } else if (!moderationRecoveryPolicy.fallbackModels.length) {
+                settleModeration('未配置回退模型链');
+                moderationRecovery = undefined;
+              } else {
+                const fallbackModel = moderationRecoveryPolicy.fallbackModels[0] ?? 'codex-default';
+                moderationRecovery = {
+                  ...moderationRecovery,
+                  nextModel: fallbackModel,
+                  inFallback: true,
+                  fallbackIndex: 1,
+                  attemptedModels: [...moderationRecovery.attemptedModels, fallbackModel],
+                };
+              }
+              if (moderationRecovery) {
+                moderationRecovery.cleanSessionAttempts += 1;
+                logger.warn({ sessionKey, diagnosticId, ...activeCorrelation, code: failure.code,
+                  attempt: moderationRecovery.cleanSessionAttempts, model: moderationRecovery.nextModel ?? 'codex-default' },
+                'Replaying original Codex input in a clean session after content-review rejection (#5463)');
+                push({ type: 'status', role: 'system', content: `🛡️ 上游内容审核未通过（可能误判），正在干净一次性会话中用模型 ${moderationRecovery.nextModel ?? 'Codex 默认模型'} 原样重放本条消息（不裁剪、不拆分）。` });
+                continue;
+              }
+              break;
             }
             if (stopped || !deferredTurnOverload) { break; }
             const failure = deferredTurnOverload as CodexOverloadFailure;
