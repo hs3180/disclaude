@@ -1360,6 +1360,77 @@ describe('ChatAgent (service)', () => {
     });
   });
 
+  describe('busy-input receipt topic routing (#5435)', () => {
+    /** Running thread-less turn whose body replies into the chat's sticky topic root. */
+    function stickyTopicTurn() {
+      const callbacks = createMockCallbacks();
+      const agent = new ChatAgent({ chatId: 'receipt-chat', callbacks, agentBackend: 'codex' as any, apiKey: 'test', model: 'test' });
+      const push = vi.fn().mockReturnValue(true);
+      const steer = vi.fn().mockResolvedValue({ turnId: 'native-A' });
+      Object.assign(agent as any, { channel: { push, close: vi.fn() }, queryHandle: { close: vi.fn(), cancel: vi.fn(), steer },
+        isSessionActive: true, isProcessingMessage: true, activeTurnMessageId: 'owner-A',
+        isAgentTeamsEnabled: () => false,
+        lastTurnMessage: { chatId: 'receipt-chat', payload: 'original', messageId: 'owner-A' } });
+      (agent as any).historyManager.firstMessageHistoryLoaded = true;
+      (agent as any).createTurnCompletion('owner-A');
+      (agent as any).turnStartThreadKeys.set('owner-A', undefined);
+      // Auto-opened topic: the delivery anchor the turn's enqueue recorded
+      // (sticky root at owner admission) — where the turn's body replies go.
+      (agent as any).turnStartAnchors.set('owner-A', 'topic-A');
+      return { agent, callbacks, push, steer };
+    }
+    const dispose = (agent: ChatAgent) => ChatAgent.prototype.dispose.call(agent);
+
+    it('anchors the steer receipt to the topic the running turn replies into', async () => {
+      const { agent, callbacks, steer } = stickyTopicTurn();
+      try {
+        await agent.processMessage({ chatId: 'receipt-chat', payload: 'supplement', messageId: 'follow-B' });
+        expect(steer).toHaveBeenCalledExactlyOnceWith('supplement');
+        expect(callbacks.sendMessage.mock.calls[0]?.[2]).toBe('topic-A');
+        expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('后端已确认接收');
+      } finally { dispose(agent); }
+    });
+
+    it('keeps an explicit input topic for the receipt', async () => {
+      const { agent, callbacks, steer } = stickyTopicTurn();
+      (agent as any).turnStartThreadKeys.set('owner-A', 'root-A');
+      try {
+        await agent.processMessage({ chatId: 'receipt-chat', payload: 'supplement', messageId: 'follow-B', threadRootId: 'root-A' });
+        expect(steer).toHaveBeenCalledExactlyOnceWith('supplement');
+        expect(callbacks.sendMessage.mock.calls[0]?.[2]).toBe('root-A');
+      } finally { dispose(agent); }
+    });
+
+    it('honors a reply-only anchor (replyRootId without threadRootId)', async () => {
+      const { agent, callbacks, steer } = stickyTopicTurn();
+      (agent as any).turnStartThreadKeys.set('owner-A', 'root-A');
+      try {
+        await agent.processMessage({ chatId: 'receipt-chat', payload: 'supplement', messageId: 'follow-B', replyRootId: 'root-A' });
+        expect(steer).toHaveBeenCalledExactlyOnceWith('supplement');
+        expect(callbacks.sendMessage.mock.calls[0]?.[2]).toBe('root-A');
+      } finally { dispose(agent); }
+    });
+
+    it('keeps replyRootId: null an explicit main-session notice', async () => {
+      const { agent, callbacks, steer } = stickyTopicTurn();
+      try {
+        await agent.processMessage({ chatId: 'receipt-chat', payload: 'supplement', messageId: 'follow-B', replyRootId: null });
+        expect(steer).toHaveBeenCalledExactlyOnceWith('supplement');
+        expect(callbacks.sendMessage.mock.calls[0]?.[2]).toBeUndefined();
+      } finally { dispose(agent); }
+    });
+
+    it('falls open to a main-session receipt when the owner anchor was never recorded', async () => {
+      const { agent, callbacks, steer } = stickyTopicTurn();
+      (agent as any).turnStartAnchors.delete('owner-A');
+      try {
+        await agent.processMessage({ chatId: 'receipt-chat', payload: 'supplement', messageId: 'follow-B' });
+        expect(steer).toHaveBeenCalledExactlyOnceWith('supplement');
+        expect(callbacks.sendMessage.mock.calls[0]?.[2]).toBeUndefined();
+      } finally { dispose(agent); }
+    });
+  });
+
   describe('MCP-free startup (Issue #4652)', () => {
     it('starts the production query path without constructing or injecting mcpServers', () => {
       (chatAgent as any).startAgentLoop();

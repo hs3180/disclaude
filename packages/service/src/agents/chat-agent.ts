@@ -412,6 +412,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // (legacy/injected paths), which keeps the pre-#5464 steer behavior.
   private readonly turnStartThreadKeys = new Map<string, string | undefined>();
 
+  // #5435: the DELIVERY anchor each turn's starter recorded (the value
+  // enqueueTurnAnchor pushed to pendingTurnAnchors — explicit identity, or
+  // the chat-level sticky root for a thread-less starter). Busy-input
+  // receipts reuse it so a supplement's receipt lands in the topic the
+  // running turn's own replies go to, instead of the bare main session.
+  // The sticky root itself cannot be read at receipt time: every accepted
+  // input (the supplement included) overwrites it with its own message id.
+  private readonly turnStartAnchors = new Map<string, string | null | undefined>();
+
   // Issue #3124: One-shot mode & task completion
   // When onceMode is true, processIterator closes the channel after the first
   // `result` message and resolves the completion promise, enabling blocking
@@ -1371,7 +1380,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const enqueueTurnAnchor = (): void => {
       if (anchorQueued) { return; }
       anchorQueued = true;
-      this.pendingTurnAnchors.push(replyRootId !== undefined ? replyRootId : threadRootId ?? this.conversationOrchestrator.getThreadRoot(chatId));
+      const turnAnchor = replyRootId !== undefined ? replyRootId : threadRootId ?? this.conversationOrchestrator.getThreadRoot(chatId);
+      this.pendingTurnAnchors.push(turnAnchor);
+      // #5435: retain the turn's own delivery anchor for busy-input receipts.
+      this.turnStartAnchors.set(messageId, turnAnchor);
+      while (this.turnStartAnchors.size > MAX_TURN_COMPLETIONS) {
+        const oldest = this.turnStartAnchors.keys().next().value;
+        if (oldest !== undefined) { this.turnStartAnchors.delete(oldest); }
+      }
       this.pendingTurnMessageIds.push(messageId);
       // Issue #5464: remember this turn starter's EXPLICIT thread identity so a
       // later busy input can tell whether it belongs to the running turn. The
@@ -1672,8 +1688,22 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       settleInput(error);
       observeTerminal();
     };
+    // #5435: the busy-input receipt must land where the running turn's own
+    // replies go, not in the bare main session. The input's explicit thread
+    // identity (`replyRootId ?? threadRootId`) already matched the turn's
+    // starter (activeTurnOwnsInput), so an explicit input anchor is exact.
+    // A thread-less supplement instead reuses the owner turn's recorded
+    // delivery anchor (turnStartAnchors) — the auto-opened topic its body
+    // replies into. `replyRootId: null` stays an explicit "no reply root"
+    // (main session); an owner whose anchor was never recorded (legacy or
+    // evicted) fails open to the pre-#5435 main-session receipt.
+    const noticeThreadRoot = params.replyRootId !== undefined
+      ? params.replyRootId ?? undefined
+      : params.threadRootId ?? (this.turnStartAnchors.has(sourceMessageId)
+        ? this.turnStartAnchors.get(sourceMessageId) ?? undefined
+        : undefined);
     const notify = async (text: string): Promise<void> => {
-      try { await this.callbacks.sendMessage(params.chatId, text, params.threadRootId); }
+      try { await this.callbacks.sendMessage(params.chatId, text, noticeThreadRoot); }
       catch (error) { this.logger.warn({ err: error, chatId: params.chatId, messageId: params.messageId }, 'Busy-input notice failed'); }
     };
 
