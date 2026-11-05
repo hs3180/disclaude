@@ -94,6 +94,10 @@ export type CodexThreadEvent =
   | { type: 'item.started'; item: CodexItem }
   | { type: 'item.updated'; item: CodexItem }
   | { type: 'item.completed'; item: CodexItem }
+  // #5607 rework: codex emits token_count events carrying the plan's real
+  // rate-limit windows (field `rate_limits`, shapes vary by version) —
+  // telemetry consumed by the weekly-quota ledger, never user-visible.
+  | { type: 'token_count'; info?: unknown; rate_limits?: unknown }
   // Tolerance catch-all: unknown top-level types skip.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   | { type: string; [extra: string]: any };

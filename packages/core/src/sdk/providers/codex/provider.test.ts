@@ -772,6 +772,82 @@ JSONL
       expect(provider.getQuotaStats().turnsCompleted).toBe(2);
     }, 20_000);
 
+    it('records upstream rate-limit windows from token_count events (#5607 rework)', async () => {
+      // 80% used with ~30% of the weekly window elapsed — would block under
+      // enforce; the default observe mode must record without blocking.
+      const resetsAtSec = Math.floor((Date.now() + 0.7 * 7 * 24 * 60 * 60_000) / 1000);
+      fixtures = makeFixtures({
+        withBinary: true,
+        withAuth: true,
+        body: `cat <<JSONL
+{"type":"thread.started","thread_id":"t-abc"}
+{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"output_tokens":2}},"rate_limits":{"primary":{"used_percent":80,"window_minutes":10080,"resets_at":${resetsAtSec}},"secondary":{"used_percent":10,"window_minutes":300,"resets_at":${resetsAtSec}}}}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ok"}}
+{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":2}}
+JSONL
+`,
+      });
+      const provider = makeProvider(fixtures);
+      await drainStream(provider, ['a']);
+      const lines = provider.getStatusExtra();
+      expect(lines.some(l => l.includes('已用 80%') && l.includes('上游实测'))).toBe(true);
+      expect(lines.some(l => l.includes('观测模式') && l.includes('若启用 enforce 将拦截'))).toBe(true);
+      // Observe mode: the next FRESH session is not blocked.
+      const { messages } = await drainStream(provider, ['fresh'], { sessionKey: 'fresh-chat' });
+      const errors = (messages as Array<{ type: string; content: string }>).filter((m) => m.type === 'error');
+      expect(errors).toHaveLength(0);
+    }, 20_000);
+
+    it('enforce blocks the next FRESH session on the progress rule; resumed turns stay untouched (#5607 rework)', async () => {
+      const resetsAtSec = Math.floor((Date.now() + 0.7 * 7 * 24 * 60 * 60_000) / 1000);
+      fixtures = makeFixtures({
+        withBinary: true,
+        withAuth: true,
+        body: `
+n=$(cat "$CODEX_HOME/count" 2>/dev/null || echo 0)
+n=$((n+1)); echo "$n" > "$CODEX_HOME/count"
+if [ "$n" -eq 1 ]; then
+cat <<JSONL
+{"type":"thread.started","thread_id":"t-abc"}
+{"type":"token_count","rate_limits":{"primary":{"used_percent":80,"window_minutes":10080,"resets_at":${resetsAtSec}}}}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ok"}}
+{"type":"turn.completed","usage":{"input_tokens":5,"output_tokens":1}}
+JSONL
+else
+cat <<'JSONL'
+{"type":"thread.started","thread_id":"t-abc"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ok"}}
+{"type":"turn.completed","usage":{"input_tokens":5,"output_tokens":1}}
+JSONL
+fi
+`,
+      });
+      const provider = new CodexAgentProvider({
+        env: {
+          PATH: `${fixtures.binDir}:${process.env.PATH ?? ''}`,
+          CODEX_HOME: fixtures.codexHome,
+          CODEX_REASONING_EFFORT: '',
+        },
+        model: '',
+        weeklyQuota: { weeklyQuotaAdmission: 'enforce' },
+      });
+      // One queryStream = one codex session: input 'a' starts fresh (n=1,
+      // records the 80%-vs-30% reading), input 'b' RESUMES the thread in the
+      // same stream — never gated even though the reading already overpaces.
+      const first = await drainStream(provider, ['a', 'b'], { sessionKey: 'chat-1' });
+      const texts = (first.messages as Array<{ type: string; content?: string }>)
+        .filter((m) => m.type === 'text' && m.content === 'ok');
+      expect(texts.length).toBe(2);
+      expect(readFileSync(join(fixtures.codexHome, 'count'), 'utf-8').trim()).toBe('2');
+      // A NEW stream is a fresh session — blocked BEFORE any spawn.
+      const third = await drainStream(provider, ['c'], { sessionKey: 'chat-2' });
+      const blocked = (third.messages as Array<{ type: string; content: string }>)
+        .find((m) => m.type === 'error');
+      expect(blocked?.content).toContain('消耗进度已超时间进度');
+      expect((third.messages as Array<{ type: string }>).some((m) => m.type === 'result')).toBe(true);
+      expect(readFileSync(join(fixtures.codexHome, 'count'), 'utf-8').trim()).toBe('2'); // no third spawn
+    }, 25_000);
+
     it('degrades a usage-limit failure to the friendly window-reset notice', async () => {
       // Official wording (OpenAI issues): "You've hit your usage limit.
       // Try again at <ts>" — as a top-level error event, then exit 1.

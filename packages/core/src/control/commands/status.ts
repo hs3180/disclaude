@@ -8,9 +8,9 @@ import { getProvider } from '../../sdk/factory.js';
  *
  * #5607: when the active agent backend's provider implements the optional
  * `getStatusExtra` capability (codex's weekly-quota ledger), its lines are
- * appended — labeled estimates, never account-truth. Provider construction
- * is the factory-cached singleton the service itself uses, so a /status
- * call never spawns anything new.
+ * appended — upstream readings + admission verdict, not raw account truth.
+ * Provider construction is the factory-cached singleton the service itself
+ * uses, so a /status call never spawns anything new.
  */
 export const handleStatus: CommandHandler = (
   _command: ControlCommand,

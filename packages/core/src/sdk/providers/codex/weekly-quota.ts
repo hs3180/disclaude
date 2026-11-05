@@ -1,78 +1,94 @@
 /**
- * Codex weekly-quota ledger + tiered fresh-session admission (#5607).
+ * Codex weekly-quota ledger + fresh-session admission (#5607, rework 1).
  *
- * Neither codex transport exposes a real balance/reset-time data source
- * (research: runs/T-058/data-source-research-2026-11-04T22-40Z.md — usage
- * payloads carry only token counts; the plan's rolling windows surface
- * solely through failure text). The ledger therefore:
+ * Data basis: the codex CLI's own structured rate-limit readings. The
+ * installed codex binary (0.151.0) exposes, per plan window, a
+ * `RateLimitWindow { used_percent, window_minutes, resets_at }` — carried
+ * by the exec transport's `token_count` JSONL event (field `rate_limits`)
+ * and by the app-server `account/rateLimits/updated` /
+ * `thread/tokenUsage/updated` notifications (serde field-name evidence in
+ * the binary; both channels are already owned by this repo's adapters).
+ * No token-budget estimation is involved: every gated number is a REAL
+ * upstream reading, only its freshness is process-local.
  *
- * - ESTIMATES consumption against a configured weekly budget
- *   (`agent.codex.weeklyBudgetTokens`, unset/0 = observe-only mode — the
- *   default, so the feature ships dark and is opted into per deployment);
- * - CALIBRATES from real usage-limit failures, parsing the upstream reset
- *   hint ("try again at <time>" / "try again in <duration>") into a
- *   deadline that gates NEW sessions until the window resets.
+ * Admission rule (fresh sessions ONLY — a resumed turn and a running turn
+ * are never killed or delayed; capacity-recovery retries reuse a thread
+ * and are structurally never gated):
  *
- * Admission tiers (only the fresh-session boundary is ever gated — a
- * resumed turn and a running turn are never killed or delayed):
- * - latched limit (real evidence, works even in observe-only mode):
- *   every fresh session degrades with the reset moment;
- * - estimate ratio ≤ block threshold: every fresh session degrades;
- * - estimate ratio ≤ tighten threshold: NON-INTERACTIVE fresh sessions
- *   are skipped with a recorded reason (never silent).
+ *   block when quota usage progress > weekly-window time progress, where
+ *   usage progress = used_percent / 100 and
+ *   time progress   = 1 - (resets_at - now) / (window_minutes * 60s)
  *
- * Every surfaced number is labeled an estimate: consumption counts only
- * what THIS process observed (uncached input + output tokens), so a
- * restart or a second process re-starts the count. No persistence —
- * mirror of the in-memory quota/governor state (#4632/#4634).
+ * Burning quota faster than the window elapses means the window WILL be
+ * exhausted before it resets; burning slower means it will not. A reading
+ * without `resets_at` (or a rolled window) cannot compute time progress
+ * and never blocks — insufficient data fails open, and the observe-only
+ * default (never blocking on readings) keeps the feature dark until
+ * `weeklyQuotaAdmission: enforce` is set per deployment.
+ *
+ * Real usage-limit failures still latch a hard block until their parsed
+ * `try again at/in …` deadline (works in observe mode too — that is
+ * upstream evidence, not a projection).
  */
 
-/** Estimated weekly budget in tokens; > 0 enables the estimation tiers. */
+/** Weekly-quota admission settings; defaults keep the ledger observe-only. */
 export interface CodexWeeklyQuotaConfig {
-  /** Configured weekly budget (tokens). Unset/0 = observe-only (default). */
-  weeklyBudgetTokens?: number;
-  /** Remaining ratio at/below which non-interactive fresh sessions are skipped. Default 0.2. */
-  weeklyTightenThreshold?: number;
-  /** Remaining ratio at/below which every fresh session degrades. Default 0.05. */
-  weeklyBlockThreshold?: number;
+  /** `'observe'` (default) records + reports readings but never gates on them; `'enforce'` applies the progress rule to fresh sessions. */
+  weeklyQuotaAdmission?: 'observe' | 'enforce';
   /** Conservative cooldown when a real limit hit carries no parsable reset hint. Default 1h. */
   weeklyLimitCooldownMs?: number;
 }
 
-export const DEFAULT_WEEKLY_TIGHTEN_THRESHOLD = 0.2;
-export const DEFAULT_WEEKLY_BLOCK_THRESHOLD = 0.05;
 export const DEFAULT_WEEKLY_LIMIT_COOLDOWN_MS = 60 * 60 * 1000;
-export const CODEX_WEEKLY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * A window of at least this many minutes is treated as the weekly-class
+ * window (7d = 10080; the 5h rolling window is 300 and never gates).
+ * Plans may name other windows — only ≥24h windows can gate admission.
+ */
+export const WEEKLY_WINDOW_MIN_MINUTES = 24 * 60;
 
 export type CodexWeeklyLimitWindow = 'weekly' | 'five-hour' | 'unknown';
 
-/** /status view. Numbers are process-local estimates unless marked otherwise. */
+/** One upstream window reading (real data; `observedAt` is process-local). */
+export interface CodexRateLimitReading {
+  /** Used share of the window, 0–100 (field name says percent; clamped). */
+  usedPercent: number;
+  /** Window span in minutes (10080 = weekly, 300 = 5h). */
+  windowMinutes: number;
+  /** Window reset (epoch ms) when the payload carried it. */
+  resetsAt?: number;
+  /** Local clock at observation — readings are process-local freshness. */
+  observedAt: number;
+  /** Where the reading came from (event/notification method). */
+  source: string;
+}
+
+/** /status view. Every number is an upstream reading; freshness is process-local. */
 export interface CodexWeeklyQuotaSnapshot {
-  estimationEnabled: boolean;
-  weeklyBudgetTokens?: number;
-  /** Start of the current estimation window (epoch ms). */
-  windowStartedAt?: number;
-  /** Estimated window reset (epoch ms) — window start + 7d, or a calibrated deadline. */
-  windowResetsAt?: number;
-  /** Tokens consumed in the current window, as observed by THIS process (estimate). */
-  consumedTokens: number;
-  remainingTokens?: number;
-  remainingRatio?: number;
+  admission: 'observe' | 'enforce';
+  /** Latest weekly-class reading, when one has been observed. */
+  weeklyReading?: CodexRateLimitReading;
+  /** Latest sub-daily (e.g. 5h) reading, reported for context only. */
+  shortWindowReading?: CodexRateLimitReading;
+  /** used_percent/100 of the current weekly reading. */
+  usageProgress?: number;
+  /** Elapsed share of the weekly window (from resets_at), 0–1. */
+  timeProgress?: number;
+  /** What checkFreshSession() would decide right now with these numbers. */
+  verdict: 'allow' | 'block' | 'insufficient-data';
   /** A real usage-limit failure is latched (its reset deadline not yet reached). */
   limitLatched: boolean;
   limitWindow?: CodexWeeklyLimitWindow;
   limitResetAt?: number;
   limitSource?: 'parsed' | 'conservative';
-  /** Last tighten-tier skip (recorded, never silent). */
-  lastSkip?: { at: number; reason: string };
+  /** Last enforce-mode block (recorded, never silent). */
+  lastBlock?: { at: number; reason: string };
 }
 
 export type CodexFreshSessionAdmission =
   | { decision: 'allow' }
-  /** Tighten tier: skip this non-interactive fresh session, record the reason. */
-  | { decision: 'skip'; reason: string; resetAt?: number }
-  /** Admission-limit tier: friendly degrade for a user-visible fresh session. */
-  | { decision: 'degrade'; reason: string; resetAt?: number };
+  /** Fresh session blocked (friendly degrade) with the reason and, when known, the window reset. */
+  | { decision: 'block'; reason: string; resetAt?: number };
 
 interface LatchedLimit {
   until: number;
@@ -130,81 +146,159 @@ export function classifyCodexLimitWindow(text: string): CodexWeeklyLimitWindow {
   return 'unknown';
 }
 
+/**
+ * Normalize a `resets_at` value to epoch ms. Accepts epoch seconds, epoch
+ * milliseconds and parseable timestamp strings; anything else (or the past
+ * by more than a minute of clock skew) yields undefined.
+ */
+function parseResetsAt(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    // Heuristic split: codex timestamps are second-granularity; ms values
+    // are 13+ digits. Both accepted so a unit change upstream keeps parsing.
+    return value > 1e12 ? value : value * 1000;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (/^\d+$/.test(trimmed)) {
+      return parseResetsAt(Number(trimmed));
+    }
+    const parsed = Date.parse(trimmed);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
+function toPercent(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    return undefined;
+  }
+  return Math.min(100, value);
+}
+
+/**
+ * Recursively collect `{used_percent, window_minutes[, resets_at]}` window
+ * readings from an arbitrary payload. The binary-proven shapes are
+ * `rate_limits: {primary, secondary}` (notification) and `rate_limits`
+ * (token_count event) — but the nesting is version-dependent, so any
+ * object carrying BOTH a used_percent and a window_minutes number at any
+ * depth (bounded) counts. Extra unknown siblings are ignored.
+ */
+export function extractCodexRateLimitReadings(
+  payload: unknown,
+  source: string,
+  now: number,
+): CodexRateLimitReading[] {
+  const readings: CodexRateLimitReading[] = [];
+  const visit = (value: unknown, depth: number): void => {
+    if (readings.length >= 8 || depth > 4) { return; }
+    if (Array.isArray(value)) {
+      for (const entry of value) { visit(entry, depth + 1); }
+      return;
+    }
+    if (typeof value !== 'object' || value === null) { return; }
+    const record = value as Record<string, unknown>;
+    const usedPercent = toPercent(record.used_percent);
+    const windowMinutes =
+      typeof record.window_minutes === 'number' && Number.isFinite(record.window_minutes) && record.window_minutes > 0
+        ? record.window_minutes
+        : undefined;
+    if (usedPercent !== undefined && windowMinutes !== undefined) {
+      const resetsAt = parseResetsAt(record.resets_at);
+      readings.push({
+        usedPercent,
+        windowMinutes,
+        ...(resetsAt !== undefined ? { resetsAt } : {}),
+        observedAt: now,
+        source,
+      });
+    }
+    for (const child of Object.values(record)) { visit(child, depth + 1); }
+  };
+  visit(payload, 0);
+  return readings;
+}
+
 const WINDOW_LABEL: Record<CodexWeeklyLimitWindow, string> = {
   weekly: '周',
   'five-hour': '5 小时',
   unknown: '周期',
 };
 
-function formatTokens(value: number): string {
-  return value.toLocaleString('en-US');
+function formatPercent(ratio: number): string {
+  return `${Math.round(ratio * 100)}%`;
 }
 
 function formatTime(epochMs: number): string {
   return new Date(epochMs).toISOString();
 }
 
+/**
+ * Quota usage progress vs weekly-window time progress. `undefined` when
+ * the reading cannot support the comparison (no reset time — or a window
+ * that has already rolled, which callers treat as expired).
+ */
+export function weeklyProgress(
+  reading: CodexRateLimitReading,
+  now: number,
+): { usageProgress: number; timeProgress: number } | undefined {
+  if (reading.resetsAt === undefined || now >= reading.resetsAt) {
+    return undefined;
+  }
+  const windowMs = reading.windowMinutes * 60_000;
+  const timeProgress = Math.min(1, Math.max(0, 1 - (reading.resetsAt - now) / windowMs));
+  return { usageProgress: reading.usedPercent / 100, timeProgress };
+}
+
 export class CodexWeeklyQuotaLedger {
-  private readonly weeklyBudgetTokens: number | undefined;
-  private readonly tightenThreshold: number;
-  private readonly blockThreshold: number;
+  private readonly admission: 'observe' | 'enforce';
   private readonly limitCooldownMs: number;
   private readonly now: () => number;
-  private windowStartedAt: number | undefined;
-  private consumedTokens = 0;
+  private weeklyReading: CodexRateLimitReading | undefined;
+  private shortWindowReading: CodexRateLimitReading | undefined;
   private limit: LatchedLimit | undefined;
-  private lastSkip: { at: number; reason: string } | undefined;
+  private lastBlock: { at: number; reason: string } | undefined;
 
   constructor(config: CodexWeeklyQuotaConfig = {}, now: () => number = Date.now) {
-    this.weeklyBudgetTokens =
-      typeof config.weeklyBudgetTokens === 'number' && config.weeklyBudgetTokens > 0
-        ? config.weeklyBudgetTokens
-        : undefined;
-    this.tightenThreshold = config.weeklyTightenThreshold ?? DEFAULT_WEEKLY_TIGHTEN_THRESHOLD;
-    this.blockThreshold = config.weeklyBlockThreshold ?? DEFAULT_WEEKLY_BLOCK_THRESHOLD;
+    this.admission = config.weeklyQuotaAdmission === 'enforce' ? 'enforce' : 'observe';
     this.limitCooldownMs = config.weeklyLimitCooldownMs ?? DEFAULT_WEEKLY_LIMIT_COOLDOWN_MS;
     this.now = now;
   }
 
-  get estimationEnabled(): boolean {
-    return this.weeklyBudgetTokens !== undefined;
-  }
-
-  /** Start a fresh estimation window (lazy — first observation wins). */
-  private ensureWindow(now: number): void {
-    if (this.windowStartedAt === undefined) {
-      this.windowStartedAt = now;
-      this.consumedTokens = 0;
-    }
-  }
-
-  /** Roll the window when the configured span has elapsed. */
-  private rollWindow(now: number): void {
-    if (this.windowStartedAt !== undefined && now - this.windowStartedAt >= CODEX_WEEKLY_WINDOW_MS) {
-      this.windowStartedAt = now;
-      this.consumedTokens = 0;
-    }
+  get enforcementEnabled(): boolean {
+    return this.admission === 'enforce';
   }
 
   /**
-   * Record one completed turn's usage. Cached input tokens are excluded —
-   * subscription cache hits are effectively free, so counting them would
-   * systematically understate the remaining budget (an estimate must err
-   * toward earlier protection, not toward hitting the wall).
+   * Record upstream rate-limit windows observed on any transport. The
+   * weekly-class reading (largest window ≥ 24h) drives admission; the
+   * largest sub-daily window is kept for /status context. A newer
+   * observation of the same window always wins.
    */
-  recordUsage(usage: { inputTokens?: number; cachedInputTokens?: number; outputTokens?: number }): void {
+  recordRateLimits(payload: unknown, source: string): void {
     const now = this.now();
-    this.ensureWindow(now);
-    this.rollWindow(now);
-    const uncachedInput = Math.max(0, (usage.inputTokens ?? 0) - (usage.cachedInputTokens ?? 0));
-    this.consumedTokens += uncachedInput + Math.max(0, usage.outputTokens ?? 0);
+    for (const reading of extractCodexRateLimitReadings(payload, source, now)) {
+      const isWeeklyClass = reading.windowMinutes >= WEEKLY_WINDOW_MIN_MINUTES;
+      const current = isWeeklyClass ? this.weeklyReading : this.shortWindowReading;
+      const sameWindow = current !== undefined && current.windowMinutes === reading.windowMinutes;
+      // Larger window wins within a class; equal windows keep the latest
+      // observation (upstream re-emits as usage grows within the window).
+      if (current === undefined || reading.windowMinutes >= current.windowMinutes || sameWindow) {
+        if (isWeeklyClass) {
+          this.weeklyReading = reading;
+        } else {
+          this.shortWindowReading = reading;
+        }
+      }
+    }
   }
 
   /**
    * Calibrate from a real usage-limit failure. Latches an admission gate
-   * until the parsed (or conservative) reset deadline; a weekly hit also
-   * restarts the estimation window at the deadline, because upstream just
-   * told us exactly when the current weekly window ends.
+   * until the parsed (or conservative) reset deadline. Independent of the
+   * readings path: a failure text proves exhaustion even when no
+   * structured window event was observed.
    */
   recordLimitHit(failureText: string): void {
     const now = this.now();
@@ -218,62 +312,58 @@ export class CodexWeeklyQuotaLedger {
       // text is more specific.
       this.limit = { ...this.limit, window: this.limit.window === 'unknown' ? window : this.limit.window };
     }
-    if (window === 'weekly') {
-      this.windowStartedAt = until;
-      this.consumedTokens = 0;
-    }
   }
 
-  /** Lazy expiry + window roll before any decision/read. */
+  /** Lazy expiry before any decision/read: latch and rolled windows. */
   private settle(now: number): void {
     if (this.limit && now >= this.limit.until) {
       this.limit = undefined;
     }
-    this.ensureWindow(now);
-    this.rollWindow(now);
+    if (this.weeklyReading?.resetsAt !== undefined && now >= this.weeklyReading.resetsAt) {
+      // The observed window rolled — its used_percent no longer describes
+      // the current window. Drop it until a fresh reading arrives.
+      this.weeklyReading = undefined;
+    }
+    if (this.shortWindowReading?.resetsAt !== undefined && now >= this.shortWindowReading.resetsAt) {
+      this.shortWindowReading = undefined;
+    }
   }
 
   /**
-   * Tiered admission for a NEW codex conversation (fresh thread). Never
-   * called for resumed turns — running work is untouchable by design.
+   * Admission for a NEW codex conversation (fresh thread). Never called
+   * for resumed turns or capacity-recovery retries — running work is
+   * untouchable by design, and retries reuse the thread.
    */
-  checkFreshSession(input: { nonInteractive: boolean }): CodexFreshSessionAdmission {
+  checkFreshSession(): CodexFreshSessionAdmission {
     const now = this.now();
     this.settle(now);
     if (this.limit) {
       const resetAt = this.limit.resetAt ?? this.limit.until;
-      return {
-        decision: 'degrade',
-        resetAt,
-        reason:
-          `Codex ${WINDOW_LABEL[this.limit.window]}额度已用尽（上游撞限实证${this.limit.source === 'conservative' ? '；未解析到重置时刻，按保守冷却估计' : ''}），` +
-          `预计 ${formatTime(resetAt)} 重置，此前新会话暂缓。运行中的回合不受影响；窗口重置后重发消息即可恢复。` +
-          '如已配置其它 agentBackend，可临时切换使用。',
-      };
+      const reason =
+        `Codex ${WINDOW_LABEL[this.limit.window]}额度已用尽（上游撞限实证${this.limit.source === 'conservative' ? '；未解析到重置时刻，按保守冷却估计' : ''}），` +
+        `预计 ${formatTime(resetAt)} 重置，此前新会话暂缓。运行中的回合不受影响；窗口重置后重发消息即可恢复。` +
+        '如已配置其它 agentBackend，可临时切换使用。';
+      this.lastBlock = { at: now, reason };
+      return { decision: 'block', resetAt, reason };
     }
-    if (!this.estimationEnabled || this.weeklyBudgetTokens === undefined) {
+    if (this.admission !== 'enforce') {
       return { decision: 'allow' };
     }
-    const budget = this.weeklyBudgetTokens;
-    const remaining = Math.max(0, budget - this.consumedTokens);
-    const ratio = remaining / budget;
-    const windowResetsAt = (this.windowStartedAt ?? now) + CODEX_WEEKLY_WINDOW_MS;
-    if (ratio <= this.blockThreshold) {
-      return {
-        decision: 'degrade',
-        resetAt: windowResetsAt,
-        reason:
-          `Codex 周额度估计余量不足（剩余约 ${formatTokens(remaining)}/${formatTokens(budget)} tokens，` +
-          `${Math.round(ratio * 100)}%——估计值，仅统计本进程消耗）。为避免任务中途撞限，新会话暂缓；` +
-          `预计窗口重置约 ${formatTime(windowResetsAt)}。如已配置其它 agentBackend，可临时切换使用。`,
-      };
+    const progress = this.weeklyReading === undefined ? undefined : weeklyProgress(this.weeklyReading, now);
+    if (progress === undefined) {
+      // No weekly reading, or the reading carries no reset time, or the
+      // window already rolled: the comparison is not computable — allow.
+      return { decision: 'allow' };
     }
-    if (ratio <= this.tightenThreshold && input.nonInteractive) {
+    if (progress.usageProgress > progress.timeProgress) {
+      const resetAt = this.weeklyReading?.resetsAt;
       const reason =
-        `周额度估计余量 ${Math.round(ratio * 100)}%（≤收紧阈值 ${Math.round(this.tightenThreshold * 100)}%，` +
-        `估计值——仅统计本进程消耗），非交互新会话本轮跳过；窗口重置约 ${formatTime(windowResetsAt)}`;
-      this.lastSkip = { at: now, reason };
-      return { decision: 'skip', resetAt: windowResetsAt, reason };
+        `Codex 周额度消耗进度已超时间进度：已用 ${formatPercent(progress.usageProgress)}，` +
+        `本窗口时间仅过 ${formatPercent(progress.timeProgress)}（上游实测 used_percent/${Math.round(this.weeklyReading?.windowMinutes ?? 0)} 分钟窗口，` +
+        `预计 ${resetAt === undefined ? '' : `${formatTime(resetAt)} `}重置）。为避免窗口末段撞限，新会话暂缓；` +
+        '运行中的回合与续聊不受影响；消耗进度回落到时间进度之下或窗口重置后重发消息即可恢复。如已配置其它 agentBackend，可临时切换使用。';
+      this.lastBlock = { at: now, reason };
+      return { decision: 'block', ...(resetAt !== undefined ? { resetAt } : {}), reason };
     }
     return { decision: 'allow' };
   }
@@ -281,52 +371,79 @@ export class CodexWeeklyQuotaLedger {
   snapshot(): CodexWeeklyQuotaSnapshot {
     const now = this.now();
     this.settle(now);
-    const windowStartedAt = this.windowStartedAt ?? now;
     const snapshot: CodexWeeklyQuotaSnapshot = {
-      estimationEnabled: this.estimationEnabled,
-      consumedTokens: this.consumedTokens,
+      admission: this.admission,
+      verdict: this.computeVerdict(now),
       limitLatched: this.limit !== undefined,
-      windowStartedAt: this.windowStartedAt,
-      windowResetsAt: this.limit?.until ?? windowStartedAt + CODEX_WEEKLY_WINDOW_MS,
     };
-    if (this.weeklyBudgetTokens !== undefined) {
-      snapshot.weeklyBudgetTokens = this.weeklyBudgetTokens;
-      snapshot.remainingTokens = Math.max(0, this.weeklyBudgetTokens - this.consumedTokens);
-      snapshot.remainingRatio = snapshot.remainingTokens / this.weeklyBudgetTokens;
+    if (this.weeklyReading !== undefined) {
+      snapshot.weeklyReading = { ...this.weeklyReading };
+      const progress = weeklyProgress(this.weeklyReading, now);
+      if (progress) {
+        snapshot.usageProgress = progress.usageProgress;
+        snapshot.timeProgress = progress.timeProgress;
+      }
+    }
+    if (this.shortWindowReading !== undefined) {
+      snapshot.shortWindowReading = { ...this.shortWindowReading };
     }
     if (this.limit) {
       snapshot.limitWindow = this.limit.window;
       snapshot.limitResetAt = this.limit.resetAt ?? this.limit.until;
       snapshot.limitSource = this.limit.source;
     }
-    if (this.lastSkip) { snapshot.lastSkip = { ...this.lastSkip }; }
+    if (this.lastBlock) { snapshot.lastBlock = { ...this.lastBlock }; }
     return snapshot;
   }
 
-  /** Human-readable /status lines. Every estimate is labeled as one. */
+  /** Would-decision from current facts — mode-independent (observe reports it). */
+  private computeVerdict(now: number): CodexWeeklyQuotaSnapshot['verdict'] {
+    if (this.limit) { return 'block'; }
+    if (this.weeklyReading === undefined) { return 'insufficient-data'; }
+    const progress = weeklyProgress(this.weeklyReading, now);
+    if (progress === undefined) { return 'insufficient-data'; }
+    return progress.usageProgress > progress.timeProgress ? 'block' : 'allow';
+  }
+
+  /** Human-readable /status lines. Upstream readings, process-local freshness. */
   formatStatusLines(): string[] {
     const snapshot = this.snapshot();
     const lines: string[] = [];
-    if (snapshot.estimationEnabled && snapshot.weeklyBudgetTokens !== undefined && snapshot.remainingTokens !== undefined) {
+    if (snapshot.weeklyReading !== undefined && snapshot.usageProgress !== undefined && snapshot.timeProgress !== undefined) {
+      const reset = snapshot.weeklyReading.resetsAt;
       lines.push(
-        `🪙 Codex 周额度（估计）：预算 ${formatTokens(snapshot.weeklyBudgetTokens)} tokens/周，` +
-        `本进程已观测 ${formatTokens(snapshot.consumedTokens)}（估计，仅本进程累计），` +
-        `剩余约 ${formatTokens(snapshot.remainingTokens)}（${Math.round((snapshot.remainingRatio ?? 0) * 100)}%，估计）`
+        `🪙 Codex 周额度（上游实测）：已用 ${formatPercent(snapshot.usageProgress)}，` +
+        `窗口时间已过 ${formatPercent(snapshot.timeProgress)}` +
+        `${reset === undefined ? '' : `，预计 ${formatTime(reset)} 重置`}` +
+        `——读数来自 ${snapshot.weeklyReading.source}（本进程最近一次观测）`,
       );
     } else {
+      lines.push('🪙 Codex 周额度：尚未观测到上游窗口读数（等待 token_count / rateLimits 事件）');
+    }
+    if (snapshot.shortWindowReading !== undefined) {
       lines.push(
-        `🪙 Codex 周额度：观测模式（未配置 agent.codex.weeklyBudgetTokens），本进程累计 ${formatTokens(snapshot.consumedTokens)} tokens`
+        `🪙 Codex 短窗口（参考）：已用 ${Math.round(snapshot.shortWindowReading.usedPercent)}%` +
+        `（${Math.round(snapshot.shortWindowReading.windowMinutes)} 分钟窗口，来自 ${snapshot.shortWindowReading.source}）`
       );
     }
     if (snapshot.limitLatched && snapshot.limitResetAt !== undefined) {
       lines.push(
-        `⛔ 撞限校准：上游实证${snapshot.limitWindow === 'weekly' ? '周' : snapshot.limitWindow === 'five-hour' ? '5 小时' : '周期'}额度已用尽` +
+        `⛔ 撞限实证：上游${snapshot.limitWindow === 'weekly' ? '周' : snapshot.limitWindow === 'five-hour' ? '5 小时' : '周期'}额度已用尽` +
         `（${snapshot.limitSource === 'conservative' ? '未解析到重置时刻，按保守冷却' : '按上游重置提示'}），` +
         `预计 ${formatTime(snapshot.limitResetAt)} 重置——重置前新会话准入受限`
       );
     }
-    if (snapshot.lastSkip) {
-      lines.push(`⏭️ 最近一次收紧跳过：${formatTime(snapshot.lastSkip.at)} —— ${snapshot.lastSkip.reason}`);
+    const mode =
+      snapshot.admission === 'enforce'
+        ? snapshot.verdict === 'block'
+          ? '当前判定：拦截新会话'
+          : snapshot.verdict === 'allow'
+            ? '当前判定：放行新会话'
+            : '当前判定：数据不足，放行'
+        : '观测模式（agent.codex.weeklyQuotaAdmission 未设为 enforce，仅记录不拦截）';
+    lines.push(`⚖️ 新会话准入：${mode}${snapshot.admission === 'observe' && snapshot.verdict === 'block' ? '；按当前读数若启用 enforce 将拦截' : ''}`);
+    if (snapshot.lastBlock) {
+      lines.push(`⛔ 最近一次拦截：${formatTime(snapshot.lastBlock.at)} —— ${snapshot.lastBlock.reason}`);
     }
     return lines;
   }

@@ -57,14 +57,14 @@ describe('handleStatus', () => {
     expect(result.message).not.toContain('周额度');
   });
 
-  it('appends labeled provider runtime stats when exposed (#5607)', async () => {
+  it('appends upstream-reading provider runtime stats when exposed (#5607)', async () => {
     getProviderMock.mockReturnValue({
-      getStatusExtra: () => ['🪙 Codex 周额度（估计）：预算 1,000 tokens/周，剩余约 500（50%，估计）'],
+      getStatusExtra: () => ['🪙 Codex 周额度（上游实测）：已用 45%，窗口时间已过 20%'],
     });
     const result = await handleStatus({ type: 'status', chatId: 'chat-1' }, createMockContext());
     expect(result.message).toContain('服务状态');
-    expect(result.message).toContain('🪙 Codex 周额度（估计）');
-    expect(result.message).toContain('估计');
+    expect(result.message).toContain('🪙 Codex 周额度（上游实测）');
+    expect(result.message).toContain('上游实测');
   });
 
   it('swallows provider lookup failures and still reports the service', async () => {

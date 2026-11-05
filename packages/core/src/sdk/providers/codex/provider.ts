@@ -473,10 +473,11 @@ export class CodexAgentProvider implements IAgentSDKProvider {
   }
 
   /**
-   * /status lines for the weekly-quota ledger (#5607) — labeled estimates:
-   * configured budget, this-process observed consumption, estimated
-   * remaining, and any latched real-limit calibration. Optional interface
-   * capability; other providers simply do not implement it.
+   * /status lines for the weekly-quota ledger (#5607 rework) — upstream
+   * rate-limit window readings (used_percent vs window time progress),
+   * admission mode/verdict, and any latched real-limit calibration.
+   * Readings are upstream facts; only their freshness is process-local.
+   * Optional interface capability; other providers do not implement it.
    */
   getStatusExtra(): string[] {
     return this.weeklyQuota.formatStatusLines();
@@ -869,6 +870,12 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           if (t === 'command_execution' || t === 'mcp_tool_call') {
             openToolItems = Math.max(0, openToolItems - 1);
           }
+        } else if (event.type === 'token_count') {
+          // #5607 rework: the exec transport surfaces the plan's real
+          // rate-limit windows (used_percent/window_minutes/resets_at) on
+          // token_count events — the queryable quota ratio this ledger is
+          // built on. Whole-event feed: the extractor tolerates nesting.
+          weeklyQuotaSink.recordRateLimits(event, 'exec token_count');
         } else if (event.type === 'turn.completed' || event.type === 'turn.failed') {
           sawTurnTerminator = true;
           if (event.type === 'turn.completed') {
@@ -885,11 +892,6 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               quotaSink.cachedInputTokens += usage.cached_input_tokens ?? 0;
               quotaSink.outputTokens += usage.output_tokens ?? 0;
               quotaSink.reasoningOutputTokens += usage.reasoning_output_tokens ?? 0;
-              weeklyQuotaSink.recordUsage({
-                inputTokens: usage.input_tokens,
-                cachedInputTokens: usage.cached_input_tokens,
-                outputTokens: usage.output_tokens,
-              });
               logger.info(
                 {
                   threadId: latestSessionId,
@@ -986,7 +988,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       // S7 (#4634): each run holds a global lease — at most
       // maxConcurrentRuns codex exec children process-wide; excess turns
       // queue FIFO across chats with a backpressure notice.
-      const runInput = async (prompt: string, correlation?: UserInput['correlation'], continuationContext?: string, nonInteractive = false): Promise<void> => {
+      const runInput = async (prompt: string, correlation?: UserInput['correlation'], continuationContext?: string): Promise<void> => {
         if (stalled || aborted || terminated) { return; }
         // Item IDs are scoped to one exec invocation. Clear before every
         // run because older Codex versions (and test doubles) may omit
@@ -1007,22 +1009,15 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         // ONLY — a new codex conversation (new chat, /reset, budget-triggered
         // fresh) is the one place the plan's rolling windows can be protected
         // without touching work: resumed turns and running runs always pass.
+        // Rework 1: the decision compares the upstream-observed quota usage
+        // progress against the weekly window's time progress (reset-time
+        // progress); observe mode records without blocking.
         if (resumeTarget === undefined) {
-          const admission = weeklyQuotaSink.checkFreshSession({ nonInteractive });
-          if (admission.decision === 'skip') {
-            // Tighten tier: record the skip (log + visible notice), never silent.
-            logger.info(
-              { sessionKey, ...correlation, reason: admission.reason },
-              'codex fresh session skipped (weekly-quota tighten tier, #5607)'
-            );
-            pushSynthetic({ type: 'status', role: 'system', content: `⏭️ Codex 新会话未开启——${admission.reason}。` });
-            pushSynthetic({ type: 'result', content: '', role: 'assistant' });
-            return;
-          }
-          if (admission.decision === 'degrade') {
+          const admission = weeklyQuotaSink.checkFreshSession();
+          if (admission.decision === 'block') {
             logger.warn(
               { sessionKey, ...correlation, reason: admission.reason },
-              'codex fresh session degraded (weekly-quota admission, #5607)'
+              'codex fresh session blocked (weekly-quota admission, #5607)'
             );
             pushSynthetic({ type: 'error', role: 'assistant', content: `⛔️ ${admission.reason}` });
             pushSynthetic({ type: 'result', content: '', role: 'assistant' });
@@ -1310,11 +1305,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             if (done || terminated) {
               return;
             }
-            await runInput(userInputText(value), value.correlation, value.continuationContext,
-              // #5607 non-interactive proxy: dependent work that must not
-              // queue, or an input without a bound interactive context
-              // (machine pushes — schedule ticks arrive via /api/push).
-              value.inputContext === undefined || options.capacityAdmission === 'reject');
+            await runInput(userInputText(value), value.correlation, value.continuationContext);
             if (stalled || aborted) { return; }
           }
         } finally {
@@ -1665,8 +1656,8 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           // #5607/#4632 parity: app-server previously never accumulated
           // usage — only the exec transport fed the quota counters. A
           // completed turn's usage payload (bounded read, finite fields
-          // only) lands in the process-wide counters AND the weekly-quota
-          // ledger, with the same one structured line per turn as exec.
+          // only) lands in the process-wide counters, with the same one
+          // structured line per turn as exec.
           if (status === 'completed' && event.turn?.usage) {
             const usage = readCodexOutputLimitUsage(event.turn.usage);
             if (usage) {
@@ -1675,11 +1666,6 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               this.quota.cachedInputTokens += usage.cachedInputTokens ?? 0;
               this.quota.outputTokens += usage.outputTokens ?? 0;
               this.quota.reasoningOutputTokens += usage.reasoningOutputTokens ?? 0;
-              this.weeklyQuota.recordUsage({
-                inputTokens: usage.inputTokens,
-                cachedInputTokens: usage.cachedInputTokens,
-                outputTokens: usage.outputTokens,
-              });
               logger.info(
                 {
                   threadId,
@@ -1848,24 +1834,15 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             // only. threadId is undefined exactly before this stream's first
             // ensureThread (or after a pre-thread failure); capacity-recovery
             // retries resume the SAME thread and are never gated, and a
-            // running turn is untouchable by design.
+            // running turn is untouchable by design. Rework 1: the decision
+            // compares upstream-observed quota usage progress against the
+            // weekly window's time progress; observe mode never blocks.
             if (!threadId) {
-              const admission = this.weeklyQuota.checkFreshSession({
-                nonInteractive: options.capacityAdmission === 'reject' || !next.value.inputContext,
-              });
-              if (admission.decision === 'skip') {
-                logger.info(
-                  { sessionKey, ...next.value.correlation, reason: admission.reason },
-                  'codex fresh session skipped (weekly-quota tighten tier, #5607)'
-                );
-                push({ type: 'status', role: 'system', content: `⏭️ Codex 新会话未开启——${admission.reason}。` });
-                push({ type: 'result', role: 'assistant', content: '' });
-                break;
-              }
-              if (admission.decision === 'degrade') {
+              const admission = this.weeklyQuota.checkFreshSession();
+              if (admission.decision === 'block') {
                 logger.warn(
                   { sessionKey, ...next.value.correlation, reason: admission.reason },
-                  'codex fresh session degraded (weekly-quota admission, #5607)'
+                  'codex fresh session blocked (weekly-quota admission, #5607)'
                 );
                 push({ type: 'error', role: 'assistant', content: `⛔️ ${admission.reason}` });
                 push({ type: 'result', role: 'assistant', content: '' });
@@ -2247,6 +2224,14 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       onAsyncAnswer,
       env: environment ?? this.env,
       onNotification: (method, params) => {
+        // #5607 rework: the app-server surfaces the plan's real rate-limit
+        // windows through account/thread-level notifications that carry no
+        // turnId — the per-session router below would drop them. Feed the
+        // weekly-quota ledger first (defensive extraction; anything without
+        // window fields is a no-op), then route as before.
+        if (method === 'account/rateLimits/updated' || method === 'thread/tokenUsage/updated') {
+          this.weeklyQuota.recordRateLimits(params, `app-server ${method}`);
+        }
         const threadId = (params as { threadId?: string } | null)?.threadId;
         if (threadId) {this.appServerRoutes.get(threadId)?.(method, params);}
       },
