@@ -67,6 +67,12 @@ channels:
     appId: $FEISHU_APP_ID
     appSecret: $FEISHU_APP_SECRET
     streamingCard: false
+    # Issue #5396: redirect hints for task messages posted in a non-main group
+    # of a project that declared a main group (`/main-group` command; mapping
+    # persisted in workspace/bot-chat-mapping.json). Default true; the hint
+    # carries the main-group chatId and a busy-state summary only — never
+    # message content.
+    mainGroupRoutingHint: true
   rest:
     enabled: false
     host: 127.0.0.1

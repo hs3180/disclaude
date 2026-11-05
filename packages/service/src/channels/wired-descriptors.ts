@@ -19,6 +19,7 @@ import {
   Config,
   GitHubIssueClient,
   resolveGitHubIssueTarget,
+  BotChatMappingStore,
   type ControlHandlerContext,
   type IChannel,
   type IncomingMessage,
@@ -33,7 +34,7 @@ import { FeishuChannel, type FeishuChannelConfig } from './feishu-channel.js';
 import { WeChatChannel, type WeChatChannelConfig } from './wechat/index.js';
 import crypto from 'crypto';
 import { stat } from 'node:fs/promises';
-import { basename } from 'node:path';
+import { basename, join } from 'node:path';
 import { messageLogger } from '../utils/message-logger.js';
 import { WelcomeService } from '../platforms/feishu/welcome-service.js';
 import type {
@@ -237,6 +238,37 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
     helpContext.issueReporting = {
       sendConfirmation: (record, target) => feishuChannel.requestIssueReport(record, target),
     };
+
+    // Issue #5396: wire main-group routing — a persistent mapping
+    // (workspace/bot-chat-mapping.json, `main-group:<workdir>` entries) holds
+    // each project's declared main chat. Task messages arriving in a non-main
+    // project group get a redirect hint instead of a parallel execution
+    // stream. `feishu.mainGroupRoutingHint: false` disables the hints; a
+    // broken store degrades to normal processing (never blocks messages).
+    try {
+      const rawFeishuConfig = Config.getRawConfig().channels?.feishu;
+      const store = new BotChatMappingStore({
+        filePath: join(Config.getWorkspaceDir(), 'bot-chat-mapping.json'),
+      });
+      const getBusySummary = (chatId: string): string | undefined => {
+        const agent = context.agentPool.get?.(chatId);
+        if (agent) {
+          if (agent.isBusy) { return '有任务执行中'; }
+          if (agent.hasPendingWork) { return '有排队任务'; }
+          return '空闲';
+        }
+        // No per-chat agent yet — fall back to a pool-level summary.
+        const stats = context.agentPool.getPoolStats();
+        return stats.busy > 0 ? '有任务执行中' : '空闲';
+      };
+      feishuChannel.setMainGroupRouting({
+        store,
+        hintEnabled: () => rawFeishuConfig?.mainGroupRoutingHint !== false,
+        getBusySummary,
+      });
+    } catch (error) {
+      context.logger.warn({ err: error }, 'main-group routing could not be wired; redirect hints stay disabled');
+    }
 
     feishuChannel.onControl(createControlHandler(helpContext));
 

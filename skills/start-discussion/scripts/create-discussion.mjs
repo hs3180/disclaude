@@ -21,7 +21,7 @@ export function positioningPost({
   topic,
   ledgerRule = '本群台账只记录本群决策与交付，原群历史不重复搬运。',
 }) {
-  return `【群定位声明】讨论：${topic}\n- 本群管什么：只讨论「${topic}」及该话题的决策与交付。\n- 原群/原 thread 保留什么：原有其他话题与历史上下文，不再承接本话题讨论。\n- 执行流水去处：本话题的进度、执行流水与交付只发到本群。\n- 台账规则：${ledgerRule}`;
+  return `【群定位声明】讨论：${topic}\n- 本群管什么：只讨论「${topic}」及该话题的决策与交付。\n- 原群/原 thread 保留什么：原有其他话题与历史上下文，不再承接本话题讨论。\n- 执行流水去处：本话题的进度、执行流水与交付只发到本群。\n- 台账规则：${ledgerRule}\n- 主群声明（Issue #5396）：若本群就是该项目的主战场群，请在群内发送 /main-group 声明；此后其他同项目群收到的任务消息会被指路到本群。`;
 }
 
 export function migrationCard({ topic, chatId, ownerOpenId }) {

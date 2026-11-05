@@ -36,6 +36,13 @@ export interface CommandRouterDeps {
   emitControl(command: ControlCommand): Promise<ControlResponse>;
   /** Send a text reply to the chat. */
   sendMessage(reply: CommandReply): Promise<void>;
+  /**
+   * Mapping store for main-group declarations (Issue #5396). Optional —
+   * without it `/main-group` replies with a guidance message instead of
+   * failing the channel.
+   */
+  mainGroupStore?: Pick<import('@disclaude/core').BotChatMappingStore,
+    'findEntryByChatId' | 'getMainGroup' | 'declareMainGroup' | 'clearMainGroup'>;
 }
 
 /** Inputs needed to evaluate a command. */
@@ -145,6 +152,59 @@ export async function tryHandleSlashCommand(
       type: 'text',
       text: '⏹️ **停止命令已发送**\n\n当前会话将尝试停止响应。',
     });
+    return true;
+  }
+
+  // Issue #5396: declare/switch this chat as the project's main group.
+  if (cmd === 'main-group') {
+    if (!deps.mainGroupStore) {
+      await deps.sendMessage({ ...replyTarget, type: 'text', text: '主群声明不可用：未配置 bot-chat-mapping 存储。' });
+      return true;
+    }
+    if (input.chatType !== 'group') {
+      await deps.sendMessage({ ...replyTarget, type: 'text', text: '/main-group 仅在群聊中使用：把当前群声明为项目主战场群。' });
+      return true;
+    }
+    const store = deps.mainGroupStore;
+    const clear = args.includes('--clear');
+    const workdirFlagIndex = args.indexOf('--workdir');
+    const explicitWorkdir = workdirFlagIndex >= 0 ? args[workdirFlagIndex + 1] : undefined;
+
+    if (clear) {
+      const entry = explicitWorkdir ? { workdir: explicitWorkdir } : await store.findEntryByChatId(input.chatId);
+      if (!entry?.workdir) {
+        await deps.sendMessage({ ...replyTarget, type: 'text', text: '未找到本项目的主群声明，无需清除。' });
+        return true;
+      }
+      const removed = await store.clearMainGroup(entry.workdir);
+      await deps.sendMessage({ ...replyTarget, type: 'text', text: removed ? '已清除本项目的主群声明。' : '未找到本项目的主群声明，无需清除。' });
+      return true;
+    }
+
+    const workdir = explicitWorkdir ?? (await store.findEntryByChatId(input.chatId))?.workdir;
+    if (!workdir) {
+      await deps.sendMessage({
+        ...replyTarget,
+        type: 'text',
+        text: '无法确定本群所属项目：本群没有携带 workdir 的 mapping 记录。可显式指定：/main-group --workdir <项目目录>',
+      });
+      return true;
+    }
+
+    const { previousChatId } = await store.declareMainGroup(workdir, input.chatId);
+    await deps.sendMessage({
+      ...replyTarget,
+      type: 'text',
+      text: `已将本群声明为项目（workdir: ${workdir}）的主战场群。`,
+    });
+    // One-time migration guidance to the previous main group (Issue #5396).
+    if (previousChatId && previousChatId !== input.chatId) {
+      await deps.sendMessage({
+        chatId: previousChatId,
+        type: 'text',
+        text: `【主群迁移】项目（workdir: ${workdir}）的主战场群已切换为 ${input.chatId}。\n后续任务消息与执行流水请发到新群；本群保留既有历史，不再作为该项目主入口。`,
+      });
+    }
     return true;
   }
 

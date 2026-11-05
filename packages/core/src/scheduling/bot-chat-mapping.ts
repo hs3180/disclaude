@@ -88,6 +88,35 @@ const PR_GROUP_NAME_REGEX = /^PR\s+#(\d+)\s*[·•\-–—]\s*/;
  */
 const PR_KEY_PREFIX = 'pr-';
 
+/**
+ * Reserved key prefix for project main-group declarations (Issue #5396).
+ * Entries under this namespace map a normalized workdir → the group chat that
+ * is the project's "main battlefield" chat. They share the same persistence
+ * file and CRUD machinery as ordinary context mappings.
+ */
+const MAIN_GROUP_KEY_PREFIX = 'main-group:';
+
+/**
+ * Mapping purpose for main-group declaration entries.
+ */
+const MAIN_GROUP_PURPOSE = 'main-group';
+
+/**
+ * Build the reserved mapping key for a workdir's main-group declaration.
+ * The workdir is resolved to an absolute path so the same project always maps
+ * to one key regardless of how the caller spelled the path.
+ */
+export function makeMainGroupKey(workdir: string): string {
+  return `${MAIN_GROUP_KEY_PREFIX}${path.resolve(workdir)}`;
+}
+
+/**
+ * Normalize a workdir for main-group lookups (absolute, trailing separators removed).
+ */
+export function normalizeWorkdir(workdir: string): string {
+  return path.resolve(workdir);
+}
+
 // ---- Helpers ----
 
 /**
@@ -385,6 +414,83 @@ export class BotChatMappingStore {
     return Object.entries(this.cache).filter(([, entry]) => entry.purpose === purpose);
   }
 
+  // ---- Main-group declarations (Issue #5396) ----
+
+  /**
+   * Look up the declared main-group chatId for a project workdir.
+   *
+   * @param workdir - The project working directory (any spelling; normalized internally)
+   * @returns The main-group chatId, or null when no declaration exists
+   */
+  async getMainGroup(workdir: string): Promise<string | null> {
+    await this.ensureInitialized();
+    const entry = this.cache[makeMainGroupKey(workdir)];
+    return entry?.chatId ?? null;
+  }
+
+  /**
+   * Declare (or switch) the main-group chat for a project workdir.
+   *
+   * Persisting workdir → main-group chatId is the runtime carrier for the
+   * project's "main battlefield" chat (Issue #5396). Group creation flows and
+   * the explicit `/main-group` command both land here. Callers use the
+   * returned `previousChatId` to send the old group a one-time migration
+   * notice when the declaration switches an existing main group.
+   *
+   * @param workdir - The project working directory
+   * @param chatId - The Feishu group chat to declare as main
+   * @returns The previous main-group chatId (null on first declaration) and persistence flag
+   */
+  async declareMainGroup(
+    workdir: string,
+    chatId: string,
+  ): Promise<{ previousChatId: string | null; persisted: boolean }> {
+    const key = makeMainGroupKey(workdir);
+    const previousChatId = (await this.getMainGroup(workdir)) ?? null;
+    const result = await this.set(key, { chatId, purpose: MAIN_GROUP_PURPOSE, workdir: normalizeWorkdir(workdir) });
+    logger.info({ workdir: normalizeWorkdir(workdir), chatId, previousChatId }, 'Main group declared');
+    return { previousChatId, persisted: result.persisted };
+  }
+
+  /**
+   * Remove a workdir's main-group declaration.
+   *
+   * @param workdir - The project working directory
+   * @returns Whether a declaration existed and was removed
+   */
+  async clearMainGroup(workdir: string): Promise<boolean> {
+    await this.ensureInitialized();
+    const key = makeMainGroupKey(workdir);
+    if (!(key in this.cache)) { return false; }
+    delete this.cache[key];
+    try {
+      await this.persist();
+    } catch (error) {
+      logger.error({ err: error, key }, 'Failed to persist after main-group clear');
+    }
+    return true;
+  }
+
+  /**
+   * Reverse lookup: find the project mapping entry for a chat.
+   *
+   * Used by the message entrypoint to learn which workdir a group belongs to
+   * (Issue #5396). Reserved main-group declaration entries are excluded —
+   * only ordinary context mappings (e.g. `pr-123` with a workdir) identify a
+   * chat's project.
+   *
+   * @param chatId - The Feishu chat ID
+   * @returns The first mapping entry carrying this chatId, or null
+   */
+  async findEntryByChatId(chatId: string): Promise<MappingEntry | null> {
+    await this.ensureInitialized();
+    for (const [key, entry] of Object.entries(this.cache)) {
+      if (key.startsWith(MAIN_GROUP_KEY_PREFIX)) { continue; }
+      if (entry.chatId === chatId) { return entry; }
+    }
+    return null;
+  }
+
   // ---- Rebuild ----
 
   /**
@@ -446,9 +552,12 @@ export class BotChatMappingStore {
       }
     }
 
-    // Only remove mappings not found in scan when explicitly requested
+    // Only remove mappings not found in scan when explicitly requested.
+    // Main-group declarations (Issue #5396) are never derived from group
+    // names, so a name scan can never confirm them — keep them unconditionally.
     if (options.removeStale) {
       for (const key of Object.keys(this.cache)) {
+        if (key.startsWith(MAIN_GROUP_KEY_PREFIX)) { continue; }
         if (!scannedKeys.has(key)) {
           delete this.cache[key];
           result.removed++;

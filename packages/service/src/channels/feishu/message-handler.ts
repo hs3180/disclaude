@@ -46,6 +46,7 @@ import type { MentionDetector } from './mention-detector.js';
 import { evaluateMessageFilters } from './message-filters.js';
 import { FeishuPrivateInput } from './private-input.js';
 import { FeishuAgentInput } from './agent-input.js';
+import { evaluateMainGroupRedirect, buildRedirectHint, type MainGroupRedirect, type MainGroupRoutingDeps } from './main-group-routing.js';
 import { FeishuTaskQuestionCards } from './task-question-cards.js';
 import type { TaskQuestionFlowPorts } from '../../agents/task-question-flow.js';
 import { FeishuIssueReport } from './issue-report.js';
@@ -276,6 +277,8 @@ export class MessageHandler {
     privateInput?: ActionBoundInput;
     /** Issue #5400: resolved GitHub App client supplier for issue reporting. */
     issueClient?: () => GitHubIssueClient | undefined;
+    /** Issue #5396: main-group routing deps; absent → no redirect hints. */
+    mainGroupRouting?: MainGroupRoutingDeps;
   }) {
     this.triggerModeManager = options.triggerModeManager;
     this.mentionDetector = options.mentionDetector;
@@ -287,8 +290,47 @@ export class MessageHandler {
     this.controlHandler = false;
     this.tenantAccessToken = options.tenantAccessToken;
     this.issueClient = options.issueClient;
+    this.mainGroupRouting = options.mainGroupRouting;
     if (options.privateInput) {this.privateInput = new FeishuPrivateInput(options.privateInput, options.callbacks.sendMessage, this.updatePrivateCard);}
 
+  }
+
+  /** Issue #5396: optional main-group routing deps (redirect hints + /main-group). */
+  private mainGroupRouting?: MainGroupRoutingDeps;
+
+  /** Issue #5396: wire main-group routing after construction (descriptor setup). */
+  setMainGroupRouting(deps: MainGroupRoutingDeps): void {
+    this.mainGroupRouting = deps;
+  }
+
+  /**
+   * Issue #5396: check whether a group message belongs to a project whose
+   * declared main group is a different chat. Failures degrade to "no redirect"
+   * — a broken mapping store must never block message processing.
+   */
+  private async checkMainGroupRedirect(chatId: string, chatType: string | undefined): Promise<MainGroupRedirect | null> {
+    if (!this.mainGroupRouting) { return null; }
+    try {
+      return await evaluateMainGroupRedirect(this.mainGroupRouting, { chatId, chatType });
+    } catch (error) {
+      logger.warn({ err: error, chatId }, 'Main-group routing check failed; message proceeds normally');
+      return null;
+    }
+  }
+
+  /**
+   * Issue #5396: send the main-group redirect hint (busy-state summary only,
+   * no message content) and report whether the message was consumed.
+   */
+  private async sendMainGroupRedirectHint(redirect: MainGroupRedirect, chatId: string): Promise<boolean> {
+    if (!this.mainGroupRouting) { return false; }
+    const text = buildRedirectHint(redirect, this.mainGroupRouting);
+    await this.callbacks.sendMessage({ chatId, type: 'text', text });
+    logger.info(
+      { event: 'main_group_redirect', chatId, mainChatId: redirect.mainChatId, workdir: redirect.workdir, user_visible: true },
+      'Task message in non-main group redirected to main group',
+    );
+    return true;
   }
 
   private readonly updatePrivateCard = async (cardId: string, card: Record<string, unknown>): Promise<void> => {
@@ -1325,6 +1367,12 @@ export class MessageHandler {
         metadata: Object.keys(fileMetadata).length > 0 ? fileMetadata : undefined,
       };
       registerFeishuInputSource(incoming, message_id, sender?.sender_type);
+      // Issue #5396: a task message in a non-main project group gets a
+      // redirect hint instead of a second parallel execution stream.
+      const fileMainGroupRedirect = await this.checkMainGroupRedirect(chat_id, chat_type);
+      if (fileMainGroupRedirect && (await this.sendMainGroupRedirectHint(fileMainGroupRedirect, chat_id))) {
+        return;
+      }
       await this.callbacks.emitMessage(incoming);
       return;
     }
@@ -1528,6 +1576,8 @@ export class MessageHandler {
         sendMessage: async (reply) => {
           await this.callbacks.sendMessage(reply);
         },
+        // Issue #5396: /main-group declaration lands here when wired.
+        ...(this.mainGroupRouting ? { mainGroupStore: this.mainGroupRouting.store } : {}),
       } satisfies import('./command-router.js').CommandRouterDeps;
     const commandHandled = await tryHandleSlashCommand(commandInput, commandDeps);
     if (commandHandled) {
@@ -1596,6 +1646,13 @@ export class MessageHandler {
       attachments: quotedAttachments,
     };
     registerFeishuInputSource(incoming, message_id, sender?.sender_type);
+    // Issue #5396: a task message in a non-main project group gets a redirect
+    // hint instead of a second parallel execution stream. Slash commands were
+    // already consumed above, so /main-group itself is never blocked here.
+    const mainGroupRedirect = await this.checkMainGroupRedirect(chat_id, chat_type);
+    if (mainGroupRedirect && (await this.sendMainGroupRedirectHint(mainGroupRedirect, chat_id))) {
+      return;
+    }
     await this.callbacks.emitMessage(incoming);
     } catch (error) {
       messageLogger.releaseMessage(message_id);

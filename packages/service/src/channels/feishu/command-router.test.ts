@@ -265,3 +265,88 @@ describe('tryHandleSlashCommand', () => {
     );
   });
 });
+
+describe('/main-group (Issue #5396)', () => {
+  type Store = import('./command-router.js').CommandRouterDeps['mainGroupStore'];
+  function makeStore(rawEntries: Array<{ chatId: string; workdir?: string }> = [], mainGroups: Record<string, string> = {}): { store: NonNullable<Store>; mainGroups: Record<string, string> } {
+    const entries: import('@disclaude/core').MappingEntry[] = rawEntries.map((e) => ({
+      chatId: e.chatId,
+      createdAt: '2026-11-05T00:00:00.000Z',
+      purpose: 'pr-review',
+      ...(e.workdir !== undefined ? { workdir: e.workdir } : {}),
+    }));
+    return {
+      store: {
+        findEntryByChatId: (chatId: string) => Promise.resolve(entries.find((e) => e.chatId === chatId) ?? null),
+        getMainGroup: (workdir: string) => Promise.resolve(mainGroups[workdir] ?? null),
+        declareMainGroup: (workdir: string, chatId: string) => {
+          const previousChatId = mainGroups[workdir] ?? null;
+          mainGroups[workdir] = chatId;
+          return Promise.resolve({ previousChatId, persisted: true });
+        },
+        clearMainGroup: (workdir: string) => Promise.resolve(delete mainGroups[workdir]),
+      },
+      mainGroups,
+    };
+  }
+  const deps = (store?: NonNullable<Store>) => ({
+    hasControlHandler: false,
+    emitControl: vi.fn().mockResolvedValue({ success: false }),
+    sendMessage: vi.fn().mockResolvedValue(undefined),
+    ...(store ? { mainGroupStore: store } : {}),
+  });
+  const groupInput = (text: string) => ({ textWithoutMentions: text, chatId: 'oc_new', chatType: 'group' as const, senderType: 'user' });
+
+  it('replies with guidance when no mapping store is wired', async () => {
+    const d = deps();
+    expect(await tryHandleSlashCommand(groupInput('/main-group'), d)).toBe(true);
+    expect(d.sendMessage).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(d.sendMessage).mock.calls[0][0].text).toContain('不可用');
+  });
+
+  it('rejects declaration outside group chats', async () => {
+    const { store } = makeStore();
+    const d = deps(store);
+    expect(await tryHandleSlashCommand({ textWithoutMentions: '/main-group', chatId: 'ou_u', chatType: 'p2p' }, d)).toBe(true);
+    expect(vi.mocked(d.sendMessage).mock.calls[0][0].text).toContain('仅在群聊中使用');
+  });
+
+  it('asks for an explicit workdir when the group has no project mapping', async () => {
+    const { store } = makeStore();
+    const d = deps(store);
+    await tryHandleSlashCommand(groupInput('/main-group'), d);
+    expect(vi.mocked(d.sendMessage).mock.calls[0][0].text).toContain('--workdir');
+  });
+
+  it('declares the current group from its mapping entry and persists it', async () => {
+    const { store, mainGroups } = makeStore([{ chatId: 'oc_new', workdir: '/data/workspace/proj' }]);
+    const d = deps(store);
+    expect(await tryHandleSlashCommand(groupInput('/main-group'), d)).toBe(true);
+    expect(mainGroups['/data/workspace/proj']).toBe('oc_new');
+    expect(vi.mocked(d.sendMessage).mock.calls[0][0].text).toContain('主战场群');
+    expect(d.sendMessage).toHaveBeenCalledTimes(1); // first declaration: no migration notice
+  });
+
+  it('switching an existing main group sends the old group a one-time migration notice', async () => {
+    const { store, mainGroups } = makeStore([{ chatId: 'oc_new', workdir: '/data/workspace/proj' }], { '/data/workspace/proj': 'oc_old' });
+    const d = deps(store);
+    await tryHandleSlashCommand(groupInput('/main-group'), d);
+    expect(mainGroups['/data/workspace/proj']).toBe('oc_new');
+    expect(d.sendMessage).toHaveBeenCalledTimes(2);
+    expect(d.sendMessage.mock.calls[1][0]).toMatchObject({ chatId: 'oc_old' });
+    expect(d.sendMessage.mock.calls[1][0].text).toContain('oc_new');
+    expect(d.sendMessage.mock.calls[1][0].text).toContain('主群迁移');
+  });
+
+  it('supports --workdir for explicit declaration and --clear for removal', async () => {
+    const { store, mainGroups } = makeStore([], { '/data/workspace/proj2': 'oc_x' });
+    const d = deps(store);
+    await tryHandleSlashCommand(groupInput('/main-group --workdir /data/workspace/proj2'), d);
+    expect(mainGroups['/data/workspace/proj2']).toBe('oc_new');
+    expect(d.sendMessage).toHaveBeenCalledTimes(2); // ack + migration notice to oc_x
+
+    const cleared = await tryHandleSlashCommand(groupInput('/main-group --clear --workdir /data/workspace/proj2'), d);
+    expect(cleared).toBe(true);
+    expect(mainGroups['/data/workspace/proj2']).toBeUndefined();
+  });
+});

@@ -304,6 +304,11 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     this.feishuMessageHandler.setPrivateWorkflowNotifier(notify);
   }
 
+  /** Issue #5396: wire main-group routing (mapping store + redirect hints). */
+  setMainGroupRouting(deps: import('./feishu/main-group-routing.js').MainGroupRoutingDeps): void {
+    this.feishuMessageHandler.setMainGroupRouting(deps);
+  }
+
   requestAgentInput(request: import('@disclaude/core').AgentInputRequest, context: import('@disclaude/core').AgentInputContext): Promise<void> {
     return this.feishuMessageHandler.requestAgentInput(request, context);
   }

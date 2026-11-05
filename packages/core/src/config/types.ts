@@ -169,6 +169,17 @@ export interface FeishuConfig {
   /** CLI chat ID for testing */
   cliChatId?: string;
   /**
+   * Main-group routing redirect hints (Issue #5396). Default `true`: when a
+   * project workdir has a declared main group (persisted in
+   * `workspace/bot-chat-mapping.json` under `main-group:<workdir>` entries,
+   * declared via the `/main-group` command), a task message arriving in a
+   * *different* group of the same project gets a redirect hint (main-group
+   * chatId + coarse busy-state summary, never message content) instead of
+   * starting a parallel execution stream. Set `false` to disable the hints;
+   * `/main-group` declarations keep working either way.
+   */
+  mainGroupRoutingHint?: boolean;
+  /**
    * Enable native streaming replies (Card Kit typewriter + breathing cursor).
    * Issue #4400 / #4208: gray-rollout flag. Default `false` — when off, the
    * Feishu channel reports `supportsStreaming: false` and the ChatAgent uses

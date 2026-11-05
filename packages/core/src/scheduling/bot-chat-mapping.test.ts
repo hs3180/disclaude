@@ -721,3 +721,75 @@ describe('purposeFromKey', () => {
     expect(purposeFromKey('simple')).toBe('discussion');
   });
 });
+
+describe('BotChatMappingStore main-group declarations (Issue #5396)', () => {
+  // The file-level vi.mock('fs/promises') is real for this suite — simulate a
+  // persistent backing file by capturing writeFile output and replaying it on
+  // readFile, so reload semantics are exercised without touching the disk.
+  const filePath = '/tmp/main-group-mapping.json';
+  let persisted = '';
+
+  beforeEach(() => {
+    persisted = '';
+    vi.mocked(fsPromises.mkdir).mockResolvedValue(undefined);
+    vi.mocked(fsPromises.readFile).mockImplementation(() => {
+      if (!persisted) {
+        const error = new Error('not found') as NodeJS.ErrnoException;
+        error.code = 'ENOENT';
+        return Promise.reject(error);
+      }
+      return Promise.resolve(persisted);
+    });
+    vi.mocked(fsPromises.writeFile).mockImplementation((_file, content) => { persisted = String(content); return Promise.resolve(); });
+    vi.mocked(fsPromises.rename).mockResolvedValue(undefined);
+    vi.mocked(fsPromises.unlink).mockImplementation(() => Promise.resolve());
+  });
+
+  it('persists workdir → main-group chatId across store reloads', async () => {
+    const store = new BotChatMappingStore({ filePath });
+    const first = await store.declareMainGroup('/data/workspace/proj-a', 'oc_main');
+    expect(first.previousChatId).toBeNull();
+
+    // A fresh store instance reads the same declaration from disk.
+    const reloaded = new BotChatMappingStore({ filePath });
+    expect(await reloaded.getMainGroup('/data/workspace/proj-a')).toBe('oc_main');
+    // Path spelling is normalized, not matched literally.
+    expect(await reloaded.getMainGroup('/data/workspace/proj-a/')).toBe('oc_main');
+  });
+
+  it('switching the main group reports the previous chatId for migration notices', async () => {
+    const store = new BotChatMappingStore({ filePath });
+    await store.declareMainGroup('/data/workspace/proj-b', 'oc_old');
+    const switched = await store.declareMainGroup('/data/workspace/proj-b', 'oc_new');
+    expect(switched.previousChatId).toBe('oc_old');
+    expect(await store.getMainGroup('/data/workspace/proj-b')).toBe('oc_new');
+  });
+
+  it('clearMainGroup removes the declaration and reports absence', async () => {
+    const store = new BotChatMappingStore({ filePath });
+    await store.declareMainGroup('/data/workspace/proj-c', 'oc_c');
+    expect(await store.clearMainGroup('/data/workspace/proj-c')).toBe(true);
+    expect(await store.getMainGroup('/data/workspace/proj-c')).toBeNull();
+    expect(await store.clearMainGroup('/data/workspace/proj-c')).toBe(false);
+  });
+
+  it('findEntryByChatId resolves a chat to its project mapping (workdir), skipping declarations', async () => {
+    const store = new BotChatMappingStore({ filePath });
+    await store.set('pr-777', { chatId: 'oc_pr', purpose: 'pr-review', workdir: '/data/workspace/proj-d' });
+    await store.declareMainGroup('/data/workspace/proj-d', 'oc_main');
+
+    const entry = await store.findEntryByChatId('oc_pr');
+    expect(entry?.workdir).toBe('/data/workspace/proj-d');
+    // The declaration entry itself is not a project mapping.
+    expect(await store.findEntryByChatId('oc_main')).toBeNull();
+    expect(await store.findEntryByChatId('oc_unknown')).toBeNull();
+  });
+
+  it('rebuild removeStale keeps main-group declarations (they are not name-derived)', async () => {
+    const store = new BotChatMappingStore({ filePath });
+    await store.declareMainGroup('/data/workspace/proj-e', 'oc_keep');
+    const result = await store.rebuildFromGroupList([{ chatId: 'oc_x', name: 'PR #1 · t' }], { removeStale: true });
+    expect(result.removed).toBe(0);
+    expect(await store.getMainGroup('/data/workspace/proj-e')).toBe('oc_keep');
+  });
+});

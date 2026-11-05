@@ -86,6 +86,12 @@ export interface ChannelSetupContext {
     getOrCreateChatAgent: (chatId: string, callbacks: ChatAgentCallbacks, threadRootId?: string) => ChatAgent;
     /** Issue #4256 (part 2): pool stats for /api/health leak diagnostics. */
     getPoolStats(): AgentPoolStats;
+    /**
+     * Issue #5396: per-chat agent lookup for coarse busy-state summaries
+     * (main-group redirect hints). Optional — the real pool provides it;
+     * minimal contexts may omit it.
+     */
+    get?(chatId: string): { isBusy: boolean; hasPendingWork: boolean } | undefined;
   };
   /** Unified control handler for all channels */
   controlHandler: ControlHandler;
