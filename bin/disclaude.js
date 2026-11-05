@@ -5,6 +5,7 @@
  * Routes subcommands to the appropriate package CLI:
  *   disclaude start [options]  → @disclaude/service
  *   disclaude channel <command> → @disclaude/channel-cli
+ *   disclaude backend <command> → bin/backend.js (backend runtime install/check, Issue #5169)
  *   disclaude service <cmd>    → scripts/launchd.mjs application service (Issue #5619)
  *   disclaude chromium-cdp <cmd> → scripts/launchd.mjs chromium-cdp (Issue #4807)
  *
@@ -49,6 +50,7 @@ function showHelp() {
       '  history query      Read locally available chat history (read-only, Issue #5603)',
       '  board-report write Report task artifacts/review proposals (agents; JSON payload on stdin)',
       '  channel <command>  Send channel messages through the service',
+      '  backend <command>  Install and check agent backend runtimes (list/install/doctor)',
       '  wechat <command>   Log in to personal WeChat or diagnose saved login',
       '  browser <cmd>      Inspect coordinated browser control',
       '  plugins <cmd>      Install, update or remove optional first-party diagnostics',
@@ -106,6 +108,9 @@ const ROUTES = {
     file: resolve(ROOT, 'node_modules/@disclaude/channel-cli/dist/cli.js'),
     jsonOutput: !['help', '--help', '-h'].includes(args[1]),
   },
+  // Issue #5169: unified idempotent backend runtime install/check
+  // (list/install/doctor) covering claude/pi/codex/dsh.
+  backend: { file: resolve(ROOT, 'bin/backend.js') },
   // Status is a cross-platform, read-only doctor. Lifecycle commands remain
   // routed to their native managers; those scripts expect the selector in argv.
   'chromium-cdp': {

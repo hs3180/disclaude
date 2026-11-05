@@ -132,4 +132,29 @@ describe('installed unified CLI argument forwarding', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+  it('routes backend subcommands to bin/backend.js with the router arg stripped (#5169)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'disclaude-cli-backend-routing-'));
+    try {
+      mkdirSync(join(root, 'bin'));
+      writeFileSync(join(root, 'package.json'), '{"type":"module"}');
+      copyFileSync(fileURLToPath(new URL('../bin/disclaude.js', import.meta.url)), join(root, 'bin/disclaude.js'));
+      copyFileSync(fileURLToPath(new URL('../bin/backend.js', import.meta.url)), join(root, 'bin/backend.js'));
+      const target = join(root, 'packages/core/dist/backends');
+      mkdirSync(target, { recursive: true });
+      writeFileSync(join(target, '../../package.json'), '{"type":"module"}');
+      writeFileSync(join(target, 'cli.js'), 'export async function runBackendCli(args) { console.log(JSON.stringify({ok:true,args})); return 0; }');
+      for (const [input, forwarded] of [
+        [['backend', 'list'], ['list']],
+        [['backend', 'install', 'codex', '--dry-run'], ['install', 'codex', '--dry-run']],
+        [['backend', 'doctor', 'pi'], ['doctor', 'pi']],
+      ]) {
+        const out = execFileSync(process.execPath, [join(root, 'bin/disclaude.js'), ...input], {
+          encoding: 'utf8', timeout: 10_000,
+        });
+        expect(JSON.parse(out).args).toEqual(forwarded);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
