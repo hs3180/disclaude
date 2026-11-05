@@ -7675,3 +7675,116 @@ describe('Issue #5399: streaming busy-input admission budget', () => {
     } finally { dispose(agent); }
   });
 });
+
+describe('Issue #5654: narration-silent heartbeat and side-effect receipts', () => {
+  const makeAgent = () => {
+    const cb = createMockCallbacks();
+    const agent = new ChatAgent({
+      chatId: 'hb-chat',
+      callbacks: cb,
+      apiKey: 'test-key',
+      model: 'test-model',
+      apiProtocol: 'anthropic',
+      apiBaseUrl: 'https://api.example.com',
+    });
+    return { agent, cb };
+  };
+  const cleanup = (agent: ChatAgent) => {
+    agent.reset();
+    ChatAgent.prototype.dispose.call(agent);
+  };
+
+  it('sends a platform heartbeat after the narration-silence window with live tool activity, then receipts side effects on the abrupt end', async () => {
+    vi.useFakeTimers();
+    const { agent, cb } = makeAgent();
+    (agent as any).createQueryStream.mockReturnValue({
+      handle: { close: vi.fn(), cancel: vi.fn() },
+      // Fake-timer driven: the generator advances the clock between tool
+      // calls, simulating a narration-silent backend (455 calls / 50 min).
+      iterator: (async function* () {
+        yield { parsed: { type: 'tool_use', content: 'step 1', metadata: { toolName: 'gh' } } };
+        vi.setSystemTime(Date.now() + 3 * 60_000);
+        yield { parsed: { type: 'tool_use', content: 'step 2', metadata: { toolName: 'gh' } } };
+        vi.setSystemTime(Date.now() + 3 * 60_000);
+        yield { parsed: { type: 'tool_use', content: 'step 3', metadata: { toolName: 'Browser' } } };
+      })(),
+    });
+    try {
+      await agent.processMessage({ chatId: 'hb-chat', payload: '长任务', messageId: 'hb-1' });
+      await agent.turnCompleteFor('hb-1')?.catch(() => { /* iterator ends without a result */ });
+      const sent = cb.sendMessage.mock.calls.filter(([, text]: unknown[]) => typeof text === 'string');
+      const heartbeats = sent.filter(([, text]) => text.includes('⏳'));
+      // Exactly one heartbeat in the 6-minute window (rate-bounded by the
+      // reset silence clock), and none before the 5-minute threshold.
+      expect(heartbeats).toHaveLength(1);
+      const heartbeatText = String(heartbeats[0]?.[1] ?? '');
+      expect(heartbeatText).toContain('6 分钟');
+      // The in-flight (3rd) tool call counts too — it is what proved liveness.
+      expect(heartbeatText).toContain('期间完成 3 次工具调用');
+      // The abrupt (iterator-ended) settlement carries the side-effect receipt.
+      const receiptText = String(sent.find(([, text]) => text.includes('📋'))?.[1] ?? '');
+      expect(receiptText).toContain('📋');
+      expect(receiptText).toContain('❌ 本次请求中断');
+      expect(receiptText).toContain('3 次工具调用');
+      expect(receiptText).toContain('gh×2');
+      expect(receiptText).toContain('Browser×1');
+    } finally {
+      cleanup(agent);
+      await vi.runOnlyPendingTimersAsync();
+      vi.useRealTimers();
+    }
+  });
+
+  it('never sends a heartbeat while the model narrates (#5377 semantics intact)', async () => {
+    vi.useFakeTimers();
+    const { agent, cb } = makeAgent();
+    (agent as any).createQueryStream.mockReturnValue({
+      handle: { close: vi.fn(), cancel: vi.fn() },
+      iterator: (async function* () {
+        for (let i = 0; i < 3; i++) {
+          yield { parsed: { type: 'tool_use', content: `step ${i}`, metadata: { toolName: 'gh', narration: `第 ${i} 步` } } };
+          vi.setSystemTime(Date.now() + 4 * 60_000);
+        }
+      })(),
+    });
+    try {
+      await agent.processMessage({ chatId: 'hb-chat', payload: '会叙述的任务', messageId: 'hb-2' });
+      await agent.turnCompleteFor('hb-2')?.catch(() => { /* iterator ends without a result */ });
+      const sent = cb.sendMessage.mock.calls.filter(([, text]: unknown[]) => typeof text === 'string');
+      expect(sent.some(([, text]) => text.includes('⏳'))).toBe(false);
+      // Decision narration itself is still delivered live (#5377 untouched).
+      expect(sent.some(([, text]) => text === '第 0 步')).toBe(true);
+      expect(sent.some(([, text]) => text === '第 2 步')).toBe(true);
+    } finally {
+      cleanup(agent);
+      await vi.runOnlyPendingTimersAsync();
+      vi.useRealTimers();
+    }
+  });
+
+  it('receipts completed side effects when the turn dies mid-stream (iterator error, e.g. context overflow)', async () => {
+    const { agent, cb } = makeAgent();
+    (agent as any).createQueryStream.mockReturnValue({
+      handle: { close: vi.fn(), cancel: vi.fn() },
+      iterator: (async function* () {
+        yield { parsed: { type: 'tool_use', content: 'create issue', metadata: { toolName: 'gh' } } };
+        yield { parsed: { type: 'tool_use', content: 'edit file', metadata: { toolName: 'Edit' } } };
+        throw new Error('prompt is too long: context_length_exceeded');
+      })(),
+    });
+    try {
+      await agent.processMessage({ chatId: 'hb-chat', payload: 'build the issue', messageId: 'hb-3' });
+      await agent.turnCompleteFor('hb-3')?.catch(() => { /* expected turn failure */ });
+      const receipt = cb.sendMessage.mock.calls
+        .map(([, text]: unknown[]) => text)
+        .filter((text): text is string => typeof text === 'string' && text.includes('📋'));
+      expect(receipt).toHaveLength(1);
+      expect(String(receipt[0])).toContain('gh×1');
+      expect(String(receipt[0])).toContain('Edit×1');
+      expect(String(receipt[0])).toContain('2 次工具调用');
+      expect(String(receipt[0])).toContain('系统不会自动重放');
+    } finally {
+      cleanup(agent);
+    }
+  });
+});
