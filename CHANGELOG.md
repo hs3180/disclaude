@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.13] - 2026-11-05
+
+### Added
+
+- Admit new codex sessions against the weekly rate-limit window instead of
+  degrading mid-task: structured `RateLimitWindow` readings
+  (`used_percent`, `window_minutes`, `resets_at`) from both the exec and
+  app-server transports feed an admission check that blocks new sessions
+  when quota-usage progress exceeds reset-time progress, while running
+  sessions keep working and are never killed. Defaults to observe mode and
+  is configurable per agent (#5607; #5677).
+
+### Fixed
+
+- Recognize codex thread writer-lock conflicts as a waitable busy state:
+  the original request is preserved, a visible note explains that the
+  session is occupied by another writer, and bounded jittered retries
+  (2/4/8/15s, at most five attempts within a configurable budget) resume
+  once the lock clears; `/stop` still cancels during the wait (#5429;
+  #5682).
+- Make launchd service installation atomic and idempotent: plists are
+  staged to a temporary file, validated with `plutil -lint`, and renamed
+  into place; service and Chromium lifecycle calls use modern
+  `bootstrap`/`bootout`/`print` semantics with a resolve/reload/activate
+  plan and a bounded activation lock; uninstall cleans service-owned
+  state, logs and configuration with an explicit `--purge-profile` option
+  for user profile data (#5619; #5664).
+- Recommend non-hourly minutes and per-chat staggering in the scheduling
+  skill examples so same-chat jobs stop colliding on the hour (#5606;
+  #5684).
+- Ship retail Google Chrome in the Chromium container image so
+  `navigator.userAgentData.brands` matches the User-Agent string;
+  `select_browser_binary()` fails closed when the retail binary is absent,
+  with no Playwright fallback (#5652; #5658).
+
 ## [0.6.12] - 2026-11-05
 
 ### Fixed

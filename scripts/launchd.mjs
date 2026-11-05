@@ -40,12 +40,19 @@
  *   for browser-use. Config via env or project-root .env (CHROMIUM_CDP_PORT /
  *   CHROMIUM_CDP_ADDRESS / CHROMIUM_CDP_PROFILE_DIR / CHROMIUM_CDP_HEADED /
  *   CHROMIUM_CDP_BINARY). Route through `disclaude chromium-cdp ...`.
+ *   T-038 rework 3 (#5619): install/start are idempotent — a loaded service
+ *   with the current definition is a no-op success, a changed one is reloaded
+ *   explicitly (same verified path as restart). uninstall removes the plist,
+ *   the saved selection and the service logs, and RETAINS the Chromium
+ *   profile by default (it is user data); `--purge-profile` deletes it
+ *   explicitly. State-changing commands queue on a bounded activation lock.
  *
  * @module scripts/launchd
  */
 
 import { execSync, execFileSync, execFile } from 'node:child_process';
-import { writeFileSync, existsSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
+import { writeFileSync, existsSync, mkdirSync, rmSync, readFileSync, renameSync, readdirSync, rmdirSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { realpathSync, accessSync, constants, statSync } from 'node:fs';
 import { resolve, dirname, relative, isAbsolute } from 'node:path';
 import { promisify } from 'node:util';
@@ -362,6 +369,247 @@ export function xmlEscape(value) {
 }
 
 // ---------------------------------------------------------------------------
+// Plist validation + atomic install (Issue #5619, T-038)
+// ---------------------------------------------------------------------------
+
+/**
+ * Offline structural validation for a generated launchd plist (Issue #5619).
+ *
+ * The authoritative check on macOS is `plutil -lint`; on non-darwin hosts
+ * (Linux CI) plutil does not exist, so this function provides the equivalent
+ * contract we can assert offline: a well-formed XML document with balanced
+ * tags and the keys a launchd LaunchAgent cannot work without (Label,
+ * ProgramArguments, RunAtLoad, KeepAlive). It is intentionally conservative —
+ * it only needs to catch a corrupted or half-written plist, not fully
+ * implement plist typing.
+ *
+ * @param {string} xml - plist document text
+ * @returns {string | null} null when valid, otherwise a human-readable error
+ */
+export function validatePlistStructure(xml) {
+  if (typeof xml !== 'string' || xml.length === 0) return 'plist is empty';
+  if (!xml.startsWith('<?xml')) return 'plist is missing the XML declaration';
+  if (!xml.includes('<plist version="1.0">')) return 'plist is missing the <plist> root element';
+  // Tag balance: tokenize tags, ignore the declaration/doctype/comments, and
+  // treat self-closing tags (<true/>) as balanced by construction.
+  const stack = [];
+  const tagRe = /<(\/?)([A-Za-z][\w.:-]*)((?:"[^"]*"|'[^']*'|[^'">])*?)(\/?)>/g;
+  let match;
+  let sawRootClose = false;
+  while ((match = tagRe.exec(xml)) !== null) {
+    const [, closing, name, , selfClosing] = match;
+    if (selfClosing) continue;
+    if (!closing) {
+      stack.push(name);
+      continue;
+    }
+    const open = stack.pop();
+    if (open !== name) {
+      return open === undefined
+        ? `unexpected closing tag </${name}>`
+        : `mismatched closing tag </${name}> (expected </${open}>)`;
+    }
+    if (name === 'plist') sawRootClose = true;
+  }
+  if (stack.length > 0) return `unclosed tag <${stack[stack.length - 1]}>`;
+  if (!sawRootClose) return 'plist root element is never closed';
+  for (const required of ['Label', 'ProgramArguments', 'RunAtLoad', 'KeepAlive']) {
+    if (!xml.includes(`<key>${required}</key>`)) {
+      return `plist is missing the required <key>${required}</key> entry`;
+    }
+  }
+  return null;
+}
+
+/**
+ * Whether plist linting runs the real `plutil -lint` on this host. PLATFORM
+ * OVERRIDE only exists so tests can force the plutil code path on Linux;
+ * production always answers from process.platform.
+ */
+function lintModeIsPlutil(env = process.env) {
+  return env.PLATFORM_OVERRIDE === 'darwin' || process.platform === 'darwin';
+}
+
+/**
+ * Validate a plist file the strongest way the platform allows (Issue #5619).
+ *
+ * On macOS runs `plutil -lint <path>` — the authoritative check launchd
+ * operators rely on. Everywhere else (Linux CI) plutil does not exist, so it
+ * falls back to {@link validatePlistStructure} over the file contents and the
+ * caller reports which mode ran; real `plutil -lint` behaviour on macOS is
+ * verified on-device, not in CI.
+ *
+ * @param {string} path - plist file to validate
+ * @param {NodeJS.ProcessEnv} [env] - environment (test seam for platform)
+ * @returns {string | null} null when valid, otherwise a human-readable error
+ */
+export function lintPlistFile(path, env = process.env) {
+  if (lintModeIsPlutil(env)) {
+    try {
+      execFileSync('plutil', ['-lint', path], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
+      return null;
+    } catch (error) {
+      return `plutil -lint rejected ${path}: ${error.message}`;
+    }
+  }
+  let xml;
+  try {
+    xml = readFileSync(path, 'utf-8');
+  } catch (error) {
+    return `cannot read plist for validation: ${error.message}`;
+  }
+  return validatePlistStructure(xml);
+}
+
+/**
+ * Install a plist atomically: write a uniquely-named temporary file next to
+ * the target, validate it, then rename over the target (Issue #5619, T-038).
+ *
+ * rename(2) is atomic, so a crash or interruption can only ever leave either
+ * the previous plist or the complete new one — never a half-written partial
+ * file that launchd might pick up on the next load. Re-running with the
+ * same content is idempotent (the rename simply replaces the file).
+ *
+ * @param {string} path - final plist path
+ * @param {string | Buffer} bytes - plist document
+ * @param {object} [options]
+ * @param {number} [options.mode=0o644] - file mode for the plist
+ * @param {(path: string) => string | null} [options.lint] - validator invoked
+ *   on the temporary file before the rename; returning a message aborts the
+ *   install with the previous plist untouched
+ * @returns {{ linted: boolean }} whether a lint function ran
+ */
+export function installPlistAtomically(path, bytes, { mode = 0o644, lint = null } = {}) {
+  mkdirSync(dirname(path), { recursive: true });
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  let linted = false;
+  try {
+    writeFileSync(temporary, bytes, { flag: 'wx', mode });
+    if (lint) {
+      linted = true;
+      const failure = lint(temporary);
+      if (failure) throw new Error(failure);
+    }
+    renameSync(temporary, path);
+  } finally {
+    // No-op after a successful rename; removes the temporary on any failure.
+    rmSync(temporary, { force: true });
+  }
+  return { linted };
+}
+
+/**
+ * Read a file's bytes, or null when it does not exist (ENOENT is the expected
+ * "absent" answer; anything else propagates).
+ */
+function readIfExists(path) {
+  try {
+    return readFileSync(path);
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Activation lock: bounded queue/retry for concurrent changes (T-038 rework 3)
+// ---------------------------------------------------------------------------
+
+const DEFAULT_LOCK_TIMEOUT_MS = 120_000;
+
+function lockTimeoutMsFromEnv(env = process.env) {
+  const raw = env.DISCLAUDE_LAUNCHD_LOCK_TIMEOUT_MS;
+  if (!raw) return DEFAULT_LOCK_TIMEOUT_MS;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 100) {
+    console.warn(`Warning: invalid DISCLAUDE_LAUNCHD_LOCK_TIMEOUT_MS "${raw}" (need an integer >= 100ms); using ${DEFAULT_LOCK_TIMEOUT_MS}ms`);
+    return DEFAULT_LOCK_TIMEOUT_MS;
+  }
+  return parsed;
+}
+
+function readLockHolderPid(lockPath) {
+  try {
+    const pid = Number(readFileSync(lockPath, 'utf-8').trim());
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function processAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM means the process exists but belongs to someone else.
+    return error.code === 'EPERM';
+  }
+}
+
+/**
+ * Serialize service-changing commands across processes with a bounded queue
+ * (Issue #5619, T-038 rework 3).
+ *
+ * The lock is an O_EXCL file next to the plist recording the holder's PID.
+ * A second invocation does not fail immediately: it retries until the holder
+ * finishes (release happens in the `finally`), bounded by `timeoutMs`
+ * (DISCLAUDE_LAUNCHD_LOCK_TIMEOUT_MS, default 120s — a Chromium activation
+ * legitimately takes up to ~2 minutes). Two failures carry exact diagnostics:
+ *
+ *  - holder PID no longer running → the lock is stale from a crashed command;
+ *    queueing behind a corpse is pointless, so this fails fast instead of
+ *    burning the budget, and names the PID and file to verify and remove.
+ *  - budget exhausted with a live holder → timeout error states the PID, the
+ *    time waited, the budget, and that no service state was changed.
+ *
+ * Never steals or removes another process's lock: every decision is made from
+ * read-only probes, so concurrent waiters cannot delete a freshly acquired
+ * live lock.
+ *
+ * @param {string} lockPath - lock file path (created/removed by this helper)
+ * @param {() => Promise<unknown> | unknown} action - command body to run under the lock
+ * @param {object} [options]
+ * @param {number} [options.timeoutMs] - queue budget before the timeout error
+ * @param {number} [options.pollMs=200] - retry interval
+ * @returns {Promise<unknown>} whatever `action` resolves to
+ */
+export async function withActivationLock(lockPath, action, { timeoutMs = lockTimeoutMsFromEnv(), pollMs = 200 } = {}) {
+  mkdirSync(dirname(lockPath), { recursive: true, mode: 0o700 });
+  const startedAt = Date.now();
+  for (;;) {
+    try {
+      writeFileSync(lockPath, `${process.pid}\n`, { flag: 'wx', mode: 0o600 });
+      break; // acquired
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+    }
+    const holder = readLockHolderPid(lockPath);
+    if (holder !== null && !processAlive(holder)) {
+      throw new Error(
+        `Activation lock ${lockPath} is held by PID ${holder}, which is not running — a crashed command left a stale lock. ` +
+          'No service was changed. Verify that PID, then remove the file and rerun.'
+      );
+    }
+    if (Date.now() - startedAt >= timeoutMs) {
+      throw new Error(
+        `Timed out after ${Date.now() - startedAt}ms (budget ${timeoutMs}ms) waiting for the activation lock ${lockPath}` +
+          `${holder === null ? ' (holder unreadable)' : ` held by PID ${holder} (still running)`}. ` +
+          'No service was changed; another launchd command is still in progress. ' +
+          'Raise DISCLAUDE_LAUNCHD_LOCK_TIMEOUT_MS to queue longer.'
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  try {
+    return await action();
+  } finally {
+    rmSync(lockPath, { force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Plist generation
 // ---------------------------------------------------------------------------
 
@@ -622,8 +870,18 @@ function generatePlist({ dryRun = false } = {}) {
 
   ensureLaunchAgentsDir();
   ensureLogDir();
-  writeFileSync(PLIST_PATH, plist, 'utf-8');
-  console.log(`Plist generated: ${PLIST_PATH}`);
+  // Issue #5619 (T-038): lint the fully-written temporary file, then rename it
+  // over the target — an interrupted or invalid generate can never leave a
+  // half-written plist behind for launchd to load.
+  const onDarwin = lintModeIsPlutil();
+  installPlistAtomically(PLIST_PATH, plist, {
+    mode: 0o644,
+    lint: (temp) => lintPlistFile(temp),
+  });
+  console.log(`Plist generated atomically: ${PLIST_PATH}`);
+  console.log(
+    `  Validated: ${onDarwin ? 'plutil -lint' : 'structural XML validation (plutil is macOS-only; real plutil -lint is verified on macOS, not in CI)'}`
+  );
   console.log(`  Node: ${nodePath}`);
   console.log(`  Entry: ${entry} (${source})`);
   for (const line of deployment.sources) console.log(`  ${line}`);
@@ -642,7 +900,7 @@ function generatePlist({ dryRun = false } = {}) {
   console.log(`  Stdout: ${STDOUT_LOG} (launchd fallback log)`);
   console.log(`  Stderr: ${STDERR_LOG} (launchd crash log)`);
   console.log(
-    `  Note: an already-loaded service must be reloaded (npm run launchd:restart) to pick up the new plist.`
+    `  Note: install/start/restart reload an already-loaded service automatically; bare generate only writes the file.`
   );
 }
 
@@ -909,15 +1167,16 @@ export function checkPortInUse(port) {
 }
 
 /**
- * Generate the chromium-cdp plist file.
+ * Compose the chromium-cdp plist document and its resolved selection
+ * (T-038 rework 3). Pure — no filesystem writes — so {@link activateChromium}
+ * can compare the candidate against the installed definition to decide
+ * between an idempotent no-op and an explicit reload.
+ *
+ * @param {string} chromeBin - resolved Chrome/Chromium executable
+ * @returns {{plist: string, caffeinatePath: string | null, port: number,
+ *   address: string, profileDir: string, headless: boolean}}
  */
-function generateChromiumPlist() {
-  const chromeBin = resolveChromiumBinary();
-  if (!chromeBin) {
-    console.error('Error: Chrome/Chromium binary not found.');
-    console.error('Install Chrome, or set CHROMIUM_CDP_BINARY to its path (e.g. in .env).');
-    throw new Error('Selected browser is unavailable');
-  }
+function composeChromiumPlistDocument(chromeBin) {
   const port = resolveChromiumPort();
   const address = resolveChromiumAddress();
   const profileDir = resolveChromiumProfileDir();
@@ -931,22 +1190,6 @@ function generateChromiumPlist() {
   const programArgs = caffeinatePath
     ? [caffeinatePath, '-s', chromeBin, ...chromeArgs]
     : [chromeBin, ...chromeArgs];
-
-  const buildCdpUrl = `http://${address}:${port}`;
-
-  if (checkPortInUse(port)) {
-    console.warn(`Warning: port ${port} is already in use.`);
-    try {
-      execSync(`lsof -nP -iTCP:${port} -sTCP:LISTEN`, { stdio: 'inherit' });
-    } catch {
-      /* ignore */
-    }
-    console.warn(
-      `  A conflicting process holds ${address}:${port}. Stop it (e.g. a manually-started Chrome) before loading the service, else KeepAlive will fight over the port.`
-    );
-  }
-
-  mkdirSync(profileDir, { recursive: true });
 
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -991,60 +1234,147 @@ ${programArgs.map((a) => `    <string>${xmlEscape(a)}</string>`).join('\n')}
 </dict>
 </plist>
 `;
+  return { plist, caffeinatePath, port, address, profileDir, headless };
+}
 
-  ensureLaunchAgentsDir();
+/**
+ * Generate the chromium-cdp plist file.
+ *
+ * T-038 rework 3: the plist is installed through {@link installPlistAtomically}
+ * with the SAME `plutil -lint` validation as the application service — write a
+ * uniquely-named temporary next to the target, lint it, then rename over the
+ * target. A lint failure aborts before the rename, so the previous plist stays
+ * in place, and the saved Chromium selection written just before is restored
+ * to its previous bytes so a failed generate leaves no half-updated state.
+ */
+function generateChromiumPlist() {
+  const chromeBin = resolveChromiumBinary();
+  if (!chromeBin) {
+    console.error('Error: Chrome/Chromium binary not found.');
+    console.error('Install Chrome, or set CHROMIUM_CDP_BINARY to its path (e.g. in .env).');
+    throw new Error('Selected browser is unavailable');
+  }
+  const doc = composeChromiumPlistDocument(chromeBin);
+  const buildCdpUrl = `http://${doc.address}:${doc.port}`;
+
+  if (checkPortInUse(doc.port)) {
+    console.warn(`Warning: port ${doc.port} is already in use.`);
+    try {
+      execSync(`lsof -nP -iTCP:${doc.port} -sTCP:LISTEN`, { stdio: 'inherit' });
+    } catch {
+      /* ignore */
+    }
+    console.warn(
+      `  A conflicting process holds ${doc.address}:${doc.port}. Stop it (e.g. a manually-started Chrome) before loading the service, else KeepAlive will fight over the port.`
+    );
+  }
+
+  mkdirSync(doc.profileDir, { recursive: true });
   ensureLogDir();
-  // Save the resolved selection (not the entire environment) outside the package.
-  // A write failure occurs before replacing the plist or unloading the service.
+
+  const config = chromiumConfigPath();
+  const previousConfig = readIfExists(config);
   saveChromiumConfig({
     CHROMIUM_CDP_BINARY: chromeBin,
-    CHROMIUM_CDP_PROFILE_DIR: profileDir,
-    CHROMIUM_CDP_PORT: String(port),
-    CHROMIUM_CDP_ADDRESS: address,
-    CHROMIUM_CDP_HEADED: headless ? '0' : '1',
+    CHROMIUM_CDP_PROFILE_DIR: doc.profileDir,
+    CHROMIUM_CDP_PORT: String(doc.port),
+    CHROMIUM_CDP_ADDRESS: doc.address,
+    CHROMIUM_CDP_HEADED: doc.headless ? '0' : '1',
     CHROMIUM_CDP_AUTOSTART: CR_PLIST_PATH === CR_AUTO_PLIST_PATH ? '1' : '0',
-  });
-  replaceChromiumFile(CR_PLIST_PATH, Buffer.from(plist));
-  console.log(`Plist generated: ${CR_PLIST_PATH}`);
+  }, config);
+  try {
+    // Pre-create with restrictive permissions (installPlistAtomically would
+    // otherwise mkdir the ManualServices parent with the umask default).
+    mkdirSync(dirname(CR_PLIST_PATH), { recursive: true, mode: 0o700 });
+    installPlistAtomically(CR_PLIST_PATH, doc.plist, {
+      mode: 0o600,
+      lint: (temp) => lintPlistFile(temp),
+    });
+  } catch (error) {
+    // Lint failure (or a crash mid-install): the rename never happened, so the
+    // old plist is intact. Restore the saved selection too — a failed generate
+    // must not leave a new selection recorded against the old definition.
+    if (previousConfig === null) rmSync(config, { force: true });
+    else replaceChromiumFile(config, previousConfig);
+    throw error;
+  }
+  const onDarwin = lintModeIsPlutil();
+  console.log(`Plist generated atomically: ${CR_PLIST_PATH}`);
+  console.log(
+    `  Validated: ${onDarwin ? 'plutil -lint' : 'structural XML validation (plutil is macOS-only; real plutil -lint is verified on macOS, not in CI)'}`
+  );
   console.log(`  Chrome: ${chromeBin}`);
   console.log(`  CDP endpoint: ${buildCdpUrl} (saved to the installed Chromium config)`);
-  console.log(`  Profile (persistent): ${profileDir}`);
+  console.log(`  Profile (persistent): ${doc.profileDir}`);
   console.log(
-    `  Mode: ${headless ? 'headless' : 'headed'} (CHROMIUM_CDP_HEADED=1 for a visible window)`
+    `  Mode: ${doc.headless ? 'headless' : 'headed'} (CHROMIUM_CDP_HEADED=1 for a visible window)`
   );
   console.log(
-    `  Caffeinate: ${caffeinatePath ? `enabled (${caffeinatePath} -s)` : 'not available'}`
+    `  Caffeinate: ${doc.caffeinatePath ? `enabled (${doc.caffeinatePath} -s)` : 'not available'}`
   );
   console.log(`  Crash recovery: enabled; login autostart: ${CR_PLIST_PATH === CR_AUTO_PLIST_PATH ? 'enabled' : 'disabled (manual service definition)'}`);
   console.log(`  Stdout: ${CR_STDOUT_LOG}`);
   console.log(`  Stderr: ${CR_STDERR_LOG}`);
   console.log(
-    `  Note: an already-loaded service must be reloaded (npm run launchd:chromium:restart) to pick up the new plist.`
+    `  Note: install/start/restart reload an already-loaded service automatically; bare generate only writes the file.`
   );
 }
 
+// Issue #5619 (T-038 rework 2): the Chromium sidecar uses the same modern
+// domain-target API as the service side — `bootstrap gui/<uid> <plist>` to
+// load, `bootout gui/<uid>/<label>` to unload (idempotent via a `print`
+// probe), `print` instead of the legacy `list` for state/pid.
 function loadPlistAt(plistPath, label) {
   if (!existsSync(plistPath)) {
     console.error(`Plist not found: ${plistPath}`);
     console.error('Run "generate" or "install" first.');
     throw new Error('Cannot load missing plist');
   }
-  execFileSync('launchctl', ['load', plistPath], { stdio: 'inherit' });
+  try {
+    execFileSync('launchctl', buildLaunchctlInvocation('bootstrap', { plistPath, label }), { stdio: 'inherit' });
+  } catch (error) {
+    // Idempotent load: bootstrap fails when the label is already in the
+    // domain. Confirm via print, then bootout + bootstrap so the fresh plist
+    // takes effect; anything else is a real failure. (Same recovery as the
+    // service-side loadPlist.)
+    if (!printChromiumState().loaded) throw error;
+    console.log('Chromium service already bootstrapped; reloading with the new plist.');
+    execFileSync('launchctl', buildLaunchctlInvocation('bootout', { label }), { stdio: 'pipe' });
+    execFileSync('launchctl', buildLaunchctlInvocation('bootstrap', { plistPath, label }), { stdio: 'inherit' });
+  }
   console.log(`Service loaded (${label}).`);
 }
 
-function unloadPlistAt(plistPath, label) {
-  if (!existsSync(plistPath)) return;
-  try { execFileSync('launchctl', ['unload', plistPath], { stdio: 'pipe' }); }
-  catch { /* Preserve idempotent stop/restart when the service is already unloaded. */ }
+function unloadPlistAt(label) {
+  // bootout addresses the service by domain target, so it works even when the
+  // plist file has already been removed; not-loaded is a no-op (stop and
+  // uninstall stay idempotent).
+  if (!printChromiumState().loaded) return;
+  execFileSync('launchctl', buildLaunchctlInvocation('bootout', { label }), { stdio: 'pipe' });
   console.log(`Service unloaded (${label}).`);
 }
 
-function chromiumServicePid() {
+/**
+ * Whether the Chromium sidecar is bootstrapped into the user domain, via
+ * `launchctl print gui/<uid>/<label>` (the modern replacement for
+ * `launchctl list <label>`). Returns the captured print output so callers can
+ * read `pid =` / `state =` lines from the same probe.
+ */
+function printChromiumState() {
   try {
-    const output = execFileSync('launchctl', ['list', LABEL_CHROMIUM], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-    return { loaded: true, pid: Number(output.match(/"PID"\s*=\s*(\d+)/)?.[1]) || undefined };
-  } catch { return { loaded: false }; }
+    const output = execFileSync('launchctl', buildLaunchctlInvocation('print', { label: LABEL_CHROMIUM }), {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return { loaded: true, output };
+  } catch {
+    return { loaded: false, output: '' };
+  }
+}
+
+function chromiumServicePid() {
+  const { loaded, output } = printChromiumState();
+  return { loaded, pid: loaded ? (Number(output.match(/^\s*pid\s*=\s*(\d+)/m)?.[1]) || undefined) : undefined };
 }
 
 function validateIsolatedChromium() {
@@ -1062,14 +1392,59 @@ function validateIsolatedChromium() {
   if (resolveChromiumAddress() !== '127.0.0.1' || !process.env.CHROMIUM_CDP_PORT) throw new Error('Isolated Chromium requires an explicit loopback port');
 }
 
+/**
+ * Decide what a Chromium install/start/restart should do when the service is
+ * already loaded (T-038 rework 3, issue #5619 audit): repeated install/start
+ * must NOT fail with "restart first". Pure so Linux CI can pin the contract:
+ *
+ *  - 'activate'         — not loaded: full activation (preflight + transition).
+ *  - 'already-current'  — loaded AND the candidate plist is byte-identical to
+ *                         the installed definition: idempotent success, no
+ *                         service churn (the browser process keeps running).
+ *  - 'reload'           — loaded with a different definition (or an explicit
+ *                         restart): the same verified stop/start/rollback path
+ *                         restart uses — an explicit equivalent reload.
+ *
+ * A loaded service whose definition file has gone missing cannot prove a
+ * no-op, so it falls to 'reload', where the rollback guard asks the operator
+ * to restore the definition or uninstall first.
+ *
+ * @param {object} input
+ * @param {boolean} input.loaded - whether the label is bootstrapped
+ * @param {boolean} input.restart - explicit restart command
+ * @param {string | null} input.installedPlist - current definition bytes (null when absent)
+ * @param {string} input.candidatePlist - the definition this invocation would install
+ * @returns {'activate' | 'already-current' | 'reload'}
+ */
+export function resolveChromiumActivationPlan({ loaded, restart, installedPlist, candidatePlist }) {
+  if (!loaded) return 'activate';
+  if (restart) return 'reload';
+  return installedPlist !== null && installedPlist === candidatePlist ? 'already-current' : 'reload';
+}
+
 async function activateChromium(restart) {
   if (process.platform !== 'darwin') throw new Error('Chromium launchd commands require macOS; no service was changed');
   const binary = resolveChromiumBinary();
   if (!binary) throw new Error('Selected browser is unavailable; existing service preserved');
   const config = chromiumConfigPath();
   const prior = chromiumServicePid();
-  if (prior.loaded && !restart) throw new Error('Chromium service is already loaded; use restart to change its configuration');
-  if (prior.loaded && !existsSync(CR_PREVIOUS_PLIST_PATH)) throw new Error('Loaded service has no saved plist; cannot provide rollback');
+  const candidate = composeChromiumPlistDocument(binary);
+  const installedPlist = readIfExists(CR_PLIST_PATH);
+  const plan = resolveChromiumActivationPlan({
+    loaded: prior.loaded,
+    restart,
+    installedPlist: installedPlist === null ? null : installedPlist.toString('utf-8'),
+    candidatePlist: candidate.plist,
+  });
+  if (plan === 'already-current') {
+    console.log(`Chromium service is already loaded with the current definition (${CR_PLIST_PATH}); nothing to do.`);
+    console.log('Repeated install/start is idempotent; use restart to force a reload, status to check CDP readiness.');
+    return;
+  }
+  if (plan === 'reload' && !restart) {
+    console.log('Chromium service is already loaded with a different definition; reloading it (explicit equivalent of restart).');
+  }
+  if (prior.loaded && !existsSync(CR_PREVIOUS_PLIST_PATH)) throw new Error('Loaded service has no saved plist to roll back to; run chromium-cdp uninstall first (it unloads without a plist) or restore the definition file');
   const selected = { address: resolveChromiumAddress(), port: resolveChromiumPort() };
   let previous;
   if (prior.loaded) {
@@ -1090,7 +1465,7 @@ async function activateChromium(restart) {
   assertChromiumProfileVersion(resolveChromiumProfileDir(), diagnosis.cycles?.[0]?.browser);
   const stop = async () => {
     if (!chromiumServicePid().loaded) return;
-    execFileSync('launchctl', ['unload', existsSync(CR_PLIST_PATH) ? CR_PLIST_PATH : CR_PREVIOUS_PLIST_PATH], { stdio: 'pipe' });
+    execFileSync('launchctl', buildLaunchctlInvocation('bootout', { label: LABEL_CHROMIUM }), { stdio: 'pipe' });
     if (chromiumServicePid().loaded) throw new Error('launchd service remained loaded after stop');
   };
   const ready = await transitionChromium({ paths: [config, CR_AUTO_PLIST_PATH, CR_MANUAL_PLIST_PATH], wasLoaded: prior.loaded,
@@ -1105,16 +1480,6 @@ async function activateChromium(restart) {
   console.log(`Temporary-profile cookie persistence: ${diagnosis.cookiePersistence}; service-profile persistence was not tested by this command.`);
 }
 
-async function withChromiumActivationLock(action) {
-  const lock = `${CR_AUTO_PLIST_PATH}.activation.lock`;
-  mkdirSync(dirname(lock), { recursive: true, mode: 0o700 });
-  try { writeFileSync(lock, `${process.pid}\n`, { flag: 'wx', mode: 0o600 }); }
-  catch (error) { if (error.code === 'EEXIST') throw new Error(`Another activation owns ${lock}; check its recorded PID before removing a stale lock`); throw error; }
-  try {
-    return await action();
-  } finally { rmSync(lock, { force: true }); }
-}
-
 // ---- chromium-cdp commands ----------------------------------------------
 
 function cmdChromiumGenerate() {
@@ -1126,11 +1491,97 @@ async function cmdChromiumInstall() {
   console.log('\nChromium CDP service installed and started.');
 }
 
+/**
+ * Resolve the profile directory an uninstall should talk about (T-038 rework
+ * 3). Precedence mirrors how a live command sees it: an explicit
+ * CHROMIUM_CDP_PROFILE_DIR (env/.env) wins, then the profile recorded in the
+ * saved selection (read BEFORE that file is deleted), then the built-in
+ * default. An unreadable saved config falls through with a warning instead of
+ * blocking uninstall of everything else.
+ */
+function resolveChromiumUninstallProfileDir() {
+  if (process.env.CHROMIUM_CDP_PROFILE_DIR) return resolveChromiumProfileDir();
+  try {
+    const saved = readChromiumConfig(chromiumConfigPath()).CHROMIUM_CDP_PROFILE_DIR;
+    if (saved && isAbsolute(saved) && !/[\r\n\0]/.test(saved)) return saved;
+  } catch {
+    console.warn('Warning: saved Chromium selection is unreadable; falling back to the default profile directory');
+  }
+  return resolveChromiumProfileDir();
+}
+
+/**
+ * Delete the Chromium profile at the operator's explicit request
+ * (--purge-profile). The profile is USER DATA (logins, cookies, browsing
+ * history) and is never deleted silently; even on request, refuse targets
+ * that are clearly not a dedicated profile directory (/, the home directory,
+ * its parent) and verify the removal afterwards.
+ */
+function purgeChromiumProfileDir(profileDir) {
+  if (!existsSync(profileDir)) {
+    console.log(`Profile already absent: ${profileDir}`);
+    return;
+  }
+  const forbidden = new Set(['/']);
+  try {
+    forbidden.add(realpathSync(homedir()));
+    forbidden.add(realpathSync(dirname(homedir())));
+  } catch {
+    // Home unreadable — the '/' guard still applies.
+  }
+  let resolved = profileDir;
+  try {
+    resolved = realpathSync(profileDir);
+  } catch {
+    // Dangling symlink — rmSync removes the link itself; nothing to guard.
+  }
+  if (forbidden.has(resolved)) {
+    throw new Error(`Refusing to purge profile at ${profileDir}: it resolves to ${resolved}, which is not a service-owned profile directory`);
+  }
+  rmSync(profileDir, { recursive: true, force: true });
+  if (existsSync(profileDir)) throw new Error(`Profile purge incomplete: ${profileDir} still exists`);
+  console.log(`Chromium profile removed (--purge-profile): ${profileDir}`);
+}
+
 function cmdChromiumUninstall() {
-  unloadPlistAt(CR_PLIST_PATH, LABEL_CHROMIUM);
+  const purgeProfile = process.argv.includes('--purge-profile');
+  // Not-loaded is a no-op on the launchctl side (idempotent uninstall).
+  unloadPlistAt(LABEL_CHROMIUM);
+  const profileDir = resolveChromiumUninstallProfileDir();
   if (existsSync(CR_PLIST_PATH)) {
     rmSync(CR_PLIST_PATH);
     console.log(`Plist removed: ${CR_PLIST_PATH}`);
+  } else {
+    console.log(`Plist already absent: ${CR_PLIST_PATH}`);
+  }
+  const config = chromiumConfigPath();
+  if (existsSync(config)) {
+    rmSync(config);
+    console.log(`Saved Chromium selection removed: ${config}`);
+  } else {
+    console.log(`Saved Chromium selection already absent: ${config}`);
+  }
+  let removedLogs = 0;
+  for (const log of [CR_STDOUT_LOG, CR_STDERR_LOG]) {
+    if (!existsSync(log)) continue;
+    rmSync(log);
+    console.log(`Log removed: ${log}`);
+    removedLogs += 1;
+  }
+  console.log(`Service-owned Chromium logs removed: ${removedLogs}`);
+  // Manual definitions live in their own directory; take it too when empty.
+  const manualDir = dirname(CR_MANUAL_PLIST_PATH);
+  try {
+    rmdirSync(manualDir);
+    console.log(`Empty manual-services directory removed: ${manualDir}`);
+  } catch {
+    // Absent or still holds other definitions — correct to keep.
+  }
+  if (purgeProfile) {
+    purgeChromiumProfileDir(profileDir);
+  } else {
+    console.log(`Chromium profile (user data) retained: ${profileDir}`);
+    console.log('  Profiles hold logins and browsing data and are never deleted silently; rerun with --purge-profile to remove it.');
   }
   console.log('Chromium CDP service uninstalled.');
 }
@@ -1141,7 +1592,7 @@ async function cmdChromiumStart() {
 }
 
 function cmdChromiumStop() {
-  unloadPlistAt(CR_PLIST_PATH, LABEL_CHROMIUM);
+  unloadPlistAt(LABEL_CHROMIUM);
 }
 
 async function cmdChromiumRestart() {
@@ -1185,8 +1636,62 @@ async function cmdChromiumStatus() {
 }
 
 // ---------------------------------------------------------------------------
-// launchctl commands
+// launchctl commands (modern bootstrap/bootout API, Issue #5619 / T-038)
 // ---------------------------------------------------------------------------
+
+/**
+ * Build a launchctl argument vector for the modern domain-target API
+ * (Issue #5619, T-038). Pure so Linux CI can assert the exact commands the
+ * service lifecycle uses without a real launchd:
+ *
+ *   bootstrap gui/<uid> <plist>   — install the definition into the domain
+ *   bootout   gui/<uid>/<label>   — remove it (and stop the job)
+ *   print     gui/<uid>/<label>   — inspect state ("state =", "pid =")
+ *
+ * `load`/`unload` (file-path form) remain available for pre-Yosemite
+ * fallbacks; they take the plist path, not the service target.
+ *
+ * @param {'bootstrap'|'bootout'|'print'|'load'|'unload'} action
+ * @param {object} [options]
+ * @param {number} [options.uid] - owning uid (defaults to this process)
+ * @param {string} [options.plistPath] - plist file path (bootstrap/load)
+ * @param {string} [options.label] - service label (bootout/print)
+ * @returns {string[]} argv for launchctl
+ */
+export function buildLaunchctlInvocation(action, { uid = process.getuid?.() ?? 0, plistPath = PLIST_PATH, label = LABEL } = {}) {
+  const domain = `gui/${uid}`;
+  switch (action) {
+    case 'bootstrap':
+      return ['bootstrap', domain, plistPath];
+    case 'bootout':
+      return ['bootout', `${domain}/${label}`];
+    case 'print':
+      return ['print', `${domain}/${label}`];
+    case 'load':
+      return ['load', plistPath];
+    case 'unload':
+      return ['unload', plistPath];
+    default:
+      throw new Error(`Unknown launchctl action: ${String(action)}`);
+  }
+}
+
+/**
+ * Whether the service is currently bootstrapped into the user domain, via
+ * `launchctl print gui/<uid>/<label>`. Returns the captured print output so
+ * `status` can surface the same state operators would see on the host.
+ */
+function printServiceState() {
+  try {
+    const output = execFileSync('launchctl', buildLaunchctlInvocation('print'), {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return { loaded: true, output };
+  } catch {
+    return { loaded: false, output: '' };
+  }
+}
 
 function loadPlist() {
   if (!existsSync(PLIST_PATH)) {
@@ -1194,16 +1699,30 @@ function loadPlist() {
     console.error('Run "generate" or "install" first.');
     process.exit(1);
   }
-  execFileSync('launchctl', ['load', PLIST_PATH], { stdio: 'inherit' });
-  console.log('Service loaded.');
+  try {
+    execFileSync('launchctl', buildLaunchctlInvocation('bootstrap'), { stdio: 'inherit' });
+  } catch (error) {
+    // Idempotent install/start: bootstrap fails when the label is already in
+    // the domain. Confirm via print, then bootout + bootstrap so the fresh
+    // plist takes effect; anything else is a real failure.
+    if (!printServiceState().loaded) throw error;
+    console.log('Service already bootstrapped; reloading with the new plist.');
+    execFileSync('launchctl', buildLaunchctlInvocation('bootout'), { stdio: 'pipe' });
+    execFileSync('launchctl', buildLaunchctlInvocation('bootstrap'), { stdio: 'inherit' });
+  }
+  console.log('Service loaded (launchctl bootstrap).');
 }
 
 function unloadPlist() {
-  if (!existsSync(PLIST_PATH)) {
-    return; // Nothing to unload
+  // bootout addresses the service by domain target, so it works even when
+  // the plist file has already been removed; not-loaded is a no-op (stop and
+  // uninstall stay idempotent).
+  if (!printServiceState().loaded) {
+    console.log('Service is not loaded (nothing to boot out).');
+    return;
   }
-  execFileSync('launchctl', ['unload', PLIST_PATH], { stdio: 'pipe' });
-  console.log('Service unloaded.');
+  execFileSync('launchctl', buildLaunchctlInvocation('bootout'), { stdio: 'pipe' });
+  console.log('Service unloaded (launchctl bootout).');
 }
 
 function build() {
@@ -1243,32 +1762,100 @@ function cmdGenerate() {
   generatePlist({ dryRun: DRY_RUN });
 }
 
+/**
+ * Load the plist with idempotent repeated install/start (T-038 rework 3):
+ * when the freshly regenerated plist is byte-identical to the one on disk and
+ * the service is already bootstrapped, loading again would only boot the
+ * running service out and back for nothing — report success instead. A changed
+ * plist takes the explicit reload path inside loadPlist (bootout + bootstrap).
+ *
+ * @param {Buffer | null} previousPlist - on-disk plist bytes before generatePlist
+ */
+function loadPlistIdempotently(previousPlist) {
+  const current = readIfExists(PLIST_PATH);
+  if (
+    previousPlist !== null &&
+    current !== null &&
+    previousPlist.equals(current) &&
+    printServiceState().loaded
+  ) {
+    console.log('Service already bootstrapped with the current plist; nothing to do (idempotent install/start).');
+    return;
+  }
+  loadPlist();
+}
+
 function cmdInstall() {
   assertDarwinServiceCommand('install');
   if (DRY_RUN) {
     generatePlist({ dryRun: true });
-    console.log(`[dry-run] would run: launchctl load ${PLIST_PATH}`);
+    console.log(`[dry-run] would run: launchctl ${buildLaunchctlInvocation('bootstrap').join(' ')}`);
     console.log('[dry-run] no launchctl commands executed');
     return;
   }
+  const previousPlist = readIfExists(PLIST_PATH);
   generatePlist();
-  loadPlist();
+  loadPlistIdempotently(previousPlist);
   console.log('\nService installed and started.');
+}
+
+/**
+ * Service-owned state removed by uninstall (T-038 rework 3): the plist and the
+ * log files the launchd definition writes. The operator's disclaude config and
+ * the workspace are user data and stay; the log directory itself is only
+ * removed when it is empty afterwards (it also hosts chromium-cdp logs).
+ */
+function serviceOwnedLogFiles() {
+  const files = [APP_LOG, STDOUT_LOG, STDERR_LOG, resolve(LOG_DIR, 'current.log')];
+  try {
+    for (const name of readdirSync(LOG_DIR)) {
+      if (/^disclaude-combined\.\d+\.log$/.test(name)) files.push(resolve(LOG_DIR, name));
+    }
+  } catch {
+    // LOG_DIR absent — nothing to enumerate.
+  }
+  return files;
 }
 
 function cmdUninstall() {
   assertDarwinServiceCommand('uninstall');
   if (DRY_RUN) {
-    console.log(`[dry-run] would run: launchctl unload ${PLIST_PATH}`);
+    console.log(`[dry-run] would run: launchctl ${buildLaunchctlInvocation('bootout').join(' ')}`);
     console.log(`[dry-run] would remove plist: ${PLIST_PATH}`);
+    for (const log of serviceOwnedLogFiles()) {
+      if (existsSync(log)) console.log(`[dry-run] would remove log: ${log}`);
+    }
+    console.log(`[dry-run] would remove the log directory only if then empty: ${LOG_DIR}`);
     console.log('[dry-run] no launchctl commands executed');
     return;
   }
+  // Not-loaded is a no-op on the launchctl side (idempotent uninstall); the
+  // owned files below are still cleaned so the state is verifiably gone.
   unloadPlist();
   if (existsSync(PLIST_PATH)) {
     rmSync(PLIST_PATH);
     console.log(`Plist removed: ${PLIST_PATH}`);
+  } else {
+    console.log(`Plist already absent: ${PLIST_PATH}`);
   }
+  let removedLogs = 0;
+  for (const log of serviceOwnedLogFiles()) {
+    if (!existsSync(log)) continue;
+    rmSync(log);
+    console.log(`Log removed: ${log}`);
+    removedLogs += 1;
+  }
+  console.log(`Service-owned logs removed: ${removedLogs} (rotated siblings included; nothing else in ${LOG_DIR} was touched)`);
+  if (existsSync(LOG_DIR)) {
+    try {
+      rmdirSync(LOG_DIR);
+      console.log(`Empty log directory removed: ${LOG_DIR}`);
+    } catch {
+      // Still hosts chromium-cdp logs or foreign files — keep it.
+      console.log(`Log directory kept (not empty or shared): ${LOG_DIR}`);
+    }
+  }
+  console.log('Operator config, workspace and the Chromium sidecar are not service-owned; left untouched.');
   console.log('Service uninstalled.');
 }
 
@@ -1277,20 +1864,21 @@ function cmdStart() {
   if (DRY_RUN) {
     console.log(`[dry-run] would run: npm run build (cwd ${PROJECT_ROOT})`);
     generatePlist({ dryRun: true });
-    console.log(`[dry-run] would run: launchctl load ${PLIST_PATH}`);
+    console.log(`[dry-run] would run: launchctl ${buildLaunchctlInvocation('bootstrap').join(' ')}`);
     console.log('[dry-run] no launchctl commands executed');
     return;
   }
   build();
+  const previousPlist = readIfExists(PLIST_PATH);
   generatePlist();
-  loadPlist();
+  loadPlistIdempotently(previousPlist);
   console.log('\nService built and started.');
 }
 
 function cmdStop() {
   assertDarwinServiceCommand('stop');
   if (DRY_RUN) {
-    console.log(`[dry-run] would run: launchctl unload ${PLIST_PATH}`);
+    console.log(`[dry-run] would run: launchctl ${buildLaunchctlInvocation('bootout').join(' ')}`);
     console.log('[dry-run] no launchctl commands executed');
     return;
   }
@@ -1300,10 +1888,10 @@ function cmdStop() {
 function cmdRestart() {
   assertDarwinServiceCommand('restart');
   if (DRY_RUN) {
-    console.log(`[dry-run] would run: launchctl unload ${PLIST_PATH}`);
+    console.log(`[dry-run] would run: launchctl ${buildLaunchctlInvocation('bootout').join(' ')}`);
     console.log(`[dry-run] would run: npm run build (cwd ${PROJECT_ROOT})`);
     generatePlist({ dryRun: true });
-    console.log(`[dry-run] would run: launchctl load ${PLIST_PATH}`);
+    console.log(`[dry-run] would run: launchctl ${buildLaunchctlInvocation('bootstrap').join(' ')}`);
     console.log('[dry-run] no launchctl commands executed');
     return;
   }
@@ -1333,14 +1921,21 @@ function cmdLogs() {
 
 function cmdStatus() {
   if (DRY_RUN) {
-    console.log('[dry-run] would run: launchctl list | grep', LABEL);
+    console.log(`[dry-run] would run: launchctl ${buildLaunchctlInvocation('print').join(' ')}`);
     console.log(`[dry-run] plist: ${PLIST_PATH}`);
     console.log('[dry-run] no launchctl commands executed');
     return;
   }
-  const result = run(`launchctl list | grep ${LABEL}`, { allowFail: true, silent: true });
-  if (result) {
-    console.log(result.trim());
+  // Issue #5619 (T-038): status comes from `launchctl print gui/<uid>/<label>`
+  // — the modern replacement for `launchctl list | grep`. Surface its state
+  // and pid lines plus the operator-relevant paths.
+  const state = printServiceState();
+  if (state.loaded) {
+    const keyLines = state.output
+      .split('\n')
+      .filter((line) => /^\s*(state|pid)\s*=/.test(line))
+      .map((line) => line.trim());
+    console.log(keyLines.length ? keyLines.join('\n') : `Service is loaded (${LABEL}).`);
     console.log(`\nPlist: ${PLIST_PATH}`);
     console.log(`App log: ${resolveAppLog()} (use newsyslog for rotation)`);
     console.log(`Stdout: ${STDOUT_LOG} (launchd fallback log)`);
@@ -1417,13 +2012,17 @@ endpoint for browser-use / X daily digest; see Issue #4807).
 
 Commands:
   generate    Generate plist file
-  install     Generate + load (first-time setup)
-  uninstall   Unload + remove plist
-  start       Generate + load
-  stop        Unload (keep plist)
+  install     Generate + load (idempotent: reloads an already-loaded service)
+  uninstall   Unload + remove plist, saved selection and logs [--purge-profile]
+  start       Generate + load (idempotent, like install)
+  stop        Unload (keep plist; no-op when not loaded)
   restart     Generate + unload + load (preserves saved selection)
   logs        Tail log files [--lines=N]
   status      Show service status
+
+uninstall keeps the Chromium profile (user data: logins, browsing state) by
+default and says so; --purge-profile deletes it after unloading, refusing
+paths that are not a dedicated profile directory.
 `);
       process.exit(1);
     }
@@ -1433,10 +2032,12 @@ Commands:
 
 Commands (add --dry-run to preview actions without running launchctl):
   generate    Generate plist file (from the .disclaude config; Issue #5619)
-  install     Generate + load (first-time setup)
-  uninstall   Unload + remove plist
-  start       Build + load
-  stop        Unload (keep plist)
+  install     Generate + load (idempotent: a loaded service with the same
+              plist is a no-op; a changed one is reloaded explicitly)
+  uninstall   Unload + remove plist and service-owned logs (config/workspace
+              are user data and stay; the log directory goes only if empty)
+  start       Build + load (idempotent, like install)
+  stop        Unload (keep plist; no-op when not loaded)
   restart     Build + unload + load
   logs        Tail log files [--lines=N]
   status      Show service status
@@ -1460,8 +2061,19 @@ absolute state directory. Missing settings fail closed before launchctl runs.
   if (FIRST_ARG === 'chromium-isolated') validateIsolatedChromium();
   else loadDotEnv(resolve(PROJECT_ROOT, '.env'));
   if (IS_CHROMIUM) selectChromiumPlistPath();
+  // T-038 rework 3: every state-changing command (both services) runs under a
+  // bounded activation lock, so concurrent invocations queue for each other
+  // instead of interleaving bootstrap/bootout with plist replacement. Read-only
+  // status/logs and --dry-run stay lock-free — they must never touch the
+  // filesystem on their own. The non-darwin fail-closed gate runs BEFORE the
+  // lock exists, so a stray command on Linux creates not even a lock file.
+  const activationLock = IS_CHROMIUM
+    ? `${CR_AUTO_PLIST_PATH}.activation.lock`
+    : `${PLIST_PATH}.activation.lock`;
+  const lockRequired = !DRY_RUN && !['status', 'logs'].includes(command);
   try {
-    if (IS_CHROMIUM && !['status', 'logs'].includes(command)) await withChromiumActivationLock(table[command]);
+    if (lockRequired && !IS_CHROMIUM) assertDarwinServiceCommand(command);
+    if (lockRequired) await withActivationLock(activationLock, () => table[command]());
     else await table[command]();
   }
   catch (error) { console.error(error.message); process.exitCode = 1; }

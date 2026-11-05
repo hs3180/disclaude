@@ -56,6 +56,7 @@ const providerRegistry = new Map([
             networkAccess: Config.CODEX_NETWORK_ACCESS,
             maxActiveSessions: Config.CODEX_MAX_ACTIVE_SESSIONS,
             maxConcurrentRuns: Config.CODEX_MAX_CONCURRENT_RUNS,
+            weeklyQuota: Config.CODEX_WEEKLY_QUOTA,
             transport: Config.CODEX_TRANSPORT,
             model: Config.CODEX_MODEL || undefined,
             modelSource: Config.CODEX_MODEL_SOURCE,

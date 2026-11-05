@@ -93,6 +93,30 @@ The default `exec` transport runs non-interactive turns. Set
 Concurrency limits are per service process; extra work waits rather than
 starting unlimited Codex sessions or child processes.
 
+### Weekly-quota admission (#5607)
+
+The ChatGPT subscription's rolling windows surface as structured rate-limit
+readings on both transports: the `exec` protocol's `token_count` events and
+the app-server's `account/rateLimits/updated` / `thread/tokenUsage/updated`
+notifications carry per-window `{used_percent, window_minutes, resets_at}`.
+Disclaude records these real readings in a per-process ledger (freshness is
+process-local; a reading dies with its window) and admits **fresh sessions
+only** — running turns are never killed, resumed conversations are never
+gated, and capacity-recovery retries reuse a thread and pass untouched.
+
+Admission compares progress, not balances: a fresh session is blocked while
+the quota usage progress (`used_percent`) exceeds the weekly window's time
+progress (elapsed share from `resets_at`/`window_minutes`). Burning quota
+faster than the window elapses exhausts it before reset; slower does not.
+Readings without a reset time (or a rolled window) never block —
+insufficient data fails open. Set
+`agents.<name>.codex.weeklyQuotaAdmission: enforce` to gate; the default
+`observe` records and reports without blocking. REAL usage-limit errors gate
+in both modes until their parsed `try again at/in …` deadline (or
+`weeklyLimitCooldownMs` when unparsable). `/status` reports the readings,
+the progress comparison and the current verdict. These caps are orthogonal
+to the concurrency limits above.
+
 ## Quiet turns and liveness
 
 `DISCLAUDE_STALL_TIMEOUT_MS` defaults to 180,000 ms. For Codex it schedules a
