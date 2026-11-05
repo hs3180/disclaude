@@ -1568,8 +1568,140 @@ echo done > "$CODEX_HOME/turn-$n.done"
   });
 });
 
+// ---------------------------------------------------------------------------
+// queryStream writer-lock conflict (#5429): another live writer holds the
+// resumed thread's writer lock (`codex exec resume` dies on stderr with the
+// writer_lock.rs family). The bridge must classify it as a wait-able occupied
+// state, keep the ORIGINAL request, retry it after a bounded abortable wait,
+// and never delete the lock or touch the holder. Real subprocesses, no mocks.
+// ---------------------------------------------------------------------------
 
-async function waitFor(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
+describe('queryStream writer-lock conflict (Issue #5429)', () => {
+  let fixtures: Fixtures;
+
+  /** Run n: fresh runs succeed and latch t-w; resume runs conflict the first
+   *  CONFLICTS times (stderr + exit 1), then succeed. */
+  const writerBody = (conflicts: number): string => `
+n=$(cat "$CODEX_HOME/count" 2>/dev/null || echo 0)
+n=$((n+1)); echo "$n" > "$CODEX_HOME/count"
+echo x >> "$CODEX_HOME/runs"
+echo "$*" > "$CODEX_HOME/argv-$n"
+if ! grep -q "exec resume " "$CODEX_HOME/argv-$n"; then
+cat <<'JSONL'
+{"type":"thread.started","thread_id":"t-w"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"first turn"}}
+{"type":"turn.completed"}
+JSONL
+else
+  echo x >> "$CODEX_HOME/resume-marks"
+  r=$(grep -c . "$CODEX_HOME/resume-marks")
+  if [ "$r" -le ${conflicts} ]; then
+    echo "Error: failed to acquire thread writer lock: thread t-w already has an active writer" >&2
+    exit 1
+  fi
+cat <<'JSONL'
+{"type":"thread.started","thread_id":"t-w"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"resumed turn"}}
+{"type":"turn.completed"}
+JSONL
+fi
+`;
+
+  const writerProvider = (fx: Fixtures, env: Record<string, string>): CodexAgentProvider =>
+    new CodexAgentProvider({
+      env: {
+        PATH: `${fx.binDir}:${process.env.PATH ?? ''}`,
+        CODEX_HOME: fx.codexHome,
+        CODEX_REASONING_EFFORT: '',
+        ...env,
+      },
+      model: '',
+    });
+
+  const readCount = (fx: Fixtures, name: string): number => {
+    try {
+      return readFileSync(join(fx.codexHome, name), 'utf-8').trim().split('\n').filter(Boolean).length;
+    } catch {
+      return 0;
+    }
+  };
+
+  afterEach(() => {
+    fixtures?.cleanup();
+  });
+
+  it('holds the request through the occupied wait and replays it after release', async () => {
+    fixtures = makeFixtures({ withBinary: true, withAuth: true, body: writerBody(1) });
+    const provider = writerProvider(fixtures, {
+      DISCLAUDE_CODEX_WRITER_CONFLICT_INITIAL_DELAY_MS: '40',
+      DISCLAUDE_CODEX_WRITER_CONFLICT_MAX_DELAY_MS: '40',
+    });
+    const { messages } = await drainStream(provider, ['a', 'b']);
+    // Fresh run latches t-w; the first resume conflicts; the retry replays the
+    // SAME prompt into the SAME thread — the original request is preserved.
+    expect(readCount(fixtures, 'runs')).toBe(3);
+    expect(readCount(fixtures, 'resume-marks')).toBe(2);
+    expect(readFileSync(join(fixtures.codexHome, 'argv-3'), 'utf-8')).toContain('exec resume ');
+    expect(readFileSync(join(fixtures.codexHome, 'argv-3'), 'utf-8')).toContain('-- b');
+    const texts = (messages as Array<{ type: string; content: string }>).filter((m) => m.type === 'text').map((m) => m.content);
+    expect(texts).toEqual(['first turn', 'resumed turn']);
+    const occupied = (messages as Array<{ type: string; content: string }>).filter(
+      (m) => m.type === 'status' && m.content.includes('被另一个写入方占用'),
+    );
+    expect(occupied).toHaveLength(1);
+    expect((messages as Array<{ type: string }>).some((m) => m.type === 'error')).toBe(false);
+  }, 20_000);
+
+  it('cancels the occupied wait on /stop without a late replay', async () => {
+    fixtures = makeFixtures({ withBinary: true, withAuth: true, body: writerBody(9) });
+    const provider = writerProvider(fixtures, {
+      DISCLAUDE_CODEX_WRITER_CONFLICT_INITIAL_DELAY_MS: '300',
+      DISCLAUDE_CODEX_WRITER_CONFLICT_MAX_DELAY_MS: '300',
+    });
+    async function* input(): AsyncGenerator<UserInput> {
+      yield { role: 'user', content: 'a' };
+      yield { role: 'user', content: 'b' };
+    }
+    const result = provider.queryStream(input(), { settingSources: [] } as AgentQueryOptions);
+    const messages: unknown[] = [];
+    let sawOccupied = false;
+    for await (const message of result.iterator) {
+      messages.push(message);
+      if ((message as { type: string; content: string }).type === 'status'
+        && (message as { content: string }).content.includes('被另一个写入方占用')) {
+        sawOccupied = true;
+        result.handle.cancel();
+      }
+    }
+    expect(sawOccupied).toBe(true);
+    // Exactly one conflicted resume attempt: the canceled request never
+    // executes late, so no third codex exec run is ever spawned.
+    expect(readCount(fixtures, 'runs')).toBe(2);
+    expect(readCount(fixtures, 'resume-marks')).toBe(1);
+    const texts = (messages as Array<{ type: string; content: string }>).filter((m) => m.type === 'text').map((m) => m.content);
+    expect(texts).toEqual(['first turn']);
+  }, 20_000);
+
+  it('surfaces the original error once the wait budget is spent, keeping the thread anchor', async () => {
+    fixtures = makeFixtures({ withBinary: true, withAuth: true, body: writerBody(1) });
+    const provider = writerProvider(fixtures, { DISCLAUDE_CODEX_WRITER_CONFLICT_MAX_RETRIES: '0' });
+    const { messages } = await drainStream(provider, ['a', 'b', 'c']);
+    // The conflicted turn settles once with the occupied-state notice carrying
+    // codex's own wording; the anchor survives, so 'c' resumes t-w normally.
+    const errors = (messages as Array<{ type: string; content: string }>).filter((m) => m.type === 'error');
+    expect(errors).toHaveLength(1);
+    expect(errors[0].content).toContain('被另一个写入方占用');
+    expect(errors[0].content).toContain('already has an active writer');
+    const failed = (messages as Array<{ type: string; metadata?: { terminatedReason?: string } }>)
+      .filter((m) => m.metadata?.terminatedReason === 'turn_failed');
+    expect(failed).toHaveLength(1);
+    expect(readCount(fixtures, 'runs')).toBe(3);
+    expect(readCount(fixtures, 'resume-marks')).toBe(2);
+    expect(readFileSync(join(fixtures.codexHome, 'argv-3'), 'utf-8')).toContain('exec resume ');
+    const texts = (messages as Array<{ type: string; content: string }>).filter((m) => m.type === 'text').map((m) => m.content);
+    expect(texts).toEqual(['first turn', 'resumed turn']);
+  }, 20_000);
+});async function waitFor(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (predicate()) {

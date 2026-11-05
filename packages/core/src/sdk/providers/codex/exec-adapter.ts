@@ -412,6 +412,35 @@ export function isCodexResumeTargetMissing(text: string): boolean {
 }
 
 /**
+ * Thread writer-lock conflict (#5429) ⇔ another live writer (desktop app,
+ * another CLI run) already holds this thread's writer lock, so codex refuses
+ * to attach a second writer to the same conversation. Captured from the
+ * codex-cli 0.151.0 binary (thread-store/src/local/writer_lock.rs and
+ * live_writer.rs):
+ * - "failed to acquire thread writer lock … thread <id> already has an
+ *   active writer"
+ * - "thread <id> already has a live local writer"
+ * The lock lives under `thread-writer-locks/<id>/.coordination.lock` (flock);
+ * a bare path fragment only counts when lock-contention wording sits beside
+ * it, so unrelated diagnostics that merely mention the directory never match.
+ * This is a wait-able occupied state, not a terminal failure: the request is
+ * rejected before any work, so the provider can hold the ORIGINAL request and
+ * retry it after a bounded wait (writer-conflict arms in provider.ts, both
+ * transports). Never delete the lock or touch the holder — teardown stays
+ * limited to processes disclaude spawned itself.
+ */
+export function isCodexWriterConflict(text: string): boolean {
+  if (/already has an? (?:active|live local) writer/i.test(text)) {
+    return true;
+  }
+  if (/failed to acquire (?:the )?thread writer lock/i.test(text)) {
+    return true;
+  }
+  return /thread-writer-locks|\.coordination\.lock/i.test(text)
+    && /\b(?:would block|temporarily unavailable|resource busy|already (?:held|locked)|conflict)/i.test(text);
+}
+
+/**
  * Usage limit exhausted ⇔ the ChatGPT plan's rolling-window quota (5h +
  * weekly) is spent; recovers by itself when the window resets. Official
  * wording (multiple OpenAI issues/reports, cross-checked 2026-08-29):
