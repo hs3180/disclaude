@@ -58,9 +58,12 @@ describe('persistent external secrets', () => {
     vi.stubEnv('HOST_PASSWORD', 'synthetic-host-password'); vi.stubEnv('SELECTED_TOOL', 'synthetic-tool-value');
     vi.stubEnv('DISCLAUDE_API_TOKEN', 'owned-channel-control');
     const value = config();
-    value.llms!.a.env = { TOOL_TOKEN: '$SELECTED_TOOL', ANTHROPIC_DEFAULT_HAIKU_MODEL: 'small-model' };
+    delete value.llms!.a.model;
+    value.llms!.a.env = { TOOL_TOKEN: '$SELECTED_TOOL' };
+    value.agents!.a.claude = { env: { ANTHROPIC_DEFAULT_HAIKU_MODEL: 'small-model' } };
     const resolved = resolveConfiguredAgents(value); expect(resolved.ok).toBe(true);
     if (!resolved.ok) { throw new Error(resolved.errors.join('; ')); }
+    expect(resolved.presets.a.model).toBe('');
     for (const name of ['a', 'b', 'daily']) {
       const preset = resolved.presets[name];
       const env = buildSdkEnv(preset.apiKey, preset.apiBaseUrl, {}, false, undefined,

@@ -395,7 +395,9 @@ export function resolveConfiguredAgents(
     }
   }
   if (!errors.length) {
-    const validation = validateAgentPresets(presets);
+    // llms.model is optional and was validated above; an empty preset model is
+    // its internal representation for "use the runtime's native default".
+    const validation = validateAgentPresets(presets, { allowUnconfiguredModel: true });
     if (!validation.ok) {
       errors.push(
         ...validation.errors.map((error) => {
