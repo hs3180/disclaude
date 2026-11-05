@@ -51,7 +51,11 @@ describe('Chromium launchd installation and recovery', () => {
         expect(version.webSocketDebuggerUrl).toMatch(/^ws:/);
         const initialClient = await open(version.webSocketDebuggerUrl);
         const initialPid = await verifyNativeBrowserPage(initialClient, profile, port);
-        await expect(command('start')).rejects.toThrow();
+        // T-038 rework 3 (#5619 audit): repeated start with the loaded service
+        // and the same definition is an idempotent success — no "restart
+        // first" error, no service churn, config/plist/profile untouched.
+        const repeatStart = await command('start');
+        expect(repeatStart.stdout).toContain('nothing to do');
         await expect(command('restart', { CHROMIUM_CDP_BINARY: join(root, 'missing') })).rejects.toThrow();
         expect(await readFile(config, 'utf8')).toBe(beforeConfig);
         expect(await readFile(plist, 'utf8')).toBe(beforePlist);

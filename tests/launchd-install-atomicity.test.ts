@@ -15,7 +15,7 @@
 // script is ESM with an isMainEntry guard, so importing it dispatches nothing.
 
 import { describe, it, expect } from 'vitest';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import {
   mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readdirSync, readFileSync, chmodSync, statSync,
 } from 'node:fs';
@@ -30,6 +30,7 @@ import {
   lintPlistFile,
   installPlistAtomically,
   buildLaunchctlInvocation,
+  resolveChromiumActivationPlan,
 } from '../scripts/launchd.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -191,6 +192,119 @@ describe('buildLaunchctlInvocation (#5619 T-038)', () => {
     // @ts-expect-error — deliberately invalid action
     expect(() => buildLaunchctlInvocation('kickstart')).toThrow('Unknown launchctl action');
   });
+});
+
+// ---------------------------------------------------------------------------
+// T-038 rework 3 (#5619 audit): Chromium plist generation must lint like the
+// service side, and repeated install/start must not demand "restart first".
+// ---------------------------------------------------------------------------
+
+describe('resolveChromiumActivationPlan (T-038 rework 3)', () => {
+  it('activates when not loaded', () => {
+    expect(resolveChromiumActivationPlan({ loaded: false, restart: false, installedPlist: null, candidatePlist: '<plist/>' }))
+      .toBe('activate');
+    expect(resolveChromiumActivationPlan({ loaded: false, restart: true, installedPlist: '<plist/>', candidatePlist: '<plist/>' }))
+      .toBe('activate');
+  });
+
+  it('repeated install/start with the current definition is an idempotent no-op', () => {
+    expect(resolveChromiumActivationPlan({ loaded: true, restart: false, installedPlist: 'P', candidatePlist: 'P' }))
+      .toBe('already-current');
+  });
+
+  it('a loaded service with a changed definition reloads (explicit equivalent of restart)', () => {
+    expect(resolveChromiumActivationPlan({ loaded: true, restart: false, installedPlist: 'old', candidatePlist: 'new' }))
+      .toBe('reload');
+  });
+
+  it('explicit restart always reloads, and a missing definition cannot prove a no-op', () => {
+    expect(resolveChromiumActivationPlan({ loaded: true, restart: true, installedPlist: 'P', candidatePlist: 'P' }))
+      .toBe('reload');
+    expect(resolveChromiumActivationPlan({ loaded: true, restart: false, installedPlist: null, candidatePlist: 'P' }))
+      .toBe('reload');
+  });
+});
+
+describe('chromium-isolated generate lints the plist before the atomic rename (T-038 rework 3)', () => {
+  function chromiumLintState(rejectPlist: boolean) {
+    const stateDir = tmpDir('launchd-cr-lint-');
+    const binDir = join(stateDir, 'bin');
+    mkdirSync(binDir);
+    const label = `com.disclaude.test.chromium-lint-${Date.now()}`;
+    const configPath = join(stateDir, 'chromium-cdp.json');
+    // Fake plutil: -lint is the only subcommand generate issues. PLATFORM_OVERRIDE
+    // reroutes lintPlistFile onto it on Linux; its verdict decides the install.
+    const plutil = join(binDir, 'plutil');
+    writeFileSync(plutil, rejectPlist
+      ? '#!/bin/sh\necho "plutil: test rejection" >&2\nexit 1\n'
+      : '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    const chrome = join(binDir, 'chrome');
+    writeFileSync(chrome, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    // Pre-existing definition + saved selection: the audit contract is that a
+    // lint failure leaves BOTH untouched.
+    const launchAgents = join(stateDir, 'LaunchAgents');
+    mkdirSync(launchAgents, { recursive: true });
+    const plistPath = join(launchAgents, `${label}.plist`);
+    writeFileSync(plistPath, 'previous-chromium-plist\n');
+    const previousConfig = JSON.stringify({
+      version: 1,
+      environment: { CHROMIUM_CDP_BINARY: chrome, CHROMIUM_CDP_PORT: '9333', CHROMIUM_CDP_ADDRESS: '127.0.0.1' },
+    }, null, 2) + '\n';
+    writeFileSync(configPath, previousConfig);
+    return {
+      stateDir, binDir, label, configPath, plistPath, previousConfig, chrome,
+      env: {
+        ...process.env,
+        PATH: `${binDir}:${process.env.PATH ?? ''}`,
+        HOME: join(stateDir, 'home'),
+        PLATFORM_OVERRIDE: 'darwin',
+        DISCLAUDE_LAUNCHD_ISOLATED: '1',
+        DISCLAUDE_LAUNCHD_LABEL: label,
+        DISCLAUDE_LAUNCHD_STATE_DIR: stateDir,
+        DISCLAUDE_LAUNCHD_CONFIG_PATH: join(stateDir, 'service.yaml'),
+        DISCLAUDE_CHROMIUM_CONFIG: configPath,
+        CHROMIUM_CDP_BINARY: chrome,
+        CHROMIUM_CDP_PROFILE_DIR: join(stateDir, 'profile'),
+        CHROMIUM_CDP_PORT: '9333',
+        CHROMIUM_CDP_ADDRESS: '127.0.0.1',
+      },
+    };
+  }
+
+  it('a rejected plutil -lint keeps the old plist and the old saved selection', () => {
+    const state = chromiumLintState(true);
+    try {
+      const run = spawnSync(process.execPath, [LAUNCHD_SCRIPT, 'chromium-isolated', 'generate'], {
+        cwd: ROOT, env: state.env, encoding: 'utf-8',
+      });
+      expect(run.status, run.stdout + run.stderr).toBe(1);
+      expect(run.stderr).toContain('plutil -lint rejected');
+      expect(readFileSync(state.plistPath, 'utf-8')).toBe('previous-chromium-plist\n');
+      expect(readFileSync(state.configPath, 'utf-8')).toBe(state.previousConfig);
+      assertNoTmpResidue(join(state.stateDir, 'LaunchAgents'));
+    } finally {
+      rmSync(state.stateDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('an accepted lint installs the new definition atomically and records the selection', () => {
+    const state = chromiumLintState(false);
+    try {
+      const run = spawnSync(process.execPath, [LAUNCHD_SCRIPT, 'chromium-isolated', 'generate'], {
+        cwd: ROOT, env: state.env, encoding: 'utf-8',
+      });
+      expect(run.status, run.stdout + run.stderr).toBe(0);
+      expect(run.stdout).toContain('Plist generated atomically');
+      expect(run.stdout).toContain('Validated: plutil -lint');
+      const plist = readFileSync(state.plistPath, 'utf-8');
+      expect(plist).not.toBe('previous-chromium-plist\n');
+      expect(validatePlistStructure(plist)).toBeNull();
+      expect(JSON.parse(readFileSync(state.configPath, 'utf-8')).environment.CHROMIUM_CDP_PORT).toBe('9333');
+      assertNoTmpResidue(join(state.stateDir, 'LaunchAgents'));
+    } finally {
+      rmSync(state.stateDir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });
 
 // ---------------------------------------------------------------------------
