@@ -469,3 +469,29 @@ describe('Optional Jupyter CLI boundary', () => {
     expect(fs.readdirSync(directory)).toEqual([]);
   });
 });
+
+describe('Jupyter CLI wait options (#5320)', () => {
+  it('parses --wait/--timeout for execute and status and rejects other uses', () => {
+    const waitExecute = parseNotebookOptions(['execute', '--wait', '--timeout', '30']);
+    expect(waitExecute.wait).toBe(true);
+    expect(waitExecute.timeoutSeconds).toBe(30);
+    expect(parseNotebookOptions(['execute', '--wait']).timeoutSeconds).toBeUndefined();
+    expect(parseNotebookOptions(['status', '--wait', '--timeout', '0.5']).timeoutSeconds).toBe(0.5);
+    expect(() => parseNotebookOptions(['read-cell', '--wait'])).toThrow(
+      /only valid for execute and status/
+    );
+    expect(() => parseNotebookOptions(['execute', '--timeout', '30'])).toThrow(
+      /--timeout requires --wait/
+    );
+    expect(() => parseNotebookOptions(['execute', '--wait', '--timeout', 'abc'])).toThrow(
+      /Invalid --timeout seconds/
+    );
+    expect(() => parseNotebookOptions(['execute', '--wait', '--timeout', '--verbose'])).toThrow(
+      /requires a positive seconds value/
+    );
+    expect(() => parseNotebookOptions(['execute', '--wait', '--wait'])).toThrow(/Repeated/);
+    expect(() => parseNotebookOptions(['execute', '--wait', '--timeout', '0'])).toThrow(
+      /Invalid --timeout seconds/
+    );
+  });
+});

@@ -8,6 +8,7 @@ import { notebookSnapshotHash, type DatalayerJupyterClient } from '@disclaude/co
 import type { ToolContext } from '@disclaude/core';
 import { NotebookTools, type NotebookToolOptions } from './notebook-tools.js';
 import { DatalayerRunStore } from './datalayer-run-store.js';
+import { awaitNotebookTerminal } from './cli.js';
 import { JupyterProjectConfigStore } from './project-config-store.js';
 
 const roots: string[] = [];
@@ -1146,5 +1147,209 @@ describe('Optional Datalayer Notebook tools', () => {
       })
     ).toMatchObject({ state: 'completed', requestId: 'original-request' });
     expect(f.client.submitCell).toHaveBeenCalledOnce();
+  });
+});
+
+describe('incremental stdout cursor and --wait outcomes (#5320)', () => {
+  type StdoutBlock = {
+    scope: 'tail' | 'delta' | 'reset';
+    text: string;
+    offset: number;
+    totalBytes: number;
+    nextCursor: string;
+    skippedBytes?: number;
+    resetReason?: string;
+  };
+  const accept = { state: 'accepted', handle: { kernelId: 'kernel', requestId: 'run-cursor' } };
+
+  it('serves new-session tails then duplicate-free, gap-free deltas across growing polls', async () => {
+    const f = await fixture();
+    f.client.submitCell.mockResolvedValue(accept as never);
+    let text = 'line-1\nline-2\n';
+    f.client.observe.mockImplementation(() =>
+      Promise.resolve({
+        state: 'running',
+        httpStatus: 202,
+        result: { outputs: [{ output_type: 'stream', name: 'stdout', text }] },
+      }) as never
+    );
+    await f.call(f.session, 'notebook_execute', f.args);
+    const statusArgs = { notebookId: f.args.notebookId, runId: 'original' };
+    const first = (await f.call(f.session, 'notebook_status', statusArgs)) as {
+      stdout: StdoutBlock;
+    };
+    expect(first.stdout.scope).toBe('tail');
+    expect(first.stdout.text).toBe('line-1\nline-2\n');
+    expect(first.stdout.offset).toBe(0);
+    expect(first.stdout.totalBytes).toBe(14);
+    text += 'line-3\n';
+    const second = (await f.call(f.session, 'notebook_status', {
+      ...statusArgs,
+      stdoutCursor: first.stdout.nextCursor,
+    })) as { stdout: StdoutBlock };
+    expect(second.stdout.scope).toBe('delta');
+    expect(second.stdout.text).toBe('line-3\n');
+    const replay = (await f.call(f.session, 'notebook_status', {
+      ...statusArgs,
+      stdoutCursor: first.stdout.nextCursor,
+    })) as { stdout: StdoutBlock };
+    expect(replay.stdout.scope).toBe('delta');
+    expect(replay.stdout.text).toBe('line-3\n');
+    f.client.observe.mockResolvedValue({
+      state: 'completed',
+      httpStatus: 200,
+      result: {
+        execution_count: 1,
+        outputs: [{ output_type: 'stream', name: 'stdout', text: `${text}final\n` }],
+      },
+    } as never);
+    const terminal = (await f.call(f.session, 'notebook_status', {
+      ...statusArgs,
+      stdoutCursor: second.stdout.nextCursor,
+    })) as { state: string; stdout: StdoutBlock };
+    expect(terminal.state).toBe('completed');
+    expect(terminal.stdout.scope).toBe('delta');
+    expect(terminal.stdout.text).toBe('final\n');
+    await f.session.close();
+  });
+
+  it('caps new-session tails and explicitly flags skipped bytes in oversized deltas', async () => {
+    const f = await fixture();
+    f.client.submitCell.mockResolvedValue(accept as never);
+    const text = `${'a'.repeat(6000)}${'b'.repeat(4000)}`;
+    f.client.observe.mockResolvedValue({
+      state: 'running',
+      httpStatus: 202,
+      result: { outputs: [{ output_type: 'stream', name: 'stdout', text }] },
+    } as never);
+    await f.call(f.session, 'notebook_execute', f.args);
+    const statusArgs = { notebookId: f.args.notebookId, runId: 'original' };
+    const tail = (await f.call(f.session, 'notebook_status', statusArgs)) as {
+      stdout: StdoutBlock;
+    };
+    expect(tail.stdout.scope).toBe('tail');
+    expect(tail.stdout.text).toBe('b'.repeat(4000));
+    expect(tail.stdout.offset).toBe(6000);
+    await f.session.close();
+    const huge = `${'c'.repeat(150000)}`;
+    f.client.observe.mockResolvedValue({
+      state: 'running',
+      httpStatus: 202,
+      result: { outputs: [{ output_type: 'stream', name: 'stdout', text: huge }] },
+    } as never);
+    const fresh = f.create();
+    const delta = (await f.call(fresh, 'notebook_status', {
+      ...statusArgs,
+      stdoutCursor: Buffer.from(JSON.stringify({ v: 1, runId: 'original', offset: 0 }), 'utf8').toString('base64url'),
+    })) as { stdout: StdoutBlock };
+    expect(delta.stdout.scope).toBe('delta');
+    expect(delta.stdout.text).toBe('c'.repeat(100000));
+    expect(delta.stdout.skippedBytes).toBe(50000);
+    await fresh.close();
+  });
+
+  it('rejects malformed and foreign-run cursors, and reports resets instead of duplicating', async () => {
+    const f = await fixture();
+    f.client.submitCell.mockResolvedValue(accept as never);
+    f.client.observe.mockImplementation(() =>
+      Promise.resolve({
+        state: 'running',
+        httpStatus: 202,
+        result: { outputs: [{ output_type: 'stream', name: 'stdout', text: stream }] },
+      }) as never
+    );
+    let stream = 'a'.repeat(8000);
+    await f.call(f.session, 'notebook_execute', f.args);
+    const statusArgs = { notebookId: f.args.notebookId, runId: 'original' };
+    await f.call(f.session, 'notebook_execute', { ...f.args, runId: 'other' });
+    const other = (await f.call(f.session, 'notebook_status', {
+      notebookId: f.args.notebookId,
+      runId: 'other',
+    })) as { stdout: StdoutBlock };
+    await expect(
+      f.call(f.session, 'notebook_status', { ...statusArgs, stdoutCursor: other.stdout.nextCursor })
+    ).rejects.toMatchObject({ diagnostic: { code: 'invalid_stdout_cursor' } });
+    await expect(
+      f.call(f.session, 'notebook_status', { ...statusArgs, stdoutCursor: 'not-a-cursor' })
+    ).rejects.toMatchObject({ diagnostic: { code: 'invalid_stdout_cursor' } });
+    const before = (await f.call(f.session, 'notebook_status', statusArgs)) as {
+      stdout: StdoutBlock;
+    };
+    stream = 'b'.repeat(4000);
+    const after = (await f.call(f.session, 'notebook_status', {
+      ...statusArgs,
+      stdoutCursor: before.stdout.nextCursor,
+    })) as { stdout: StdoutBlock };
+    expect(after.stdout.scope).toBe('reset');
+    expect(after.stdout.text).toBe(stream);
+    expect(after.stdout.resetReason).toBe('retained-stdout-no-longer-covers-cursor');
+    await f.session.close();
+  });
+
+  it('awaitNotebookTerminal mirrors terminal states and never cancels the run on wait timeout', async () => {
+    const f = await fixture();
+    f.client.submitCell.mockResolvedValue(accept as never);
+    f.client.observe.mockResolvedValue({
+      state: 'running',
+      httpStatus: 202,
+      result: { outputs: [] },
+    } as never);
+    const submitted = await f.call(f.session, 'notebook_execute', f.args);
+    const timedOut = (await awaitNotebookTerminal(
+      f.session,
+      f.args,
+      submitted,
+      0.2,
+      invocation.signal
+    )) as { state: string; wait: { state: string; runPreserved: boolean } };
+    expect(timedOut.state).toBe('running');
+    expect(timedOut.wait.state).toBe('timeout');
+    expect(timedOut.wait.runPreserved).toBe(true);
+    expect(f.client.stopRequest).not.toHaveBeenCalled();
+    f.client.observe.mockResolvedValue({
+      state: 'completed',
+      httpStatus: 200,
+      result: {
+        execution_count: 1,
+        outputs: [{ output_type: 'stream', name: 'stdout', text: 'done' }],
+      },
+    } as never);
+    const done = (await awaitNotebookTerminal(
+      f.session,
+      f.args,
+      timedOut,
+      5,
+      invocation.signal
+    )) as { state: string; wait: { state: string } };
+    expect(done.state).toBe('completed');
+    expect(done.wait.state).toBe('completed');
+    expect(f.client.stopRequest).not.toHaveBeenCalled();
+    await f.session.close();
+  });
+
+  it('distinguishes failed and cancelled terminal outcomes under --wait', async () => {
+    for (const state of ['failed', 'cancelled'] as const) {
+      const f = await fixture();
+      f.client.submitCell.mockResolvedValue(accept as never);
+      f.client.observe.mockResolvedValue({
+        state,
+        httpStatus: 500,
+        result: {
+          error: { ename: state === 'cancelled' ? 'KeyboardInterrupt' : 'ValueError', evalue: 'x' },
+        },
+      } as never);
+      const submitted = await f.call(f.session, 'notebook_execute', f.args);
+      const outcome = (await awaitNotebookTerminal(
+        f.session,
+        f.args,
+        submitted,
+        5,
+        invocation.signal
+      )) as { state: string; wait: { state: string } };
+      expect(outcome.state).toBe(state);
+      expect(outcome.wait.state).toBe(state);
+      expect(f.client.stopRequest).not.toHaveBeenCalled();
+      await f.session.close();
+    }
   });
 });

@@ -48,6 +48,13 @@ Options:
   --interactive        Prompt for credentials with hidden input
   --no-interactive     Never prompt (for agent/automation calls)
   --verbose            Emit safe credential/HTTP phase records on stderr
+  --wait               execute/status only: block until a terminal state
+  --timeout S          Requires --wait; seconds before waiting gives up
+                        (default 600; fractional allowed). A wait timeout stops
+                        only this CLI wait; it never stops or cancels the
+                        kernel execution. Terminal results distinguish
+                        completed/failed/cancelled; wait:{state:"timeout"}
+                        plus the still-running state marks a wait timeout.
 
 Credentials: environment > .env > interactive input. Connection is lazy.
 The selected env-file path is reported; credential values and cookies stay private.
@@ -57,6 +64,12 @@ Failures expose error.layer/code/status/serverBody/hint; exit codes: schema=2,
 auth=3, dns=4, tcp=5, http=6, cas=7, local=8, unknown=1.
 Each command closes its RTC sockets. Kernel memory stays on remote Jupyter.
 execute submits once and returns runId; use status/stop for the original run.
+execute/status --wait [--timeout S] blocks until the run reaches completed,
+failed, cancelled or rejected, or until the wait timeout; the wait timeout
+never cancels the kernel run — re-query status with the same runId and
+stdout.nextCursor. status stdout is incremental: omit stdoutCursor for the
+new-session tail, then pass stdout.nextCursor for duplicate-free, gap-free
+deltas of the same run.
 status labels source as live or local-journal; connection failures retain last-known facts.
 reconcile queries every nonterminal original handle after restoring credentials/connection.
 interrupt targets an existing kernelId, or a uniquely bound notebookId; no runId.
@@ -78,6 +91,9 @@ export interface NotebookCLIOptions {
   tokenEnv?: string;
   interactive?: boolean;
   verbose?: boolean;
+  wait?: boolean;
+  /** Seconds; requires --wait. */
+  timeoutSeconds?: number;
 }
 export interface NotebookCLIConnection {
   client: DatalayerJupyterClient;
@@ -245,6 +261,25 @@ export function parseNotebookOptions(args: string[]): NotebookCLIOptions {
       options.interactive = flag === '--interactive';
       continue;
     }
+    if (flag === '--wait') {
+      if (seen.has('wait')) { invalid('Repeated wait option'); }
+      seen.add('wait'); options.wait = true; continue;
+    }
+    if (flag === '--timeout') {
+      if (seen.has('timeout')) { invalid('Repeated timeout option'); }
+      const raw = args[i + 1];
+      if (raw === undefined || raw.startsWith('--')) {
+        invalid('--timeout requires a positive seconds value');
+      }
+      const seconds = Number(raw);
+      if (!Number.isFinite(seconds) || seconds <= 0 || seconds > 86400) {
+        invalid('Invalid --timeout seconds; use a positive number of seconds up to 86400');
+      }
+      seen.add('timeout');
+      options.timeoutSeconds = seconds;
+      i++;
+      continue;
+    }
     const name = names[flag as keyof typeof names];
     if (!name || seen.has(name) || !args[i + 1] || args[i + 1].startsWith('--')) {
       invalid('Unknown, repeated or empty Jupyter option');
@@ -254,6 +289,12 @@ export function parseNotebookOptions(args: string[]): NotebookCLIOptions {
   }
   if (options.passwordEnv && options.tokenEnv) {
     invalid('Choose one authentication mode');
+  }
+  if (options.wait && !['execute', 'status'].includes(options.command)) {
+    invalid('--wait is only valid for execute and status');
+  }
+  if (options.timeoutSeconds !== undefined && !options.wait) {
+    invalid('--timeout requires --wait');
   }
   if (!/^[A-Za-z0-9_-]{1,200}$/.test(options.connectionId)) {
     invalid('Invalid connection ID');
@@ -280,8 +321,66 @@ function notebookInput(file: string | undefined, read: (file: string) => string)
   }
 }
 
-/** One local command lock prevents CLI processes from losing journal updates. */
-export async function withNotebookLock<T>(root: string, operation: () => Promise<T>): Promise<T> {
+const waitTerminalStates = new Set(['completed', 'failed', 'cancelled', 'rejected']);
+
+/**
+ * Wait loop for execute/status --wait. It only ever queries notebook_status;
+ * it never calls stop/interrupt, so a wait timeout leaves the kernel run
+ * untouched. Ambiguous unknown/loss observations keep polling until the
+ * timeout instead of guessing a terminal outcome.
+ */
+export async function awaitNotebookTerminal(
+  tools: NotebookTools,
+  input: Record<string, unknown>,
+  first: unknown,
+  timeoutSeconds: number,
+  signal: AbortSignal
+): Promise<unknown> {
+  const started = Date.now();
+  const deadline = started + timeoutSeconds * 1000;
+  const notebookId = String(input.notebookId ?? '');
+  const runId = String((first as { runId?: unknown })?.runId ?? input.runId ?? '');
+  const status = tools.tools.find((tool) => tool.name === 'notebook_status');
+  if (!notebookId || !runId || !status) {
+    throw new Error('Waiting needs the original notebookId and runId');
+  }
+  const delay = Math.max(50, Math.min(1000, (timeoutSeconds * 1000) / 8));
+  let last = first as Record<string, unknown>;
+  let stdoutCursor: string | undefined;
+  for (;;) {
+    const observed = (last as { stdout?: { nextCursor?: unknown } }).stdout;
+    if (typeof observed?.nextCursor === 'string') {
+      stdoutCursor = observed.nextCursor;
+    }
+    if (waitTerminalStates.has(String(last.state))) {
+      return {
+        ...last,
+        wait: { state: String(last.state), waitedMs: Date.now() - started, timeoutSeconds },
+      };
+    }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      return {
+        ...last,
+        wait: {
+          state: 'timeout',
+          waitedMs: Date.now() - started,
+          timeoutSeconds,
+          runPreserved: true,
+          hint: 'Only this CLI wait timed out; the kernel execution was not stopped or cancelled. Re-run status (optionally with --wait) for the same runId and stdout.nextCursor.',
+        },
+      };
+    }
+    await new Promise((resolve) => setTimeout(resolve, Math.min(delay, remaining)));
+    signal.throwIfAborted();
+    last = (await status.execute(
+      { notebookId, runId, ...(stdoutCursor ? { stdoutCursor } : {}) },
+      { signal }
+    )) as Record<string, unknown>;
+  }
+}
+
+/** One local command lock prevents CLI processes from losing journal updates. */export async function withNotebookLock<T>(root: string, operation: () => Promise<T>): Promise<T> {
   const directory = path.join(fs.realpathSync(root), '.jupyter');
   try {
     fs.mkdirSync(directory, { mode: 0o700 });
@@ -438,7 +537,19 @@ export async function runNotebookCommand(
         throw new Error('Unknown Notebook operation');
       }
       const result = await tool.execute(input as Record<string, unknown>, { signal });
-      return materializeImages(root, result);
+      if (!options.wait) {
+        return materializeImages(root, result);
+      }
+      return materializeImages(
+        root,
+        await awaitNotebookTerminal(
+          tools,
+          input as Record<string, unknown>,
+          result,
+          options.timeoutSeconds ?? 600,
+          signal
+        )
+      );
     });
   } finally {
     await tools.close();
