@@ -260,6 +260,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     generation: number; resolve: () => void; reject: (error: Error) => void;
   }>();
   private hasBackgroundTaskSnapshot = false;
+  // Turn-sequence scoping for snapshot-vs-bookend conflicts: a snapshot taken
+  // mid-turn stays authoritative until that turn's result settles, so a same-
+  // turn terminal bookend (potentially stale/duplicate) must not clear it,
+  // while a terminal notification in a later turn is newer information than
+  // the snapshot and must be honored (#5330 killed-child release).
+  private turnSequence = 0;
+  private backgroundSnapshotTurnSeq = -1;
   private releaseBackgroundIndicator?: () => void;
   private activityThreadRootId?: string;
 
@@ -851,13 +858,36 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   private observeBackgroundTasks(metadata: AgentMessageMetadata | undefined): void {
     if (metadata?.backgroundTaskIds !== undefined) {
       this.hasBackgroundTaskSnapshot = true;
+      this.backgroundSnapshotTurnSeq = this.turnSequence;
       this.backgroundTaskIds.clear();
       for (const id of metadata.backgroundTaskIds) { this.backgroundTaskIds.add(id); }
-    } else if (metadata?.backgroundTask && !this.hasBackgroundTaskSnapshot) {
+    } else if (metadata?.backgroundTask) {
       const { id, state } = metadata.backgroundTask;
-      if (state === 'running') { this.backgroundTaskIds.add(id); }
-      else { this.backgroundTaskIds.delete(id); }
+      // #5330: a snapshot has no per-task state, so it lists killed children as
+      // running. Terminal task_notification events must still be honored after
+      // a snapshot — dropping them keeps a dead child "running" forever, which
+      // holds the busy indicator, hasPendingWork and work settlement with no
+      // error anywhere (30-minute fake hang). Late 'running' events stay
+      // snapshot-guarded so a stale start cannot resurrect an evicted id.
+      // Same-turn bookends after a snapshot are the exception: the snapshot is
+      // the fresher full live-task list, so a mid-turn terminal bookend must
+      // not override it (stale bookend); only once the turn has settled
+      // (turnSequence advanced past the snapshot's turn) does the terminal
+      // event become newer information and delete the id.
+      if (state === 'running') {
+        if (!this.hasBackgroundTaskSnapshot) { this.backgroundTaskIds.add(id); }
+      } else if (this.turnSequence > this.backgroundSnapshotTurnSeq) {
+        this.backgroundTaskIds.delete(id);
+      }
     }
+    // #5330: a terminal task_notification clears the live id set, but the
+    // pending continuation keeps latching until work settlement — a completed
+    // child still owes a resumed parent turn (its bookend is not that turn),
+    // and idle reclamation must retain the agent through it. Unlatching here
+    // made the agent evictable between the child's terminal event and the
+    // resumed turn, dropping retained real work; clearBackgroundWork() clears
+    // the latch when the query settles, which is also where a silently killed
+    // child (no resumed turn ever) releases the agent.
     if (this.backgroundTaskIds.size > 0) { this.backgroundContinuationPending = true; }
     this.updateBackgroundIndicator();
   }
@@ -1882,6 +1912,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     this.clearBackgroundWork(new Error('Agent session replaced before work settled'));
     this.workSettlementError = undefined;
     this.hasBackgroundTaskSnapshot = false;
+    this.backgroundSnapshotTurnSeq = -1;
     this.noteActivity('session-start');
     const existingActivityObserver = queryOptions.onActivity;
     queryOptions.onActivity = (type) => {
@@ -3596,6 +3627,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             turnResultText = '';
             turnResultTruncated = false;
             this.activeTurnMessageId = undefined;
+            // Turn boundary: events after this point belong to a later turn,
+            // so a terminal task_notification here outranks any snapshot the
+            // settled turn observed (#5330 same-turn bookend scoping).
+            this.turnSequence++;
             const backgroundError = this.backgroundContinuationPending && !turnSucceeded
               ? turnError ?? new Error('Native background continuation did not complete successfully') : undefined;
             if (this.backgroundTaskIds.size === 0) { this.backgroundContinuationPending = false; }
