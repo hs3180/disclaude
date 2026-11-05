@@ -28,7 +28,14 @@ the [service-internal CDP contract](cdp-endpoint.md).
 The `chromium_profile` volume is mounted at `CHROMIUM_CDP_PROFILE_DIR`, which
 defaults to `/data/chrome-profile`; Chromium receives the same path as its
 `--user-data-dir`. Set an absolute container path in the Compose `.env` file to
-change it. Restarts and container recreation preserve the volume at that path.
+change it. To keep the profile in a directory you manage instead of the managed
+named volume, set `CHROMIUM_PROFILE_VOLUME` to an absolute host path in the
+Compose `.env` file — Compose bind-mounts that directory at the same target.
+Leaving it unset keeps the named volume (the default). To run without a
+Compose-managed profile mount at all, drop the entry in an override file: the
+image itself declares `/data/chrome-profile` as a `VOLUME`, so the profile
+still lands on an anonymous Docker volume rather than the container layer.
+Restarts and container recreation preserve the volume at that path.
 Do not use `docker compose down -v` when retaining browser state. The profile
 belongs to the container browser and is not the host's daily Chrome profile.
 Changing the configured path selects a different profile; setup does not copy or
@@ -38,9 +45,15 @@ Defaults include `CHROMIUM_MEMORY=4G`, `CHROMIUM_SHM_SIZE=2gb`,
 `TZ=Asia/Shanghai`, `CHROMIUM_LANG=C.UTF-8`, and
 `CHROMIUM_ACCEPT_LANG=en-US,en`. `CHROMIUM_LANG` sets the process locale;
 `CHROMIUM_ACCEPT_LANG` controls Chromium's Accept-Language and JavaScript
-language properties. Set a comma-separated value such as `zh-CN,zh` for a
+language properties, and its first segment also sets the `--lang` UI language.
+Set a comma-separated value such as `zh-CN,zh` for a
 Chinese-language deployment. This startup setting does not rewrite profile
 preferences.
+
+The launcher enables software WebGL (`--enable-unsafe-swiftshader
+--use-gl=angle --use-angle=vulkan`, no GPU dependency) and starts Chromium with
+`--restore-last-session`, so session-level cookies survive a full container
+rebuild as long as the profile volume is kept.
 
 Chromium runs as root with `--no-sandbox` inside this image. The container is
 not a sandbox for untrusted agent code. Headed mode does not guarantee

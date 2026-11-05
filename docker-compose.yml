@@ -234,9 +234,11 @@ services:
       # nginx reverse-proxy config (templated with port placeholders). See the
       # header comment above and docker/chromium-cdp-nginx.conf for why it's needed.
       - ./docker/chromium-cdp-nginx.conf:/etc/nginx/cdp-proxy.conf.template:ro
-      - type: volume
-        source: chromium_profile
-        target: "${CHROMIUM_CDP_PROFILE_DIR:-/data/chrome-profile}"
+      # The browser profile (user-data-dir) lives on its own volume
+      # (#5653 review 6646239269). Leave CHROMIUM_PROFILE_VOLUME unset for the
+      # managed named volume below; set it to an absolute host path to
+      # bind-mount the profile into a directory you manage instead.
+      - ${CHROMIUM_PROFILE_VOLUME:-chromium_profile}:${CHROMIUM_CDP_PROFILE_DIR:-/data/chrome-profile}
 
     environment:
       # External port other containers connect to (nginx listens here).

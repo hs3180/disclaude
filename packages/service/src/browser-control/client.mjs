@@ -18,12 +18,14 @@ export async function main(args = process.argv.slice(2), env = process.env) {
   const marker = join(runtime.directory, 'interrupted.json');
   const waiting = new AbortController();
   let child, interrupted, killTimer, observer, diagnosticCount = 0;
+  let secondary; // Command lock of a refreshed identity, held until this invocation ends.
+  let diagnosticDirectory = runtime.directory; // Follows the manifest across a refresh.
   const invocationId = randomUUID();
   const reportDiagnostic = diagnostic => {
     diagnosticCount++;
     const record = { ...diagnostic, invocationId, recordedAt: new Date().toISOString() };
     console.error(`\n${JSON.stringify(record)}`);
-    try { writeFileSync(join(runtime.directory, 'last-diagnostic.json'), JSON.stringify(record), { mode: 0o600 }); }
+    try { writeFileSync(join(diagnosticDirectory, 'last-diagnostic.json'), JSON.stringify(record), { mode: 0o600 }); }
     catch { /* A diagnostic write must not change the upstream result. */ }
   };
   function interrupt(signal = 'SIGTERM') {
@@ -71,16 +73,42 @@ export async function main(args = process.argv.slice(2), env = process.env) {
         if (!Number.isSafeInteger(daemonPid) || daemonPid <= 0) throw new Error('Unrecognized upstream daemon ownership record; inspect it before recovery');
       }
     }
+    // #5427: the manifest pins the websocket identity discovered when the
+    // service started. A browser restart keeps the HTTP endpoint but rotates
+    // /devtools/browser/<id>, so a stale pin fails every attach with 404 and
+    // neither restarts of Chromium nor --reload heal a manifest nobody
+    // refreshes. Re-validate the pin against the current /json/version before
+    // attach; on mismatch re-run discovery and migrate the manifest, then run
+    // THIS invocation on the refreshed identity (also holding its command
+    // lock, so a migration never widens the exclusive unit). An unreachable
+    // browser keeps the pinned connection and the CLI reports the failure as
+    // before; --reload re-discovers separately after stopping the daemon.
+    let active = runtime;
+    if (!reload) {
+      active = await refreshBrowserRuntimeConnection({ env, onEvent: reportDiagnostic, tolerateDiscoveryFailure: true });
+      if (active.browserEnv.BU_CDP_WS !== runtime.browserEnv.BU_CDP_WS) {
+        const refreshed = openCommandLock(join(active.directory, 'command.lock'));
+        try {
+          if (!tryCommandLock(refreshed)) {
+            console.error('Waiting for another browser-use invocation to finish');
+            await waitCommandLock(refreshed, waiting.signal);
+          }
+          secondary = refreshed;
+          diagnosticDirectory = active.directory;
+        } catch (error) { closeSync(refreshed); throw error; }
+      }
+    }
+    const guard = join(active.directory, 'interrupted.json');
     // An outcome guard, not a PID lock. A killed wrapper leaves it behind.
-    writeFileSync(marker, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), daemonPid }), { mode: 0o600 });
+    writeFileSync(guard, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), daemonPid }), { mode: 0o600 });
     const cliEnv = { ...env };
     for (const key of Object.keys(cliEnv)) {
       if (key.startsWith('BU_CDP_') || key.startsWith('BH_') || ['BU_NAME', 'BU_AUTOSPAWN'].includes(key)) delete cliEnv[key];
     }
-    Object.assign(cliEnv, runtime.browserEnv, { PATH: runtime.path });
+    Object.assign(cliEnv, active.browserEnv, { PATH: active.path });
     if (args.length === 0) {
-      observer = await observeBrowser({ websocket: runtime.browserEnv.BU_CDP_WS,
-        endpoint: runtime.browserEnv.BU_CDP_URL, endpointSource: runtime.endpointSource || 'unknown', onDiagnostic: reportDiagnostic, env });
+      observer = await observeBrowser({ websocket: active.browserEnv.BU_CDP_WS,
+        endpoint: active.browserEnv.BU_CDP_URL, endpointSource: active.endpointSource || 'unknown', onDiagnostic: reportDiagnostic, env });
       if (interrupted) throw new Error('Browser command cancelled before execution');
     }
     const result = await new Promise((done, reject) => {
@@ -91,7 +119,7 @@ export async function main(args = process.argv.slice(2), env = process.env) {
     });
     if (result.code !== 0 && !diagnosticCount && !interrupted) reportDiagnostic(browserDiagnostic({
       stage: 'unknown', observation: 'upstream-exit', method: 'unknown', url: undefined,
-      endpoint: runtime.browserEnv.BU_CDP_URL, endpointSource: runtime.endpointSource || 'unknown', reason: 'upstream-command-failed',
+      endpoint: active.browserEnv.BU_CDP_URL, endpointSource: active.endpointSource || 'unknown', reason: 'upstream-command-failed',
     }));
     if (result.code === 0 && !interrupted) {
       if (reload && daemonPid) {
@@ -105,13 +133,14 @@ export async function main(args = process.argv.slice(2), env = process.env) {
         // an unreachable browser is reported but does not fail the reload.
         await refreshBrowserRuntimeConnection({ env, onEvent: reportDiagnostic, tolerateDiscoveryFailure: true });
       }
-      rmSync(marker, { force: true });
+      rmSync(guard, { force: true });
     }
     return interrupted ? { code: null, signal: interrupted } : result;
   } finally {
     await observer?.stop().catch(() => {});
     clearInterval(ownerCheck); clearTimeout(killTimer);
     process.removeListener('SIGINT', sigint); process.removeListener('SIGTERM', sigterm);
+    if (secondary !== undefined) closeSync(secondary);
     closeSync(fd);
   }
 }

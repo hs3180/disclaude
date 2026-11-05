@@ -17,6 +17,7 @@ import type {
   StreamQueryResult,
   UserInput,
 } from '../../types.js';
+import type { AgentInputContext } from '../../user-input.js';
 import { adaptSDKMessage, adaptUserInput, TaskSubjectRegistry } from './message-adapter.js';
 import { adaptOptions } from './options-adapter.js';
 import { createLogger } from '../../../utils/logger.js';
@@ -314,8 +315,17 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     // Issue #2920: 创建 stderr 捕获器
     const stderrCapture = new StderrCapture();
 
-    const native = adaptOptions(commonOptions, { allowedTools, disallowedTools });
     const queryId = randomUUID();
+    // T-057 (#5613): latest verified input context for the AskUserQuestion
+    // permission bridge. canUseTool fires mid-turn, so the adapter reads the
+    // newest user message's context at call time (undefined until one arrives
+    // or for unverified sources — the bridge then denies with guidance).
+    let latestInputContext: AgentInputContext | undefined;
+    const native = adaptOptions(commonOptions, { allowedTools, disallowedTools }, {
+      inputContext: () => latestInputContext,
+      sessionKey: options.sessionKey,
+      queryId,
+    });
     let latestUsage: Pick<NonNullable<AgentMessage['metadata']>,
       'inputTokens' | 'outputTokens' | 'cacheReadTokens' | 'cacheCreationTokens' | 'costUsd'> = {};
     let usageLogged = false;
@@ -364,6 +374,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         const { value, done } = await input.next();
         if (done || nativeProcess.closed) { return; }
         inputCount++;
+        latestInputContext = value.inputContext;
         logger.info({ inputCount, contentLength: value.content?.length }, 'Input received');
         yield adaptUserInput(value);
       }
