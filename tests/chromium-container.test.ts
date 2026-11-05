@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { resolve, join } from 'node:path';
-import { readFileSync } from 'node:fs';
+import { resolve, join, dirname } from 'node:path';
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import yaml from 'js-yaml';
 
 describe('container Chromium configuration', () => {
@@ -20,7 +21,7 @@ describe('container Chromium configuration', () => {
     } });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(message);
-    expect(result.stderr).not.toContain('bundled Chromium executable not found');
+    expect(result.stderr).not.toContain('retail Google Chrome executable not found');
   });
 
   it('skips VNC in headless mode without rejecting the enabled default', () => {
@@ -49,6 +50,17 @@ describe('container Chromium configuration', () => {
     const compose = yaml.load(readFileSync(resolve('docker-compose.yml'), 'utf8')) as any;
     const browser = compose.services.chromium;
     expect(browser.init).toBe(true);
+    // #5658 review: the Playwright base-image build arg is gone; the image
+    // ships exactly one browser (retail Chrome from the pinned-deb layer).
+    expect(browser.build.args ?? {}).toEqual({});
+    expect(browser.image).toBe('disclaude-chromium:${CHROMIUM_IMAGE_TAG:-retail}');
+    const dockerfile = readFileSync(join(browser.build.context, browser.build.dockerfile), 'utf8');
+    expect(dockerfile).toContain('COPY start-chromium.sh');
+    expect(dockerfile).toContain('VOLUME ["/data/chrome-profile"]');
+    expect(dockerfile).toContain('FROM ubuntu:24.04');
+    expect(dockerfile).not.toContain('mcr.microsoft.com/playwright');
+    expect(dockerfile).toContain('COPY --from=node:22-bookworm-slim /usr/local/bin/node');
+    expect(dockerfile).toContain('test -x /opt/google/chrome/chrome');
     // #5653 review 6646239269: the profile mount source is user-selectable —
     // an absolute host path via CHROMIUM_PROFILE_VOLUME, or the managed named
     // volume by default; the target stays the profile dir Chromium uses.
@@ -57,8 +69,6 @@ describe('container Chromium configuration', () => {
     );
     expect(browser.environment).toContain('CHROMIUM_CDP_PROFILE_DIR=${CHROMIUM_CDP_PROFILE_DIR:-/data/chrome-profile}');
     expect(compose.volumes).toHaveProperty('chromium_profile');
-    expect(readFileSync(join(browser.build.context, browser.build.dockerfile), 'utf8')).toContain('COPY start-chromium.sh');
-    expect(readFileSync(join(browser.build.context, browser.build.dockerfile), 'utf8')).toContain('VOLUME ["/data/chrome-profile"]');
     const launcher = readFileSync(resolve('docker/start-chromium.sh'), 'utf8');
     expect(launcher).toContain('CHROMIUM_CDP_PROFILE_DIR=${CHROMIUM_CDP_PROFILE_DIR:-/data/chrome-profile}');
     expect(launcher).toContain('"--user-data-dir=$CHROMIUM_CDP_PROFILE_DIR"');
@@ -77,6 +87,85 @@ describe('container Chromium configuration', () => {
   it('keeps Chromium automation exposure disabled in the container launcher', () => {
     const launcher = readFileSync(resolve('docker/start-chromium.sh'), 'utf8');
     expect(launcher).toContain('--disable-blink-features=AutomationControlled');
+  });
+
+  // Extracted from the real launcher so the probe is tested verbatim (#5652,
+  // #5658 review): retail-only — no Playwright fallback, fail closed.
+  const probe = readFileSync(resolve('docker/start-chromium.sh'), 'utf8')
+    .match(/^select_browser_binary\(\) \{[\s\S]*?^\}/m)![0];
+  const runProbe = (retail: string) => {
+    const result = spawnSync('bash', ['-c', `${probe}\nselect_browser_binary "$PROBE_RETAIL"`], {
+      encoding: 'utf8',
+      env: { PATH: process.env.PATH, PROBE_RETAIL: retail },
+    });
+    return { status: result.status, stdout: (result.stdout ?? '').trimEnd(), stderr: result.stderr ?? '' };
+  };
+  // Every fixture keeps an executable browser at the legacy fallback location
+  // so the "no downgrade" scenarios prove the fallback path is really gone.
+  const makeFixture = () => {
+    const root = mkdtempSync(join(tmpdir(), 'disclaude-chromium-probe-'));
+    const playwrightBinary = join(root, 'ms-playwright', 'chromium-1234', 'chrome-linux', 'chrome');
+    mkdirSync(dirname(playwrightBinary), { recursive: true });
+    writeFileSync(playwrightBinary, '');
+    chmodSync(playwrightBinary, 0o755);
+    return { root, playwrightBinary };
+  };
+
+  it('selects the retail Google Chrome binary when the deb layer is present', () => {
+    const { root } = makeFixture();
+    try {
+      const retail = join(root, 'opt', 'google', 'chrome', 'chrome');
+      mkdirSync(dirname(retail), { recursive: true });
+      writeFileSync(retail, '');
+      chmodSync(retail, 0o755);
+      const result = runProbe(retail);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe(retail);
+      expect(result.stderr).toContain('INFO: using retail Google Chrome binary');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed without the retail binary even when a bundled Chromium still exists', () => {
+    const { root } = makeFixture();
+    try {
+      const result = runProbe(join(root, 'opt', 'google', 'chrome', 'chrome'));
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe('');
+      expect(result.stderr).toContain('FATAL: retail Google Chrome executable not found');
+      expect(result.stderr).toContain('no fallback browser');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('ignores a non-executable retail binary instead of downgrading', () => {
+    const { root } = makeFixture();
+    try {
+      const retail = join(root, 'opt', 'google', 'chrome', 'chrome');
+      mkdirSync(dirname(retail), { recursive: true });
+      writeFileSync(retail, '');
+      chmodSync(retail, 0o644);
+      const result = runProbe(retail);
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe('');
+      expect(result.stderr).toContain('FATAL: retail Google Chrome executable not found');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed when no browser exists at all', () => {
+    const { root } = makeFixture();
+    rmSync(join(root, 'ms-playwright'), { recursive: true, force: true });
+    try {
+      const result = runProbe(join(root, 'opt', 'google', 'chrome', 'chrome'));
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('FATAL: retail Google Chrome executable not found');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('launches Chromium with software WebGL, session restore, and UI language flags', () => {
