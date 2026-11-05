@@ -28,28 +28,37 @@ if [ -f "$CONFIG_FILE" ]; then
   # semantics — the awk scraper only knew the pre-0.6.4 top-level section and
   # passed the literal "$FEISHU_APP_SECRET" string to lark-cli.
   # Output protocol: "none" | "missing-env VAR" | two lines (appId, secret).
-  FEISHU_AUTH=$(node -e '
-    const base = "/app/node_modules/@disclaude/core/dist/config";
-    const { readDiscoveredConfigYaml } = require(base + "/discovery.js");
-    const { credentialEnvName } = require(base + "/env-reference.js");
-    const { config } = readDiscoveredConfigYaml(process.env.DISCLAUDE_CONFIG_PATH);
-    const feishu = config && config.channels ? config.channels.feishu : undefined;
-    const appId = typeof feishu?.appId === "string" ? feishu.appId : "";
-    const appSecret = typeof feishu?.appSecret === "string" ? feishu.appSecret : "";
-    if (!appId || !appSecret) { console.log("none"); return; }
-    const envName = credentialEnvName(appSecret);
-    if (!envName) { process.stdout.write(appId + "\n" + appSecret + "\n"); return; }
-    const secret = process.env[envName];
-    if (!secret || !secret.trim()) { console.log("missing-env " + envName); return; }
-    process.stdout.write(appId + "\n" + secret + "\n");
-  ' 2>/dev/null) || FEISHU_AUTH="none"
-  [ -n "$FEISHU_AUTH" ] || FEISHU_AUTH="none"
+  if FEISHU_AUTH=$(node -e '
+    (() => {
+      const base = "/app/node_modules/@disclaude/core/dist/config";
+      const { readDiscoveredConfigYaml } = require(base + "/discovery.js");
+      const { credentialEnvName } = require(base + "/env-reference.js");
+      const { config } = readDiscoveredConfigYaml(process.env.DISCLAUDE_CONFIG_PATH);
+      const feishu = config && config.channels ? config.channels.feishu : undefined;
+      const appId = typeof feishu?.appId === "string" ? feishu.appId : "";
+      const appSecret = typeof feishu?.appSecret === "string" ? feishu.appSecret : "";
+      if (!appId || !appSecret) { console.log("none"); return; }
+      const envName = credentialEnvName(appSecret);
+      if (!envName) { process.stdout.write(appId + "\n" + appSecret + "\n"); return; }
+      const secret = process.env[envName];
+      if (!secret || !secret.trim()) { console.log("missing-env " + envName); return; }
+      process.stdout.write(appId + "\n" + secret + "\n");
+    })();
+  '); then
+    [ -n "$FEISHU_AUTH" ] || FEISHU_AUTH="none"
+  else
+    AUTH_STATUS=$?
+    FEISHU_AUTH="error"
+    echo "[entrypoint] WARNING: failed to extract channels.feishu credentials (exit $AUTH_STATUS) — lark-cli auth skipped" >&2
+  fi
 
   APP_ID=""
   APP_SECRET=""
   case "$FEISHU_AUTH" in
     none)
       echo "[entrypoint] channels.feishu appId/appSecret not configured — skipping auth init"
+      ;;
+    error)
       ;;
     missing-env*)
       echo "[entrypoint] WARNING: appSecret references ${FEISHU_AUTH#missing-env } but the variable is missing/empty — lark-cli auth skipped"
