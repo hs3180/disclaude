@@ -6,6 +6,13 @@ agents:
     default: true
     codex:
       transport: app-server
+      # Weekly-quota admission (#5607). All optional; default is observe-only
+      # (record + report upstream window readings, gate only on REAL
+      # usage-limit errors). enforce blocks NEW sessions while the quota
+      # usage progress exceeds the weekly window's time progress — running
+      # turns, resumed chats and capacity-recovery retries are never gated.
+      # weeklyQuotaAdmission: enforce # observe (default) | enforce
+      # weeklyLimitCooldownMs: 3600000  # fallback cooldown when a real limit hit has no parsable reset hint
   assistant:
     backend: claude
     llm: assistant

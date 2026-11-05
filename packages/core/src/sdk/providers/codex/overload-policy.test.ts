@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { codexOverloadRetryDelay, readCodexOverloadFailure,
-  alignCodexCapacityWait, clearCodexCapacityCooldowns, recordCodexCapacityCooldown, readCodexCapacityCooldown } from './overload-policy.js';
+  alignCodexCapacityWait, clearCodexCapacityCooldowns, recordCodexCapacityCooldown, readCodexCapacityCooldown,
+  codexWriterConflictRetryDelay, readCodexWriterConflictPolicy } from './overload-policy.js';
 
 describe('Codex native overload classification', () => {
   it.each(['httpConnectionFailed', 'responseStreamConnectionFailed', 'responseStreamDisconnected', 'responseTooManyFailedAttempts'])('recognizes forwarded 503 in %s, excluding 401 and quota', kind => {
@@ -75,5 +76,40 @@ describe('process-wide capacity cooldown (#5494 review)', () => {
     expect(alignCodexCapacityWait('gpt-6-luna', 45_000, () => 1, t0)).toBe(45_000);
     expect(alignCodexCapacityWait('gpt-6-minima', 5_000, () => 1, t0)).toBe(5_000);
     clearCodexCapacityCooldowns();
+  });
+});
+
+describe('writer-lock conflict wait policy (#5429)', () => {
+  it('backoff is jittered within [half, full] of the nominal curve and capped', () => {
+    const policy = readCodexWriterConflictPolicy({});
+    // attempt 0 → nominal 2s; attempts 3+ cap at the 15s max delay.
+    for (const random of [() => 0, () => 1]) {
+      expect(codexWriterConflictRetryDelay(0, 0, policy, random)).toBeGreaterThanOrEqual(1000);
+      expect(codexWriterConflictRetryDelay(0, 0, policy, random)).toBeLessThanOrEqual(2000);
+      expect(codexWriterConflictRetryDelay(3, 0, policy, random)).toBeLessThanOrEqual(15_000);
+    }
+  });
+
+  it('declines once the attempt cap is hit', () => {
+    const policy = readCodexWriterConflictPolicy({});
+    expect(codexWriterConflictRetryDelay(policy.maxRetries, 0, policy)).toBeUndefined();
+    expect(codexWriterConflictRetryDelay(policy.maxRetries - 1, 0, policy)).toBeDefined();
+  });
+
+  it('never waits past the cumulative budget — defer (surface the error) instead', () => {
+    const policy = readCodexWriterConflictPolicy({ DISCLAUDE_CODEX_WRITER_CONFLICT_BUDGET_MS: '5000' });
+    expect(codexWriterConflictRetryDelay(0, 4900, policy)).toBeUndefined();
+    expect(codexWriterConflictRetryDelay(0, 0, policy)).toBeDefined();
+  });
+
+  it('reads test/ops overrides like the capacity policy does', () => {
+    const policy = readCodexWriterConflictPolicy({
+      DISCLAUDE_CODEX_WRITER_CONFLICT_MAX_RETRIES: '1',
+      DISCLAUDE_CODEX_WRITER_CONFLICT_INITIAL_DELAY_MS: '40',
+      DISCLAUDE_CODEX_WRITER_CONFLICT_MAX_DELAY_MS: '40',
+    });
+    expect(policy.maxRetries).toBe(1);
+    expect(codexWriterConflictRetryDelay(1, 0, policy)).toBeUndefined();
+    expect(codexWriterConflictRetryDelay(0, 0, policy)).toBeLessThanOrEqual(40);
   });
 });

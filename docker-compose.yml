@@ -169,17 +169,16 @@ services:
   # ===========================================================================
   # Chromium with Xvfb (headed by default) and a persistent automation profile. Its primary
   # consumer is the browser-use Skill (#4460); any CDP driver may attach (see
-  # docs/cdp-endpoint.md, #4496). Chromium ships via the official Playwright
-  # image — the name is the distribution channel, not a tooling statement.
-  # Identifiers renamed playwright → chromium (#4613); the image reference stays
-  # on the Playwright registry path.
+  # docs/cdp-endpoint.md, #4496). The image ships exactly one browser: retail
+  # Google Chrome from a pinned deb (#5652, #5658 review) — no Playwright
+  # Chromium fallback layer; the launcher fails closed without the retail binary.
   # Start with: docker compose --profile chromium up -d
   #
   # The CDP endpoint is available at http://disclaude-chromium:${CDP_PORT:-9222}
   # within the Docker network (internal only, not exposed to host).
   #
   # IMPORTANT — why an nginx reverse proxy fronts Chrome's CDP listener:
-  # Two quirks of the official Playwright image's Chromium (Chrome 148+, `--headless=new`)
+  # Two quirks of Chrome's CDP listener (148+, `--headless=new`)
   # prevent other containers from reaching CDP over the bridge network:
   #   1. `--remote-debugging-address=0.0.0.0` is IGNORED — CDP binds to 127.0.0.1 only.
   #   2. Its HTTP/WS endpoints enforce a DNS-rebinding check and reject any request whose
@@ -203,10 +202,10 @@ services:
     build:
       context: ./docker
       dockerfile: Dockerfile.chromium
-      args:
-        CHROMIUM_IMAGE_TAG: ${CHROMIUM_IMAGE_TAG:-v1.64.1-noble}
     stop_grace_period: 15s
-    image: disclaude-chromium:${CHROMIUM_IMAGE_TAG:-v1.64.1-noble}
+    # CHROMIUM_IMAGE_TAG now only names the locally built image (the Playwright
+    # base-image selector is gone with the fallback removal).
+    image: disclaude-chromium:${CHROMIUM_IMAGE_TAG:-retail}
     container_name: disclaude-chromium
     init: true
     restart: unless-stopped

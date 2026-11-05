@@ -83,6 +83,14 @@ For each detected pattern, provide:
 [✅ 创建定时任务] [🔄 调整时间] [❌ 忽略]
 ```
 
+**Choosing the recommended time (Issue #5606)**: unless the detected pattern or
+the user pins an exact minute, recommend a non-zero minute instead of an
+on-the-hour time (e.g. 09:07 rather than 09:00) — on-the-hour schedules in the
+same chat fire in the same serial tick window, and synchronized external calls
+hit API rate limits together. When recommending multiple schedules for one
+chat, stagger them onto different minutes. If the user or the pattern clearly
+implies an exact time, keep that exact time.
+
 ---
 
 ## Pattern Detection Guidelines (Prompt-Based)
@@ -131,7 +139,7 @@ For each detected pattern, provide:
 
 **任务类型**: GitHub Issues 检查
 **检测到的模式**: 用户每天早上 9:00-9:30 之间查询新的 GitHub issues
-**建议时间**: 每天 09:00
+**建议时间**: 每天 09:07
 **置信度**: High
 **出现次数**: 4 次
 
@@ -158,7 +166,7 @@ If user confirms (✅ 创建定时任务), use the `/schedule` skill to create t
 
 **Important**:
 - Use the current chatId as the schedule scope
-- Set appropriate cron expression based on detected pattern
+- Set appropriate cron expression based on detected pattern; when neither the pattern nor the user pins an exact minute, use a non-zero minute (avoid minute 0) and stagger multiple tasks in the same chat onto different minutes (Issue #5606)
 - Include all necessary context in the schedule prompt
 
 ---
