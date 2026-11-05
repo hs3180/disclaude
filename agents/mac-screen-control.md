@@ -2,7 +2,6 @@
 name: mac-screen-control
 description: macOS screen/keyboard/mouse control via Accessibility API and CGEvent. Use when user wants to control desktop applications, automate UI interactions, take screenshots, click elements, type text (including Chinese), or manage windows on macOS.
 tools: ["Read", "Write", "Bash", "Glob", "Grep"]
-model: sonnet
 ---
 
 # Mac Screen Control Agent

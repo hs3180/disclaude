@@ -1821,7 +1821,12 @@ export class CodexAgentProvider {
                                 }
                                 turnCanRetry = false;
                                 noteCapacityProgress();
-                                if (request.kind === 'async-message' && (!next.value.inputContext || !options.onAsyncUserInputAnswer)) {
+                                if (request.kind === 'async-message' && (!next.value.inputContext || !options.onAsyncUserInputAnswer
+                                    || options.asyncUserInputCapable?.() === false)) {
+                                    // #5467: same capability mismatch the prompt note announces —
+                                    // reject as a structured "unsupported" error before host
+                                    // wiring runs, so the question degrades to plain text
+                                    // instead of surfacing a host rejection in the chat.
                                     throw new CodexAsyncInputDeliveryError('unsupported');
                                 }
                                 // Even a non-blocking question can leave the model idle while the
@@ -1920,13 +1925,15 @@ export class CodexAgentProvider {
                             activeTurnId = await lifecycle.startTurn(sessionKey, 
                             // #5467: when wiring already proves this session cannot receive
                             // async question forms (no interactive channel, no input
-                            // context, or no answer host), say so up-front instead of
-                            // letting the model discover it through a runtime rejection —
-                            // codex >=0.162 registers the async question tool from the
-                            // model catalog regardless of our enablement flags, so the
-                            // prompt is the layer we control. Blocking questions are
-                            // unaffected (they ride onUserInput only).
+                            // context, no answer host, or the per-turn capability probe
+                            // reporting a once-mode/stale host session), say so up-front
+                            // instead of letting the model discover it through a runtime
+                            // rejection — codex >=0.162 registers the async question tool
+                            // from the model catalog regardless of our enablement flags,
+                            // so the prompt is the layer we control. Blocking questions
+                            // are unaffected (they ride onUserInput only).
                             !options.onUserInput || !options.onAsyncUserInputAnswer || !next.value.inputContext
+                                || options.asyncUserInputCapable?.() === false
                                 ? `${userInput}\n\n[Session note] This conversation cannot receive asynchronous question forms. When you need clarification, ask the user directly in your reply text instead of using an async question tool.`
                                 : userInput, {
                                 sandbox,

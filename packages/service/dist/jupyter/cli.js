@@ -5,6 +5,7 @@ import { NotebookTools, createArtifactDirectory, notebookIdentifier } from './no
 import { JupyterProjectConfigStore } from './project-config-store.js';
 const commands = [
     'list',
+    'runtime-probe',
     'describe',
     'read-cell',
     'insert-cell',
@@ -62,6 +63,18 @@ executionState remains unknown. It does not confirm termination or queue clearin
 Chat /stop stops inference only. It does not confirm remote kernel cancellation.
 Reports/images become persistent Project artifacts; send them with channel.
 patch <action> remains the separate Jupyter Terminal repair installer.`;
+const runtimeProbeCommand = {
+    command: 'runtime-probe',
+    description: 'Probe an existing kernel with fixed host-owned code. Returns a hashed host ID and sorted GPU UUIDs; unknown never means safe to run. No Notebook writeback.',
+    inputSchema: {
+        type: 'object', properties: { kernelId: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,256}$' } },
+        required: ['kernelId'], additionalProperties: false,
+    },
+    outputSchema: {
+        type: 'object', required: ['schema', 'host', 'gpus'],
+        description: 'disclaude.jupyter-runtime.v1; host.id is sha256:<64 lowercase hex> or null; gpus.uuids is a sorted unique GPU-* list or null with state=unknown.',
+    },
+};
 const interruptCommand = {
     command: 'interrupt',
     description: 'Interrupt an explicitly selected existing kernel, preserving its identity and memory. No runId required. HTTP 204 only acknowledges the request; query the original execution separately. Never a fallback for stop.',
@@ -282,6 +295,7 @@ export async function runNotebookCommand(options, connection, signal, readInput 
                     outputSchema,
                 })),
                 interruptCommand,
+                runtimeProbeCommand,
             ];
         }
         if (options.command === 'list') {
@@ -366,6 +380,15 @@ export async function runNotebookCommand(options, connection, signal, readInput 
             const input = notebookInput(options.inputFile, readInput);
             if (options.command === 'interrupt') {
                 return interruptKernel(root, input, connection, signal);
+            }
+            if (options.command === 'runtime-probe') {
+                if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length !== 1 ||
+                    typeof input.kernelId !== 'string' ||
+                    !/^[A-Za-z0-9_-]{1,256}$/.test(input.kernelId)) {
+                    throw new Error('Invalid runtime probe input; an existing kernelId is required');
+                }
+                signal.throwIfAborted();
+                return (await connection()).client.probeRuntime(input.kernelId, signal);
             }
             const name = `notebook_${options.command.replaceAll('-', '_')}`;
             const tool = tools.tools.find((t) => t.name === name);

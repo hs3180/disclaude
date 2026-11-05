@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.15] - 2026-11-05
+
+### Added
+
+- Expose the Jupyter kernel host and GPU UUIDs through a `runtime-probe`
+  command: an existing kernel is probed with fixed host-owned code
+  (no Notebook writeback, no store_history) that returns a SHA-256 host
+  id and sorted unique GPU UUIDs under a stable
+  `disclaude.jupyter-runtime.v1` schema; unavailable metadata is
+  reported as explicit `unknown` and never as an empty list, so agents
+  can decide same-card exclusion without hand-running `nvidia-smi`
+  (#5322; #5691).
+- Automate the Feishu discussion-group handoff in the start-discussion
+  skill: one ordered chain creates the group with `--owner
+  <triggering user>`, sends and pins the positioning first post, replies
+  with a migration card in the source thread, and only then injects the
+  initialization context — the script stops at the first failed stage,
+  is idempotent by key, and never re-runs blindly after a partial
+  result (#5393; #5690).
+- Lock in the unrecognized slash-command passthrough contract across
+  p2p, group-mention and topic entry points: an unregistered `/xxx`
+  command with arguments, multiline text, CJK content and quoting is
+  forwarded verbatim exactly once, while registered-command argument
+  errors, permission denials and execution failures stay out of the
+  agent path (#5401; #5689).
+
+### Changed
+
+- Track async-question capability per turn instead of per session: a
+  new `asyncUserInputCapable` probe reflecting the same conditions that
+  reject async questions at runtime (once-mode, superseded session
+  generation) lets the provider announce the incapability in the prompt
+  up-front and reject async questions as a structured "unsupported"
+  error before host wiring, instead of surfacing a host rejection
+  mid-turn (#5467; #5665).
+- Remove the hardcoded default model, model ban and fixed effort from
+  the collaboration rules: model and effort selection now follows the
+  current user instructions and deployment configuration, historical
+  acceptance results stay scoped to their original verification, and
+  concrete recommendations live only in the configuration example
+  (#5407; #5688).
+- Route human-readable report deliverables to the research-workflow
+  skill: briefs, final reports, closing/experiment/analysis reports and
+  feedback revisions on existing reports now trigger the methodology,
+  while simple factual Q&A, code comments, commit messages, plain data
+  tables and other non-report writing stay out (#5459; #5692).
+
+### Fixed
+
+- Stop the docker entrypoint from silently skipping lark-cli
+  authentication on Node 22: the FEISHU_AUTH extraction script is now
+  an IIFE without a top-level `return`, exit status is checked before
+  the not-configured fallback, and real crashes keep their stderr and a
+  WARNING instead of masquerading as "not configured" (#5680; #5686).
+
 ## [0.6.14] - 2026-11-05
 
 ### Added
