@@ -236,6 +236,13 @@ export class Config {
   static readonly CODEX_MAX_ACTIVE_SESSIONS = defaultAgent?.codex?.maxActiveSessions;
   static readonly CODEX_MAX_CONCURRENT_RUNS = defaultAgent?.codex?.maxConcurrentRuns;
   static readonly CODEX_TRANSPORT = defaultAgent?.codex?.transport ?? 'exec';
+  /** #5607 weekly-quota admission settings (observe-only unless set to enforce). */
+  static readonly CODEX_WEEKLY_QUOTA = defaultAgent?.codex
+    ? {
+      weeklyQuotaAdmission: defaultAgent.codex.weeklyQuotaAdmission,
+      weeklyLimitCooldownMs: defaultAgent.codex.weeklyLimitCooldownMs,
+    }
+    : undefined;
 
   // Logging configuration
   static readonly LOG_LEVEL = fileConfigOnly.logging?.level || 'info';

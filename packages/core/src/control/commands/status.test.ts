@@ -9,6 +9,16 @@ import { describe, it, expect, vi } from 'vitest';
 import { handleStatus } from './status.js';
 import type { ControlHandlerContext } from '../types.js';
 
+// #5607: /status appends the active provider's optional runtime-stats
+// capability. The factory is an internal module (not an external SDK), so a
+// vi.mock here is allowed; per-test return values keep the baseline cases
+// (provider without the capability) and the codex-ledger case in one file.
+const { getProviderMock } = vi.hoisted(() => ({ getProviderMock: vi.fn() }));
+vi.mock('../../sdk/factory.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../sdk/factory.js')>();
+  return { ...actual, getProvider: (...args: Parameters<typeof actual.getProvider>) => getProviderMock(...args) };
+});
+
 function createMockContext(overrides?: Partial<ControlHandlerContext>): ControlHandlerContext {
   return {
     agentPool: { reset: vi.fn(), stop: vi.fn().mockReturnValue(true) },
@@ -23,6 +33,7 @@ function createMockContext(overrides?: Partial<ControlHandlerContext>): ControlH
 
 describe('handleStatus', () => {
   it('reports the running service', async () => {
+    getProviderMock.mockReturnValue({});
     const context = createMockContext();
     const result = await handleStatus({ type: 'status', chatId: 'chat-1' }, context);
 
@@ -32,10 +43,36 @@ describe('handleStatus', () => {
   });
 
   it('does not expose removed execution roles', async () => {
+    getProviderMock.mockReturnValue({});
     const context = createMockContext();
     const result = await handleStatus({ type: 'status', chatId: 'chat-1' }, context);
 
     expect(result.success).toBe(true);
     expect(result.message).not.toContain('节点');
+  });
+
+  it('stays at the baseline report when the provider has no stats capability', async () => {
+    getProviderMock.mockReturnValue({});
+    const result = await handleStatus({ type: 'status', chatId: 'chat-1' }, createMockContext());
+    expect(result.message).not.toContain('周额度');
+  });
+
+  it('appends upstream-reading provider runtime stats when exposed (#5607)', async () => {
+    getProviderMock.mockReturnValue({
+      getStatusExtra: () => ['🪙 Codex 周额度（上游实测）：已用 45%，窗口时间已过 20%'],
+    });
+    const result = await handleStatus({ type: 'status', chatId: 'chat-1' }, createMockContext());
+    expect(result.message).toContain('服务状态');
+    expect(result.message).toContain('🪙 Codex 周额度（上游实测）');
+    expect(result.message).toContain('上游实测');
+  });
+
+  it('swallows provider lookup failures and still reports the service', async () => {
+    getProviderMock.mockImplementation(() => {
+      throw new Error('Unknown provider type');
+    });
+    const result = await handleStatus({ type: 'status', chatId: 'chat-1' }, createMockContext());
+    expect(result.success).toBe(true);
+    expect(result.message).toContain('运行中');
   });
 });
