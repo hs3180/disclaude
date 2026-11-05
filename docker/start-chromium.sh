@@ -55,19 +55,17 @@ fi
 # UA string (#5652); when the image carries no retail deb the bundled Playwright
 # Chromium build stays the fallback with unchanged behavior. Paths default to
 # the in-image locations but are parameters so the probe is unit-testable.
+# Retail-only (#5652, #5658 review): the image ships exactly one browser.
+# A missing retail binary is a build/packaging failure — fail closed instead
+# of silently downgrading to some other Chromium build.
 select_browser_binary() {
     local retail=${1:-/opt/google/chrome/chrome}
-    local glob=${2:-'/ms-playwright/chromium-*/chrome-linux*/chrome'}
     if [[ -x "$retail" ]]; then
         echo "INFO: using retail Google Chrome binary $retail" >&2
         printf '%s\n' "$retail"
         return 0
     fi
-    local candidate
-    for candidate in $glob; do
-        if [[ -x "$candidate" ]]; then printf '%s\n' "$candidate"; return 0; fi
-    done
-    echo 'FATAL: bundled Chromium executable not found' >&2
+    echo "FATAL: retail Google Chrome executable not found at $retail; this image ships no fallback browser" >&2
     return 1
 }
 
