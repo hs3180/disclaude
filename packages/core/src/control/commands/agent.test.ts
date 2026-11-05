@@ -62,4 +62,62 @@ describe('/agent', () => {
     expect(result.message).toContain('service maintainer');
     expect(result.message).not.toMatch(/\/agent|claude-sonnet|glm-fast/);
   });
+
+  describe('config (Issue #4914 native card)', () => {
+    it('delegates to the channel hook with the command coordinates', async () => {
+      const openConfigCard = vi.fn().mockResolvedValue({ ok: true });
+      const ctx = context();
+      ctx.agentConfigUi = { openConfigCard };
+      const result = await handleAgent({
+        type: 'agent', chatId: 'oc_1', actorId: 'ou_actor', threadRootId: 'om_topic',
+        data: { subcommand: 'config' },
+      }, ctx);
+      expect(openConfigCard).toHaveBeenCalledExactlyOnceWith({
+        chatId: 'oc_1', threadRootId: 'om_topic', actorId: 'ou_actor',
+      });
+      expect(result).toMatchObject({ success: true });
+      expect(result.message).toContain('harness / model / thinking');
+    });
+
+    it('falls back to text-only guidance when the channel has no card hook', async () => {
+      const result = await handleAgent(
+        { type: 'agent', chatId: 'a', actorId: 'ou_actor', data: { subcommand: 'config' } },
+        context()
+      );
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('`/agent list`');
+      expect(result.message).toContain('`/agent use <name>`');
+    });
+
+    it('refuses to open a card without an identifiable actor', async () => {
+      const openConfigCard = vi.fn();
+      const ctx = context();
+      ctx.agentConfigUi = { openConfigCard };
+      const result = await handleAgent(
+        { type: 'agent', chatId: 'a', data: { subcommand: 'config' } }, ctx);
+      expect(openConfigCard).not.toHaveBeenCalled();
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('无法识别操作者');
+    });
+
+    it('surfaces a delivery failure with the text command as recovery', async () => {
+      const ctx = context();
+      ctx.agentConfigUi = { openConfigCard: vi.fn().mockResolvedValue({ ok: false, error: 'configuration card was not delivered' }) };
+      const result = await handleAgent(
+        { type: 'agent', chatId: 'a', actorId: 'ou_actor', data: { subcommand: 'config' } }, ctx);
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('configuration card was not delivered');
+      expect(result.message).toContain('`/agent use <name>`');
+    });
+
+    it('recovers from a hook exception without losing the text path', async () => {
+      const ctx = context();
+      ctx.agentConfigUi = { openConfigCard: vi.fn().mockRejectedValue(new Error('boom')) };
+      const result = await handleAgent(
+        { type: 'agent', chatId: 'a', actorId: 'ou_actor', data: { subcommand: 'config' } }, ctx);
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('`/agent list`');
+      expect(result.error).toBe('boom');
+    });
+  });
 });

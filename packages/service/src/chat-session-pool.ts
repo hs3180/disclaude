@@ -128,6 +128,8 @@ export interface ActiveAgentPreset {
   name: string;
   agentBackend: AgentPreset['agentBackend'];
   model: string;
+  /** Thinking/reasoning effort when the preset's LLM pins one (#4914 card display). */
+  reasoningEffort?: AgentPreset['reasoningEffort'];
 }
 
 export type AgentPresetSwitchResult =
@@ -208,6 +210,7 @@ export class ChatSessionPool {
       name,
       agentBackend: preset.agentBackend,
       model: preset.model,
+      ...(preset.reasoningEffort ? { reasoningEffort: preset.reasoningEffort } : {}),
     }));
   }
 
@@ -216,7 +219,12 @@ export class ChatSessionPool {
     const sessionKey = this.sessionKeyOf(chatId, threadRootId);
     const resolved = resolveAgentPreset(this.presets, this.selectedPresetBySession.get(sessionKey));
     return resolved.ok
-      ? { name: resolved.name, agentBackend: resolved.preset.agentBackend, model: resolved.preset.model }
+      ? {
+          name: resolved.name,
+          agentBackend: resolved.preset.agentBackend,
+          model: resolved.preset.model,
+          ...(resolved.preset.reasoningEffort ? { reasoningEffort: resolved.preset.reasoningEffort } : {}),
+        }
       : undefined;
   }
 
@@ -298,6 +306,7 @@ export class ChatSessionPool {
         name: resolved.name,
         agentBackend: resolved.preset.agentBackend,
         model: resolved.preset.model,
+        ...(resolved.preset.reasoningEffort ? { reasoningEffort: resolved.preset.reasoningEffort } : {}),
       },
       sessionBoundary: 'new-session',
     };

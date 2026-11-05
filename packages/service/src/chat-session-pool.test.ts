@@ -234,6 +234,25 @@ describe('ChatSessionPool', () => {
       });
     });
 
+    it('surfaces the pinned thinking effort through the same selection API (#4914)', () => {
+      const withEffort = {
+        ...presets,
+        deep: { apiKey: 'test-key', llm: 'test', agentBackend: 'codex' as const, model: 'gpt-5.1', reasoningEffort: 'high' as const },
+      };
+      const pool = new ChatSessionPool({ agentPresets: withEffort, validatePresetBackend: () => ({ available: true }) });
+      try {
+        expect(pool.listAgentPresets().find(p => p.name === 'deep')).toEqual({
+          name: 'deep', agentBackend: 'codex', model: 'gpt-5.1', reasoningEffort: 'high',
+        });
+        expect(pool.switchAgentPreset('chat-effort', 'deep')).toMatchObject({
+          ok: true, active: { name: 'deep', reasoningEffort: 'high' },
+        });
+        expect(pool.getActiveAgentPreset('chat-effort')).toEqual({
+          name: 'deep', agentBackend: 'codex', model: 'gpt-5.1', reasoningEffort: 'high',
+        });
+      } finally { pool.disposeAll(); }
+    });
+
     it('isolates selections by chat and atomically replaces only the selected chat', () => {
       const pool = new ChatSessionPool({ agentPresets: presets, validatePresetBackend: () => ({ available: true }) });
       const callbacksA = createMockCallbacks();

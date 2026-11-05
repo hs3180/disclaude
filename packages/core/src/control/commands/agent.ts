@@ -7,10 +7,10 @@ function formatPreset(preset: { name: string; agentBackend: string; model: strin
   return `**${preset.name}** — ${preset.agentBackend} / ${preset.model}`;
 }
 
-export const handleAgent: CommandHandler<'agent'> = (
+export const handleAgent: CommandHandler<'agent'> = async (
   command: AgentCommand,
   context: ControlHandlerContext
-): ControlResponse => {
+): Promise<ControlResponse> => {
   const api = context.agentPool;
   if (!api.listAgentPresets || !api.getActiveAgentPreset || !api.switchAgentPreset) {
     return { success: false, message: 'Agent presets are not available on this node.' };
@@ -52,8 +52,41 @@ export const handleAgent: CommandHandler<'agent'> = (
     };
   }
 
+  if (subcommand === 'config') {
+    // Issue #4914: delegate to the channel's native configuration card; the
+    // card consumes the same catalog and selection service as `use` below.
+    if (!command.actorId) {
+      return { success: false, message: '无法识别操作者，未打开配置卡片。请从聊天消息发起 `/agent config`。' };
+    }
+    if (!context.agentConfigUi) {
+      return { success: false, message: '此渠道没有原生配置卡片。用 `/agent list` 查看预设，`/agent use <name>` 切换。' };
+    }
+    try {
+      const sent = await context.agentConfigUi.openConfigCard({
+        chatId: command.chatId,
+        ...(command.threadRootId ? { threadRootId: command.threadRootId } : {}),
+        actorId: command.actorId,
+      });
+      return sent.ok
+        ? {
+            success: true,
+            message: '🧩 配置卡片已发送：在卡片上依次选择 harness / model / thinking 后确认。确认生效前当前选择不变。',
+          }
+        : {
+            success: false,
+            message: `配置卡片发送失败：${sent.error}\n\n仍可用 \`/agent list\` 与 \`/agent use <name>\` 完成切换。`,
+          };
+    } catch (error) {
+      return {
+        success: false,
+        message: '配置卡片发送失败。仍可用 `/agent list` 与 `/agent use <name>` 完成切换。',
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
   if (subcommand !== 'current') {
-    return { success: false, message: 'Usage: `/agent [current|list|use <preset>]`' };
+    return { success: false, message: 'Usage: `/agent [current|list|use <preset>|config]`' };
   }
 
   const active = api.getActiveAgentPreset(command.chatId, command.threadRootId);

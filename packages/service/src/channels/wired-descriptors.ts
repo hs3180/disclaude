@@ -238,6 +238,27 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       sendConfirmation: (record, target) => feishuChannel.requestIssueReport(record, target),
     };
 
+    // #4914 (T-088): wire the native agent config card to the SAME preset
+    // catalog and chat-level selection service the /agent command uses;
+    // Feishu is only the presenter. Callbacks re-check the host access
+    // policy at click time, so a policy change takes effect immediately.
+    const agentPoolPorts = context.controlHandlerContext.agentPool;
+    if (agentPoolPorts?.listAgentPresets && agentPoolPorts.getActiveAgentPreset && agentPoolPorts.switchAgentPreset) {
+      config.agentConfigAccess = {
+        listPresets: () => agentPoolPorts.listAgentPresets?.() ?? [],
+        getActivePreset: (chatId, threadRootId) => agentPoolPorts.getActiveAgentPreset?.(chatId, threadRootId),
+        switchAgentPreset: (chatId, presetName, threadRootId) =>
+          agentPoolPorts.switchAgentPreset?.(chatId, presetName, threadRootId)
+          ?? { ok: false, error: 'Agent preset switching is no longer available on this node' },
+        ...(context.controlHandlerContext.isCommandAllowed
+          ? { isCommandAllowed: context.controlHandlerContext.isCommandAllowed }
+          : {}),
+      };
+      helpContext.agentConfigUi = {
+        openConfigCard: target => feishuChannel.requestAgentConfigCard(target),
+      };
+    }
+
     feishuChannel.onControl(createControlHandler(helpContext));
 
     // 3. Register REST API handlers for channel CLI requests

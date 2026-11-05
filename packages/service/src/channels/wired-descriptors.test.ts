@@ -240,6 +240,52 @@ describe('WiredChannelDescriptors', () => {
         question: 'Choose', options: [{ text: 'Continue', value: 'continue' }],
       })).rejects.toThrow('message_id');
     });
+
+    it('wires the agent config card to the shared selection services and the command surface (#4914)', async () => {
+      const requestAgentConfigCard = vi.fn().mockResolvedValue({ ok: true });
+      const mockChannel = Object.assign(createMockChannel('feishu'), {
+        getTriggerModeManager: () => ({ getMode: vi.fn(), setMode: vi.fn() }),
+        setWelcomeService: vi.fn(),
+        requestAgentConfigCard,
+      });
+      const listAgentPresets = vi.fn().mockReturnValue([
+        { name: 'default', agentBackend: 'claude', model: 'claude-sonnet' },
+      ]);
+      const getActiveAgentPreset = vi.fn().mockReturnValue(
+        { name: 'default', agentBackend: 'claude', model: 'claude-sonnet' });
+      const switchAgentPreset = vi.fn().mockReturnValue({
+        ok: true, active: { name: 'default', agentBackend: 'claude', model: 'claude-sonnet' }, sessionBoundary: 'new-session' as const,
+      });
+      const isCommandAllowed = vi.fn().mockReturnValue(true);
+      const context = createMockContext({
+        controlHandlerContext: {
+          agentPool: {
+            reset: vi.fn(), stop: vi.fn(),
+            listAgentPresets, getActiveAgentPreset, switchAgentPreset,
+          },
+          isCommandAllowed,
+        },
+      });
+      const config: import('./feishu-channel.js').FeishuChannelConfig = { appId: 'test', appSecret: 'test' };
+      await FEISHU_WIRED_DESCRIPTOR.setup!(mockChannel, config, context);
+
+      // The injected access ports route to the SAME services as /agent.
+      const access = config.agentConfigAccess!;
+      expect(access.listPresets()).toEqual([{ name: 'default', agentBackend: 'claude', model: 'claude-sonnet' }]);
+      expect(access.getActivePreset('oc_1')).toMatchObject({ name: 'default' });
+      access.switchAgentPreset('oc_1', 'default');
+      expect(switchAgentPreset).toHaveBeenCalledExactlyOnceWith('oc_1', 'default', undefined);
+      expect(access.isCommandAllowed?.({ type: 'agent', chatId: 'oc_1', data: { subcommand: 'use' } })).toBe(true);
+      expect(isCommandAllowed).toHaveBeenCalled();
+
+      // End-to-end: /agent config through the wired control handler opens the channel card.
+      const controlHandler = vi.mocked(mockChannel.onControl).mock.calls[0][0] as import('@disclaude/core').ControlHandler;
+      const response = await controlHandler({
+        type: 'agent', chatId: 'oc_1', actorId: 'ou_actor', data: { subcommand: 'config' },
+      });
+      expect(response.success).toBe(true);
+      expect(requestAgentConfigCard).toHaveBeenCalledWith({ chatId: 'oc_1', actorId: 'ou_actor' });
+    });
   });
 
   describe('WECHAT_WIRED_DESCRIPTOR (Issue #1554)', () => {

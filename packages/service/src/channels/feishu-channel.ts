@@ -240,6 +240,12 @@ export interface FeishuChannelConfig {
    * undefined disables submission (cards still render the summary).
    */
   issueReportingClient?: import('@disclaude/core').GitHubIssueClient;
+  /**
+   * #4914: preset catalog and chat-level selection ports backing the native
+   * agent config card. Injected by the wired-descriptor setup (same services
+   * the /agent command consumes); undefined disables `/agent config` cards.
+   */
+  agentConfigAccess?: import('./feishu/agent-config-cards.js').FeishuAgentConfigAccess;
 }
 
 /**
@@ -324,6 +330,12 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     return this.feishuMessageHandler.requestIssueReport(record, target);
   }
 
+  /** #4914: send the native agent config card (harness/model/thinking). */
+  requestAgentConfigCard(target: { chatId: string; threadRootId?: string; actorId?: string }):
+    Promise<{ ok: true } | { ok: false; error: string }> {
+    return this.feishuMessageHandler.requestAgentConfigCard(target);
+  }
+
   constructor(config: FeishuChannelConfig = {}) {
     super(config, 'feishu', 'Feishu');
     // Preserve explicitly supplied empty strings so callers/tests can model
@@ -382,6 +394,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       // Issue #5400: descriptor setup injects the GitHub client after this
       // constructor returns; read it at callback time like the resolvers above.
       issueClient: () => config.issueReportingClient,
+      // #4914: same deferred-injection pattern for the config-card ports.
+      agentConfigAccess: () => config.agentConfigAccess,
     });
 
     logger.info({ id: this.id }, 'FeishuChannel created');
