@@ -844,6 +844,7 @@ fi
           CODEX_REASONING_EFFORT: '',
         },
         model: '',
+        builtinsDir: fixtures.builtinsDir,
         weeklyQuota: { weeklyQuotaAdmission: 'enforce' },
       });
       // One queryStream = one codex session: input 'a' starts fresh (n=1,
@@ -1634,6 +1635,7 @@ fi
         ...env,
       },
       model: '',
+      builtinsDir: fx.builtinsDir,
     });
 
   const readCount = (fx: Fixtures, name: string): number => {
