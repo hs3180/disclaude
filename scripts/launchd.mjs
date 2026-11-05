@@ -1155,28 +1155,61 @@ ${programArgs.map((a) => `    <string>${xmlEscape(a)}</string>`).join('\n')}
   );
 }
 
+// Issue #5619 (T-038 rework 2): the Chromium sidecar uses the same modern
+// domain-target API as the service side — `bootstrap gui/<uid> <plist>` to
+// load, `bootout gui/<uid>/<label>` to unload (idempotent via a `print`
+// probe), `print` instead of the legacy `list` for state/pid.
 function loadPlistAt(plistPath, label) {
   if (!existsSync(plistPath)) {
     console.error(`Plist not found: ${plistPath}`);
     console.error('Run "generate" or "install" first.');
     throw new Error('Cannot load missing plist');
   }
-  execFileSync('launchctl', ['load', plistPath], { stdio: 'inherit' });
+  try {
+    execFileSync('launchctl', buildLaunchctlInvocation('bootstrap', { plistPath, label }), { stdio: 'inherit' });
+  } catch (error) {
+    // Idempotent load: bootstrap fails when the label is already in the
+    // domain. Confirm via print, then bootout + bootstrap so the fresh plist
+    // takes effect; anything else is a real failure. (Same recovery as the
+    // service-side loadPlist.)
+    if (!printChromiumState().loaded) throw error;
+    console.log('Chromium service already bootstrapped; reloading with the new plist.');
+    execFileSync('launchctl', buildLaunchctlInvocation('bootout', { label }), { stdio: 'pipe' });
+    execFileSync('launchctl', buildLaunchctlInvocation('bootstrap', { plistPath, label }), { stdio: 'inherit' });
+  }
   console.log(`Service loaded (${label}).`);
 }
 
-function unloadPlistAt(plistPath, label) {
-  if (!existsSync(plistPath)) return;
-  try { execFileSync('launchctl', ['unload', plistPath], { stdio: 'pipe' }); }
-  catch { /* Preserve idempotent stop/restart when the service is already unloaded. */ }
+function unloadPlistAt(label) {
+  // bootout addresses the service by domain target, so it works even when the
+  // plist file has already been removed; not-loaded is a no-op (stop and
+  // uninstall stay idempotent).
+  if (!printChromiumState().loaded) return;
+  execFileSync('launchctl', buildLaunchctlInvocation('bootout', { label }), { stdio: 'pipe' });
   console.log(`Service unloaded (${label}).`);
 }
 
-function chromiumServicePid() {
+/**
+ * Whether the Chromium sidecar is bootstrapped into the user domain, via
+ * `launchctl print gui/<uid>/<label>` (the modern replacement for
+ * `launchctl list <label>`). Returns the captured print output so callers can
+ * read `pid =` / `state =` lines from the same probe.
+ */
+function printChromiumState() {
   try {
-    const output = execFileSync('launchctl', ['list', LABEL_CHROMIUM], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-    return { loaded: true, pid: Number(output.match(/"PID"\s*=\s*(\d+)/)?.[1]) || undefined };
-  } catch { return { loaded: false }; }
+    const output = execFileSync('launchctl', buildLaunchctlInvocation('print', { label: LABEL_CHROMIUM }), {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return { loaded: true, output };
+  } catch {
+    return { loaded: false, output: '' };
+  }
+}
+
+function chromiumServicePid() {
+  const { loaded, output } = printChromiumState();
+  return { loaded, pid: loaded ? (Number(output.match(/^\s*pid\s*=\s*(\d+)/m)?.[1]) || undefined) : undefined };
 }
 
 function validateIsolatedChromium() {
@@ -1222,7 +1255,7 @@ async function activateChromium(restart) {
   assertChromiumProfileVersion(resolveChromiumProfileDir(), diagnosis.cycles?.[0]?.browser);
   const stop = async () => {
     if (!chromiumServicePid().loaded) return;
-    execFileSync('launchctl', ['unload', existsSync(CR_PLIST_PATH) ? CR_PLIST_PATH : CR_PREVIOUS_PLIST_PATH], { stdio: 'pipe' });
+    execFileSync('launchctl', buildLaunchctlInvocation('bootout', { label: LABEL_CHROMIUM }), { stdio: 'pipe' });
     if (chromiumServicePid().loaded) throw new Error('launchd service remained loaded after stop');
   };
   const ready = await transitionChromium({ paths: [config, CR_AUTO_PLIST_PATH, CR_MANUAL_PLIST_PATH], wasLoaded: prior.loaded,
@@ -1259,7 +1292,7 @@ async function cmdChromiumInstall() {
 }
 
 function cmdChromiumUninstall() {
-  unloadPlistAt(CR_PLIST_PATH, LABEL_CHROMIUM);
+  unloadPlistAt(LABEL_CHROMIUM);
   if (existsSync(CR_PLIST_PATH)) {
     rmSync(CR_PLIST_PATH);
     console.log(`Plist removed: ${CR_PLIST_PATH}`);
@@ -1273,7 +1306,7 @@ async function cmdChromiumStart() {
 }
 
 function cmdChromiumStop() {
-  unloadPlistAt(CR_PLIST_PATH, LABEL_CHROMIUM);
+  unloadPlistAt(LABEL_CHROMIUM);
 }
 
 async function cmdChromiumRestart() {
