@@ -176,3 +176,17 @@ Concretely, when composing the initialization prompt (Step 3):
 | External review automation | May manage review groups separately                            |
 | `daily-chat-review`        | May trigger `start-discussion` when repetitive issues detected |
 | `daily-soul-question`      | May trigger `start-discussion` for deep reflection topics      |
+
+## Relationship with `/discuss` (Issue #5412)
+
+`/discuss` is the user-side quick entry for side discussions and deliberately prefers
+the platform's native topic/thread mechanism over group creation:
+
+- Short aside in the same chat → `/discuss <问题>` (native thread/topic, own agent slot,
+  conclusion flows back via `/discuss done`). Do NOT create a group for these.
+- This skill remains the path when a separate group is genuinely needed (multi-party,
+  isolated execution stream, longer lifetime) — including the `--group` delegation of
+  `/discuss`, which only assembles the context bundle and hands it to this skill.
+
+When you (the agent) are asked to start a side discussion, choose the venue by the same
+criteria: native thread for in-chat asides, this skill for group handoffs.

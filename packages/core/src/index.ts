@@ -389,6 +389,11 @@ export {
   type CommandHandler,
   type CommandDefinition,
   type DebugGroup,
+  // Issue #5412: side-discussion hook types backing /discuss
+  type SideVenueKind,
+  type SideDiscussionOpenRequest,
+  type SideDiscussionConcludeRequest,
+  type SideDiscussionSummary,
 } from './control/index.js';
 
 // Internal Event Bus (Issue #4031: decoupled event propagation)

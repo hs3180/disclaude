@@ -55,6 +55,12 @@ export interface CommandRouterInput {
   actorId?: string;
   sourceMessageId?: string;
   senderType?: string;
+  /**
+   * Issue #5412: the replied-to (trigger) message when /discuss is sent as a
+   * reply. Rides in command data (CommandDataMap.discuss.parentId) so the
+   * side discussion can branch from that message.
+   */
+  parentId?: string;
 }
 
 /**
@@ -97,8 +103,10 @@ export async function tryHandleSlashCommand(
   // Control-handler path (Issue #3529: typed command data).
   // Issue #4587 (part 3): threadRootId rides along so /reset and /stop
   // address the thread's agent slot when typed inside a topic-group thread.
+  // Issue #5412: /discuss branches from the replied-to message; parentId
+  // rides in its raw data only (CommandDataMap.discuss.parentId).
   if (deps.hasControlHandler) {
-    const rawData = { args };
+    const rawData = { args, ...(cmd === 'discuss' && input.parentId ? { parentId: input.parentId } : {}) };
     const response = await deps.emitControl(
       createControlCommand(cmd as ControlCommandType, input.chatId, rawData,
         input.threadRootId || input.chatType || input.actorId || input.sourceMessageId ? {

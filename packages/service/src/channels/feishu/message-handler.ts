@@ -36,6 +36,9 @@ import {
   type ActionBoundInput,
   type ChatFailureRecord,
   type GitHubIssueClient,
+  type SideDiscussionConcludeRequest,
+  type SideDiscussionOpenRequest,
+  type SideDiscussionSummary,
 } from '@disclaude/core';
 import { InteractionManager } from '../../platforms/feishu/interaction-manager.js';
 import { registerFeishuInputSource } from '../../agents/input-provenance.js';
@@ -49,6 +52,7 @@ import { FeishuAgentInput } from './agent-input.js';
 import { FeishuTaskQuestionCards } from './task-question-cards.js';
 import type { TaskQuestionFlowPorts } from '../../agents/task-question-flow.js';
 import { FeishuIssueReport } from './issue-report.js';
+import { FeishuSideDiscussions, SideDiscussionStore } from './side-discussions.js';
 import { FeishuPrivateWorkflows, type PrivateWorkflowRequest } from './private-workflows.js';
 import { tryHandleSlashCommand, tryHandleGuidance } from './command-router.js';
 import type { WelcomeService } from '../../platforms/feishu/welcome-service.js';
@@ -216,6 +220,7 @@ export class MessageHandler {
   private taskQuestionHost?: { appId: string; ports: Omit<TaskQuestionFlowPorts, 'send' | 'reconcileCard'> };
   private issueReport?: FeishuIssueReport;
   private readonly issueClient?: () => GitHubIssueClient | undefined;
+  private sideDiscussions?: FeishuSideDiscussions;
   private welcomeService?: WelcomeService;
 
   setWelcomeService(service: WelcomeService): void { this.welcomeService = service; }
@@ -248,6 +253,20 @@ export class MessageHandler {
     Promise<{ ok: true } | { ok: false; error: string }> {
     if (!this.issueReport) { return Promise.resolve({ ok: false, error: 'Feishu issue reporting is unavailable' }); }
     return this.issueReport.start(record, target);
+  }
+
+  /** Issue #5412: /discuss delivery arm — open/conclude/list side discussions. */
+  openSideDiscussion(request: SideDiscussionOpenRequest): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
+    if (!this.sideDiscussions) { return Promise.resolve({ ok: false, error: 'Feishu side discussions are unavailable' }); }
+    return this.sideDiscussions.open(request);
+  }
+  concludeSideDiscussion(request: SideDiscussionConcludeRequest): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
+    if (!this.sideDiscussions) { return Promise.resolve({ ok: false, error: 'Feishu side discussions are unavailable' }); }
+    return this.sideDiscussions.conclude(request);
+  }
+  listSideDiscussions(chatId: string): Promise<SideDiscussionSummary[]> {
+    if (!this.sideDiscussions) { return Promise.resolve([]); }
+    return this.sideDiscussions.list(chatId);
   }
   private readonly privateWorkflows: FeishuPrivateWorkflows;
 
@@ -308,6 +327,7 @@ export class MessageHandler {
     if (this.taskQuestionHost) { this.taskQuestionCards = new FeishuTaskQuestionCards(client, this.taskQuestionHost.appId, this.taskQuestionHost.ports); }
     this.issueReport?.close();
     this.issueReport = new FeishuIssueReport(client, this.issueClient ?? (() => undefined));
+    this.sideDiscussions = new FeishuSideDiscussions(client, new SideDiscussionStore(SideDiscussionStore.defaultFilePath()));
     this.controlHandler = this.getHasControlHandler();
     logger.debug({ controlHandler: this.controlHandler }, 'MessageHandler initialized');
   }
@@ -1520,6 +1540,7 @@ export class MessageHandler {
     const commandInput: import('./command-router.js').CommandRouterInput = {
       textWithoutMentions, mentions, chatId: chat_id, threadRootId, sourceMessageId: message_id, senderType: sender?.sender_type,
       ...(chat_type === 'p2p' || chat_type === 'group' || chat_type === 'topic' ? { chatType: chat_type } : {}),
+      ...(parent_id ? { parentId: parent_id } : {}),
       actorId: extractOpenId(sender),
     };
     const commandDeps = {

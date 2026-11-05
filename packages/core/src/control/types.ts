@@ -132,8 +132,71 @@ export interface ControlHandlerContext {
     ): Promise<{ ok: true } | { ok: false; error: string }>;
   };
 
+  /**
+   * Issue #5412: channel hook that delivers side discussions (支线讨论) for
+   * /discuss. The command parses input and picks the venue in core; the hook
+   * executes it on the platform (native thread/topic send, DM, record
+   * persistence, conclusion flow-back). Absent → /discuss is unavailable.
+   */
+  sideDiscussions?: {
+    /** Open a side venue and persist the source link. */
+    open(request: SideDiscussionOpenRequest): Promise<{ ok: true; message: string } | { ok: false; error: string }>;
+    /** Post a conclusion summary back to the source venue and mark the record concluded. */
+    conclude(request: SideDiscussionConcludeRequest): Promise<{ ok: true; message: string } | { ok: false; error: string }>;
+    /** Side-discussion summaries visible from a chat (source or venue). */
+    list(chatId: string): Promise<SideDiscussionSummary[]>;
+  };
+
   /** 日志记录器 */
   logger?: Logger;
+}
+
+/**
+ * 载体类型（Issue #5412 选路面）：
+ * - `topic-thread` — 话题群内新开原生话题（新根消息）
+ * - `message-thread` — p2p/普通群以锚点消息开原生话题线程（reply_in_thread）
+ * - `p2p` — 与发起人私聊承接
+ * - `delegated-group` — 建群交给 start-discussion 交接（本命令不直接建群）
+ */
+export type SideVenueKind = 'topic-thread' | 'message-thread' | 'p2p' | 'delegated-group';
+
+/** /discuss open request — context bundle for opening a side venue. */
+export interface SideDiscussionOpenRequest {
+  chatId: string;
+  question: string;
+  venue: Exclude<SideVenueKind, 'delegated-group'>;
+  /** Thread anchor chosen by core (trigger message when replying, else the command message). */
+  anchorMessageId?: string;
+  /** Message the user replied to with /discuss, when any. */
+  triggerMessageId?: string;
+  /** The /discuss command message itself. */
+  commandMessageId?: string;
+  /** Thread root when the command was typed inside an existing topic. */
+  threadRootId?: string;
+  chatType?: 'p2p' | 'group' | 'topic';
+  actorId?: string;
+}
+
+/** /discuss done request — conclusion flow-back. */
+export interface SideDiscussionConcludeRequest {
+  chatId: string;
+  /** Explicit record id (`side-N`), when given. */
+  id?: string;
+  /** Thread root of the chat where /discuss done was typed (anchor resolution). */
+  threadRootId?: string;
+  summary: string;
+  actorId?: string;
+}
+
+/** Persisted side-discussion summary surfaced by /discuss status. */
+export interface SideDiscussionSummary {
+  id: string;
+  title: string;
+  venue: SideVenueKind;
+  /** Thread anchor for topic/message-thread venues. */
+  anchorMessageId?: string;
+  createdAt: string;
+  status: 'open' | 'concluded';
 }
 
 /**
