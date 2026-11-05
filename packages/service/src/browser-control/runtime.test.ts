@@ -345,6 +345,26 @@ describe('transparent browser-use command coordination', () => {
     expect(browserStatus(f.path).state).toBe('idle');
   });
 
+  it('re-validates the pinned websocket before a normal attach and self-heals after a browser restart (#5427)', async () => {
+    const f = await fixture();
+    const staleId = f.data.browserEnv.BU_CDP_WS.split('/').pop()!;
+    const second = randomUUID();
+    f.setBrowserId(second); // Same HTTP endpoint, rotated /devtools/browser/<id>.
+    const inspected = await f.run({ inspect: true }).result;
+    expect(inspected.code).toBe(0);
+    const reported = JSON.parse(inspected.stdout);
+    // The invocation attaches through the CURRENT identity, not the stale pin.
+    expect(reported.endpoint).toContain(second);
+    expect(reported.endpoint).not.toContain(staleId);
+    const migrated = JSON.parse(readFileSync(f.path, 'utf8'));
+    expect(migrated.browserEnv.BU_CDP_WS).toContain(second);
+    expect(migrated.directory).not.toBe(f.data.directory);
+    expect(reported.runtime).toBe(migrated.directory);
+    roots.add(migrated.directory);
+    expect(inspected.stderr).toContain('browser-connection-refreshed');
+    expect(browserStatus(f.path).state).toBe('idle');
+  });
+
   it('refreshes in place without migration while the browser id is unchanged (#5427)', async () => {
     const f = await fixture();
     const onEvent = vi.fn();
