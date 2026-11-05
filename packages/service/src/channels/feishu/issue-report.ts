@@ -18,6 +18,7 @@ import { randomUUID } from 'node:crypto';
 import type { Client } from '@larksuiteoapi/node-sdk';
 import {
   sanitizeDiagnosticText,
+  createPrefilledIssueDraft,
   type ChatFailureRecord,
   type GitHubIssueClient,
 } from '@disclaude/core';
@@ -61,31 +62,10 @@ export function composeIssueDraft(
   record: ChatFailureRecord,
   note: string | undefined
 ): { title: string; body: string } {
-  const shortId = record.diagnosticId.slice(0, 8);
-  // Records are sanitized at capture time; re-run defensively so a malformed
-  // producer cannot leak auth material into a public issue.
-  const detail = sanitizeDiagnosticText(record.detail);
-  const headline = detail.split('\n')[0].slice(0, 80) || record.failureClass;
-  const safeNote = note?.trim() ? sanitizeDiagnosticText(note) : undefined;
-  const body = [
-    '### 自动诊断摘要',
-    `- 诊断 ID: \`${record.diagnosticId}\``,
-    `- 分类: ${record.failureClass}`,
-    `- 时间(UTC): ${record.timestamp}`,
-    `- Backend/Provider: ${record.backend ?? record.provider ?? 'unavailable'}`,
-    `- disclaude 版本: ${SERVICE_VERSION}`,
-    `- 会话/消息: session ${record.sessionId ?? 'unavailable'}, message ${record.sourceMessageId ?? 'unavailable'}, chat ${record.chatId}`,
-    '- 日志: 服务端 disclaude-combined 日志按诊断 ID 检索（或服务 stderr）；缺失字段以 unavailable 标记。',
-    '',
-    '### 错误详情',
-    detail,
-    '',
-    '### 用户补充',
-    safeNote ?? '（未填写）',
-    '',
-    '> 由 disclaude `/issue` 一键上报生成；诊断信息已脱敏，缺失信息明确标注，未编造原因或复现结论。',
-  ].join('\n');
-  return { title: `[feedback] ${record.failureClass}: ${headline} (diag ${shortId})`, body };
+  const draft = createPrefilledIssueDraft(record, SERVICE_VERSION);
+  const safeNote = note?.trim() ? sanitizeDiagnosticText(note).slice(0, 600) : undefined;
+  draft.body += `\n\n### 用户补充\n${safeNote ?? '（未填写）'}`;
+  return draft;
 }
 
 export class FeishuIssueReport {

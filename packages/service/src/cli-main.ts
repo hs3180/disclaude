@@ -41,6 +41,7 @@ import {
   type ChatType,
 } from '@disclaude/core';
 import crypto from 'node:crypto';
+import { SERVICE_VERSION } from './version.js';
 import { DisclaudeService } from './service.js';
 import { HttpApiServer } from './http-api-server.js';
 import { ChatSessionPool } from './chat-session-pool.js';
@@ -586,6 +587,7 @@ export async function main(): Promise<void> {
     // (recorded by ChatAgent); the Feishu descriptor setup adds the
     // confirmation-card hook on top of it.
     failureRegistry,
+    serviceVersion: SERVICE_VERSION,
     projectManager,
     // Issue #3807: /restart command calls this to trigger graceful shutdown
     get shutdown() {

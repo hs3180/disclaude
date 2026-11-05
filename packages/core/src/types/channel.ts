@@ -140,7 +140,9 @@ export type ControlCommandType =
   | 'steer'
   | 'goal'
   // One-click GitHub issue reporting of the chat's last failure (Issue #5400)
-  | 'issue';
+  | 'issue'
+  // Backward-compatible alias; /issue is the canonical entry.
+  | 'feedback';
 
 /**
  * Typed data schema for each command type (Issue #3529).

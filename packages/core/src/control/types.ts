@@ -120,6 +120,9 @@ export interface ControlHandlerContext {
     get(chatId: string): ChatFailureRecord | undefined;
   };
 
+  /** Version embedded in locally generated issue drafts. */
+  serviceVersion?: string;
+
   /**
    * Issue #5400: channel hook that renders the sanitized confirmation card
    * for a failure record (Feishu interactive card). Absent → /issue answers

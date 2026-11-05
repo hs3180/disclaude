@@ -66,6 +66,12 @@ describe('tryHandleSlashCommand', () => {
     expect(deps.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining('用户直接发送') }));
   });
 
+  it('routes /feedback through the compatible /issue alias entry', async () => {
+    const { deps } = makeDeps({ hasControlHandler: true, controlResponse: { success: true, message: 'accepted' } });
+    await tryHandleSlashCommand(input('/feedback'), deps);
+    expect(deps.emitControl).toHaveBeenCalledWith(expect.objectContaining({ type: 'feedback', chatId: 'oc_x' }));
+  });
+
   it('carries the raw platform source ID outside Goal arguments into control dispatch', async () => {
     const { deps } = makeDeps({ hasControlHandler: true, controlResponse: { success: true, message: 'accepted' } });
     await tryHandleSlashCommand({ textWithoutMentions: '/goal start some-id 1', chatId: 'oc_x',

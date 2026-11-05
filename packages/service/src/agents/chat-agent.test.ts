@@ -68,6 +68,9 @@ vi.mock('@disclaude/core', async (importOriginal) => {
     // Issue #4399: real driver so the streaming wiring is exercised end-to-end.
     StreamingReplyDriver: actual.StreamingReplyDriver,
     sanitizeDiagnosticText: actual.sanitizeDiagnosticText,
+    // T-085: failure diagnostics append a locally built prefilled issue URL.
+    createPrefilledIssueUrl: actual.createPrefilledIssueUrl,
+    DEFAULT_ISSUE_REPOSITORY: actual.DEFAULT_ISSUE_REPOSITORY,
     // Issue #4649 (review ①): real class — ChatAgent throws it from
     // setTurnPending and the tests below assert instanceof on the exact
     // class the production import resolves to.

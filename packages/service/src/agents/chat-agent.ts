@@ -71,6 +71,8 @@ import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 import type { InterruptedServiceTurn, ServiceTurnRecoveryStore } from '../service-turn-recovery.js';
 import { HistoryManager } from './history-manager.js';
 import crypto from 'node:crypto';
+import { SERVICE_VERSION } from '../version.js';
+import { appendFailureReportLink } from './failure-report-link.js';
 
 // Type alias for backward compatibility within this module
 type UserInput = AgentUserInput;
@@ -2599,9 +2601,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   }
 
   private formatFailureDiagnostic(failure: ReturnType<ChatAgent['createFailureContext']>): string {
-    return `诊断 ID: ${failure.diagnosticId}\nRun ID: ${failure.runId ?? 'unavailable'}\n会话 ID: ${failure.sessionId}\n消息 ID: ${failure.sourceMessageId ?? 'unavailable'}\n` +
+    const diagnostic = `诊断 ID: ${failure.diagnosticId}\nRun ID: ${failure.runId ?? 'unavailable'}\n会话 ID: ${failure.sessionId}\n消息 ID: ${failure.sourceMessageId ?? 'unavailable'}\n` +
       `Chat ID: ${failure.chatId}；Thread: ${failure.threadRootId}\nUTC: ${failure.timestamp}；Backend: ${failure.backend ?? failure.provider}；分类: ${failure.failureClass}\n` +
       `错误: ${failure.detail}\n日志: ${failure.logPath}（或服务 stderr），按诊断 ID 检索。`;
+    return appendFailureReportLink(
+      diagnostic,
+      failure,
+      SERVICE_VERSION,
+      this.callbacks.getCapabilities?.(this.boundChatId)?.supportsMarkdown === true,
+    );
   }
 
   /**

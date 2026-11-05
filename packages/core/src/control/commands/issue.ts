@@ -1,5 +1,6 @@
 import type { ControlCommand, ControlResponse } from '../../types/channel.js';
 import type { CommandHandler, ControlHandlerContext } from '../types.js';
+import { createPrefilledIssueUrl, DEFAULT_ISSUE_REPOSITORY } from '../../feedback/index.js';
 
 /**
  * /issue (Issue #5400): offer one-click GitHub reporting of this chat's most
@@ -23,10 +24,19 @@ export const handleIssue: CommandHandler<'issue'> = async (
     };
   }
   if (!context.issueReporting) {
-    return {
-      success: false,
-      message: '当前渠道不支持上报确认卡，或 github 配置段未配置。请联系服务维护者。',
-    };
+    try {
+      const url = createPrefilledIssueUrl(record, context.serviceVersion ?? 'unavailable');
+      return {
+        success: true,
+        message: `当前渠道使用文本上报。复制链接打开预填 GitHub issue（提交前请核对脱敏摘要）：\n${url}`,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: `预填链接生成失败，请前往 https://github.com/${DEFAULT_ISSUE_REPOSITORY}/issues/new 手动新建 issue，并仅粘贴脱敏诊断 ID ${record.diagnosticId}。`,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
   try {
     const sent = await context.issueReporting.sendConfirmation(record, {
@@ -50,4 +60,13 @@ export const handleIssue: CommandHandler<'issue'> = async (
       error: error instanceof Error ? error.message : String(error),
     };
   }
+};
+
+/** /feedback remains a compatible alias while /issue is the single canonical entry. */
+export const handleFeedback: CommandHandler<'feedback'> = async (command, context) => {
+  const response = await handleIssue({ ...command, type: 'issue' }, context);
+  return {
+    ...response,
+    message: `${response.message ?? ''}\n/feedback 已统一为 /issue 的兼容别名，后续请使用 /issue。`.trim(),
+  };
 };

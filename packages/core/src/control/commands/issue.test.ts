@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ControlCommand } from '../../types/channel.js';
 import type { ControlHandlerContext } from '../types.js';
 import { ChatFailureRegistry, type ChatFailureRecord } from '../../feedback/index.js';
-import { handleIssue } from './issue.js';
+import { handleIssue, handleFeedback } from './issue.js';
 
 const record: ChatFailureRecord = {
   chatId: 'chat-1',
@@ -38,12 +38,14 @@ describe('/issue command', () => {
     expect(response.message).toContain('暂无可上报的失败记录');
   });
 
-  it('answers with text-only guidance when the channel cannot render cards', async () => {
+  it('answers with a copyable prefilled URL when the channel cannot render cards', async () => {
     const registry = new ChatFailureRegistry();
     registry.record(record);
-    const response = await handleIssue(command, context({ failureRegistry: registry }));
-    expect(response.success).toBe(false);
-    expect(response.message).toContain('不支持上报确认卡');
+    const response = await handleIssue(command, context({ failureRegistry: registry, serviceVersion: '0.6.0' }));
+    expect(response.success).toBe(true);
+    expect(response.message).toContain('复制链接');
+    expect(response.message).toContain('https://github.com/hs3180/disclaude/issues/new?');
+    expect(decodeURIComponent(response.message!)).toContain('0.6.0');
   });
 
   it('delegates the record to the channel hook with thread and actor context', async () => {
@@ -77,6 +79,15 @@ describe('/issue command', () => {
     expect(response.message).toContain('card was not delivered');
     expect(response.message).toContain('已保留');
     expect(registry.get('chat-1')).toBeDefined();
+  });
+
+  it('keeps /feedback compatible and points to the canonical /issue entry', async () => {
+    const registry = new ChatFailureRegistry();
+    registry.record(record);
+    const response = await handleFeedback({ type: 'feedback', chatId: 'chat-1' }, context({ failureRegistry: registry }));
+    expect(response.success).toBe(true);
+    expect(response.message).toContain('兼容别名');
+    expect(response.message).toContain('/issue');
   });
 
   it('does not crash the command when the hook throws', async () => {
