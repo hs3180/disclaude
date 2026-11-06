@@ -1457,6 +1457,269 @@ describe('ClaudeSDKProvider', () => {
   });
 
   // --------------------------------------------------------------------------
+  // Z.ai [1301] Content Moderation Degradation Ladder (Issue #5463 rework)
+  //
+  // The incident harness is THIS provider: Z.ai routed through an
+  // Anthropic-compatible gateway (ANTHROPIC_BASE_URL) on the claude-agent-sdk,
+  // whose [1301] verdict arrives as an is_error result → turn_failed terminal.
+  // A scripted query() injects the verdict on the original conversation; the
+  // four required states are asserted on the real provider path:
+  // classification (verdict vs. ordinary failure), degradation (clean one-shot
+  // replay → fallback model), termination (repeat verdict / side-effect /
+  // budget exhaustion) and the per-chat rate limit. Scenario names mirror the
+  // codex ladder tests (providers/codex/provider-moderation-recovery.test.ts).
+  // --------------------------------------------------------------------------
+
+  describe('content moderation degradation ladder (Issue #5463)', () => {
+    const VERDICT =
+      'API Error: 400 "provider": 系统检测到输入或生成内容可能包含不安全或敏感内容 [1301]';
+    const verdict = (sessionId: string) => ({
+      type: 'result', subtype: 'success', is_error: true, result: VERDICT,
+      session_id: sessionId, usage: { input_tokens: 5, output_tokens: 1 },
+    });
+    const ok = (sessionId: string) => ({
+      type: 'result', subtype: 'success', is_error: false, result: '✅ Complete',
+      session_id: sessionId, usage: { input_tokens: 5, output_tokens: 3 },
+    });
+    const makeInput = (text: string, runId: string): UserInput => ({
+      role: 'user',
+      content: text,
+      correlation: { runId, chatId: 'chat-5463', sourceMessageId: runId, traceId: 'trace-5463' },
+    });
+
+    interface WirePull { type: string; message?: { role: string; content: string }; uuid?: string }
+
+    /**
+     * Script the mock SDK gateway. Each scripted attempt consumes its prompt
+     * stream exactly like the real SDK (one pull per user message, only after
+     * the previous turn settled) so turn bookkeeping stays realistic. Records
+     * the wire-level pulled messages and the model of every query() call.
+     */
+    const scriptGateway = (
+      attempts: Array<(context: { pull: () => Promise<void> }) => AsyncGenerator<Record<string, unknown>>>
+    ) => {
+      let nextIndex = 0;
+      const pulls: WirePull[][] = [];
+      const models: Array<string | undefined> = [];
+      mockQuery.mockImplementation(({
+        prompt, options,
+      }: { prompt: AsyncGenerator<unknown>; options: { model?: string } }) => {
+        const index = nextIndex++;
+        models.push(options.model);
+        const received: WirePull[] = [];
+        pulls.push(received);
+        const pull = async (): Promise<void> => {
+          const step = (await prompt.next()) as { done?: boolean; value?: unknown };
+          if (!step.done) {
+            received.push(step.value as WirePull);
+          }
+        };
+        return Object.assign(attempts[index]({ pull }), { close: vi.fn() });
+      });
+      return { pulls, models };
+    };
+
+    const run = async (inputs: UserInput[], env: Record<string, string | undefined>) => {
+      const stream = provider.queryStream(
+        (async function* () {
+          for (const input of inputs) {
+            yield input;
+          }
+        })(),
+        { settingSources: [], model: 'glm-5.2', env: { DISCLAUDE_MODERATION_FALLBACK_MODELS: 'glm-4.7-flash', ...env } }
+      );
+      const messages: AgentMessage[] = [];
+      for await (const message of stream.iterator) { messages.push(message); }
+      return messages;
+    };
+
+    it('classifies the [1301] verdict and recovers in a clean session on the same model, keeping the original conversation alive', async () => {
+      const input1 = makeInput('帮我总结这段日志', '54630000-0000-4000-8000-000000000001');
+      const input2 = makeInput('第二条消息', '54630000-0000-4000-8000-000000000002');
+      const { pulls, models } = scriptGateway([
+        // Original long-lived conversation: turn 1 eats the verdict; after the
+        // recovery the conversation keeps serving turn 2 through THIS query.
+        async function* ({ pull }) {
+          await pull();
+          yield verdict('sess-5463-a');
+          await pull(); // second input is pulled only after turn 1 settles
+          yield ok('sess-5463-a');
+        },
+        // Clean one-shot replay, same model, receives the ORIGINAL wire message.
+        async function* ({ pull }) {
+          await pull();
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'moderation-recovered' }] },
+            session_id: 'sess-5463-clean',
+          };
+          yield ok('sess-5463-clean');
+        },
+      ]);
+
+      const messages = await run([input1, input2], {});
+
+      expect(mockQuery).toHaveBeenCalledTimes(2);
+      // Degradation ladder: clean replay keeps the SAME model.
+      expect(models).toEqual(['glm-5.2', 'glm-5.2']);
+      // The replay carried the original wire message verbatim — no trimming,
+      // no rewriting; correlation uuid survives.
+      expect(pulls[0]).toHaveLength(2); // turn 1 + turn 2 both on the original query
+      expect(pulls[1]).toHaveLength(1); // the replay saw exactly the one original message
+      expect(pulls[1][0]).toEqual(pulls[0][0]);
+      expect(pulls[0][0]?.uuid).toBe('54630000-0000-4000-8000-000000000001');
+
+      // Turn 2 was served by the ORIGINAL conversation (query #0), proving the
+      // long-lived session survived the one-shot recovery.
+      expect(pulls[0][1]?.message?.content).toBe('第二条消息');
+
+      const statuses = messages.filter((message) => message.type === 'status').map((message) => message.content);
+      expect(statuses).toHaveLength(2);
+      expect(statuses[0]).toContain('🛡️');
+      expect(statuses[0]).toContain('glm-5.2');
+      expect(statuses[0]).toContain('不裁剪、不拆分');
+      expect(statuses[1]).toContain('✅');
+      expect(statuses[1]).toContain('glm-5.2');
+
+      const text = messages.find((message) => message.type === 'text');
+      expect(text?.content).toBe('moderation-recovered');
+      // Replay messages re-anchor to the conversation's session id.
+      expect(text?.metadata?.sessionId).toBe('sess-5463-a');
+
+      const results = messages.filter((message) => message.type === 'result');
+      expect(results).toHaveLength(2);
+      expect(results.every((result) => result.metadata?.terminatedReason === undefined)).toBe(true);
+      expect(results.every((result) => result.metadata?.sessionId === 'sess-5463-a')).toBe(true);
+    });
+
+    it('falls back to the configured model when the same model repeats the verdict', async () => {
+      const input = makeInput('帮我总结这段日志', '54630000-0000-4000-8000-000000000003');
+      const { pulls, models } = scriptGateway([
+        async function* ({ pull }) { await pull(); yield verdict('sess-5463-a'); },
+        async function* ({ pull }) { await pull(); yield verdict('sess-5463-clean-1'); },
+        async function* ({ pull }) {
+          await pull();
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'fallback-recovered' }] },
+            session_id: 'sess-5463-clean-2',
+          };
+          yield ok('sess-5463-clean-2');
+        },
+      ]);
+
+      const messages = await run([input], {});
+
+      expect(mockQuery).toHaveBeenCalledTimes(3);
+      expect(models).toEqual(['glm-5.2', 'glm-5.2', 'glm-4.7-flash']);
+      // Every replay (same model AND fallback) received the original payload.
+      expect(pulls[1]).toEqual(pulls[0]);
+      expect(pulls[2]).toEqual(pulls[0]);
+
+      const statuses = messages.filter((message) => message.type === 'status').map((message) => message.content);
+      expect(statuses[0]).toContain('glm-5.2');
+      expect(statuses[1]).toContain('glm-4.7-flash');
+      expect(statuses[2]).toContain('✅');
+      expect(statuses[2]).toContain('glm-4.7-flash');
+
+      expect(messages.find((message) => message.type === 'text')?.content).toBe('fallback-recovered');
+      const result = messages.at(-1);
+      expect(result?.type).toBe('result');
+      expect(result?.metadata?.terminatedReason).toBeUndefined();
+    });
+
+    it('terminates immediately when the fallback model repeats the verdict, with a structured explanation card', async () => {
+      const input = makeInput('帮我总结这段日志', '54630000-0000-4000-8000-000000000004');
+      scriptGateway([
+        async function* ({ pull }) { await pull(); yield verdict('sess-5463-a'); },
+        async function* ({ pull }) { await pull(); yield verdict('sess-5463-clean-1'); },
+        async function* ({ pull }) { await pull(); yield verdict('sess-5463-clean-2'); },
+      ]);
+
+      const messages = await run([input], {});
+
+      expect(mockQuery).toHaveBeenCalledTimes(3);
+      const result = messages.find((message) => message.type === 'result');
+      expect(result?.content).toContain('上游内容审核未通过');
+      expect(result?.content).toContain('诊断 ID: trace-5463:54630000-0000-4000-8000-000000000004');
+      expect(result?.content).toContain('失败类别: content_moderation [1301]');
+      expect(result?.content).toContain('回退模型再次命中同一内容审核判决，已立即终止');
+      expect(result?.content).toContain('已尝试: 原会话 + 2 次干净会话重放（模型 glm-5.2 → glm-4.7-flash）');
+      expect(result?.content).toContain('无需 /reset');
+      expect(result?.metadata?.terminatedReason).toBe('turn_failed');
+      expect(result?.metadata?.terminationDetail).toContain('content moderation [1301]');
+      expect(result?.metadata?.terminationDetail).toContain('cleanSessionAttempts=2');
+      expect(result?.metadata?.terminationDetail).toContain(
+        'attemptedModels=["glm-5.2","glm-4.7-flash"]'
+      );
+      expect(result?.metadata?.terminationDetail).toContain(
+        'diagnosticId=trace-5463:54630000-0000-4000-8000-000000000004'
+      );
+    });
+
+    it('never replays a turn that already produced visible output (side-effect safety)', async () => {
+      const input = makeInput('帮我总结这段日志', '54630000-0000-4000-8000-000000000005');
+      scriptGateway([
+        async function* ({ pull }) {
+          await pull();
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'partial-output-before-verdict' }] },
+            session_id: 'sess-5463-a',
+          };
+          yield verdict('sess-5463-a');
+        },
+      ]);
+
+      const messages = await run([input], {});
+
+      // No replay attempt at all: the partial output makes replay unsafe.
+      expect(mockQuery).toHaveBeenCalledTimes(1);
+      expect(messages.find((message) => message.type === 'text')?.content).toBe('partial-output-before-verdict');
+      const result = messages.find((message) => message.type === 'result');
+      expect(result?.content).toContain('已发生工具或输出，自动重放可能重复外部副作用，已停止降级');
+      expect(result?.content).toContain('失败类别: content_moderation [1301]');
+      expect(result?.metadata?.terminatedReason).toBe('turn_failed');
+    });
+
+    it('enforces the per-chat hourly cap: past the limit only the structured explanation is emitted', async () => {
+      const input1 = makeInput('第一条命中审核', '54630000-0000-4000-8000-000000000006');
+      const input2 = makeInput('第二条命中审核', '54630000-0000-4000-8000-000000000007');
+      scriptGateway([
+        // One long-lived conversation serving two moderated turns.
+        async function* ({ pull }) {
+          await pull();
+          yield verdict('sess-5463-a');
+          await pull();
+          yield verdict('sess-5463-a');
+        },
+        async function* ({ pull }) {
+          await pull();
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'first-recovery' }] },
+            session_id: 'sess-5463-clean',
+          };
+          yield ok('sess-5463-clean');
+        },
+      ]);
+
+      const messages = await run([input1, input2], {
+        DISCLAUDE_MODERATION_MAX_PER_CHAT_PER_HOUR: '1',
+      });
+
+      // Turn 1 spent the single admission; turn 2 must NOT launch another query.
+      expect(mockQuery).toHaveBeenCalledTimes(2);
+      const results = messages.filter((message) => message.type === 'result');
+      expect(results).toHaveLength(2);
+      expect(results[0]?.metadata?.terminatedReason).toBeUndefined();
+      expect(results[1]?.content).toContain('本 chat 每小时自动降级次数已达上限 1');
+      expect(results[1]?.content).toContain('失败类别: content_moderation [1301]');
+      expect(results[1]?.metadata?.terminatedReason).toBe('turn_failed');
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // Process Listener Cleanup (Issue #3378)
   // --------------------------------------------------------------------------
 
