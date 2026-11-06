@@ -1,0 +1,35 @@
+{
+  "schema": "2.0",
+  "config": { "update_multi": true, "enable_forward": true },
+  "header": {
+    "title": { "tag": "plain_text", "content": "交付指标速览" },
+    "subtitle": { "tag": "plain_text", "content": "Card JSON 2.0 离线示例" },
+    "template": "blue"
+  },
+  "body": {
+    "direction": "vertical",
+    "elements": [
+      {
+        "tag": "column_set",
+        "flex_mode": "none",
+        "background_style": "default",
+        "columns": [
+          { "tag": "column", "width": "weighted", "weight": 1, "elements": [{ "tag": "markdown", "content": "**构建**\n通过" }] },
+          { "tag": "column", "width": "weighted", "weight": 1, "elements": [{ "tag": "markdown", "content": "**测试**\n6 失败为基线" }] },
+          { "tag": "column", "width": "weighted", "weight": 1, "elements": [{ "tag": "markdown", "content": "**发布**\n未执行" }] }
+        ]
+      },
+      { "tag": "hr" },
+      {
+        "tag": "collapsible_panel",
+        "element_id": "detail_panel",
+        "expanded": false,
+        "background_color": "grey",
+        "header": { "title": { "tag": "markdown", "content": "折叠详情（本示例可编辑后重新 card_check）" } },
+        "elements": [
+          { "tag": "markdown", "content": "- 指标列来自 column_set\n- 次要说明放折叠面板\n- 修改后先离线校验，再考虑发送" }
+        ]
+      }
+    ]
+  }
+}

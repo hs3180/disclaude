@@ -74,10 +74,14 @@ for the current JSON input schemas and [README.md](./README.md) for setup.
    Project, then `import-file` with its Project-relative `filePath`: the path
    is resolved against the Project directory and must stay inside it —
    absolute paths, traversal out of the Project, symlinks and non-regular
-   files are rejected (limit 2 MB, one file per invocation; whole directory
-   trees and object-storage/URL pull transfers are out of scope). Read the
-   returned hash/size and use `kernelRelativePath` in remote code. Host and
-   kernel paths belong to separate environments.
+   files are rejected (one file per invocation). One command covers regular
+   files up to 512 MB: files above 2 MB upload in server-reassembled chunks
+   and are hash-verified, and a failed or aborted import removes its partial
+   remote file instead of leaving it looking complete — re-run the same
+   command to retry. Read the returned hash/size and use
+   `kernelRelativePath` in remote code. Host and kernel paths belong to
+   separate environments. Whole directory trees and object-storage
+   (S3/URL pull) transfers are out of scope; import files one by one.
 6. Use `observe-image` to obtain a local image artifact and inspect that file
    with the harness's image tool. MIME names alone do not establish plot content.
    Output provenance can be historical after a source edit.
