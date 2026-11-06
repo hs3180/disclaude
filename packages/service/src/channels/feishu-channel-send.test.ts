@@ -608,6 +608,111 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
     });
   });
 
+  describe('automatic final Markdown Card 2.0 (#5487)', () => {
+    const tableAnswer = [
+      'Here is the comparison:',
+      '',
+      '| Layer | State |',
+      '| --- | --- |',
+      '| CLI | shipped |',
+      '| Feishu | automatic |',
+    ].join('\n');
+
+    it('renders a GFM table without Sources as one Card 2.0 column_set card', async () => {
+      const { client, mocks } = createMockClient();
+      const channel = createTestChannel(client);
+
+      const result = await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'text',
+        text: tableAnswer,
+      });
+
+      expect(mocks.createMock).toHaveBeenCalledTimes(1);
+      const [[call]] = mocks.createMock.mock.calls;
+      expect(call.data.msg_type).toBe('interactive');
+      const card = JSON.parse(call.data.content);
+      expect(card.schema).toBe('2.0');
+      expect(card.body.elements.some((element: { tag?: string }) => element.tag === 'column_set')).toBe(true);
+      expect(call.data.content).not.toContain('| Layer | State |');
+      expect(result).toBe('new_msg_001');
+    });
+
+    it('keeps standalone raw JSON in the exact text format', async () => {
+      const { client, mocks } = createMockClient();
+      const channel = createTestChannel(client);
+      const rawJson = '{"rows":[{"cells":["| a |","| b |"]}],"separator":"| --- |"}';
+
+      await channel.sendMessage({ chatId: 'chat_123', type: 'text', text: rawJson });
+
+      expect(mocks.createMock).toHaveBeenCalledTimes(1);
+      const [[call]] = mocks.createMock.mock.calls;
+      expect(call.data.msg_type).toBe('text');
+      expect(JSON.parse(call.data.content).text).toBe(rawJson);
+    });
+
+    it('keeps code-only tables literal as plain text', async () => {
+      const { client, mocks } = createMockClient();
+      const channel = createTestChannel(client);
+      const codeOnly = ['```text', tableAnswer, '```'].join('\n');
+
+      await channel.sendMessage({ chatId: 'chat_123', type: 'text', text: codeOnly });
+
+      expect(mocks.createMock).toHaveBeenCalledTimes(1);
+      const [[call]] = mocks.createMock.mock.calls;
+      expect(call.data.msg_type).toBe('text');
+      expect(JSON.parse(call.data.content).text).toBe(codeOnly);
+    });
+
+    it('does not turn a malformed Sources answer into a generic table card', async () => {
+      const { client, mocks } = createMockClient();
+      const channel = createTestChannel(client);
+      const malformed = `${tableAnswer}\n\n## Sources\nnot a source entry`;
+
+      await channel.sendMessage({ chatId: 'chat_123', type: 'text', text: malformed });
+
+      expect(mocks.createMock).toHaveBeenCalledTimes(1);
+      const [[call]] = mocks.createMock.mock.calls;
+      expect(call.data.msg_type).toBe('text');
+      expect(JSON.parse(call.data.content).text).toBe(malformed);
+    });
+
+    it('falls back to plain text once after a definite Feishu rejection', async () => {
+      const { client, mocks } = createMockClient();
+      mocks.createMock
+        .mockRejectedValueOnce(
+          Object.assign(new Error('card rejected'), {
+            response: { status: 400, data: { code: 230026, msg: 'invalid card' } },
+          })
+        )
+        .mockResolvedValueOnce({ data: { message_id: 'text_fallback_002' } });
+      const channel = createTestChannel(client);
+
+      const result = await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'text',
+        text: tableAnswer,
+      });
+
+      expect(mocks.createMock).toHaveBeenCalledTimes(2);
+      expect(mocks.createMock.mock.calls[0][0].data.msg_type).toBe('interactive');
+      expect(mocks.createMock.mock.calls[1][0].data.msg_type).toBe('text');
+      expect(result).toBe('text_fallback_002');
+    });
+
+    it('does not retry an ambiguous final-card transport failure as text', async () => {
+      const { client, mocks } = createMockClient();
+      mocks.createMock.mockRejectedValueOnce(new Error('socket timeout'));
+      const channel = createTestChannel(client);
+
+      await expect(
+        channel.sendMessage({ chatId: 'chat_123', type: 'text', text: tableAnswer })
+      ).rejects.toThrow('socket timeout');
+      expect(mocks.createMock).toHaveBeenCalledTimes(1);
+      expect(mocks.createMock.mock.calls[0][0].data.msg_type).toBe('interactive');
+    });
+  });
+
   describe('text messages with mentions (post type)', () => {
     it('should send as post type when mentions are provided', async () => {
       const { client, mocks } = createMockClient();
