@@ -94,6 +94,17 @@ export interface ChatAgentCallbacks {
    */
   getChatLogFilePaths?: (chatId: string) => Promise<string[]>;
 
+  /**
+   * Contextual agent-config hint (#4914 / T-088): given the text of a
+   * terminal failure, return a one-line pointer at the native config entry
+   * (`/agent config`), or undefined when switching is not meaningful here —
+   * unclassified failure, no real choice (fewer than two presets), or a
+   * channel without the card. All gating policy lives in the channel
+   * wiring; the agent loop only appends the returned line to the failure
+   * notice, so an error path never grows new failure modes.
+   */
+  suggestAgentConfig?: (chatId: string, failureText: string) => string | undefined;
+
   // --------------------------------------------------------------------------
   // Streaming contract — Issue #4208 P2-a (#4397)
   // --------------------------------------------------------------------------

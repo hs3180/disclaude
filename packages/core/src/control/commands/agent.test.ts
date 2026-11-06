@@ -47,6 +47,19 @@ describe('/agent', () => {
     expect(result.message).not.toContain('✅');
   });
 
+  it('offers the card picker first when a failed typed switch meets a channel with the native card', async () => {
+    const ctx = context({ switchAgentPreset: () => ({ ok: false, error: 'Unknown agent preset: missing' }) });
+    ctx.agentConfigUi = { openConfigCard: vi.fn() };
+    const result = await handleAgent(
+      { type: 'agent', chatId: 'a', actorId: 'ou_actor', data: { subcommand: 'use', preset: 'missing' } }, ctx);
+    expect(result.success).toBe(false);
+    // The card is the zero-recall recovery (no preset names to remember)…
+    expect(result.message).toContain('`/agent config`');
+    expect((result.message ?? '').indexOf('`/agent config`')).toBeLessThan((result.message ?? '').indexOf('`/agent list`'));
+    // …and the command path remains as the alternative.
+    expect(result.message).toContain('`/agent use <name>`');
+  });
+
   it('keeps recovery guidance within the actor and topic permissions', async () => {
     const ctx = context({ switchAgentPreset: () => ({ ok: false, error: 'Unknown agent preset: missing' }) });
     ctx.isCommandAllowed = vi.fn(command => command.data?.subcommand !== 'list');
@@ -61,6 +74,16 @@ describe('/agent', () => {
     expect(result.success).toBe(false);
     expect(result.message).toContain('service maintainer');
     expect(result.message).not.toMatch(/\/agent|claude-sonnet|glm-fast/);
+  });
+
+  it('points at the native card from the current-profile report when the channel has one', async () => {
+    const ctx = context();
+    ctx.agentConfigUi = { openConfigCard: vi.fn() };
+    const withCard = await handleAgent({ type: 'agent', chatId: 'a' }, ctx);
+    expect(withCard.success).toBe(true);
+    expect(withCard.message).toContain('`/agent config`');
+    const withoutCard = await handleAgent({ type: 'agent', chatId: 'a' }, context());
+    expect(withoutCard.message).not.toContain('`/agent config`');
   });
 
   describe('config (Issue #4914 native card)', () => {

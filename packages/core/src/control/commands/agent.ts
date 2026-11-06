@@ -41,8 +41,12 @@ export const handleAgent: CommandHandler<'agent'> = async (
       const canList = !context.isCommandAllowed || context.isCommandAllowed({
         ...command, data: { subcommand: 'list' },
       });
+      // Contextual discovery (#4914): at the moment the typed name fails, the
+      // restricted picker is the easier path — it lists valid names for you.
       const recovery = canList
-        ? 'Use `/agent list` to find a configured preset, then `/agent use <name>` to switch.'
+        ? (context.agentConfigUi
+          ? 'Send `/agent config` to pick from the configured options in a card (no preset names to remember), or `/agent list` + `/agent use <name>`.'
+          : 'Use `/agent list` to find a configured preset, then `/agent use <name>` to switch.')
         : 'Contact the service maintainer to confirm which presets are available.';
       return { success: false, message: `${result.error}\n\nThe current selection is unchanged. ${recovery}` };
     }
@@ -90,7 +94,12 @@ export const handleAgent: CommandHandler<'agent'> = async (
   }
 
   const active = api.getActiveAgentPreset(command.chatId, command.threadRootId);
+  // Asking `/agent` at all is the strongest config-intent signal; when a
+  // native card exists, point at it right here (#4914 contextual discovery).
+  const cardHint = context.agentConfigUi
+    ? '\n\nSwitch or review it with `/agent config` — a card with restricted options, no model IDs to type.'
+    : '';
   return active
-    ? { success: true, message: `🤖 Active agent: ${formatPreset(active)}\n\nSelection scope: this chat/session; persistence: until service restart.` }
+    ? { success: true, message: `🤖 Active agent: ${formatPreset(active)}\n\nSelection scope: this chat/session; persistence: until service restart.${cardHint}` }
     : { success: false, message: 'No named agent presets are configured (legacy `agent:` configuration remains active).' };
 };
