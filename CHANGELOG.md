@@ -7,6 +7,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.17] - 2026-11-06
+
+### Added
+
+- Deliver concrete executable next steps as `send_interactive` candidate
+  cards: the channel skill now carries an "executable next-step candidates"
+  contract — a single option is enough, each button's action prompt carries
+  the full instruction bound to the current session/thread-root, the
+  idempotency key (`next-step:<origin>`) prevents duplicate cards on retries,
+  nothing runs before the click, and no card is sent for plain confirmations,
+  unbeneficial follow-ups, pending review feedback, strict JSON or code-only
+  output, or card-less channels; a service-level regression reproduces the
+  dependency-retirement scenario through the real delivery chain (#5472;
+  #5693).
+- Render table-bearing final Markdown replies as Feishu Card 2.0: a final
+  Claude result that contains a GFM table outside code fences and no
+  `## Sources` trailer is now converted to a native card
+  (`final-markdown-card.ts`, `column_set` layout) — sent once as an
+  interactive card in non-streaming mode and as an in-place replacement of
+  the streaming card at finalize, never a second message; raw JSON,
+  code-only output and card-less payloads stay plain text, over-budget
+  payloads use the existing payload budget, and explicit Feishu rejections
+  degrade to text exactly once (#5487; #5695).
+- Fail closed on cross-channel chat ownership collisions: when multiple
+  channel types are enabled on one instance, a chat id claimed by two
+  channels no longer silently rebinds — inbound delivery during the conflict
+  is rejected, `forgetChannelRoutes` cleanup is unified, and an unregistered
+  or recovered channel re-binds to the sole healthy owner; text, attachment
+  and card handlers reject ambiguous ownership before parsing, and a
+  same-process Feishu+WeChat integration regression covers inbound
+  ownership, outbound text/attachment routing, capability queries, zero
+  delivery on ambiguity, single-channel startup failure isolation and route
+  recovery after unregister (#5449; #5698).
+- Ship an offline Card 2.0 help and validation surface: `channel card_help`
+  lists/searches components (card, header, markdown, column_set, column,
+  collapsible_panel, hr) with field-level help and editable native examples,
+  and `channel card_check --card|--card-file|-` validates chat-independent,
+  offline, with no message or upload side effects; valid input exits 0 with
+  `{"ok":true}` and invalid input returns stable `CARD_*` diagnostic codes
+  with RFC 6901 JSON Pointers and a help entry point; the bundled
+  `CARD2_SPEC` snapshot declares its source and `partial` coverage and
+  unknown components answer `NOT_IN_CATALOG` instead of claiming support,
+  with a short `card-2` skill and a sanitized metrics/columns/collapsible
+  fixture that agents can self-correct against (#5512; #5703).
+
+### Changed
+
+- Stop fabricating a skills manifest into Codex exec/resume prompts: the
+  exec transport has no compliant native registration channel (probed
+  0.151.0 — only `<cwd>/.codex/skills` and `$CODEX_HOME/skills` are scanned,
+  no flag/env/config key, plugins require prior install), so when Disclaude
+  skill roots exist the exec transport now fails fast with an actionable
+  app-server-transport diagnostic instead of injecting a self-made
+  name/path/description list into first/multi-turn/resume inputs; the
+  app-server native `skills/extraRoots/set` path is unchanged, effective
+  skill sets stay identical across transports via the shared
+  `codexNativeSkillRoots()` computation, and the only remaining DSH/Pi
+  opt-in discovery path is the receipt-verified `diagnosticsPluginManifest`
+  (#5520; #5683).
+- Raise the Jupyter `import-file` ceiling from 2MB to 512MB with chunked
+  upload and verified readback: files above 2MB now go through the
+  jupyter-server `LargeFileManager` chunked contract (8MiB chunks,
+  `chunk 1..N/-1`), the finished upload is verified by streaming SHA-256
+  readback through the `files/` route before `imported` is returned, any
+  failed chunk or checksum mismatch best-effort deletes the remote partial
+  and returns a retryable diagnostic, and a stale same-name partial with a
+  mismatched size is cleaned up and re-uploaded automatically (Disclaude
+  input directories only); the small-file path keeps byte-exact existing/
+  no-overwrite semantics, the 512MB ceiling is rejected locally before any
+  remote write, and the request timeout for `import-file` rises to 300s
+  (#5318; #5696).
+- Auto-create missing remote parent directories on Notebook creation:
+  `jupyter create --path a/b/c.ipynb` now walks the parent chain level by
+  level (GET, and PUT `directory` only on 404), so a fresh remote succeeds
+  directly instead of failing with a generic error; already-existing
+  directories are idempotent, and a rejected creation keeps HTTP status,
+  server body, the parent path and a permission hint in the error so the
+  next step is actionable (#5314; #5687).
+
 ## [0.6.16] - 2026-11-06
 
 ### Changed

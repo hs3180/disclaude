@@ -64,7 +64,7 @@ import { createCodexDynamicToolRegistry } from './dynamic-tools.js';
 import { AgentInputDeliveryError } from '../../user-input.js';
 import { CodexAsyncUserInput, CodexAsyncInputDeliveryError } from './async-user-input.js';
 import { adaptCodexEvent, classifyCodexEvent, isCodexAuthFailure, isCodexResumeTargetMissing, isCodexUsageLimit, isCodexWriterConflict, userInputText, } from './exec-adapter.js';
-import { codexNativeSkillRoots, codexSkillsRegistry } from './skill-sources.js';
+import { codexNativeSkillRoots } from './skill-sources.js';
 import { CODEX_OVERLOAD_MAX_RETRIES, CODEX_OVERLOAD_MAX_WAIT_MS, codexOverloadRetryDelay, readCodexOverloadFailure, waitForCodexOverloadRetry, codexCapacityRecoveryDelay, readCodexCapacityRecoveryPolicy, codexWriterConflictRetryDelay, readCodexWriterConflictPolicy, isCodexCapacityFailure, alignCodexCapacityWait, recordCodexCapacityCooldown } from './overload-policy.js';
 const logger = createLogger('CodexAgentProvider');
 /**
@@ -236,8 +236,6 @@ export class CodexAgentProvider {
      * /reset, idle GC) deliberately does NOT stash — reset means reset.
      */
     threadStash = new Map();
-    skillsRegistries = new Map();
-    reportedSkillRevisions = new WeakMap();
     /** Anonymous-stream key counter (queryStream without options.sessionKey). */
     anonSessionCounter = 0;
     disposed = false;
@@ -265,25 +263,6 @@ export class CodexAgentProvider {
             ...hooks,
             messageBuilderOptions: withCodexSourceCitations(hooks.messageBuilderOptions),
         };
-    }
-    skillsManifestFor(projectRoot, executionRoot = projectRoot) {
-        if (!projectRoot || !executionRoot) {
-            return '';
-        }
-        const key = JSON.stringify([projectRoot, executionRoot]);
-        let registry = this.skillsRegistries.get(key);
-        if (!registry) {
-            registry = codexSkillsRegistry(projectRoot, this.builtinRoot, executionRoot);
-            this.skillsRegistries.set(key, registry);
-        }
-        const resolution = registry.resolve();
-        if (this.reportedSkillRevisions.get(registry) !== resolution.revision) {
-            this.reportedSkillRevisions.set(registry, resolution.revision);
-            if (resolution.diagnostics.length) {
-                logger.warn({ diagnostics: resolution.diagnostics }, 'Skill discovery diagnostics');
-            }
-        }
-        return resolution.manifest;
     }
     // --------------------------------------------------------------------------
     // Provider information
@@ -460,7 +439,19 @@ export class CodexAgentProvider {
         if ((native ? native.transport ?? 'exec' : this.transportMode) === 'app-server') {
             return this.queryAppServer(input, options, sandboxDecision.sandbox, binary, codexModel, requestedEffort);
         }
-        const skillsManifest = this.skillsManifestFor(options.projectRoot ?? options.cwd, options.cwd ?? process.cwd());
+        // Native skill discovery (#5520, following #5546): codex exec has NO
+        // mechanism to register Disclaude-managed skill directories. Native extra
+        // roots exist only on the app-server protocol (skills/extraRoots/set,
+        // verified with Codex CLI 0.140.0-0.164.0; offline probes on 0.151.0 show
+        // exec natively scans only <cwd>/.codex/skills and $CODEX_HOME/skills,
+        // with no flag, env var or config override for extra roots). Fail fast
+        // with the supported alternative — never inject a fabricated skills
+        // manifest into the prompt. Same contract as the host-tools check below.
+        if (codexNativeSkillRoots(options.projectRoot ?? options.cwd, this.builtinRoot).length) {
+            throw new Error('Codex exec cannot natively load Disclaude skill directories: the CLI has no exec-side registration mechanism ' +
+                '(native loading uses the app-server protocol skills/extraRoots/set, verified with Codex CLI 0.140.0-0.164.0). ' +
+                'Set agents.<name>.codex.transport: app-server. No prompt manifest was injected and no model turn was submitted.');
+        }
         if (options.tools?.length) {
             throw new Error('Codex host tools require agents.<name>.codex.transport: app-server; codex exec cannot dispatch host tools.');
         }
@@ -910,10 +901,11 @@ export class CodexAgentProvider {
                     touchStallWatchdog();
                     const contextualPrompt = resumeTarget === undefined && continuationContext
                         ? `${continuationContext}\n${prompt}` : prompt;
+                    // #5520: the prompt is the bare user request — skills are never
+                    // prefixed here; a transport that cannot register them natively
+                    // fails fast at queryStream entry instead.
                     const { promise, handle } = runner.run({
-                        prompt: skillsManifest
-                            ? `${skillsManifest}\n\nUser request:\n${contextualPrompt}`
-                            : contextualPrompt,
+                        prompt: contextualPrompt,
                         correlation,
                         resumeSessionId: resumeTarget,
                         sandboxMode: sandboxDecision.sandbox,

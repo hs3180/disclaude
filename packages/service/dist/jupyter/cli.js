@@ -29,7 +29,7 @@ Commands:
   tools                 Show command input schemas; no connection required
   check                 Inspect the configured Datalayer interfaces
   link                  Link an existing remote .ipynb to this Project
-  create                Create and link a new remote .ipynb; refuse overwrite
+  create                Create missing parents, then create/link .ipynb; refuse overwrite
   unlink                Remove a local reference; retain remote Notebook/kernel
   ${commands.join(', ')}
                         Every command above takes exactly one JSON object through
@@ -408,6 +408,35 @@ export async function runNotebookCommand(options, connection, signal, readInput 
                             message: 'Remote Notebook already exists; refusing overwrite', hint: 'Choose another path or explicitly link the existing Notebook.', outcome: 'not-submitted' });
                     }
                     signal.throwIfAborted();
+                    const segments = ref.contentPath.split('/');
+                    for (let index = 0; index < segments.length - 1; index++) {
+                        const parentPath = segments.slice(0, index + 1).join('/');
+                        const parentRoute = `api/contents/${segments.slice(0, index + 1).map(encodeURIComponent).join('/')}`;
+                        const parent = await client.response(`${parentRoute}?content=0`);
+                        if (parent.status !== 404) {
+                            if (!parent.ok) {
+                                throw await client.responseError(parent, `create-parent-preflight:${parentPath}`);
+                            }
+                            await parent.body?.cancel();
+                            continue;
+                        }
+                        await parent.body?.cancel();
+                        signal.throwIfAborted();
+                        try {
+                            await client.json(parentRoute, 'PUT', { type: 'directory' });
+                        }
+                        catch (error) {
+                            if (!(error instanceof JupyterDiagnosticError)) {
+                                throw error;
+                            }
+                            throw new JupyterDiagnosticError({
+                                ...error.diagnostic,
+                                phase: `create-parent:${parentPath}`,
+                                message: `Could not create remote parent directory "${parentPath}": ${error.diagnostic.message}`,
+                                hint: `Check Jupyter permissions for "${parentPath}" and inspect the server reason before retrying.`,
+                            });
+                        }
+                    }
                     await client.json(route, 'PUT', {
                         type: 'notebook',
                         format: 'json',

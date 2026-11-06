@@ -19,7 +19,33 @@ function requireCodeCell(cellType) {
             message: 'Notebook execute requires a code cell', hint: 'Select the stable ID of a code cell and read its latest sourceHash.', outcome: 'not-submitted' });
     }
 }
+// Small files keep the single-request import path; larger ones upload in
+// server-reassembled chunks (jupyter-server LargeFileManager `chunk` model
+// field: 1=truncate-write, 2..N=append, -1=finalize).
 const inputLimit = 2_000_000;
+const importFileMaxBytes = 512 * 1024 * 1024;
+const importChunkBytes = 8 * 1024 * 1024;
+/** Hash a raw streaming body with bounded memory; used for readback verification. */
+async function streamedSha256(body) {
+    const reader = body?.getReader();
+    if (!reader) {
+        throw new Error('Remote verification response body is missing');
+    }
+    const hasher = createHash('sha256');
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+                break;
+            }
+            hasher.update(value);
+        }
+    }
+    finally {
+        await reader.cancel().catch(() => { });
+    }
+    return hasher.digest('hex');
+}
 const errorOutputDescription = 'Error previews expose output_type="error", ename:string, evalue:string and traceback:string[]. Tracebacks retain the last 20 frames, at most 1000 characters per frame and 8000 total. errorName/errorValue are deprecated aliases retained for this release.';
 function boundedErrorOutput(output) {
     const ename = (typeof output.ename === 'string' ? output.ename : 'Error').slice(0, 128).replace(/[\uD800-\uDBFF]$/, '');
@@ -280,11 +306,11 @@ export class NotebookTools {
                 };
                 return result;
             }),
-            this.tool('notebook_import_file', 'Copy one explicitly selected Project-local file to the remote Notebook input directory. filePath is resolved against the Project directory and must stay inside it: absolute paths, traversal outside the Project, symlinks and non-regular files are rejected. Return its kernel-relative path, SHA-256 and size; limit 2 MB.', {
+            this.tool('notebook_import_file', 'Copy an explicitly selected Project-local file to the remote Notebook input directory in one command. Files above 2 MB upload in server-reassembled chunks and are hash-verified; nothing incomplete is left behind. Return its kernel-relative path, SHA-256 and size; limit 512 MB.', {
                 ...notebookId,
                 filePath: {
                     type: 'string',
-                    description: 'Project-relative path of one existing regular file (resolved against --project-dir; absolute, escaping or symlinked paths are rejected; at most 2 MB).',
+                    description: 'Project-relative path of one existing regular file (resolved against --project-dir; absolute, escaping or symlinked paths are rejected; at most 512 MB).',
                 },
             }, (input, invocation) => this.importFile(input, invocation)),
             this.tool('notebook_download_report', 'Export and download matching ipynb/HTML and up to four bounded PNG/JPEG previews into Project artifacts. Return file paths, revision and hashes. Delivery uses the independent channel tool.', notebookId, (input, invocation) => this.downloadReport(String(input.notebookId), invocation)),
@@ -362,12 +388,16 @@ export class NotebookTools {
         const localPath = path.resolve(this.root, String(input.filePath));
         const relative = path.relative(this.root, fs.realpathSync(localPath));
         const identity = fs.lstatSync(localPath);
-        if (relative.startsWith('..') ||
-            path.isAbsolute(relative) ||
-            !identity.isFile() ||
-            identity.isSymbolicLink() ||
-            identity.size > inputLimit) {
-            throw new Error('Input must be a regular file inside this Project, at most 2 MB');
+        const limits = {
+            smallFileBytes: this.options.importFileLimits?.smallFileBytes ?? inputLimit,
+            maxBytes: this.options.importFileLimits?.maxBytes ?? importFileMaxBytes,
+            chunkBytes: this.options.importFileLimits?.chunkBytes ?? importChunkBytes,
+        };
+        if (relative.startsWith('..') || path.isAbsolute(relative) || !identity.isFile() || identity.isSymbolicLink()) {
+            throw new Error('Input must be a regular file inside this Project');
+        }
+        if (identity.size > limits.maxBytes) {
+            throw new Error(`Input exceeds the import-file limit of ${limits.maxBytes} bytes`);
         }
         const attachment = {
             localPath,
@@ -385,7 +415,7 @@ export class NotebookTools {
             const current = fs.fstatSync(descriptor);
             const original = attachment.identity;
             if (!current.isFile() ||
-                current.size > inputLimit ||
+                current.size > limits.maxBytes ||
                 current.dev !== original.dev ||
                 current.ino !== original.ino ||
                 current.size !== original.size ||
@@ -426,31 +456,124 @@ export class NotebookTools {
             await existingDirectory.body?.cancel();
             throw new Error('Remote Notebook input directory could not be verified');
         }
-        const existing = await bound.client.response(`${route(remotePath)}?format=base64`);
         let state = 'existing';
-        if (existing.status === 404) {
-            await existing.body?.cancel();
-            invocation.signal.throwIfAborted();
-            this.assertBound(bound);
-            await bound.client.json(route(remotePath), 'PUT', {
-                type: 'file',
-                format: 'base64',
-                content: data.toString('base64'),
-            });
-            state = 'imported';
-        }
-        else if (existing.ok) {
-            const stored = JSON.parse(await bound.client.responseText(existing));
-            if (stored.type !== 'file' ||
-                stored.format !== 'base64' ||
-                typeof stored.content !== 'string' ||
-                createHash('sha256').update(Buffer.from(stored.content, 'base64')).digest('hex') !== sha256) {
-                throw new Error('Remote input content changed; refusing to overwrite it');
+        let imported;
+        if (data.length <= limits.smallFileBytes) {
+            // Historical single-request path for small files: verify a repeated
+            // import byte-for-byte and never overwrite remotely changed content.
+            const existing = await bound.client.response(`${route(remotePath)}?format=base64`);
+            if (existing.status === 404) {
+                await existing.body?.cancel();
+                invocation.signal.throwIfAborted();
+                this.assertBound(bound);
+                await bound.client.json(route(remotePath), 'PUT', {
+                    type: 'file',
+                    format: 'base64',
+                    content: data.toString('base64'),
+                });
+                state = 'imported';
+            }
+            else if (existing.ok) {
+                const stored = JSON.parse(await bound.client.responseText(existing));
+                if (stored.type !== 'file' ||
+                    stored.format !== 'base64' ||
+                    typeof stored.content !== 'string' ||
+                    createHash('sha256').update(Buffer.from(stored.content, 'base64')).digest('hex') !== sha256) {
+                    throw new Error('Remote input content changed; refusing to overwrite it');
+                }
+            }
+            else {
+                await existing.body?.cancel();
+                throw new Error('Remote input content could not be verified');
             }
         }
         else {
-            await existing.body?.cancel();
-            throw new Error('Remote input content could not be verified');
+            // Large-file path: one command, server-reassembled chunks, explicit
+            // verification, and no partial result left looking complete.
+            const metadata = await bound.client.response(`${route(remotePath)}?content=0`);
+            if (metadata.status === 404) {
+                await metadata.body?.cancel();
+            }
+            else if (metadata.ok) {
+                const stored = JSON.parse(await bound.client.responseText(metadata));
+                if (stored.type !== 'file' || typeof stored.size !== 'number') {
+                    throw new Error('Remote input content could not be verified');
+                }
+                if (stored.size === data.length) {
+                    // Content-addressed name plus a matching size: a previous verified
+                    // import is present. Its bytes are not re-downloaded on this path.
+                    return {
+                        state: 'existing',
+                        filePath: path.relative(this.root, localPath),
+                        remotePath,
+                        kernelRelativePath: path.posix.relative(path.posix.dirname(bound.ref.contentPath), remotePath),
+                        sha256,
+                        size: data.length,
+                    };
+                }
+                // The remote file lives in the disclaude-owned input directory under a
+                // content-addressed name: a size mismatch can only be a stale partial
+                // from an interrupted upload. Remove it so the import can be retried.
+                await this.removeRemoteInput(bound, route(remotePath));
+            }
+            else {
+                await metadata.body?.cancel();
+                throw await bound.client.responseError(metadata, 'import-preflight');
+            }
+            invocation.signal.throwIfAborted();
+            this.assertBound(bound);
+            const chunkCount = Math.max(2, Math.ceil(data.length / limits.chunkBytes));
+            try {
+                for (let index = 0; index < chunkCount; index++) {
+                    invocation.signal.throwIfAborted();
+                    this.assertBound(bound);
+                    const slice = data.subarray(index * limits.chunkBytes, Math.min((index + 1) * limits.chunkBytes, data.length));
+                    await bound.client.json(route(remotePath), 'PUT', {
+                        type: 'file',
+                        format: 'base64',
+                        content: slice.toString('base64'),
+                        chunk: index === chunkCount - 1 ? -1 : index + 1,
+                    });
+                }
+            }
+            catch (error) {
+                throw await this.importFailed(bound, route(remotePath), error, 'import-upload');
+            }
+            invocation.signal.throwIfAborted();
+            this.assertBound(bound);
+            const filesRoute = `files/${remotePath.split('/').map(encodeURIComponent).join('/')}`;
+            const verification = await bound.client.response(filesRoute);
+            if (!verification.ok) {
+                await verification.body?.cancel();
+                throw await this.importFailed(bound, route(remotePath), new JupyterDiagnosticError({
+                    layer: 'http',
+                    code: 'verification_unavailable',
+                    phase: 'import-verify',
+                    status: verification.status,
+                    message: 'Remote content verification endpoint rejected the request',
+                    hint: 'This Jupyter server did not serve the file over its files route; an unverifiable upload is never left in place.',
+                    outcome: 'unknown',
+                }), 'import-verify');
+            }
+            let remoteSha256;
+            try {
+                remoteSha256 = await streamedSha256(verification.body);
+            }
+            catch (error) {
+                throw await this.importFailed(bound, route(remotePath), error, 'import-verify');
+            }
+            if (remoteSha256 !== sha256) {
+                throw await this.importFailed(bound, route(remotePath), new JupyterDiagnosticError({
+                    layer: 'cas',
+                    code: 'verification_failed',
+                    phase: 'import-verify',
+                    message: 'Remote content hash mismatch after the chunked upload',
+                    hint: 'The server stored different bytes than the local file; chunked contents uploads may be unsupported there. The remote file was removed.',
+                    outcome: 'unknown',
+                }), 'import-verify');
+            }
+            state = 'imported';
+            imported = { transport: 'chunked', chunks: chunkCount };
         }
         return {
             state,
@@ -459,7 +582,40 @@ export class NotebookTools {
             kernelRelativePath: path.posix.relative(path.posix.dirname(bound.ref.contentPath), remotePath),
             sha256,
             size: data.length,
+            ...(imported ? { verifiedBy: 'sha256-readback' } : {}),
+            ...imported,
         };
+    }
+    /** Best-effort removal of a disclaude-owned remote input; never throws. */
+    async removeRemoteInput(bound, fileRoute) {
+        try {
+            await bound.client.json(fileRoute, 'DELETE');
+            return 'removed';
+        }
+        catch (error) {
+            if (error instanceof JupyterDiagnosticError &&
+                error.diagnostic.status === 404) {
+                return 'not_present';
+            }
+            return 'cleanup_failed';
+        }
+    }
+    /** Delete the incomplete remote input, then surface the original failure. */
+    async importFailed(bound, fileRoute, error, phase) {
+        const cleanup = await this.removeRemoteInput(bound, fileRoute);
+        const original = error instanceof JupyterDiagnosticError ? error.diagnostic : undefined;
+        return new JupyterDiagnosticError({
+            layer: original?.layer ?? 'unknown',
+            code: original?.code ?? 'import_failed',
+            phase,
+            ...(original?.status !== undefined ? { status: original.status } : {}),
+            ...(original?.serverBody !== undefined ? { serverBody: original.serverBody } : {}),
+            message: error instanceof Error ? error.message : 'Chunked import failed',
+            hint: cleanup === 'cleanup_failed'
+                ? `An incomplete file may remain at the remote input path and must be removed before retrying; deletion failed during ${phase}. Re-run import-file after removing it.`
+                : 'The incomplete upload was removed from the remote input path; nothing partial is left. Re-run the same import-file command to retry.',
+            outcome: 'unknown',
+        });
     }
     refs() {
         const loaded = this.config.listNotebookReferences();

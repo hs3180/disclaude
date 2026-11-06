@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { getChatIdValidationError } from './utils/chat-id-validator.js';
 import { assertReadableInteractiveText } from './utils/interactive-text.js';
 import { getCardValidationError, isValidFeishuCard } from './utils/card-validator.js';
+import { buildCard2Help, checkCard2, CARD2_SPEC } from './utils/card2-help.js';
 const autoRunOutput = process.argv[1]?.endsWith('/cli.js') ? process.stdout.write.bind(process.stdout) : undefined;
 if (autoRunOutput) {
     process.stdout.write = process.stderr.write.bind(process.stderr);
@@ -25,6 +26,8 @@ const { CHANNEL_CLI_HELP, getChannelCliCommandHelp, normalizeChannelApiBaseUrl, 
 const COMMON_FLAGS = ['chat', 'parent', 'base-url', 'api-token', 'dry-run'];
 const COMMAND_FLAGS = {
     capabilities: [],
+    card_help: ['query', 'component'],
+    card_check: ['card', 'card-file'],
     request_private_input: ['actor', 'source', 'workflow', 'workflow-file'],
     send_text: ['text', 'text-file', 'mentions'],
     send_file: ['file'],
@@ -139,6 +142,7 @@ function readInput(args, valueKey, fileKey, defaultStdin = true) {
 function validateInputSources(command, args) {
     const pairs = {
         send_text: [['text', 'text-file', true]], send_card: [['card', 'card-file', true]],
+        card_check: [['card', 'card-file', true]],
         push_to_agent: [['message', 'message-file', true]], request_private_input: [['workflow', 'workflow-file', true]],
         send_interactive: [['question', 'question-file', true], ['options', 'options-file', false],
             ['action-prompts', 'action-prompts-file', false]],
@@ -539,6 +543,48 @@ export async function run(argv) {
             }
             emitOk({ command, channels: result.channels });
             return 0;
+        }
+        catch (error) {
+            emitFail(command, errorMessage(error));
+            return 1;
+        }
+    }
+    if (command === 'card_help') {
+        if (arg(args, 'query') !== undefined && arg(args, 'component') !== undefined) {
+            emitFail(command, 'Use only one of --query and --component');
+            return 1;
+        }
+        const result = buildCard2Help({ query: arg(args, 'query'), component: arg(args, 'component') });
+        emitOk({ ...result, offline: true, sideEffects: 'none' });
+        return 0;
+    }
+    if (command === 'card_check') {
+        try {
+            validateInputSources(command, args);
+            const raw = readInput(args, 'card', 'card-file');
+            if (!raw) {
+                emitFail(command, 'Missing card content', 'pass --card <json>, --card-file <path>, or pipe card JSON on stdin');
+                return 1;
+            }
+            let card;
+            try {
+                card = JSON.parse(raw.replace(/^\uFEFF/, ''));
+            }
+            catch (error) {
+                writeResult(`${JSON.stringify({
+                    ok: false, command, valid: false, spec: CARD2_SPEC,
+                    issues: [{ code: 'CARD_JSON_PARSE', pointer: '', reason: `card is not valid JSON: ${errorMessage(error)}`, help: 'disclaude channel card_help' }],
+                })}\n`);
+                return 1;
+            }
+            const result = checkCard2(card);
+            const payload = {
+                command, valid: result.valid, offline: true, sideEffects: 'none',
+                spec: result.spec,
+                ...(result.valid ? {} : { issues: result.diagnostics }),
+            };
+            writeResult(`${JSON.stringify(result.valid ? { ok: true, ...payload } : { ok: false, ...payload })}\n`);
+            return result.valid ? 0 : 1;
         }
         catch (error) {
             emitFail(command, errorMessage(error));

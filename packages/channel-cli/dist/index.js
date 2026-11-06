@@ -6,6 +6,7 @@ export { send_file } from './tools/send-file.js';
 export { push_to_agent } from './tools/push-to-agent.js';
 export { send_interactive, send_interactive_message } from './tools/interactive-message.js';
 export { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
+export { CARD2_SPEC, CARD2_COMPONENTS, METRICS_COLLAPSIBLE_EXAMPLE, buildCard2Help, checkCard2, } from './utils/card2-help.js';
 export { transformCardTables } from './utils/table-converter.js';
 export { resolveCardImages } from './utils/card-image-resolver.js';
 export { getChatIdValidationError } from './utils/chat-id-validator.js';
