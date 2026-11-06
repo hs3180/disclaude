@@ -302,7 +302,7 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
       },
       llms: {
         shared: {
-          model: 'group/hq-degrade',
+          defaultModel: 'group/hq-degrade',
           api: {
             protocol: 'anthropic',
             baseUrl: 'https://gateway.example',

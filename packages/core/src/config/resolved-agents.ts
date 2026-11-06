@@ -3,6 +3,7 @@ import type {
   AgentDefinition,
   AgentPreset,
   AgentPresets,
+  ClaudeAgentConfig,
   DisclaudeConfig,
   LlmConfig,
 } from './types.js';
@@ -35,8 +36,40 @@ const CLAUDE_MODEL_ID = /^claude-[a-z0-9]+(?:-[a-z0-9]+)*$/;
  * shared binding must pin the wire model and keep the alias out of `model`.
  */
 const BARE_CLAUDE_ALIAS = /^(opus|sonnet|haiku|fable|default)$/i;
+/** Native variables Claude Code resolves the opus/sonnet/haiku tiers through. */
+const CLAUDE_TIER_ENV = {
+  opus: 'ANTHROPIC_DEFAULT_OPUS_MODEL',
+  sonnet: 'ANTHROPIC_DEFAULT_SONNET_MODEL',
+  haiku: 'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+} as const;
+type ClaudeTier = keyof typeof CLAUDE_TIER_ENV;
 const mapping = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
+
+/**
+ * Default tier environment for a Claude runtime (review 2026-11-06): each
+ * opus/sonnet/haiku tier uses `claude.models.<tier>`, falling back to the
+ * provider `defaultModel` — so configuring only one model points all three
+ * tiers at it. Explicit `claude.env` entries keep precedence; a tier both
+ * forms would set is rejected during validation instead.
+ */
+function claudeTierEnvironment(
+  claude: ClaudeAgentConfig | undefined,
+  defaultModel: string
+): Record<string, string> | undefined {
+  const tiers: Record<string, string> = {};
+  for (const tier of Object.keys(CLAUDE_TIER_ENV) as ClaudeTier[]) {
+    if (claude?.env?.[CLAUDE_TIER_ENV[tier]] !== undefined) {
+      continue;
+    }
+    const configured = claude?.models?.[tier];
+    const model = (typeof configured === 'string' ? configured.trim() : '') || defaultModel;
+    if (model) {
+      tiers[CLAUDE_TIER_ENV[tier]] = model;
+    }
+  }
+  return Object.keys(tiers).length ? tiers : undefined;
+}
 
 export function resolveConfiguredAgents(
   config: DisclaudeConfig
@@ -82,13 +115,15 @@ export function resolveConfiguredAgents(
     for (const key of Object.keys(raw)) {
       if (key === 'behavesAs' || key === 'modelOverrides') {
         errors.push(`${field}.${key} has moved to agents.<name>.claude.${key}; llms contains provider settings only`);
-      } else if (!['model', 'reasoningEffort', 'maxConcurrentSessions', 'api', 'env'].includes(key)) {
+      } else if (key === 'model') {
+        errors.push(`${field}.model has been renamed to ${field}.defaultModel; agents can use any model of this provider and defaultModel only sets the default`);
+      } else if (!['defaultModel', 'reasoningEffort', 'maxConcurrentSessions', 'api', 'env'].includes(key)) {
         errors.push(`${field}.${key} is unsupported`);
       }
     }
     const llm = raw as LlmConfig;
-    if (llm.model !== undefined && (typeof llm.model !== 'string' || !llm.model.trim())) {
-      errors.push(`${field}.model must be a non-empty string when set`);
+    if (llm.defaultModel !== undefined && (typeof llm.defaultModel !== 'string' || !llm.defaultModel.trim())) {
+      errors.push(`${field}.defaultModel must be a non-empty string when set`);
     }
     if (llm.reasoningEffort !== undefined && !isCodexReasoningEffort(llm.reasoningEffort)) {
       errors.push(`${field}.reasoningEffort is invalid`);
@@ -110,7 +145,7 @@ export function resolveConfiguredAgents(
     }
     for (const key of Object.keys(llm.env ?? {})) {
       if (/^ANTHROPIC_DEFAULT_(OPUS|SONNET|HAIKU)_MODEL$/.test(key)) {
-        errors.push(`${field}.env.${key} has moved to agents.<name>.claude.env.${key}`);
+        errors.push(`${field}.env.${key} has moved to agents.<name>.claude.models or agents.<name>.claude.env.${key}`);
       }
     }
     if (llm.api !== undefined) {
@@ -301,7 +336,7 @@ export function resolveConfiguredAgents(
         errors.push(`${field}.claude must be a mapping`);
       } else {
         for (const key of Object.keys(agent.claude)) {
-          if (!['behavesAs', 'modelOverrides', 'env'].includes(key)) {
+          if (!['behavesAs', 'modelOverrides', 'models', 'env'].includes(key)) {
             errors.push(`${field}.claude.${key} is unsupported`);
           }
         }
@@ -312,8 +347,8 @@ export function resolveConfiguredAgents(
           if (agent.claude.modelOverrides !== undefined) {
             errors.push(`${field}.claude.behavesAs and modelOverrides are mutually exclusive`);
           }
-          if (!llms[agent.llm]?.model?.trim()) {
-            errors.push(`${field}.claude.behavesAs requires a provider default model at llms.${agent.llm}.model`);
+          if (!llms[agent.llm]?.defaultModel?.trim()) {
+            errors.push(`${field}.claude.behavesAs requires a provider default model at llms.${agent.llm}.defaultModel`);
           }
         }
         if (agent.claude.modelOverrides !== undefined &&
@@ -321,6 +356,31 @@ export function resolveConfiguredAgents(
             Object.entries(agent.claude.modelOverrides).some(([key, value]) =>
               !CLAUDE_MODEL_ID.test(key) || typeof value !== 'string' || !value.trim()))) {
           errors.push(`${field}.claude.modelOverrides must map full Claude model IDs to non-empty provider model IDs`);
+        }
+        // Three-tier opus/sonnet/haiku mapping (review 2026-11-06): each tier
+        // names a provider model; omitted tiers fall back to the provider
+        // defaultModel at resolution time.
+        if (agent.claude.models !== undefined) {
+          if (!mapping(agent.claude.models)) {
+            errors.push(`${field}.claude.models must be a mapping of opus, sonnet and haiku model IDs`);
+          } else {
+            const tiers = Object.keys(agent.claude.models);
+            if (!tiers.length) {
+              errors.push(`${field}.claude.models must set at least one of opus, sonnet or haiku`);
+            }
+            for (const tier of tiers) {
+              if (!Object.hasOwn(CLAUDE_TIER_ENV, tier)) {
+                errors.push(`${field}.claude.models.${tier} is unsupported; use opus, sonnet or haiku`);
+                continue;
+              }
+              const model = agent.claude.models[tier as ClaudeTier];
+              if (typeof model !== 'string' || !model.trim()) {
+                errors.push(`${field}.claude.models.${tier} must be a non-empty model ID`);
+              } else if (agent.claude.env?.[CLAUDE_TIER_ENV[tier as ClaudeTier]] !== undefined) {
+                errors.push(`${field}.claude.models.${tier} conflicts with ${field}.claude.env.${CLAUDE_TIER_ENV[tier as ClaudeTier]}; configure the tier in one place`);
+              }
+            }
+          }
         }
         if (agent.claude.env !== undefined && (!mapping(agent.claude.env) ||
           Object.entries(agent.claude.env).some(([key, value]) => !ENV_NAME.test(key) || typeof value !== 'string'))) {
@@ -335,9 +395,8 @@ export function resolveConfiguredAgents(
     if (agent.backend === 'claude' && llm.api?.protocol === 'openai') {
       errors.push(`${field}: Claude requires an Anthropic API connection`);
     }
-    if (llm.reasoningEffort !== undefined && !['codex', 'dsh'].includes(agent.backend)) {
-      errors.push(`llms.${agent.llm}.reasoningEffort requires a Codex or DSH native runtime`);
-    }
+    // reasoningEffort is a provider-level default, not a harness gate
+    // (review 2026-11-06): runtimes that cannot apply an effort ignore it.
     if (agent.backend === 'codex' && llm.api !== undefined) {
       errors.push(
         `${field}: this native runtime owns its API connection; omit llms.${agent.llm}.api`
@@ -351,6 +410,12 @@ export function resolveConfiguredAgents(
     const protocol = llm.api?.protocol;
     const keyEnv = llm.api ? apiCredentialEnvName(llm.api) : undefined;
     const { backend, ...settings } = agent;
+    const defaultModel = llm.defaultModel?.trim() ?? '';
+    const resolvedEnv = resolveLlmEnvironment({
+      ...llm.env,
+      ...(backend === 'claude' ? agent.claude?.env : {}),
+    });
+    const tierEnv = backend === 'claude' ? claudeTierEnvironment(agent.claude, defaultModel) : undefined;
     presets[name] = {
       ...settings,
       agentBackend: backend,
@@ -358,15 +423,15 @@ export function resolveConfiguredAgents(
       maxConcurrentSessions: llm.maxConcurrentSessions,
       // Claude owns its model names; other runtimes never receive this metadata.
       modelOverrides: backend === 'claude'
-        ? agent.claude?.behavesAs !== undefined && llm.model
-          ? { [agent.claude.behavesAs]: llm.model.trim() }
+        ? agent.claude?.behavesAs !== undefined && defaultModel
+          ? { [agent.claude.behavesAs]: defaultModel }
           : agent.claude?.modelOverrides
         : undefined,
-      model: llm.model?.trim() ?? '',
+      model: defaultModel,
       apiKey: keyEnv ? (process.env[keyEnv] ?? '') : '',
       apiProtocol: protocol,
       apiBaseUrl: llm.api?.baseUrl,
-      env: resolveLlmEnvironment({ ...llm.env, ...(backend === 'claude' ? agent.claude?.env : {}) }),
+      env: tierEnv ? { ...tierEnv, ...resolvedEnv } : resolvedEnv,
       missingEnvReferences: [
         ...Object.entries(llm.env ?? {}).map(([key, value]) => [`llms.${agent.llm}.env.${key}`, value] as const),
         ...Object.entries(backend === 'claude' ? agent.claude?.env ?? {} : {}).map(([key, value]) => [`${field}.claude.env.${key}`, value] as const),
@@ -386,24 +451,25 @@ export function resolveConfiguredAgents(
       continue;
     }
     const llm = llms[llmName];
-    const model = llm.model?.trim();
+    const model = llm.defaultModel?.trim();
     if (model && BARE_CLAUDE_ALIAS.test(model)) {
       const others = [...backends].filter((backend) => backend !== 'claude').join('/');
       errors.push(
-        `llms.${llmName}.model "${model}" is a bare Claude alias; Claude resolves it internally while ${others} send it literally. Pin the wire model in llms.${llmName}.model and the Claude capability slot in agents.<name>.claude.behavesAs`
+        `llms.${llmName}.defaultModel "${model}" is a bare Claude alias; Claude resolves it internally while ${others} send it literally. Pin the wire model in llms.${llmName}.defaultModel and the Claude capability slot in agents.<name>.claude.behavesAs`
       );
     }
   }
   if (!errors.length) {
-    // llms.model is optional and was validated above; an empty preset model is
-    // its internal representation for "use the runtime's native default".
+    // llms.defaultModel is optional and was validated above; an empty preset
+    // model is its internal representation for "use the runtime's native
+    // default".
     const validation = validateAgentPresets(presets, { allowUnconfiguredModel: true });
     if (!validation.ok) {
       errors.push(
         ...validation.errors.map((error) => {
           for (const [name, preset] of Object.entries(presets)) {
             error = error
-              .replace(`agents.${name}.model`, `llms.${preset.llm}.model`)
+              .replace(`agents.${name}.model`, `llms.${preset.llm}.defaultModel`)
               .replace(`agents.${name}.agentBackend`, `agents.${name}.backend`);
           }
           return error;
@@ -417,7 +483,7 @@ export function resolveConfiguredAgents(
 /** Validate only the selected runtime's secrets; dormant entries need no credentials. */
 export function validateResolvedAgent(preset: AgentPreset): string | undefined {
   if (typeof preset.model !== 'string') {
-    return `llms.${preset.llm}.model must be a string when set`;
+    return `llms.${preset.llm}.defaultModel must be a string when set`;
   }
   if (preset.missingEnvReferences?.length) {
     return `External environment references are missing or empty: ${preset.missingEnvReferences.join(', ')}`;

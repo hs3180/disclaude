@@ -27,7 +27,7 @@ beforeEach(() => {
     workspace: { dir: '/owned-selected-model-test' },
     logging: { sdkDebug: false },
     agents: { default: { backend: 'codex', llm: 'default' } },
-    llms: { default: { model: 'gpt-6-luna' } },
+    llms: { default: { defaultModel: 'gpt-6-luna' } },
   };
 });
 afterEach(() => {
@@ -67,7 +67,7 @@ describe('Claude native model aliases', () => {
     fixture.value.agents!.independent = { backend: 'codex', llm: 'other' };
     fixture.value.llms!.default.reasoningEffort = 'max';
     fixture.value.llms!.default.maxConcurrentSessions = 3;
-    fixture.value.llms!.other = { model: 'gpt-6-luna', reasoningEffort: 'low', maxConcurrentSessions: 1 };
+    fixture.value.llms!.other = { defaultModel: 'gpt-6-luna', reasoningEffort: 'low', maxConcurrentSessions: 1 };
     const { BaseAgent } = await import('./base-agent.js');
     const { Config } = await import('../config/index.js');
     class BoundAgent extends BaseAgent {
@@ -171,7 +171,7 @@ describe('shared bindings across harnesses (Issue #5679)', () => {
       },
       llms: {
         shared: {
-          model: 'group/hq-degrade',
+          defaultModel: 'group/hq-degrade',
           api: {
             protocol: 'anthropic',
             baseUrl: 'https://gateway.example',
