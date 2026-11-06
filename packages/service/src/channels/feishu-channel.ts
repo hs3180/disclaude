@@ -208,8 +208,13 @@ export interface FeishuChannelConfig {
   privateInput?: ActionBoundInput;
   /** Channel ID (optional) */
   id?: string;
-  /** Named multi-app mode: stable app name used to prefix routed chat IDs. */
-  appName?: string;
+  /**
+   * Named-declaration mode: stable channel name from `channels.<name>` (the
+   * declaration key). Present only for channels created from a named
+   * declaration; the legacy single-app channel leaves it undefined so bare
+   * Feishu chat IDs stay bit-identical.
+   */
+  channelName?: string;
   /** Feishu App ID */
   appId?: string;
   /** Feishu App Secret */
@@ -369,7 +374,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // missing credentials without being overridden by ambient configuration.
     this.appId = config.appId ?? Config.FEISHU_APP_ID;
     this.appSecret = config.appSecret ?? Config.FEISHU_APP_SECRET;
-    this.routePrefix = config.appName ? `${this.id}:` : undefined;
+    this.routePrefix = config.channelName ? `${this.id}:` : undefined;
     const toRoutedChatId = (chatId: string): string =>
       this.routePrefix && chatId ? `${this.routePrefix}${chatId}` : chatId;
     const toRoutedMessageId = (messageId: string): string =>

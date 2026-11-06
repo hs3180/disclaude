@@ -1,5 +1,6 @@
 import { credentialEnvName } from './env-reference.js';
 import type { DisclaudeConfig } from './types.js';
+import { channelDeclarationErrors, resolveChannelDeclarations } from './channel-declarations.js';
 import { externalSecretEnvironmentNames } from './secret-environment.js';
 
 /** Public IDs may be literals; secrets always reference host-owned environment values. */
@@ -36,93 +37,94 @@ export function knownSecretValues(): string[] {
   ].filter(Boolean);
 }
 
-/** Validate named Feishu apps without resolving their secrets. */
-export function feishuAppErrors(config: DisclaudeConfig): string[] {
-  const feishu = config.channels?.feishu;
-  if (feishu?.apps === undefined) {
+/**
+ * One credential field's shape check, shared by legacy sections and named
+ * declarations. Registers secret environment names for redaction as a side
+ * effect; call sites word the diagnostics.
+ */
+function credentialFieldIssue(
+  value: unknown,
+  secret: boolean,
+  config: DisclaudeConfig
+): { kind: 'shape' } | { kind: 'env-collision'; name: string } | undefined {
+  const name = credentialEnvName(typeof value === 'string' ? value : undefined);
+  if (secret && name) {
+    privateNames.add(name);
+  }
+  if (typeof value !== 'string' || !value.trim() || (!name && (secret || value.startsWith('$')))) {
+    return { kind: 'shape' };
+  }
+  if (name && secret && Object.hasOwn(config.env ?? {}, name)) {
+    return { kind: 'env-collision', name };
+  }
+  return undefined;
+}
+
+/**
+ * Credential rules for named Feishu channel declarations
+ * (`channels.<name>: { type: feishu, appId, appSecret }`).
+ */
+function feishuDeclarationCredentialErrors(config: DisclaudeConfig): string[] {
+  const declarations = resolveChannelDeclarations(config).filter(
+    (declaration) => declaration.type === 'feishu'
+  );
+  if (!declarations.length) {
     return [];
   }
   const errors: string[] = [];
-  const apps = feishu.apps as unknown;
-  if (!apps || typeof apps !== 'object' || Array.isArray(apps) || Object.keys(apps).length === 0) {
-    return ['channels.feishu.apps must be a non-empty map of named apps'];
+  const legacyFeishu = config.channels?.feishu;
+  if (legacyFeishu?.appId !== undefined || legacyFeishu?.appSecret !== undefined) {
+    errors.push(
+      'channels.feishu.appId/appSecret cannot be combined with named feishu channel declarations; declare every Feishu app as its own channel'
+    );
   }
-  if (feishu.appId !== undefined || feishu.appSecret !== undefined) {
-    errors.push('channels.feishu.appId/appSecret cannot be combined with channels.feishu.apps');
-  }
-  const normalizedNames = new Map<string, string>();
-  for (const [name, raw] of Object.entries(apps)) {
-    const path = `channels.feishu.apps.${name}`;
-    if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(name)) {
-      errors.push(`${path}: app names must be non-empty and contain only letters, digits, _ or -`);
-    }
-    const normalized = name.toLowerCase();
-    const previous = normalizedNames.get(normalized);
-    if (previous) {
-      errors.push(`${path}: duplicate app name (also ${previous})`);
-    }
-    normalizedNames.set(normalized, name);
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-      errors.push(`${path} must be a mapping`);
+  for (const { name, config: declaration } of declarations) {
+    if (declaration.enabled === false) {
       continue;
     }
-    const app = raw as Record<string, unknown>;
     for (const [field, secret] of [
       ['appId', false],
       ['appSecret', true],
     ] as const) {
-      const value = app[field];
-      const envName = credentialEnvName(value);
-      if (envName && secret) {
-        privateNames.add(envName);
+      const path = `channels.${name}.${field}`;
+      if (declaration[field] === undefined) {
+        errors.push(`${path} is required for a feishu channel declaration`);
+        continue;
       }
-      if (
-        typeof value !== 'string' ||
-        !value.trim() ||
-        (!envName && (secret || value.startsWith('$')))
-      ) {
-        errors.push(
-          `${path}.${field} must be ${secret ? 'a whole $VARIABLE or ${VARIABLE} reference' : 'a public identifier or whole $VARIABLE / ${VARIABLE} reference'}`
-        );
-      } else if (envName && secret && Object.hasOwn(config.env ?? {}, envName)) {
-        errors.push(
-          `${path}.${field} references env.${envName} in the same config; supply it through the service environment`
-        );
+      const issue = credentialFieldIssue(declaration[field], secret, config);
+      if (!issue) {
+        continue;
       }
-    }
-    if (app.agent !== undefined && (typeof app.agent !== 'string' || !app.agent.trim())) {
-      errors.push(`${path}.agent must be a non-empty agents preset name`);
-    } else if (typeof app.agent === 'string' && !Object.hasOwn(config.agents ?? {}, app.agent)) {
-      errors.push(`${path}.agent references unknown agents preset: ${app.agent}`);
+      errors.push(
+        issue.kind === 'env-collision'
+          ? `${path} references env.${issue.name} in the same config; supply it through the service environment`
+          : `${path} must be ${
+              secret
+                ? 'a whole $VARIABLE or ${VARIABLE} reference'
+                : 'a public identifier or whole $VARIABLE / ${VARIABLE} reference'
+            }`
+      );
     }
   }
   return errors;
 }
 
-export function feishuAppAgentDefaults(config: DisclaudeConfig): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(config.channels?.feishu?.apps ?? {})
-      .map(([name, app]) => [name, typeof app.agent === 'string' ? app.agent : undefined] as const)
-      .filter(
-        (entry): entry is readonly [string, string] =>
-          typeof entry[1] === 'string' && entry[1].trim() !== ''
-      )
-  );
-}
-
-/** Resolve one named app's credential independently from every other app. */
-export function resolveFeishuAppCredential(
+/** Resolve one named feishu channel's credential independently from every other channel. */
+export function resolveFeishuChannelCredential(
   config: DisclaudeConfig,
-  appName: string,
+  channelName: string,
   field: 'appId' | 'appSecret'
 ): string {
-  const errors = feishuAppErrors(config);
+  const errors = channelCredentialErrors(config);
   if (errors.length) {
     throw new Error(errors.join('; '));
   }
-  const path = `channels.feishu.apps.${appName}.${field}`;
-  const value = config.channels?.feishu?.apps?.[appName]?.[field];
-  if (value === undefined) {
+  const path = `channels.${channelName}.${field}`;
+  const declaration = resolveChannelDeclarations(config).find(
+    (entry) => entry.name === channelName && entry.type === 'feishu'
+  );
+  const value = declaration?.config[field];
+  if (typeof value !== 'string' || !value.trim()) {
     throw new Error(`${path} is not configured`);
   }
   const name = credentialEnvName(value);
@@ -140,17 +142,27 @@ export function resolveFeishuAppCredential(
 }
 
 export function channelCredentialErrors(config: DisclaudeConfig): string[] {
-  const errors: string[] = feishuAppErrors(config);
+  const errors: string[] = [
+    ...channelDeclarationErrors(config),
+    ...feishuDeclarationCredentialErrors(config),
+  ];
   for (const [channel, fields] of Object.entries(CHANNEL_CREDENTIAL_FIELDS)) {
     const entry = config.channels?.[channel];
     if (!entry) {
       continue;
     }
     // Diagnose raw legacy YAML without retaining the removed field in the API.
-    if (channel === 'feishu' && Object.hasOwn(entry, 'appSecretEnv')) {
-      errors.push(
-        'channels.feishu.appSecretEnv is obsolete; migrate to appSecret: $VARIABLE and an external secret environment file (docs/channel-credentials.md)'
-      );
+    if (channel === 'feishu') {
+      if (Object.hasOwn(entry, 'appSecretEnv')) {
+        errors.push(
+          'channels.feishu.appSecretEnv is obsolete; migrate to appSecret: $VARIABLE and an external secret environment file (docs/channel-credentials.md)'
+        );
+      }
+      if (Object.hasOwn(entry, 'apps')) {
+        errors.push(
+          'channels.feishu.apps is obsolete; declare each app as its own named channel with type: feishu (see disclaude.config.example.yaml)'
+        );
+      }
     }
     for (const [field, secret] of Object.entries(fields)) {
       const value = entry[field];
@@ -158,23 +170,19 @@ export function channelCredentialErrors(config: DisclaudeConfig): string[] {
         continue;
       }
       const path = `channels.${channel}.${field}`;
-      const name = credentialEnvName(value);
-      if (secret && name) {
-        privateNames.add(name);
+      const issue = credentialFieldIssue(value, secret, config);
+      if (!issue) {
+        continue;
       }
-      if (
-        typeof value !== 'string' ||
-        !value.trim() ||
-        (!name && (secret || value.startsWith('$')))
-      ) {
-        errors.push(
-          `${path} must be ${secret ? 'a whole $VARIABLE or ${VARIABLE} reference; move its value outside the general config' : 'a public identifier or whole $VARIABLE / ${VARIABLE} reference'}`
-        );
-      } else if (name && secret && Object.hasOwn(config.env ?? {}, name)) {
-        errors.push(
-          `${path} references env.${name} in the same config; remove that secret and supply it through the service environment or a restricted external file`
-        );
-      }
+      errors.push(
+        issue.kind === 'env-collision'
+          ? `${path} references env.${issue.name} in the same config; remove that secret and supply it through the service environment or a restricted external file`
+          : `${path} must be ${
+              secret
+                ? 'a whole $VARIABLE or ${VARIABLE} reference; move its value outside the general config'
+                : 'a public identifier or whole $VARIABLE / ${VARIABLE} reference'
+            }`
+      );
     }
   }
   return errors;

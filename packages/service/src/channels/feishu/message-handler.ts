@@ -330,7 +330,7 @@ export class MessageHandler {
     hasControlHandler: () => boolean;
     tenantAccessToken: string;
     privateInput?: ActionBoundInput;
-    /** Named-app routing: prefix chat/message IDs before persistence and agent routing. */
+    /** Named-channel routing: prefix chat/message IDs before persistence and agent routing. */
     routedChatId?: (chatId: string) => string;
     routedMessageId?: (messageId: string) => string;
     /** Issue #5400: resolved GitHub App client supplier for issue reporting. */

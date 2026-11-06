@@ -33,8 +33,10 @@ import {
   eventBus,
   channelCredentialErrors,
   resolveChannelCredential,
-  resolveFeishuAppCredential,
-  feishuAppAgentDefaults,
+  resolveFeishuChannelCredential,
+  channelDeclarationAgentDefaults,
+  isChannelDeclaration,
+  resolveChannelDeclarations,
   ChatFailureRegistry,
   GoalStore,
   resolveAgentPreset,
@@ -621,7 +623,7 @@ export async function main(): Promise<void> {
 
   const agentPool = new ChatSessionPool({
     agentPresets: Config.getAgentPresets(),
-    appAgentDefaults: feishuAppAgentDefaults(Config.getRawConfig()),
+    channelAgentDefaults: channelDeclarationAgentDefaults(Config.getRawConfig()),
     turnRecovery,
     // Issue #5400: per-chat last-failure registry backing the /issue entry.
     failureRecorder: (failure) => failureRegistry.record(failure),
@@ -1358,13 +1360,16 @@ interface ResolvedChannelConfig {
  * Resolve channel configurations from the loaded config.
  *
  * Handles the current mixed config structure where:
+ * - Named channel declarations live under `channels.<name>` with a `type`
+ *   marker (`type: feishu` is the first supported type, #5254 rework)
  * - REST config lives under `channels.rest`
  * - Feishu config lives under top-level `feishu.appId/appSecret`
  *
- * LIMITATION: This function has hard-coded knowledge of 'rest' and 'feishu'
- * types due to the current mixed config structure. Adding a new config-driven
- * channel type requires updating this function. A future config unification
- * (all channels under `channels.<type>`) would eliminate this limitation.
+ * LIMITATION: Legacy type sections still require per-type knowledge here.
+ * Named declarations flow through the shared declaration layer
+ * (`@disclaude/core` `resolveChannelDeclarations`) so future types — and a
+ * future dynamic (non-YAML) declaration source — plug in without changing
+ * this function's shape.
  *
  * WeChat uses credentials saved by `disclaude wechat login`, never a YAML token.
  *
@@ -1413,27 +1418,45 @@ export function resolveChannelConfigs(
     });
   }
 
-  // Feishu channel: named apps get independent channel IDs and credentials.
-  // The legacy single-app shape deliberately keeps its original id and bare chat IDs.
+  // Named channel declarations (`channels.<name>: { type: … }`). Feishu is
+  // the first type instantiable as several named channels; every other type
+  // fails explicitly so a typo'd type never silently drops a channel.
+  const declarations = resolveChannelDeclarations(rawConfig);
+  const unsupported = declarations.filter((declaration) => declaration.type !== 'feishu');
+  const [unsupportedDeclaration] = unsupported;
+  if (unsupportedDeclaration) {
+    throw new Error(
+      `channels.${unsupportedDeclaration.name}: type "${unsupportedDeclaration.type}" cannot be declared as a named channel yet; only feishu supports named channel declarations`
+    );
+  }
+
+  // Feishu channel: each named declaration gets an independent channel ID
+  // and credentials. The legacy single-app shape deliberately keeps its
+  // original id and bare chat IDs.
   const feishuEnabled = rawConfig.channels?.feishu?.enabled !== false;
-  const namedApps = rawConfig.channels?.feishu?.apps;
-  if (feishuEnabled && namedApps) {
+  const feishuDeclarations = declarations.filter(
+    (declaration) => declaration.type === 'feishu' && declaration.config.enabled !== false
+  );
+  if (feishuEnabled && feishuDeclarations.length) {
     const seenAppIds = new Map<string, string>();
-    for (const [name] of Object.entries(namedApps)) {
-      const appId = resolveFeishuAppCredential(rawConfig, name, 'appId');
+    for (const { name, config: declaration } of feishuDeclarations) {
+      const appId = resolveFeishuChannelCredential(rawConfig, name, 'appId');
       const previous = seenAppIds.get(appId);
       if (previous) {
-        throw new Error(`channels.feishu.apps.${name}.appId duplicates app ${previous}`);
+        throw new Error(`channels.${name}.appId duplicates channel ${previous}`);
       }
       seenAppIds.set(appId, name);
       entries.push({
         type: 'feishu',
         config: {
           id: `feishu:${name}`,
-          appName: name,
+          channelName: name,
           appId,
-          appSecret: resolveFeishuAppCredential(rawConfig, name, 'appSecret'),
-          streamingCard: config.FEISHU_STREAMING_CARD,
+          appSecret: resolveFeishuChannelCredential(rawConfig, name, 'appSecret'),
+          streamingCard:
+            typeof declaration.streamingCard === 'boolean'
+              ? declaration.streamingCard
+              : config.FEISHU_STREAMING_CARD,
         },
       });
     }
@@ -1491,11 +1514,11 @@ export function resolveChannelConfigs(
     });
   }
 
-  // Warn on unrecognized channel config keys (Issue #1594 review P2)
+  // Warn on unrecognized channel config keys (Issue #1594 review P2).
+  // Named declarations (any key with a `type` marker) are a recognized kind.
   const knownChannelKeys = new Set(['rest', 'feishu', 'wechat']);
-  const channelKeys = Object.keys(rawConfig.channels || {});
-  for (const key of channelKeys) {
-    if (!knownChannelKeys.has(key)) {
+  for (const [key, entry] of Object.entries(rawConfig.channels ?? {})) {
+    if (!knownChannelKeys.has(key) && !isChannelDeclaration(entry)) {
       logger.warn(
         { channelKey: key },
         `Unrecognized channel config key "channels.${key}" — this channel type is not supported`

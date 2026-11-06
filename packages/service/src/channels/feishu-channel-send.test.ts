@@ -179,7 +179,7 @@ vi.mock('./feishu/index.js', () => ({
  */
 function createTestChannel(
   mockClient: ReturnType<typeof createMockClient>['client'],
-  config: { id?: string; appName?: string } = {}
+  config: { id?: string; channelName?: string } = {}
 ) {
   const channel = new FeishuChannel({ appId: 'test-app', appSecret: 'test-secret', ...config });
   // Inject mock client by setting the private field
@@ -196,9 +196,9 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
     vi.clearAllMocks();
   });
 
-  it('keeps named-app ownership in history while Feishu receives the bare chat ID', async () => {
+  it('keeps named-channel ownership in history while Feishu receives the bare chat ID', async () => {
     const { client, mocks } = createMockClient();
-    const channel = createTestChannel(client, { id: 'feishu:personal', appName: 'personal' });
+    const channel = createTestChannel(client, { id: 'feishu:personal', channelName: 'personal' });
     await channel.sendMessage({ chatId: 'feishu:personal:oc_same', type: 'text', text: 'reply' });
     expect(mocks.createMock).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({

@@ -166,20 +166,20 @@ export interface AgentPreset extends AgentConfig {
 export type AgentPresets = Record<string, AgentPreset>;
 
 /**
+ * A user-declared channel: a `channels.<name>` entry carrying an explicit
+ * `type` marker (e.g. `type: feishu`). The map key is the channel's stable
+ * name and identity; type-specific fields (credentials, `agent`, …) sit next
+ * to `type` and are validated per channel type.
+ *
+ * Legacy type sections (`channels.feishu`, `channels.rest`, …) carry no
+ * `type` field and keep their original meaning (#5254 review rework).
+ */
+export type ChannelDeclarationConfig = ConfigChannelConfig & { type: string };
+
+/**
  * Feishu/Lark platform configuration section.
  */
-export interface FeishuAppConfig {
-  /** Public application ID: literal or whole $VARIABLE / ${VARIABLE} reference. */
-  appId: string;
-  /** Secret: whole $VARIABLE / ${VARIABLE} reference to the service environment. */
-  appSecret: string;
-  /** Named `agents` preset used when this app's chat has no `/agent use` override. */
-  agent?: string;
-}
-
 export interface FeishuConfig {
-  /** Named applications. When present, legacy appId/appSecret credentials are not allowed alongside it. */
-  apps?: Record<string, FeishuAppConfig>;
   /** Public application ID: literal or whole $VARIABLE / ${VARIABLE} reference. */
   appId?: string;
   /** Secret: whole $VARIABLE / ${VARIABLE} reference to the external service environment. */
@@ -515,14 +515,22 @@ export interface ConfigChannelConfig {
 }
 
 /**
- * Channels configuration section (abstract).
- * Main project extends this with specific channel types.
+ * Channels configuration section.
+ *
+ * Two entry kinds share this map:
+ * - **Named channel declarations** — `channels.<name>: { type: feishu, … }`.
+ *   The key is the channel's stable name; several declarations may share one
+ *   type. Reserved for future expansion beyond static YAML (see
+ *   `config/channel-declarations.ts` for the declaration seam).
+ * - **Legacy type sections** — `channels.feishu`, `channels.rest`,
+ *   `channels.ruliu`, `channels.wechat` without a `type` field configure one
+ *   instance per type and keep their original shape.
  */
 export interface ChannelsConfig {
   rest?: ConfigChannelConfig & { authToken?: string };
   feishu?: ConfigChannelConfig & FeishuConfig;
   ruliu?: ConfigChannelConfig & RuliuConfig;
-  [channelName: string]: ConfigChannelConfig | undefined;
+  [channelName: string]: ConfigChannelConfig | ChannelDeclarationConfig | undefined;
 }
 
 /**

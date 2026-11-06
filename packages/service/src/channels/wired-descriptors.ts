@@ -216,9 +216,19 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       triggerMode: triggerModeAdapter,
       getHelpCapabilities: () => feishuChannel.getCapabilities(),
     };
-    const generateWelcomeMessage = (chatId: string, chatType: import('@disclaude/core').ChatType): string | undefined => {
-      const command = { type: 'help' as const, chatId, chatType, ...(chatId.startsWith('ou_') ? { actorId: chatId } : {}) };
-      if (helpContext.isCommandAllowed && !helpContext.isCommandAllowed(command)) { return undefined; }
+    const generateWelcomeMessage = (
+      chatId: string,
+      chatType: import('@disclaude/core').ChatType
+    ): string | undefined => {
+      const command = {
+        type: 'help' as const,
+        chatId,
+        chatType,
+        ...(chatId.startsWith('ou_') ? { actorId: chatId } : {}),
+      };
+      if (helpContext.isCommandAllowed && !helpContext.isCommandAllowed(command)) {
+        return undefined;
+      }
       return buildWelcomeMessage('feishu');
     };
     const welcomeService = new WelcomeService({
@@ -364,8 +374,9 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
     };
 
     // Legacy unscoped handlers exist only for the single-app channel; named
-    // apps (`feishu:<app>` ids) are reachable exclusively through chatId-owning
-    // channel handlers, so a raw Feishu chat ID never resolves to one of them.
+    // declarations (`feishu:<name>` ids) are reachable exclusively through
+    // chatId-owning channel handlers, so a raw Feishu chat ID never resolves
+    // to one of them.
     if (!feishuChannel.id.startsWith('feishu:')) {
       context.service.registerFeishuHandlers(feishuHandlers);
     }

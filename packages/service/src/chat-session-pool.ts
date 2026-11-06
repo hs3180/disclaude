@@ -45,8 +45,12 @@ export interface ChatSessionPoolOptions {
   configureQueryOptions?: (options: AgentQueryOptions, chatId: string) => AgentQueryOptions;
   /** Named runtime presets. Defaults to Config.getAgentPresets(). */
   agentPresets?: AgentPresets;
-  /** Feishu app name -> agents preset. `/agent use` remains the stronger per-session override. */
-  appAgentDefaults?: Record<string, string>;
+  /**
+   * Channel name → default agents preset for chats owned by a named channel
+   * declaration (`channels.<name>`). `/agent use` remains the stronger
+   * per-session override.
+   */
+  channelAgentDefaults?: Record<string, string>;
   /** Backend availability probe; injectable for deterministic tests. */
   validatePresetBackend?: (
     backend: AgentPreset['agentBackend'],
@@ -192,7 +196,7 @@ export class ChatSessionPool {
   private readonly callbacksBySession = new Map<string, ChatAgentCallbacks>();
   private readonly selectedPresetBySession = new Map<string, string>();
   private readonly presets?: AgentPresets;
-  private readonly appAgentDefaults?: Record<string, string>;
+  private readonly channelAgentDefaults?: Record<string, string>;
   private readonly options: ChatSessionPoolOptions;
   /**
    * Issue #3696: session keys that should skip history loading on next agent
@@ -228,12 +232,12 @@ export class ChatSessionPool {
         getProvider().forgetSession?.(chatId);
       });
     this.presets = options.agentPresets ?? Config.getAgentPresets();
-    this.appAgentDefaults = Object.keys(options.appAgentDefaults ?? {}).length
-      ? options.appAgentDefaults
+    this.channelAgentDefaults = Object.keys(options.channelAgentDefaults ?? {}).length
+      ? options.channelAgentDefaults
       : undefined;
   }
 
-  /** Session preset: explicit /agent use > source Feishu app default > global default. */
+  /** Session preset: explicit /agent use > owning named channel's default > global default. */
   private resolveSessionPreset(chatId: string, sessionKey: string) {
     if (!this.presets) {
       return undefined;
@@ -242,8 +246,11 @@ export class ChatSessionPool {
     if (explicit) {
       return resolveAgentPreset<AgentPreset>(this.presets, explicit);
     }
-    const app = /^feishu:([^:]+):/.exec(chatId)?.[1];
-    return resolveAgentPreset<AgentPreset>(this.presets, app && this.appAgentDefaults?.[app]);
+    const channel = /^feishu:([^:]+):/.exec(chatId)?.[1];
+    return resolveAgentPreset<AgentPreset>(
+      this.presets,
+      channel && this.channelAgentDefaults?.[channel]
+    );
   }
 
   listAgentPresets(): ActiveAgentPreset[] {

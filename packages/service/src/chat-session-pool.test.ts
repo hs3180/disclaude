@@ -392,12 +392,12 @@ describe('ChatSessionPool', () => {
       });
     });
 
-    it('resolves per-Feishu-app defaults with /agent use taking precedence, across restart', () => {
-      const appDefaults = { personal: 'fast', work: 'default' };
+    it('resolves per-channel defaults with /agent use taking precedence, across restart', () => {
+      const channelDefaults = { personal: 'fast', work: 'default' };
       const callbacks = createMockCallbacks();
       const first = new ChatSessionPool({
         agentPresets: presets,
-        appAgentDefaults: appDefaults,
+        channelAgentDefaults: channelDefaults,
         validatePresetBackend: () => ({ available: true }),
       });
       try {
@@ -427,7 +427,7 @@ describe('ChatSessionPool', () => {
       // /agent use selection is intentionally not persisted.
       const second = new ChatSessionPool({
         agentPresets: presets,
-        appAgentDefaults: appDefaults,
+        channelAgentDefaults: channelDefaults,
         validatePresetBackend: () => ({ available: true }),
       });
       try {

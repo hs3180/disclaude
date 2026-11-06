@@ -128,13 +128,13 @@ function createMockLarkClient() {
 }
 
 function createTestChannel(
-  opts: { streamingCard?: boolean; client?: any; id?: string; appName?: string } = {}
+  opts: { streamingCard?: boolean; client?: any; id?: string; channelName?: string } = {}
 ) {
   const channel = new FeishuChannel({
     appId: 'test-app',
     appSecret: 'test-secret',
     ...(opts.id !== undefined ? { id: opts.id } : {}),
-    ...(opts.appName !== undefined ? { appName: opts.appName } : {}),
+    ...(opts.channelName !== undefined ? { channelName: opts.channelName } : {}),
     ...(opts.streamingCard !== undefined ? { streamingCard: opts.streamingCard } : {}),
   });
   if (opts.client !== undefined) {
@@ -175,7 +175,7 @@ describe('FeishuChannel.startStreaming — Issue #4400', () => {
     expect(createMock).toHaveBeenCalledTimes(1);
   });
 
-  it('sends a named app streaming card to the bare Feishu chat ID', async () => {
+  it('sends a named channel streaming card to the bare Feishu chat ID', async () => {
     const { FeishuCardKitClient } = await import('../platforms/feishu/feishu-cardkit-client.js');
     vi.mocked(FeishuCardKitClient).mockImplementationOnce(
       // eslint-disable-next-line prefer-arrow-callback
@@ -189,7 +189,7 @@ describe('FeishuChannel.startStreaming — Issue #4400', () => {
       streamingCard: true,
       client,
       id: 'feishu:personal',
-      appName: 'personal',
+      channelName: 'personal',
     });
     await expect(channel.startStreaming('feishu:personal:oc_same')).resolves.toBe('card_123');
     expect(createMock).toHaveBeenCalledExactlyOnceWith(
