@@ -37,9 +37,12 @@ are removed from child environments before only the selected key is projected.
 Do not put literal API keys in YAML; supply them through the service's environment
 or a restricted environment file in launchd, systemd or Docker.
 
-Every named agent binds an LLM with an explicit, non-empty `model`. This includes
-native Codex: bind `backend: codex` to a named LLM with `model` and no `api` block.
-`ANTHROPIC_MODEL` and `OPENAI_MODEL` do not fill missing models. `CODEX_MODEL`
+Every named agent binds an LLM. `llms.<name>.model` is that provider's
+optional default model — set it to pin one deployment model for every runtime
+bound to the provider, omit it to keep each runtime's native selection (a
+set-but-blank value is rejected). This includes native Codex: bind
+`backend: codex` to a named LLM with no `api` block. `ANTHROPIC_MODEL` and
+`OPENAI_MODEL` do not fill missing models. `CODEX_MODEL`
 explicitly overrides the default Codex binding only after the configured model
 passes validation; it does not supply a missing model. Named non-default bindings
 remain independent. Put `reasoningEffort` alongside `model`

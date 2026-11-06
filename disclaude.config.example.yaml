@@ -1,63 +1,99 @@
-# Runtime → named LLM. /agent use <name> starts a new session in the current chat.
+# Model configuration is split by ownership (Issue #5679):
+#   llms.<name>   = one LLM provider: connection, credentials, endpoint, plus
+#                   an OPTIONAL provider default model. Nothing else.
+#   agents.<name> = one runtime: which backend harness runs, which llms entry
+#                   it uses, and harness-specific settings — Claude model names
+#                   (claude:), Codex governance (codex:), DSH composition.
+# /agent use <name> starts a new session in the current chat.
 agents:
+  # Codex runtime: the CLI's own ChatGPT login is the connection, so the llms
+  # entry it references carries no api block (config rejects one for codex).
   daily:
-    backend: codex
-    llm: daily
-    default: true
-    codex:
-      transport: app-server
-      # Weekly-quota admission (#5607). All optional; default is observe-only
-      # (record + report upstream window readings, gate only on REAL
-      # usage-limit errors). enforce blocks NEW sessions while the quota
-      # usage progress exceeds the weekly window's time progress — running
-      # turns, resumed chats and capacity-recovery retries are never gated.
+    backend: codex # required: claude | pi | codex | dsh
+    llm: daily # required: names an entry under llms below
+    default: true # optional: runtime for chats that did not select one
+    codex: # optional, codex-only governance
+      transport: app-server # exec | app-server
+      # Weekly-quota admission (#5607). All keys optional; default is
+      # observe-only (record + report upstream window readings, gate only on
+      # REAL usage-limit errors). enforce additionally blocks NEW sessions
+      # while quota usage progress exceeds the weekly window's time progress;
+      # running turns, resumed chats and capacity-recovery retries are never
+      # gated.
       # weeklyQuotaAdmission: enforce # observe (default) | enforce
       # weeklyLimitCooldownMs: 3600000  # fallback cooldown when a real limit hit has no parsable reset hint
+
+  # Claude runtime. Claude-only model names live HERE, under claude:, never
+  # under llms — that split lets the provider default model below serve
+  # several harnesses while Claude keeps its capability metadata.
   assistant:
     backend: claude
-    llm: assistant
-    # Claude-only model names (agent/claude; provider settings stay in llms).
-    # claude:
-    #   behavesAs: claude-opus-5
-    #   modelOverrides:
-    #     claude-opus-5: kimi-k3
-    #     claude-sonnet-4-5: kimi-k3-flash
-    #   env:
-    #     ANTHROPIC_DEFAULT_OPUS_MODEL: your-opus-model
-    #     ANTHROPIC_DEFAULT_SONNET_MODEL: your-sonnet-model
-    #     ANTHROPIC_DEFAULT_HAIKU_MODEL: your-haiku-model
-  # Optional DSH runtime; its API connection belongs in the named LLM below.
-  # dsh:
-  #   backend: dsh
-  #   llm: glm-openai
-  #   mode: minimal
-  #   dshHome: /absolute/path/to/isolated-dsh-home
+    llm: shared-gateway
+    claude: # requires backend: claude; every key optional
+      # Capability slot for the provider default model: a full Claude model
+      # ID (aliases are not auto-resolved here). Claude Code applies that
+      # catalog entry while sending llms.shared-gateway.model on the wire.
+      behavesAs: claude-opus-5
+      # Alternative to behavesAs (mutually exclusive): map several full Claude
+      # model IDs to provider IDs, e.g. a multi-model gateway:
+      # modelOverrides:
+      #   claude-opus-5: kimi-k3
+      #   claude-sonnet-4-5: kimi-k3-flash
+      #   claude-haiku-4-5: kimi-k3-flash
+      # Claude-only environment (subagent model aliases, etc.):
+      env:
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: your-haiku-model
 
-# Every bound LLM requires an explicit model, including native Codex.
-# Codex uses the CLI's account; no API block is needed.
+  # Second runtime on the SAME provider: DSH sends llms.shared-gateway.model
+  # verbatim, so changing the deployment default model means editing that one
+  # line. Claude-only keys (claude.behavesAs/modelOverrides/env) belong to the
+  # Claude agent above and are rejected here.
+  research:
+    backend: dsh
+    llm: shared-gateway
+    mode: minimal # optional: minimal | standard (default)
+    # dshHome: /absolute/path/to/isolated-dsh-home # optional (overrides DSH_HOME)
+
+  # A pi runtime on an OpenAI-protocol provider (pi accepts both protocols):
+  # helper:
+  #   backend: pi
+  #   llm: glm-openai
+
+# LLM providers: connection, credentials, endpoint, plus an OPTIONAL provider
+# default model. Omit `model` to keep each bound runtime's native selection;
+# set it to pin one deployment default for every runtime bound to the
+# provider. A set-but-blank model is rejected. maxConcurrentSessions is the
+# shared live-session budget of the provider.
 llms:
+  # Native Codex: model only (also optional — omitted = Codex's own
+  # selection); an api block is rejected because the CLI owns its connection.
+  daily:
+    model: gpt-6-luna
+    reasoningEffort: max # optional; native Codex/DSH runtimes only
+    maxConcurrentSessions: 3 # shared by every agent bound to this provider
+  # Provider shared by the Claude and DSH agents above (#5679): Anthropic
+  # protocol (Claude requires it), explicit gateway URL (DSH requires
+  # baseUrl), pinned wire model that every bound backend sends unchanged.
+  shared-gateway:
+    model: group/hq-degrade # the wire model EVERY bound backend sends
+    api:
+      protocol: anthropic # required inside api: anthropic | openai
+      baseUrl: https://your-anthropic-gateway.example
+      apiKey: $ASSISTANT_API_KEY # $NAME or ${NAME}, from the service environment
+  # OpenAI-protocol provider for pi/DSH runtimes (Claude rejects openai):
   # glm-openai:
   #   model: glm-5.3
   #   api:
   #     protocol: openai
   #     baseUrl: https://your-openai-compatible-api.example/v1
   #     apiKey: $GLM_API_KEY
-  daily:
-    model: gpt-6-luna
-    reasoningEffort: max
-    maxConcurrentSessions: 3 # Shared by agents bound to this LLM
-  assistant:
-    model: sonnet
-    api:
-      protocol: anthropic # anthropic or openai (Pi and DSH support both)
-      apiKey: $ASSISTANT_API_KEY # $NAME or ${NAME}, from the service environment
-      # baseUrl: https://your-api.example # Omit for the protocol's default endpoint
-    # One binding may serve several harnesses (Issue #5679): backend: claude,
-    # dsh and pi agents bound to the same llms entry all send `model` as the
-    # wire model; Claude model names live in agents.<name>.claude above.
-    # Do not share a bare Claude alias (e.g. model: sonnet) across that
-    # boundary — pin the wire model and set claude.behavesAs on the Claude
-    # agent instead.
+  #
+  # Cross-boundary guard: a provider shared by Claude AND another backend must
+  # NOT use a bare Claude alias as its model. Claude resolves "sonnet"
+  # internally while dsh/pi/codex would put the literal string on the wire, so
+  # the loader rejects e.g. `model: sonnet` on shared-gateway and asks for
+  # exactly the shape above: pin the wire model here and give the Claude agent
+  # its capability slot via agents.<name>.claude.behavesAs.
 
 channels:
   # Personal WeChat via Tencent iLink. First run: disclaude wechat login
