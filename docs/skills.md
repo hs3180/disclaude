@@ -47,7 +47,17 @@ turn prompts. Unsupported older CLIs receive an explicit upgrade diagnostic
 before the protocol, because it rejects the `--stdio` argument itself).
 Registration timeouts or other
 errors fail before thread/turn start. There is no prompt-manifest fallback.
-Codex exec, DSH and Pi keep their existing discovery paths. This change covers
+The `codex exec` transport has no native registration mechanism at all — extra
+roots exist only on the app-server protocol, and `codex exec` itself natively
+scans only `<cwd>/.codex/skills` and `$CODEX_HOME/skills` (offline-probed on
+CLI 0.151.0: no flag, environment variable or `config.toml` key adds extra
+roots, and config-enabled plugins require prior installation into
+`$CODEX_HOME/plugins/cache`). With Disclaude skill roots present — always, in
+practice, because the builtins bundle ships them — `codex exec` and
+`exec resume` fail fast with an actionable diagnostic directing to
+`agents.<name>.codex.transport: app-server`, before any child process or model
+turn; they never inject a fabricated skills manifest (#5520). DSH and Pi keep
+their documented diagnostics-plugin discovery path (below). This change covers
 skills; it does not emulate Claude plugin hooks, MCP servers or agent modules.
 
 ### Registration sequence and real-CLI verification
@@ -106,12 +116,16 @@ service workspace. The CLI does not start or restart services.
 
 After installing, start a new agent session in that Project. Claude loads the
 installed directory through its local-plugin API; Codex app-server registers
-its original directory with the native loader; Codex exec indexes it through
-`SkillsRegistry`; DSH and Pi receive the same compact skill manifest and
+its original directory with the native loader; Codex exec treats the installed
+directory as a native skill root, so its unsupported-transport diagnostic
+applies (use `agents.<name>.codex.transport: app-server`); DSH and Pi receive
+the same compact skill manifest and
 can read the linked instructions using its profile's file/shell tools. A custom
 DSH profile must provide a tool capable of reading local Markdown. Pi uses its
 native `Read` tool; a custom injected Pi runtime must also provide a file reader. References
-resolve from the actual execution directory, including Project subdirectories.
+resolve from the actual execution directory, including Project subdirectories
+(DSH/Pi manifest references; the Codex native loader reads the original
+`SKILL.md` in place).
 Codex treats installed plugin skills at user precedence, so explicit project
 skills override them.
 

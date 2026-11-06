@@ -15,7 +15,8 @@ const mockLogger = vi.hoisted(() => ({
   trace: vi.fn(),
 }));
 
-vi.mock('@disclaude/core', () => ({
+vi.mock('@disclaude/core', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@disclaude/core')>()),
   createLogger: vi.fn(() => mockLogger),
 }));
 

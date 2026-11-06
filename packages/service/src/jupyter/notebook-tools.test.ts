@@ -117,10 +117,11 @@ async function fixture() {
       operation: (value: DatalayerJupyterClient) => Promise<T>
     ) => operation(client as unknown as DatalayerJupyterClient),
   } satisfies Pick<NotebookToolOptions, 'useClient'>;
-  const create = () =>
+  const create = (importFileLimits?: NotebookToolOptions['importFileLimits']) =>
     new NotebookTools({
       projectDir: root,
       useClient: (id, namespace, operation) => connections.useClient(id, namespace, operation),
+      ...(importFileLimits ? { importFileLimits } : {}),
     });
   const session = create();
   const call = (owner: NotebookTools, name: string, input: Record<string, unknown>) =>
@@ -442,17 +443,181 @@ describe('Optional Datalayer Notebook tools', () => {
 
   it('refuses symlinks, files outside the Project and oversized input before remote writes', async () => {
     const f = await fixture();
+    const session = f.create({ maxBytes: 4096 });
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'disclaude-outside-input-'));
     roots.push(outside);
     fs.writeFileSync(path.join(outside, 'data.csv'), 'outside');
     fs.symlinkSync(path.join(outside, 'data.csv'), path.join(f.root, 'link'));
-    fs.writeFileSync(path.join(f.root, 'large'), Buffer.alloc(2_000_001));
-    for (const filePath of ['link', path.join(outside, 'data.csv'), 'large']) {
+    fs.writeFileSync(path.join(f.root, 'large'), Buffer.alloc(4097));
+    for (const [file, message] of [
+      ['link', 'regular file inside this Project'],
+      [path.join(outside, 'data.csv'), 'regular file inside this Project'],
+      ['large', 'exceeds the import-file limit of 4096 bytes'],
+    ] as const) {
       await expect(
-        f.call(f.session, 'notebook_import_file', { notebookId: f.args.notebookId, filePath })
-      ).rejects.toThrow('regular file inside this Project');
+        f.call(session, 'notebook_import_file', { notebookId: f.args.notebookId, filePath: file })
+      ).rejects.toThrow(message);
     }
     expect(f.client.json).not.toHaveBeenCalled();
+  });
+
+  it('uploads one file above the small-file limit in verified chunks and keeps re-imports idempotent', async () => {
+    const f = await fixture();
+    const session = f.create({ smallFileBytes: 1000, chunkBytes: 1000, maxBytes: 100_000 });
+    const content = Buffer.alloc(2500, 7);
+    fs.writeFileSync(path.join(f.root, 'data.parquet'), content);
+    const remote = new Map<string, Buffer>();
+    let finalized = false;
+    const chunks: number[] = [];
+    Object.assign(f.client, {
+      response: vi.fn((route: string) => {
+        const [pathPart, query] = route.split('?');
+        if (pathPart.startsWith('files/')) {
+          const value = finalized ? remote.get(`api/contents/${pathPart.slice('files/'.length)}`) : undefined;
+          return Promise.resolve(
+            value ? new Response(value) : new Response('{}', { status: 404 })
+          );
+        }
+        if (query?.includes('content=0')) {
+          const value = finalized ? remote.get(pathPart) : undefined;
+          return Promise.resolve(
+            value
+              ? new Response(JSON.stringify({ type: 'file', size: value.length }))
+              : new Response('{}', { status: 404 })
+          );
+        }
+        return Promise.resolve(new Response('{}', { status: 404 }));
+      }),
+      responseText: (value: Response) => value.text(),
+      json: vi.fn((route: string, method?: string, body?: Record<string, unknown>) => {
+        if (method === 'PUT' && typeof body?.chunk === 'number' && typeof body.content === 'string') {
+          expect(body.type).toBe('file');
+          chunks.push(body.chunk);
+          if (body.chunk === 1) {
+            remote.delete(route);
+            chunks.length = 0;
+            chunks.push(1);
+            remote.set(route, Buffer.alloc(0));
+          }
+          const assembled = remote.get(route)!;
+          remote.set(route, Buffer.concat([assembled, Buffer.from(body.content, 'base64')]));
+          if (body.chunk === -1) {
+            finalized = true;
+          }
+          return Promise.resolve({ type: 'file', size: remote.get(route)!.length });
+        }
+        if (method === 'DELETE') {
+          remote.delete(route);
+          finalized = false;
+          return Promise.resolve(undefined);
+        }
+        return Promise.resolve({ path: route });
+      }),
+    });
+    const input = { notebookId: f.args.notebookId, filePath: 'data.parquet' };
+    const imported = (await f.call(session, 'notebook_import_file', input)) as {
+      remotePath: string;
+      chunks: number;
+      transport: string;
+      verifiedBy: string;
+    };
+    expect(chunks).toEqual([1, 2, -1]);
+    const storedAt = (name: string): Buffer | undefined => remote.get(`api/contents/${name}`);
+    expect(imported).toMatchObject({
+      state: 'imported',
+      transport: 'chunked',
+      chunks: 3,
+      verifiedBy: 'sha256-readback',
+      size: 2500,
+      sha256: createHash('sha256').update(content).digest('hex'),
+    });
+    expect(storedAt(imported.remotePath)?.length).toBe(2500);
+    // Re-import: content-addressed name plus matching metadata size, no re-upload.
+    expect(await f.call(session, 'notebook_import_file', input)).toMatchObject({
+      state: 'existing',
+      remotePath: imported.remotePath,
+    });
+    const putCalls = f.client.json.mock.calls.filter(
+      ([, method, body]) => method === 'PUT' && typeof body?.chunk === 'number'
+    ).length;
+    expect(putCalls).toBe(3);
+    // A stale truncated partial (size mismatch under the content-addressed
+    // name) is removed and the import retried instead of being blocked.
+    finalized = true;
+    remote.set(`api/contents/${imported.remotePath}`, content.subarray(0, 1000));
+    expect(await f.call(session, 'notebook_import_file', input)).toMatchObject({
+      state: 'imported',
+      chunks: 3,
+    });
+    expect(storedAt(imported.remotePath)?.length).toBe(2500);
+  });
+
+  it('removes the remote partial when a chunk fails or verification cannot prove the content', async () => {
+    const f = await fixture();
+    const failing = f.create({ smallFileBytes: 10, chunkBytes: 1000, maxBytes: 100_000 });
+    const verified = f.create({ smallFileBytes: 10, chunkBytes: 1000, maxBytes: 100_000 });
+    fs.writeFileSync(path.join(f.root, 'data.bin'), Buffer.alloc(2500, 9));
+    const deleted: string[] = [];
+    let stored = Buffer.alloc(0);
+    let chunkFailuresRemaining = 1;
+    const wire = (session: NotebookTools, filesResponse: (route: string) => Response) => {
+      Object.assign(f.client, {
+        response: vi.fn((route: string) => {
+          if (route.startsWith('files/')) {
+            return Promise.resolve(filesResponse(route));
+          }
+          if (route.split('?')[1]?.includes('content=0')) {
+            return Promise.resolve(
+              stored.length
+                ? new Response(JSON.stringify({ type: 'file', size: stored.length }))
+                : new Response('{}', { status: 404 })
+            );
+          }
+          return Promise.resolve(new Response('{}', { status: 404 }));
+        }),
+        responseText: (value: Response) => value.text(),
+        json: vi.fn((route: string, method?: string, body?: Record<string, unknown>) => {
+          if (method === 'PUT' && typeof body?.chunk === 'number' && typeof body.content === 'string') {
+            if (body.chunk === 1) {
+              stored = Buffer.alloc(0);
+            }
+            if (body.chunk === 2 && chunkFailuresRemaining > 0) {
+              chunkFailuresRemaining--;
+              stored = Buffer.concat([stored, Buffer.from(body.content, 'base64')]);
+              throw new Error('simulated network failure mid-upload');
+            }
+            stored = Buffer.concat([stored, Buffer.from(body.content, 'base64')]);
+            return Promise.resolve({ type: 'file', size: stored.length });
+          }
+          if (method === 'DELETE') {
+            deleted.push(route);
+            stored = Buffer.alloc(0);
+            return Promise.resolve(undefined);
+          }
+          return Promise.resolve({ path: route });
+        }),
+      });
+      return session;
+    };
+    const input = { notebookId: f.args.notebookId, filePath: 'data.bin' };
+    // 1) A failing chunk removes the partial and reports a retryable failure.
+    await expect(f.call(wire(failing, () => new Response('{}', { status: 404 })), 'notebook_import_file', input))
+      .rejects.toThrow(/simulated network failure mid-upload/);
+    expect(deleted).toHaveLength(1);
+    // 2) An unavailable verification route fails closed and removes the upload.
+    await expect(f.call(wire(verified, () => new Response('gone', { status: 404 })), 'notebook_import_file', input))
+      .rejects.toThrow(/verification/i);
+    expect(deleted).toHaveLength(2);
+    // 3) A hash mismatch fails closed and removes the reassembled bytes.
+    await expect(
+      f.call(
+        wire(f.create({ smallFileBytes: 10, chunkBytes: 1000, maxBytes: 100_000 }), () => new Response('other bytes')),
+        'notebook_import_file',
+        input
+      )
+    ).rejects.toThrow(/hash mismatch/);
+    expect(deleted).toHaveLength(3);
+    expect(stored.length).toBe(0);
   });
 
   it('refuses an attachment import write when its Project reference is removed during the read', async () => {

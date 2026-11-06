@@ -38,7 +38,11 @@ export async function main(args = process.argv.slice(2)) {
         namespace = createHash('sha256').update(endpoint.href).digest('hex');
         client = new DatalayerJupyterClient({ baseUrl: endpoint.href,
           ...(mode === 'token' ? { authorization: async () => 'token ' + secret } : { password: async () => secret }),
-          allowInsecureHttp: endpoint.protocol === 'http:', onProgress: trace });
+          allowInsecureHttp: endpoint.protocol === 'http:',
+          // Chunked imports legitimately stream multi-megabyte requests; other
+          // commands keep the 30s connection default.
+          ...(options.command === 'import-file' ? { timeoutMs: 300_000 } : {}),
+          onProgress: trace });
       }
       phase = 'operation';
       return { client, connectionId: options.connectionId, namespace };
