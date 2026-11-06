@@ -23,31 +23,44 @@ agents:
       # weeklyQuotaAdmission: enforce # observe (default) | enforce
       # weeklyLimitCooldownMs: 3600000  # fallback cooldown when a real limit hit has no parsable reset hint
 
-  # Claude runtime. Claude-only model names live HERE, under claude:, never
+  # Claude runtime. Claude-only model settings live HERE, under claude:, never
   # under llms — that split lets the provider default model below serve
-  # several harnesses while Claude keeps its capability metadata.
+  # several harnesses while Claude keeps its model mapping.
   assistant:
     backend: claude
     llm: shared-gateway
     claude: # requires backend: claude; every key optional
-      # Capability slot for the provider default model: a full Claude model
-      # ID (aliases are not auto-resolved here). Claude Code applies that
-      # catalog entry while sending llms.shared-gateway.model on the wire.
-      behavesAs: claude-opus-5
+      # Three-tier mapping for Claude Code's multi-agent model slots: which of
+      # the provider's models pretends to be opus / sonnet / haiku (subagents
+      # and background tasks resolve through these tiers). Every tier key is
+      # optional; an omitted tier falls back to the provider defaultModel
+      # below — so you can skip `models` entirely and configure only
+      # defaultModel: all three tiers then point at that one model.
+      models:
+        opus: kimi-k3 # heavyweight tier
+        sonnet: kimi-k3-flash # default tier
+        haiku: kimi-k3-air # fast/background tier
+      # Capability slot for the provider defaultModel when it is a gateway ID
+      # Claude Code does not know: a full Claude model ID (aliases are not
+      # auto-resolved here) whose catalog entry Claude Code applies to it.
+      # behavesAs: claude-opus-5
       # Alternative to behavesAs (mutually exclusive): map several full Claude
       # model IDs to provider IDs, e.g. a multi-model gateway:
       # modelOverrides:
       #   claude-opus-5: kimi-k3
       #   claude-sonnet-4-5: kimi-k3-flash
       #   claude-haiku-4-5: kimi-k3-flash
-      # Claude-only environment (subagent model aliases, etc.):
-      env:
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: your-haiku-model
+      # Other Claude-only environment. The three tier variables above are
+      # derived from `models`/defaultModel — set a tier in ONE place; setting
+      # e.g. ANTHROPIC_DEFAULT_HAIKU_MODEL here together with models.haiku is
+      # rejected (an explicit env entry still overrides a computed default).
+      # env:
+      #   ANTHROPIC_SMALL_FAST_MODEL: your-small-model
 
-  # Second runtime on the SAME provider: DSH sends llms.shared-gateway.model
+  # Second runtime on the SAME provider: DSH sends llms.shared-gateway.defaultModel
   # verbatim, so changing the deployment default model means editing that one
-  # line. Claude-only keys (claude.behavesAs/modelOverrides/env) belong to the
-  # Claude agent above and are rejected here.
+  # line. Claude-only keys (claude.models/behavesAs/modelOverrides/env) belong
+  # to the Claude agent above and are rejected here.
   research:
     backend: dsh
     llm: shared-gateway
@@ -59,41 +72,45 @@ agents:
   #   backend: pi
   #   llm: glm-openai
 
-# LLM providers: connection, credentials, endpoint, plus an OPTIONAL provider
-# default model. Omit `model` to keep each bound runtime's native selection;
-# set it to pin one deployment default for every runtime bound to the
-# provider. A set-but-blank model is rejected. maxConcurrentSessions is the
-# shared live-session budget of the provider.
+# LLM providers: connection, credentials, endpoint, plus an OPTIONAL default
+# model. Agents bound to a provider can use ANY model it serves —
+# defaultModel only pins the model a runtime falls back to when nothing more
+# specific selects one, so changing the deployment default means editing this
+# single line. A set-but-blank value is rejected; omit defaultModel to keep
+# each bound runtime's native selection. maxConcurrentSessions is the shared
+# live-session budget of the provider.
 llms:
-  # Native Codex: model only (also optional — omitted = Codex's own
+  # Native Codex (defaultModel is also optional here — omitted = Codex's own
   # selection); an api block is rejected because the CLI owns its connection.
   daily:
-    model: gpt-6-luna
-    reasoningEffort: max # optional; native Codex/DSH runtimes only
+    defaultModel: gpt-6-luna
+    # Optional provider-level default, unrelated to the harness — runtimes
+    # that cannot apply an effort ignore it (currently codex and dsh do).
+    reasoningEffort: max
     maxConcurrentSessions: 3 # shared by every agent bound to this provider
   # Provider shared by the Claude and DSH agents above (#5679): Anthropic
   # protocol (Claude requires it), explicit gateway URL (DSH requires
-  # baseUrl), pinned wire model that every bound backend sends unchanged.
+  # baseUrl), default wire model that every bound backend sends unchanged.
   shared-gateway:
-    model: group/hq-degrade # the wire model EVERY bound backend sends
+    defaultModel: group/hq-degrade # the wire model EVERY bound backend sends
     api:
       protocol: anthropic # required inside api: anthropic | openai
       baseUrl: https://your-anthropic-gateway.example
       apiKey: $ASSISTANT_API_KEY # $NAME or ${NAME}, from the service environment
   # OpenAI-protocol provider for pi/DSH runtimes (Claude rejects openai):
   # glm-openai:
-  #   model: glm-5.3
+  #   defaultModel: glm-5.3
   #   api:
   #     protocol: openai
   #     baseUrl: https://your-openai-compatible-api.example/v1
   #     apiKey: $GLM_API_KEY
   #
   # Cross-boundary guard: a provider shared by Claude AND another backend must
-  # NOT use a bare Claude alias as its model. Claude resolves "sonnet"
+  # NOT use a bare Claude alias as its defaultModel. Claude resolves "sonnet"
   # internally while dsh/pi/codex would put the literal string on the wire, so
-  # the loader rejects e.g. `model: sonnet` on shared-gateway and asks for
-  # exactly the shape above: pin the wire model here and give the Claude agent
-  # its capability slot via agents.<name>.claude.behavesAs.
+  # the loader rejects e.g. `defaultModel: sonnet` on shared-gateway and asks
+  # for exactly the shape above: pin the wire model here and map the Claude
+  # tiers via agents.<name>.claude.models (capability slot: behavesAs).
 
 channels:
   # Personal WeChat via Tencent iLink. First run: disclaude wechat login
