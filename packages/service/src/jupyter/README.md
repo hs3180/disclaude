@@ -6,6 +6,15 @@ command invocation, and `notebook-tools.ts` owns its temporary RTC connections
 and Project-local run facts. Neither module is imported by ChatAgent or service
 startup. Report files are delivered separately through the channel CLI.
 
+`disclaude jupyter tools` publishes every command except itself — the Notebook
+operations, `check`, the `link`/`create`/`unlink` lifecycle commands,
+`interrupt` and `runtime-probe` — each with one JSON input schema used through
+`--input-file`; `--path` remains a shorthand for the lifecycle `path` field.
+The schema descriptions carry the documented contracts (the RTC-seeded phantom
+empty first cell after `create`, per-kernel FIFO execute ordering and
+`import-file`'s Project-relative `filePath`); the Skill README/SKILL keep the
+authoritative wording.
+
 Jupyter reference metadata belongs to the Jupyter integration. It is stored at
 `<workingDir>/.jupyter/config.json`, independently of the generic ProjectManager
 and its chat-to-directory bindings.

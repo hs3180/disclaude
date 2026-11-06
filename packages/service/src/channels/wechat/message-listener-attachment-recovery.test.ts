@@ -11,7 +11,10 @@ import type { WeChatApiClient } from './api-client.js';
 import type { WeChatUpdate } from './types.js';
 
 const logger = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() }));
-vi.mock('@disclaude/core', () => ({ createLogger: () => logger }));
+vi.mock('@disclaude/core', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@disclaude/core')>()),
+  createLogger: () => logger,
+}));
 const owned: WeChatMessageListener[] = [], dirs: string[] = [];
 afterEach(async () => {
   for (const l of owned.splice(0)) { await l.stop(); }

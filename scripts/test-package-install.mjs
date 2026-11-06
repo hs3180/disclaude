@@ -259,7 +259,7 @@ async function verifyPackage() {
     '-e',
     `
     import assert from 'node:assert/strict';
-    import { join, resolve } from 'node:path';
+    import { join } from 'node:path';
     import { readFileSync, realpathSync } from 'node:fs';
     import { pathToFileURL } from 'node:url';
     const installed = ${JSON.stringify(installed)};
@@ -278,19 +278,16 @@ async function verifyPackage() {
     assert.equal(realpathSync(Config.getWorkspaceDir()), realpathSync(${JSON.stringify(temp)}),
       'Installation checks must never use an inherited production workspace');
     if (${isPrebuilt} && realpathSync(Config.getBuiltinsDir()) !== realpathSync(installed)) throw new Error('Builtins do not resolve to installed release');
-    // Exercise the installed Codex discovery path from the user's execution root,
-    // not a copied skill fixture or the source checkout.
-    const { codexSkillsRegistry } = await load('core', 'sdk/providers/codex/skill-sources.js');
+    // Exercise the installed Codex native discovery roots from the user's execution
+    // root, not a copied skill fixture or the source checkout.
+    const { codexNativeSkillRoots } = await load('core', 'sdk/providers/codex/skill-sources.js');
     const workspace = realpathSync(process.cwd());
-    const skills = codexSkillsRegistry(workspace, Config.getBuiltinsDir()).resolve();
-    assert(!skills.manifest.includes('diagnose-logs'), 'Clean default manifest must not expose diagnostics');
-    assert.deepEqual(skills.diagnostics.filter((item) => item.name === 'browser-use'), [],
-      'Installed browser-use metadata must parse successfully');
-    const browserLink = skills.manifest.match(/\\[browser-use\\]\\(([^)]+)\\)/)?.[1];
-    assert(browserLink, 'Installed Codex manifest must expose browser-use');
-    const browserPath = realpathSync(resolve(workspace, decodeURIComponent(browserLink)));
+    const nativeRoots = codexNativeSkillRoots(workspace, Config.getBuiltinsDir());
+    assert.deepEqual(nativeRoots.map(root => realpathSync(root)), [realpathSync(join(installed, 'skills'))],
+      'Clean workspace must expose only the installed builtin skill root to Codex');
+    const browserPath = realpathSync(join(nativeRoots[0], 'browser-use/SKILL.md'));
     assert.equal(browserPath, realpathSync(join(installed, 'skills/browser-use/SKILL.md')),
-      'Manifest link must resolve to the installed skill from the execution workspace');
+      'Native root must load browser-use from the installed release');
     assert.match(readFileSync(browserPath, 'utf8'), /name: browser-use/);
     const service = new DisclaudeService();
     await service.start({ deferScheduler: true });
@@ -319,14 +316,15 @@ async function verifyPackage() {
     const project = ${JSON.stringify(diagnosticsProject)};
     const modulesRoot = ${JSON.stringify(isPrebuilt ? 'packages' : 'node_modules/@disclaude')};
     const load = file => import(pathToFileURL(join(root, modulesRoot, 'core/dist', file)).href);
-    const { codexSkillsRegistry } = await load('sdk/providers/codex/skill-sources.js');
+    const { codexNativeSkillRoots } = await load('sdk/providers/codex/skill-sources.js');
     const { diagnosticsPluginManifest, diagnosticsPluginRoot } = await load('skills/diagnostics-plugin.js');
     const { adaptPiOptions } = await load('sdk/providers/pi/options-adapter.js');
     const { adaptOptions } = await load('sdk/providers/claude/options-adapter.js');
-    const resolution = codexSkillsRegistry(project, root).resolve();
-    const skill = resolution.skills.find(item => item.name === 'diagnose-logs');
-    assert(skill, 'Installed diagnostics must be discovered');
-    const instructions = readFileSync(resolve(project, skill.reference), 'utf8');
+    const nativeRoots = codexNativeSkillRoots(project, root);
+    const diagnosticsSkills = join(diagnosticsPluginRoot(project), 'skills');
+    assert(nativeRoots.includes(join(root, 'skills')), 'Installed builtin skill root must remain registered');
+    assert(nativeRoots.includes(diagnosticsSkills), 'Installed diagnostics must be a Codex native skill root');
+    const instructions = readFileSync(join(diagnosticsSkills, 'diagnose-logs/SKILL.md'), 'utf8');
     assert.match(instructions, /Disclaude service issues only/);
     assert(diagnosticsPluginManifest(project).includes('diagnose-logs'), 'DSH manifest must discover installed diagnostics');
     const pi = adaptPiOptions({ settingSources: [], cwd: project }, diagnosticsPluginManifest(project));
