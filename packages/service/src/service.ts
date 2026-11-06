@@ -799,6 +799,9 @@ export class DisclaudeService extends EventEmitter {
    */
   private resolveApiHandlers(chatId?: string): ChannelApiHandlers | undefined {
     if (chatId) {
+      if (this.channelManager.isChatOwnershipAmbiguous(chatId)) {
+        throw new Error('Ambiguous chat ownership; use an unambiguous chat ID');
+      }
       const matches = [...this.channelHandlersMap.values()].filter(({ channel }) => channel.ownsChatId(chatId));
       if (matches.length > 1) { throw new Error('Ambiguous chat ownership; use an unambiguous chat ID'); }
       if (matches[0]) { return matches[0].handlers; }
