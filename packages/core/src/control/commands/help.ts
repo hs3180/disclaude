@@ -2,6 +2,21 @@ import type { ControlCommand, ControlResponse } from '../../types/channel.js';
 import type { ControlHandlerContext, CommandHandler } from '../types.js';
 import { getAvailableCommands } from './index.js';
 
+const WELCOME_EXAMPLES = ['总结这份文件的重点', '把这段话改得更简洁', '帮我列一份周末旅行计划'];
+
+/** Automatic guidance stays task-focused; explicit /help owns the advanced command view. */
+export function buildWelcomeMessage(channel: 'feishu' | 'wechat'): string {
+  const help = channel === 'wechat'
+    ? '发送 /help 可查看全部功能。'
+    : '想进一步了解用法或查看完整命令列表，请发送 /help。';
+  return [
+    '👋 你好，我可以帮你回答问题、整理资料和处理文字。',
+    '可以直接照抄发给我：',
+    ...WELCOME_EXAMPLES.map(example => `「${example}」`),
+    help,
+  ].join('\n');
+}
+
 /** Help reflects registered handlers, their dependencies and the host's access policy. */
 export function buildHelpMessage(command: ControlCommand, context: ControlHandlerContext, brief = false): string {
   const commands = getAvailableCommands(context, command);

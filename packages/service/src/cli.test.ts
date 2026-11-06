@@ -21,34 +21,38 @@ import { execFileSync } from 'node:child_process';
 // racing a real setTimeout. pino's call signature is (fields, msg) — capture
 // both.
 const loggerInfoCalls: Array<{ fields: unknown; msg: unknown }> = [];
-vi.mock('@disclaude/core', () => ({
-  channelCredentialErrors: (...args: Parameters<typeof channelCredentialErrors>) => channelCredentialErrors(...args),
-  resolveChannelCredential: (...args: Parameters<typeof resolveChannelCredential>) => resolveChannelCredential(...args),
-  loadConfigFile: vi.fn(),
-  setLoadedConfig: vi.fn(),
-  applyGlobalEnv: vi.fn(),
-  createDefaultRuntimeContext: vi.fn(),
-  createLogger: () => ({
-    info: vi.fn((...args: unknown[]) => {
-      loggerInfoCalls.push({ fields: args[0], msg: args[1] });
+vi.mock('@disclaude/core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@disclaude/core')>();
+  return {
+    ...actual,
+    channelCredentialErrors: (...args: Parameters<typeof channelCredentialErrors>) => channelCredentialErrors(...args),
+    resolveChannelCredential: (...args: Parameters<typeof resolveChannelCredential>) => resolveChannelCredential(...args),
+    loadConfigFile: vi.fn(),
+    setLoadedConfig: vi.fn(),
+    applyGlobalEnv: vi.fn(),
+    createDefaultRuntimeContext: vi.fn(),
+    createLogger: () => ({
+      info: vi.fn((...args: unknown[]) => {
+        loggerInfoCalls.push({ fields: args[0], msg: args[1] });
+      }),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
     }),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  }),
-  initLogger: vi.fn(),
-  flushLogger: vi.fn().mockResolvedValue(undefined),
-  // cli-main wires the messageLogger self-sent registry (#5504); the module
-  // singleton's constructor reads these at import time.
-  Config: { getWorkspaceDir: () => '/tmp/disclaude-cli-test' },
-  MESSAGE_LOGGING: { LOGS_DIR: 'chat-logs' },
-  createControlHandler: vi.fn(),
-  ProcessLock: vi.fn(),
-  ProjectManager: vi.fn(),
-  resolveAgentPreset: vi.fn(),
-  getProvider: vi.fn(),
-  TaskResultOutbox: vi.fn(),
-}));
+    initLogger: vi.fn(),
+    flushLogger: vi.fn().mockResolvedValue(undefined),
+    // cli-main wires the messageLogger self-sent registry (#5504); the module
+    // singleton's constructor reads these at import time.
+    Config: { getWorkspaceDir: () => '/tmp/disclaude-cli-test' },
+    MESSAGE_LOGGING: { LOGS_DIR: 'chat-logs' },
+    createControlHandler: vi.fn(),
+    ProcessLock: vi.fn(),
+    ProjectManager: vi.fn(),
+    resolveAgentPreset: vi.fn(),
+    getProvider: vi.fn(),
+    TaskResultOutbox: vi.fn(),
+  };
+});
 
 // cli-main constructs background task ownership beside the agent pool; the
 // real agent chain (factory → chat-agent → SDK) is out of scope here.

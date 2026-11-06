@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { DatalayerJupyterClient } from '@disclaude/core/jupyter';
+import { JupyterDiagnosticError, type DatalayerJupyterClient } from '@disclaude/core/jupyter';
 import { SkillsRegistry } from '../../../core/src/skills/skills-registry.js';
 import {
   parseNotebookOptions,
@@ -46,8 +46,12 @@ function connection() {
       schema: 'disclaude.jupyter-runtime.v1', host: { state: 'available', id: `sha256:${'a'.repeat(64)}` },
       gpus: { state: 'available', uuids: [`GPU-${'b'.repeat(8)}-aaaa-aaaa-aaaa-${'c'.repeat(12)}`] }, kernelId,
     })),
-    response: vi.fn(() => Promise.resolve(new Response('{}', { status: 404 }))),
-    json: vi.fn(() => Promise.resolve({})),
+    response: vi.fn((_route: string, _method = 'GET', _body?: Record<string, unknown>) =>
+      Promise.resolve(new Response('{}', { status: 404 }))
+    ),
+    json: vi.fn((_route: string, _method = 'GET', _body?: Record<string, unknown>) =>
+      Promise.resolve({})
+    ),
     notebookEntry: () => 'https://remote.invalid/lab/tree/research.ipynb',
   };
   const resolve = vi.fn(() =>
@@ -120,6 +124,144 @@ describe('Optional Jupyter CLI boundary', () => {
       anyOf: [{ required: ['kernelId'] }, { required: ['notebookId'] }],
       additionalProperties: false,
     });
+    expect(f.resolve).not.toHaveBeenCalled();
+  });
+
+  it('lists every command except itself with one JSON input schema each', async () => {
+    const f = connection();
+    const entries = (await runNotebookCommand(
+      parseNotebookOptions(['tools', '--project-dir', root()]),
+      f.resolve,
+      signal
+    )) as Array<{
+      command: string;
+      inputSchema: { type: string; properties: Record<string, unknown>; required: string[]; additionalProperties: boolean };
+    }>;
+    // Regression lock (#5321): the whole command surface, lifecycle included,
+    // is discoverable from tools output alone, in one JSON input style.
+    expect(entries.map((entry) => entry.command)).toEqual([
+      'list', 'describe', 'read-cell', 'insert-cell', 'edit-cell', 'move-cell',
+      'delete-cell', 'execute', 'status', 'reconcile', 'stop', 'observe-image',
+      'import-file', 'download-report', 'export',
+      'check', 'link', 'create', 'unlink', 'interrupt', 'runtime-probe',
+    ]);
+    for (const entry of entries) {
+      expect(entry.inputSchema.type).toBe('object');
+      expect(entry.inputSchema.additionalProperties).toBe(false);
+    }
+    const lifecycleSchema = entries.find((entry) => entry.command === 'create')?.inputSchema;
+    for (const command of ['link', 'create', 'unlink']) {
+      expect(entries.find((entry) => entry.command === command)?.inputSchema).toEqual(lifecycleSchema);
+    }
+    expect(lifecycleSchema).toMatchObject({
+      type: 'object',
+      properties: { path: { type: 'string' } },
+      required: ['path'],
+      additionalProperties: false,
+    });
+    expect(entries.find((entry) => entry.command === 'check')?.inputSchema).toMatchObject({
+      type: 'object',
+      properties: {},
+      required: [],
+      additionalProperties: false,
+    });
+    expect(f.resolve).not.toHaveBeenCalled();
+  });
+
+  it('publishes the phantom first cell, FIFO execute ordering and Project-relative filePath contracts in tools', async () => {
+    const f = connection();
+    const entries = (await runNotebookCommand(
+      parseNotebookOptions(['tools', '--project-dir', root()]),
+      f.resolve,
+      signal
+    )) as Array<{
+      command: string;
+      description: string;
+      inputSchema: { properties: { filePath?: { description?: string } } };
+    }>;
+    expect(entries.find((entry) => entry.command === 'describe')?.description)
+      .toContain('RTC-seeded phantom empty code cell');
+    expect(entries.find((entry) => entry.command === 'describe')?.description)
+      .toContain('SHA-256 of the empty string');
+    expect(entries.find((entry) => entry.command === 'describe')?.description)
+      .toContain('removedSeedCellId');
+    const execute = entries.find((entry) => entry.command === 'execute')?.description;
+    expect(execute).toContain('submission order');
+    expect(execute).toContain('per-kernel FIFO queue');
+    expect(execute).toContain('superseded');
+    expect(entries.find((entry) => entry.command === 'import-file')?.inputSchema.properties.filePath?.description)
+      .toContain('Project-relative');
+    expect(f.resolve).not.toHaveBeenCalled();
+  });
+
+  it('locks the documented contracts in the Skill and module READMEs', () => {
+    const skillReadme = fs.readFileSync(path.join(repository, 'skills/jupyter/README.md'), 'utf8');
+    const skill = fs.readFileSync(path.join(repository, 'skills/jupyter/SKILL.md'), 'utf8');
+    const moduleReadme = fs.readFileSync(path.join(repository, 'packages/service/src/jupyter/README.md'), 'utf8');
+    for (const document of [skillReadme, skill]) {
+      expect(document).toContain('phantom empty code cell');
+      expect(document).toContain('removedSeedCellId');
+      expect(document).toContain('e3b0c442');
+      expect(document).toContain('per-kernel FIFO');
+      expect(document).toContain('Project-relative');
+      expect(document).toContain('{"path"');
+    }
+    // Lifecycle commands are documented in the unified JSON input style.
+    expect(skillReadme).toContain('`--path` is the shorthand');
+    expect(skill).toContain('`--path` is the shorthand');
+    expect(moduleReadme).toContain('every command except itself');
+  });
+
+  it('runs link/create/unlink through the unified JSON input like every other command', async () => {
+    const directory = root();
+    const f = connection();
+    const linked = await runNotebookCommand(
+      parseNotebookOptions(['link', '--input-file', '-', '--project-dir', directory]),
+      f.resolve,
+      signal,
+      () => '{"path":"research.ipynb"}'
+    );
+    expect(linked).toMatchObject({ documentId: 'document-1', serverNamespace: 'endpoint-fingerprint' });
+    expect(f.doc.close).toHaveBeenCalledOnce();
+    f.resolve.mockClear();
+    expect(
+      await runNotebookCommand(
+        parseNotebookOptions(['unlink', '--input-file', '-', '--project-dir', directory]),
+        f.resolve,
+        signal,
+        () => '{"path":"research.ipynb"}'
+      )
+    ).toEqual({ removed: true });
+    expect(f.resolve).not.toHaveBeenCalled();
+    await runNotebookCommand(
+      parseNotebookOptions(['create', '--input-file', '-', '--project-dir', directory]),
+      f.resolve,
+      signal,
+      () => '{"path":"research.ipynb"}'
+    );
+    expect(f.client.json).toHaveBeenCalledWith(
+      'api/contents/research.ipynb',
+      'PUT',
+      expect.objectContaining({ type: 'notebook' })
+    );
+  });
+
+  it.each([
+    ['{"path":123}'],
+    ['{"other":true}'],
+    ['{}'],
+    ['[]'],
+    ['{"path":"../other.ipynb"}'],
+  ])('rejects lifecycle JSON input that does not match the published schema: %s', async (raw) => {
+    const f = connection();
+    await expect(
+      runNotebookCommand(
+        parseNotebookOptions(['link', '--input-file', '-', '--project-dir', root()]),
+        f.resolve,
+        signal,
+        () => raw
+      )
+    ).rejects.toThrow(/lifecycle command input|relative Notebook path/);
     expect(f.resolve).not.toHaveBeenCalled();
   });
 
@@ -267,12 +409,21 @@ describe('Optional Jupyter CLI boundary', () => {
       ['list', '--path', 'x.ipynb'],
       ['check', '--input-file', '-'],
       ['status', '--input-file', '-', '--input-file', 'x'],
+      ['link', '--path', 'x.ipynb', '--input-file', '-'],
+      ['create', '--input-file', '-', '--path', 'x.ipynb'],
     ]) {
       expect(() => parseNotebookOptions(args)).toThrow();
     }
     expect(parseNotebookOptions(['status', '--input-file', '-', '--no-interactive'])).toMatchObject(
       { command: 'status', inputFile: '-', interactive: false }
     );
+    expect(parseNotebookOptions(['link', '--input-file', '-', '--no-interactive'])).toMatchObject(
+      { command: 'link', inputFile: '-', interactive: false }
+    );
+    expect(parseNotebookOptions(['unlink', '--path', 'x.ipynb'])).toMatchObject({
+      command: 'unlink',
+      contentPath: 'x.ipynb',
+    });
   });
 
   it('lists schemas and references without reading credentials, creating files or connecting', async () => {
@@ -300,31 +451,35 @@ describe('Optional Jupyter CLI boundary', () => {
     ).rejects.toThrow('Invalid Notebook command input');
   });
 
-  it('links a stable remote identity, closes its RTC socket, then unlinks locally', async () => {
-    const directory = root();
-    const f = connection();
-    const linked = await runNotebookCommand(
-      parseNotebookOptions(['link', '--path', 'research.ipynb', '--project-dir', directory]),
-      f.resolve,
-      signal
-    );
-    expect(linked).toMatchObject({
-      documentId: 'document-1',
-      serverNamespace: 'endpoint-fingerprint',
-    });
-    expect(f.doc.close).toHaveBeenCalledOnce();
-    expect(f.client.json).not.toHaveBeenCalled();
-    f.resolve.mockClear();
-    expect(
-      await runNotebookCommand(
-        parseNotebookOptions(['unlink', '--path', 'research.ipynb', '--project-dir', directory]),
+  it.each(['research.ipynb', 'research/nested.ipynb'])(
+    'links a stable remote identity without creating parent directories: %s',
+    async (contentPath) => {
+      const directory = root();
+      const f = connection();
+      const linked = await runNotebookCommand(
+        parseNotebookOptions(['link', '--path', contentPath, '--project-dir', directory]),
         f.resolve,
         signal
-      )
-    ).toEqual({ removed: true });
-    expect(f.resolve).not.toHaveBeenCalled();
-    expect(fs.existsSync(path.join(directory, '.jupyter', 'cli.lock'))).toBe(false);
-  });
+      );
+      expect(linked).toMatchObject({
+        documentId: 'document-1',
+        serverNamespace: 'endpoint-fingerprint',
+      });
+      expect(f.doc.close).toHaveBeenCalledOnce();
+      expect(f.client.response).not.toHaveBeenCalled();
+      expect(f.client.json).not.toHaveBeenCalled();
+      f.resolve.mockClear();
+      expect(
+        await runNotebookCommand(
+          parseNotebookOptions(['unlink', '--path', contentPath, '--project-dir', directory]),
+          f.resolve,
+          signal
+        )
+      ).toEqual({ removed: true });
+      expect(f.resolve).not.toHaveBeenCalled();
+      expect(fs.existsSync(path.join(directory, '.jupyter', 'cli.lock'))).toBe(false);
+    }
+  );
 
   it('creates only the selected remote path and refuses a subsequent overwrite', async () => {
     const directory = root();
@@ -345,6 +500,99 @@ describe('Optional Jupyter CLI boundary', () => {
     f.client.response.mockResolvedValue(new Response('{}', { status: 200 }));
     await expect(runNotebookCommand(options, f.resolve, signal)).rejects.toThrow('already exists');
     expect(f.client.json).toHaveBeenCalledOnce();
+  });
+
+  it('creates each missing remote parent before a nested Notebook', async () => {
+    const directory = root();
+    const f = connection();
+    await runNotebookCommand(
+      parseNotebookOptions(['create', '--path', 'a/b/c.ipynb', '--project-dir', directory]),
+      f.resolve,
+      signal
+    );
+    expect(f.client.json.mock.calls).toEqual([
+      ['api/contents/a', 'PUT', { type: 'directory' }],
+      ['api/contents/a/b', 'PUT', { type: 'directory' }],
+      [
+        'api/contents/a/b/c.ipynb',
+        'PUT',
+        {
+          type: 'notebook',
+          format: 'json',
+          content: { nbformat: 4, nbformat_minor: 5, metadata: {}, cells: [] },
+        },
+      ],
+    ]);
+    expect(f.client.openDocument).toHaveBeenCalledExactlyOnceWith('a/b/c.ipynb');
+  });
+
+  it('treats existing remote parents as idempotent and writes only the Notebook', async () => {
+    const directory = root();
+    const f = connection();
+    f.client.response.mockImplementation((route) =>
+      Promise.resolve(
+        new Response('{}', {
+          status: ['api/contents/a?content=0', 'api/contents/a/b?content=0'].includes(route)
+            ? 200
+            : 404,
+        })
+      )
+    );
+    await runNotebookCommand(
+      parseNotebookOptions(['create', '--path', 'a/b/c.ipynb', '--project-dir', directory]),
+      f.resolve,
+      signal
+    );
+    expect(f.client.json).toHaveBeenCalledExactlyOnceWith(
+      'api/contents/a/b/c.ipynb',
+      'PUT',
+      expect.objectContaining({ type: 'notebook' })
+    );
+  });
+
+  it('reports the rejected parent path and server reason without creating the Notebook', async () => {
+    const directory = root();
+    const f = connection();
+    f.client.response.mockImplementation((route) =>
+      Promise.resolve(
+        new Response('{}', { status: route === 'api/contents/a?content=0' ? 200 : 404 })
+      )
+    );
+    f.client.json.mockImplementation((route) =>
+      route === 'api/contents/a/b'
+        ? Promise.reject(
+            new JupyterDiagnosticError({
+              layer: 'auth',
+              code: 'authentication_rejected',
+              phase: 'request',
+              status: 403,
+              serverBody: '{"reason":"read-only"}',
+              message: 'Jupyter API returned HTTP 403',
+              hint: 'Verify permissions.',
+              outcome: 'rejected',
+            })
+          )
+        : Promise.resolve({})
+    );
+    await expect(
+      runNotebookCommand(
+        parseNotebookOptions(['create', '--path', 'a/b/c.ipynb', '--project-dir', directory]),
+        f.resolve,
+        signal
+      )
+    ).rejects.toMatchObject({
+      diagnostic: {
+        layer: 'auth',
+        status: 403,
+        phase: 'create-parent:a/b',
+        message: expect.stringContaining('a/b'),
+        serverBody: expect.stringContaining('read-only'),
+      },
+    });
+    expect(f.client.json).toHaveBeenCalledExactlyOnceWith('api/contents/a/b', 'PUT', {
+      type: 'directory',
+    });
+    expect(f.client.openDocument).not.toHaveBeenCalled();
   });
 
   it('rejects traversal before credentials or remote writes, preserving malformed config', async () => {
