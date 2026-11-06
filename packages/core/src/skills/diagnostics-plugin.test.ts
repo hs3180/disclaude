@@ -15,11 +15,12 @@ import {
   diagnosticsPluginRoot,
   manageDiagnosticsPlugin,
 } from './diagnostics-plugin.js';
-import { codexSkillsRegistry } from '../sdk/providers/codex/skill-sources.js';
+import { codexNativeSkillRoots } from '../sdk/providers/codex/skill-sources.js';
 import { adaptOptions } from '../sdk/providers/claude/options-adapter.js';
 
 const roots: string[] = [];
 const builtin = resolve('.');
+const diagnosticsSkillRoot = (project: string) => join(diagnosticsPluginRoot(project), 'skills');
 function project() {
   const root = mkdtempSync(join(tmpdir(), 'disclaude-diagnostics-'));
   roots.push(root);
@@ -40,7 +41,7 @@ describe('optional first-party diagnostics plugin', () => {
     });
     expect(existsSync(join(root, '.disclaude'))).toBe(false);
     expect(existsSync(join(builtin, 'skills/diagnose-logs'))).toBe(false);
-    expect(codexSkillsRegistry(root, builtin).resolve().manifest).not.toContain('diagnose-logs');
+    expect(codexNativeSkillRoots(root, builtin)).not.toContain(diagnosticsSkillRoot(root));
     expect(diagnosticsPluginManifest(root)).toBe('');
     expect(adaptOptions({ cwd: root, settingSources: [] }).plugins).toHaveLength(1);
   });
@@ -49,19 +50,22 @@ describe('optional first-party diagnostics plugin', () => {
     const root = project();
     const execution = join(root, 'nested execution');
     mkdirSync(execution);
-    const registry = codexSkillsRegistry(root, builtin, execution);
-    expect(registry.resolve().manifest).not.toContain('diagnose-logs');
+    expect(codexNativeSkillRoots(root, builtin)).not.toContain(diagnosticsSkillRoot(root));
     expect(manageDiagnosticsPlugin('install', root, builtin)).toMatchObject({
       installed: true,
       changed: true,
     });
     const plugin = diagnosticsPluginRoot(root);
-    const result = registry.resolve();
-    const { reference } = result.skills.find((skill) => skill.name === 'diagnose-logs')!;
-    const content = readFileSync(resolve(execution, reference), 'utf8');
-    expect(content).toContain('Disclaude service issues only');
-    expect(result.diagnostics).toEqual([]);
-    expect(diagnosticsPluginManifest(root, execution)).toContain(reference);
+    // The native loader (app-server registration) reads the installed
+    // directory in place; the exec transport fails fast instead of
+    // registering it (#5520).
+    expect(codexNativeSkillRoots(root, builtin)).toContain(diagnosticsSkillRoot(root));
+    expect(readFileSync(join(plugin, 'skills/diagnose-logs/SKILL.md'), 'utf8')).toContain('Disclaude service issues only');
+    const manifest = diagnosticsPluginManifest(root, execution);
+    expect(manifest).toContain('diagnose-logs');
+    const reference = manifest.match(/\[diagnose-logs\]\(([^)]+)\)/)?.[1];
+    expect(reference).toBeDefined();
+    expect(readFileSync(resolve(execution, decodeURIComponent(reference!)), 'utf8')).toContain('Disclaude service issues only');
     expect(
       adaptOptions({ cwd: execution, projectRoot: root, settingSources: [] }).plugins
     ).toContainEqual({ type: 'local', path: plugin });
@@ -72,7 +76,7 @@ describe('optional first-party diagnostics plugin', () => {
       installed: false,
       changed: true,
     });
-    expect(registry.resolve().manifest).not.toContain('diagnose-logs');
+    expect(codexNativeSkillRoots(root, builtin)).not.toContain(diagnosticsSkillRoot(root));
     expect(diagnosticsPluginManifest(root)).toBe('');
     expect(adaptOptions({ cwd: root, settingSources: [] }).plugins).toHaveLength(1);
     expect(readFileSync(join(root, 'user-data.txt'), 'utf8')).toBe('keep');
@@ -138,7 +142,7 @@ describe('optional first-party diagnostics plugin', () => {
         expect(existsSync(plugin)).toBe(true);
       }
       expect(diagnosticsPluginManifest(root)).toBe('');
-      expect(codexSkillsRegistry(root, builtin).resolve().manifest).not.toContain('diagnose-logs');
+      expect(codexNativeSkillRoots(root, builtin)).not.toContain(diagnosticsSkillRoot(root));
       expect(adaptOptions({ cwd: root, settingSources: [] }).plugins).toHaveLength(1);
     }
   );
@@ -159,13 +163,13 @@ describe('optional first-party diagnostics plugin', () => {
     (boundary) => {
       const projectA = project();
       const projectB = project();
-      const registry = codexSkillsRegistry(projectA, builtin);
-      expect(registry.resolve().manifest).not.toContain('diagnose-logs');
+      expect(codexNativeSkillRoots(projectA, builtin)).not.toContain(diagnosticsSkillRoot(projectA));
       manageDiagnosticsPlugin('install', projectB, builtin);
       mkdirSync(join(projectA, boundary, '..'), { recursive: true });
       symlinkSync(join(projectB, boundary), join(projectA, boundary));
       expect(() => manageDiagnosticsPlugin('install', projectA, builtin)).toThrow();
-      expect(registry.resolve().manifest).not.toContain('diagnose-logs');
+      expect(codexNativeSkillRoots(projectA, builtin)).not.toContain(diagnosticsSkillRoot(projectA));
+      expect(codexNativeSkillRoots(projectA, builtin)).not.toContain(diagnosticsSkillRoot(projectB));
       expect(diagnosticsPluginManifest(projectA)).toBe('');
       expect(adaptOptions({ cwd: projectA, settingSources: [] }).plugins).toHaveLength(1);
       expect(diagnosticsPluginManifest(projectB)).toContain('diagnose-logs');

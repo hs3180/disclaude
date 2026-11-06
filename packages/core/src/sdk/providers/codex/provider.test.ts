@@ -17,7 +17,7 @@
 
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -28,6 +28,8 @@ import type { AgentMessage, AgentQueryOptions, UserInput } from '../../types.js'
 interface Fixtures {
   binDir: string;
   codexHome: string;
+  /** Empty builtins root — no `skills/` inside, so tests control root presence. */
+  builtinsDir: string;
   cleanup: () => void;
 }
 
@@ -43,8 +45,10 @@ function makeFixtures(
   const root = mkdtempSync(join(tmpdir(), 'codex-provider-test-'));
   const binDir = join(root, 'bin');
   const codexHome = join(root, 'codex-home');
+  const builtinsDir = join(root, 'builtins');
   mkdirSync(binDir, { recursive: true });
   mkdirSync(codexHome, { recursive: true });
+  mkdirSync(builtinsDir, { recursive: true });
 
   if (opts.withBinary) {
     const bin = join(binDir, 'codex');
@@ -62,6 +66,7 @@ function makeFixtures(
   return {
     binDir,
     codexHome,
+    builtinsDir,
     cleanup: () => rmSync(root, { recursive: true, force: true }),
   };
 }
@@ -125,6 +130,10 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
       // Ignore the developer machine's ~/.disclaude model so these subprocess
       // contract tests only exercise values passed in their own fixtures.
       model: '',
+      // Empty builtins root: the developer checkout's real builtins (repo
+      // root with skills/) would otherwise make every exec query fail the
+      // native-skills gate. Tests that need roots create them explicitly.
+      builtinsDir: fx.builtinsDir,
     });
 
   // --------------------------------------------------------------------------
@@ -211,13 +220,8 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
   // --------------------------------------------------------------------------
 
   describe('queryStream (exec bridge, Issue #4630)', () => {
-    it('reports sanitized discovery diagnostics once per revision without adding them to prompts', async () => {
-      const workspace = mkdtempSync(join(tmpdir(), 'codex-skill-diagnostics-'));
-      const written: string[] = [];
-      const spy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown): boolean => {
-        written.push(String(chunk));
-        return true;
-      });
+    it('fails fast instead of injecting a manifest when Disclaude skill roots exist (#5520)', () => {
+      const workspace = mkdtempSync(join(tmpdir(), 'codex-skill-native-'));
       try {
         const directory = join(workspace, 'skills', 'invalid');
         mkdirSync(directory, { recursive: true });
@@ -225,39 +229,28 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
         fixtures = makeFixtures({ withBinary: true, withAuth: true,
           body: `printf '%s' "$*" > "$CODEX_HOME/prompt"\n${HAPPY_BODY}` });
         const provider = makeProvider(fixtures);
-        await drainStream(provider, ['first'], { cwd: workspace });
-        await drainStream(provider, ['second'], { cwd: workspace });
-        const diagnostics = written.filter(line => line.includes('Skill discovery diagnostics'));
-        expect(diagnostics).toHaveLength(1);
-        expect(diagnostics[0]).toContain('skill metadata could not be parsed');
-        expect(diagnostics[0]).not.toContain(workspace);
-        expect(diagnostics[0]).not.toContain('secret');
-        const prompt = readFileSync(join(fixtures.codexHome, 'prompt'), 'utf8');
-        expect(prompt).not.toContain('skill metadata could not be parsed');
-        expect(prompt).not.toContain('private-secret-marker');
+        const input = (async function* (): AsyncGenerator<UserInput> {
+          yield { role: 'user', content: 'hi' };
+        })();
+        expect(() => provider.queryStream(input, { settingSources: [], cwd: workspace } as AgentQueryOptions))
+          .toThrow(/Codex exec cannot natively load Disclaude skill directories.*skills\/extraRoots\/set.*0\.140\.0-0\.164\.0.*transport: app-server.*No prompt manifest was injected/s);
+        // Fail-fast is total: no child ran, so no prompt — fabricated or
+        // otherwise — ever reached codex exec.
+        expect(existsSync(join(fixtures.codexHome, 'prompt'))).toBe(false);
       } finally {
-        spy.mockRestore();
         rmSync(workspace, { recursive: true, force: true });
       }
-    }, 15_000);
+    });
 
-    it('discovers shared project skills from .disclaude without scanning .claude', async () => {
+    it('treats shared .disclaude skills as a native root and never scans .claude', async () => {
       const workspace = mkdtempSync(join(tmpdir(), 'codex-project-workspace-'));
       try {
-        mkdirSync(join(workspace, 'skills', 'demo'), { recursive: true });
+        // .claude-only workspaces have NO Disclaude skill root: the run
+        // proceeds, and the prompt carries no trace of the Claude-local skill.
         mkdirSync(join(workspace, '.claude', 'skills', 'claude-local'), { recursive: true });
-        mkdirSync(join(workspace, '.disclaude', 'skills', 'shared-local'), { recursive: true });
-        writeFileSync(
-          join(workspace, 'skills', 'demo', 'SKILL.md'),
-          '---\ndescription: Demo project skill\n---\nUse the demo workflow.',
-        );
         writeFileSync(
           join(workspace, '.claude', 'skills', 'claude-local', 'SKILL.md'),
           '---\ndescription: Claude local skill\n---\nUse the Claude local workflow.',
-        );
-        writeFileSync(
-          join(workspace, '.disclaude', 'skills', 'shared-local', 'SKILL.md'),
-          '---\ndescription: Shared local skill\n---\nUse the shared workflow.',
         );
         fixtures = makeFixtures({
           withBinary: true,
@@ -266,21 +259,47 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
         });
         await drainStream(makeProvider(fixtures), ['hi'], { cwd: workspace });
         const prompt = readFileSync(join(fixtures.codexHome, 'prompt'), 'utf8');
-        expect(prompt).toContain('demo');
-        expect(prompt).toContain('Demo project skill');
-        expect(prompt).toContain('skills/demo/SKILL.md');
-        expect(prompt).not.toContain(workspace);
-        expect(prompt).toContain('Shared local skill');
-        expect(prompt).toContain('skills/shared-local/SKILL.md');
+        expect(prompt).toContain('hi');
         expect(prompt).not.toContain('Claude local skill');
         expect(prompt).not.toContain('claude-local');
-        expect(prompt).toContain('User request:\nhi');
+        expect(prompt).not.toMatch(/SKILL\.md|skill \[|User request:|description:/);
+        // Adding a .disclaude skill flips the same workspace to fail-fast.
+        mkdirSync(join(workspace, '.disclaude', 'skills', 'shared-local'), { recursive: true });
+        writeFileSync(
+          join(workspace, '.disclaude', 'skills', 'shared-local', 'SKILL.md'),
+          '---\ndescription: Shared local skill\n---\nUse the shared workflow.',
+        );
+        const retry = (async function* (): AsyncGenerator<UserInput> {
+          yield { role: 'user', content: 'hi' };
+        })();
+        expect(() => makeProvider(fixtures).queryStream(retry, { settingSources: [], cwd: workspace } as AgentQueryOptions))
+          .toThrow('cannot natively load Disclaude skill directories');
       } finally {
         rmSync(workspace, { recursive: true, force: true });
       }
     }, 15_000);
 
-    it('discovers skills from projectRoot when the runtime cwd is a separate workspace', async () => {
+    it('submits bare user inputs with no fabricated skills list on first, multi-turn and resume runs', async () => {
+      const workspace = mkdtempSync(join(tmpdir(), 'codex-bare-prompt-'));
+      try {
+        fixtures = makeFixtures({ withBinary: true, withAuth: true,
+          body: `printf '%s\\n' "$*" >> "$CODEX_HOME/prompts"\n${HAPPY_BODY}` });
+        const provider = makeProvider(fixtures);
+        // No native roots anywhere: empty builtins fixture, bare temp cwd.
+        // Multi-turn: the second input resumes the first turn's thread, and
+        // both prompts flow through the same runner.run call site.
+        await drainStream(provider, ['first', 'second'], { cwd: workspace });
+        const prompts = readFileSync(join(fixtures.codexHome, 'prompts'), 'utf8');
+        expect(prompts).toContain('first');
+        expect(prompts).toContain('second');
+        expect(prompts).not.toMatch(/SKILL\.md|skill \[|User request:|description:/);
+        expect(prompts).not.toContain('disclaude-builtins');
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    }, 15_000);
+
+    it('fails fast for skill roots discovered through projectRoot, not only the runtime cwd', () => {
       const project = mkdtempSync(join(tmpdir(), 'codex-project-root-'));
       const workspace = mkdtempSync(join(tmpdir(), 'codex-runtime-workspace-'));
       try {
@@ -288,27 +307,17 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
         writeFileSync(join(project, '.disclaude', 'skills', 'project-only', 'SKILL.md'), '---\ndescription: Project-only skill\n---');
         fixtures = makeFixtures({ withBinary: true, withAuth: true, body: `printf '%s' "$*" > "$CODEX_HOME/prompt"\n${HAPPY_BODY}` });
         const provider = makeProvider(fixtures);
-        await drainStream(provider, ['hi'], { cwd: workspace, projectRoot: project });
-        const prompt = readFileSync(join(fixtures.codexHome, 'prompt'), 'utf8');
-        expect(prompt).toContain('skills/project-only/SKILL.md');
-        const reference = prompt.match(/\[project-only\]\(([^)]+)\)/)?.[1];
-        expect(reference).toBeDefined();
-        expect(readFileSync(resolve(workspace, decodeURIComponent(reference!)), 'utf8')).toContain('Project-only skill');
-        expect(prompt).not.toContain(project);
-        expect(prompt).not.toContain(workspace);
-        const nestedWorkspace = join(workspace, 'another-runtime');
-        mkdirSync(nestedWorkspace);
-        await drainStream(provider, ['hi'], { cwd: nestedWorkspace, projectRoot: project });
-        const nextPrompt = readFileSync(join(fixtures.codexHome, 'prompt'), 'utf8');
-        const nextReference = nextPrompt.match(/\[project-only\]\(([^)]+)\)/)?.[1];
-        expect(nextReference).toBeDefined();
-        expect(nextReference).not.toBe(reference);
-        expect(readFileSync(resolve(nestedWorkspace, decodeURIComponent(nextReference!)), 'utf8')).toContain('Project-only skill');
+        const input = (async function* (): AsyncGenerator<UserInput> {
+          yield { role: 'user', content: 'hi' };
+        })();
+        expect(() => provider.queryStream(input, { cwd: workspace, projectRoot: project, settingSources: [] } as AgentQueryOptions))
+          .toThrow('cannot natively load Disclaude skill directories');
+        expect(existsSync(join(fixtures.codexHome, 'prompt'))).toBe(false);
       } finally {
         rmSync(project, { recursive: true, force: true });
         rmSync(workspace, { recursive: true, force: true });
       }
-    }, 15_000);
+    });
 
     it('bridges a happy-path run: text + result, thread_id → sessionId', async () => {
       fixtures = makeFixtures({ withBinary: true, withAuth: true, body: HAPPY_BODY });
@@ -473,6 +482,7 @@ fi
         },
         model: 'gpt-5.5',
         reasoningEffort: 'medium',
+        builtinsDir: fixtures.builtinsDir,
       });
       await drainStream(provider, ['hello'], {
         model: 'gpt-5.6-luna',
@@ -511,6 +521,7 @@ fi
       const provider = new CodexAgentProvider({
         env: { PATH: `${fixtures.binDir}:${process.env.PATH ?? ''}`, CODEX_HOME: fixtures.codexHome },
         maxResumeInputTokens: 100,
+        builtinsDir: fixtures.builtinsDir,
       });
       const { messages } = await drainStream(provider, [
         { role: 'user', content: 'Stable shared guidance\nfirst request' },
@@ -682,6 +693,7 @@ JSONL
       const provider = new CodexAgentProvider({
         env: { PATH: `${fixtures.binDir}:${process.env.PATH ?? ''}`, CODEX_HOME: fixtures.codexHome },
         transport: 'app-server', fullAccess: true, reasoningEffort: 'max',
+        builtinsDir: fixtures.builtinsDir,
       });
       await drainStream(provider, ['hi'], {
         model: 'gpt-6-luna', reasoningEffort: undefined,
@@ -699,6 +711,7 @@ JSONL
       const provider = new CodexAgentProvider({
         env: { PATH: `${fixtures.binDir}:${process.env.PATH ?? ''}`, CODEX_HOME: fixtures.codexHome },
         maxActiveSessions: 1, maxConcurrentRuns: 1,
+        builtinsDir: fixtures.builtinsDir,
       });
       const streams = Array.from({ length: 4 }, (_, index) => provider.queryStream(
         (async function* () { yield { role: 'user', content: 'hi' } as UserInput; })(),
@@ -725,6 +738,7 @@ JSONL
           CODEX_HOME: fixtures.codexHome,
         },
         fullAccess: true,
+        builtinsDir: fixtures.builtinsDir,
       });
       await drainStream(provider, ['hi']);
       expect(argvOf(fixtures)).toContain('-s danger-full-access');
@@ -745,6 +759,7 @@ JSONL
           CODEX_HOME: fixtures.codexHome,
         },
         sandboxOverride: 'danger-full-access',
+        builtinsDir: fixtures.builtinsDir,
       });
       await drainStream(provider, ['hi'], { permissionMode: 'default' });
       expect(argvOf(fixtures)).toContain('-s danger-full-access');
@@ -829,6 +844,7 @@ fi
           CODEX_REASONING_EFFORT: '',
         },
         model: '',
+        builtinsDir: fixtures.builtinsDir,
         weeklyQuota: { weeklyQuotaAdmission: 'enforce' },
       });
       // One queryStream = one codex session: input 'a' starts fresh (n=1,
@@ -960,6 +976,7 @@ describe('CodexAgentProvider turn termination (S2 review)', () => {
         PATH: `${fx.binDir}:${process.env.PATH ?? ''}`,
         CODEX_HOME: fx.codexHome,
       },
+      builtinsDir: fx.builtinsDir,
     });
 
   it('ends a turn.failed turn with error + result(terminatedReason: turn_failed)', async () => {
@@ -1128,6 +1145,7 @@ describe('CodexAgentProvider detection hardening (S3 review)', () => {
   const makeProvider = (fx: Fixtures) =>
     new CodexAgentProvider({
       env: { PATH: `${fx.binDir}:${process.env.PATH ?? ''}`, CODEX_HOME: fx.codexHome },
+      builtinsDir: fx.builtinsDir,
     });
 
   it('does NOT report 401 on a SUCCESSFUL turn whose stderr carries unrelated 401 noise', async () => {
@@ -1230,6 +1248,7 @@ describe('CodexAgentProvider governance (Issue #4634)', () => {
         PATH: `${fx.binDir}:${process.env.PATH ?? ''}`,
         CODEX_HOME: fx.codexHome,
       },
+      builtinsDir: fx.builtinsDir,
       ...caps,
     });
 
@@ -1616,6 +1635,7 @@ fi
         ...env,
       },
       model: '',
+      builtinsDir: fx.builtinsDir,
     });
 
   const readCount = (fx: Fixtures, name: string): number => {
