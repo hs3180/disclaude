@@ -5,7 +5,7 @@
  * Routes subcommands to the appropriate package CLI:
  *   disclaude start [options]  → @disclaude/service
  *   disclaude channel <command> → @disclaude/channel-cli
- *   disclaude backend <command> → bin/backend.js (backend runtime install/check, Issue #5169)
+ *   disclaude harness <command> → bin/harness.js (agent harness install/check, Issue #5169)
  *   disclaude service <cmd>    → scripts/launchd.mjs application service (Issue #5619)
  *   disclaude chromium-cdp <cmd> → scripts/launchd.mjs chromium-cdp (Issue #4807)
  *
@@ -50,7 +50,8 @@ function showHelp() {
       '  history query      Read locally available chat history (read-only, Issue #5603)',
       '  board-report write Report task artifacts/review proposals (agents; JSON payload on stdin)',
       '  channel <command>  Send channel messages through the service',
-      '  backend <command>  Install and check agent backend runtimes (list/install/doctor)',
+      '  harness <command>  Install and check agent harness runtimes (list/install/doctor)',
+      "  backend <command>  Deprecated alias of 'harness' (still forwarded)",
       '  wechat <command>   Log in to personal WeChat or diagnose saved login',
       '  browser <cmd>      Inspect coordinated browser control',
       '  plugins <cmd>      Install, update or remove optional first-party diagnostics',
@@ -108,9 +109,13 @@ const ROUTES = {
     file: resolve(ROOT, 'node_modules/@disclaude/channel-cli/dist/cli.js'),
     jsonOutput: !['help', '--help', '-h'].includes(args[1]),
   },
-  // Issue #5169: unified idempotent backend runtime install/check
-  // (list/install/doctor) covering claude/pi/codex/dsh.
-  backend: { file: resolve(ROOT, 'bin/backend.js') },
+  // Issue #5169: unified idempotent agent harness install/check
+  // (list/install/doctor) covering claude/pi/codex/dsh. `backend` stays as a
+  // deprecated compatibility alias (maintenance review on #5709): it forwards
+  // to the same script after printing a migration hint on stderr, so stdout
+  // JSON stays machine-parseable for both spellings.
+  harness: { file: resolve(ROOT, 'bin/harness.js') },
+  backend: { file: resolve(ROOT, 'bin/harness.js'), deprecatedAliasOf: 'harness' },
   // Status is a cross-platform, read-only doctor. Lifecycle commands remain
   // routed to their native managers; those scripts expect the selector in argv.
   'chromium-cdp': {
@@ -158,6 +163,12 @@ if (!existsSync(target)) {
   console.error(`Error: Target not found at ${target}`);
   console.error('Did you forget to run "npm run build"?');
   process.exit(1);
+}
+
+if (route.deprecatedAliasOf) {
+  console.error(
+    `Note: 'disclaude ${command}' is a deprecated alias; use 'disclaude ${route.deprecatedAliasOf}' instead.`
+  );
 }
 
 // Forward user args. keepCommand routes (chromium-cdp) preserve the command in

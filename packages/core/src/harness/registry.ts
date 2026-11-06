@@ -1,19 +1,20 @@
 /**
- * Backend runtime catalog for `disclaude backend` (Issue #5169).
+ * Harness runtime catalog for `disclaude harness` (Issue #5169).
  *
- * Single source of truth for which agent runtimes the CLI can install and
- * check, which npm packages provide them, and where each must be discoverable
- * after installation (PATH binaries vs production Node module resolution).
- * Default versions always carry the place they are pinned so operators can
- * trace them; every default is overridable via --version or environment.
+ * Single source of truth for which agent harness runtimes the CLI can install
+ * and check, which npm packages provide them, and where each must be
+ * discoverable after installation (PATH binaries vs production Node module
+ * resolution). Default versions always carry the place they are pinned so
+ * operators can trace them; every default is overridable via --version or
+ * environment.
  */
 
-import type { BackendId, InstallTarget } from './types.js';
+import type { HarnessId, InstallTarget } from './types.js';
 
 /** Minimal pi runtime Node requirement from docs/pi-backend.md. */
 export const PI_MIN_NODE = [22, 19, 0] as const;
 
-/** Runtime packages for the pi backend; one version applies to both. */
+/** Runtime packages for the pi harness; one version applies to both. */
 export const PI_RUNTIME_PACKAGES = [
   '@earendil-works/pi-agent-core',
   '@earendil-works/pi-ai',
@@ -22,15 +23,15 @@ export const PI_RUNTIME_PACKAGES = [
 /** Agent SDK whose bundled Claude Code CLI the service actually spawns. */
 export const CLAUDE_AGENT_SDK_PACKAGE = '@anthropic-ai/claude-agent-sdk';
 
-export interface BackendCatalogEntry {
-  id: BackendId;
+export interface HarnessCatalogEntry {
+  id: HarnessId;
   aliases: string[];
   label: string;
   /** PATH CLI binaries vs Node modules under production resolution. */
   installTarget: InstallTarget;
   /** npm package names providing the runtime. */
   packages: string[];
-  /** PATH binary names the service spawns this backend through. */
+  /** PATH binary names the service spawns this harness through. */
   binaries: string[];
   /** Repo-pinned default version; claude resolves its pin from the SDK manifest. */
   pinnedVersion?: string;
@@ -41,8 +42,8 @@ export interface BackendCatalogEntry {
   auth: { independent: boolean; nextStep: string };
 }
 
-/** The npm package a backend installs; claude additionally matches the bundled CLI version. */
-const CATALOG: Record<BackendId, BackendCatalogEntry> = {
+/** The npm package a harness installs; claude additionally matches the bundled CLI version. */
+const CATALOG: Record<HarnessId, HarnessCatalogEntry> = {
   claude: {
     id: 'claude',
     aliases: [],
@@ -110,20 +111,29 @@ const CATALOG: Record<BackendId, BackendCatalogEntry> = {
   },
 };
 
-export const BACKEND_IDS: BackendId[] = ['claude', 'pi', 'codex', 'dsh'];
+export const HARNESS_IDS: HarnessId[] = ['claude', 'pi', 'codex', 'dsh'];
 
-export function backendCatalog(id: BackendId): BackendCatalogEntry {
+export function harnessCatalog(id: HarnessId): HarnessCatalogEntry {
   return CATALOG[id];
 }
 
-/** Resolve user input (id or alias, case-insensitive) to a backend id. */
-export function resolveBackendId(input: string): BackendId | undefined {
+/** Resolve user input (id or alias, case-insensitive) to a harness id. */
+export function resolveHarnessId(input: string): HarnessId | undefined {
   const normalized = input.trim().toLowerCase();
-  return BACKEND_IDS.find((id) => id === normalized || CATALOG[id].aliases.includes(normalized));
+  return HARNESS_IDS.find((id) => id === normalized || CATALOG[id].aliases.includes(normalized));
 }
 
-/** Environment key that overrides a backend's default version. */
-export function backendVersionEnvKey(id: BackendId): string {
+/** Environment key that overrides a harness's default version. */
+export function harnessVersionEnvKey(id: HarnessId): string {
+  return `DISCLAUDE_HARNESS_${id.toUpperCase()}_VERSION`;
+}
+
+/**
+ * Legacy spelling of {@link harnessVersionEnvKey} from when the command family
+ * was named `disclaude backend`; still honored so existing environments keep
+ * working, with the legacy key named in the version source for migration.
+ */
+export function legacyHarnessVersionEnvKey(id: HarnessId): string {
   return `DISCLAUDE_BACKEND_${id.toUpperCase()}_VERSION`;
 }
 
@@ -134,13 +144,14 @@ export interface ResolvedVersion {
 }
 
 /**
- * Version precedence: --version flag, then DISCLAUDE_BACKEND_<ID>_VERSION, then
- * the repo pin. Claude's pin is the Claude Code version bundled inside the
- * pinned agent SDK (read from the installed manifest); when that manifest is
- * unreadable the npm `latest` dist-tag is used with an explicit source label.
+ * Version precedence: --version flag, then DISCLAUDE_HARNESS_<ID>_VERSION
+ * (legacy DISCLAUDE_BACKEND_<ID>_VERSION still honored), then the repo pin.
+ * Claude's pin is the Claude Code version bundled inside the pinned agent SDK
+ * (read from the installed manifest); when that manifest is unreadable the npm
+ * `latest` dist-tag is used with an explicit source label.
  */
-export function resolveBackendVersion(
-  id: BackendId,
+export function resolveHarnessVersion(
+  id: HarnessId,
   options: {
     flagVersion?: string;
     env?: Record<string, string | undefined>;
@@ -152,11 +163,17 @@ export function resolveBackendVersion(
   if (options.flagVersion) {
     return { value: options.flagVersion, source: '--version flag', overridden: 'flag' };
   }
-  const envValue = options.env?.[backendVersionEnvKey(id)]?.trim();
+  const envKey = harnessVersionEnvKey(id);
+  const envValue = options.env?.[envKey]?.trim();
   if (envValue) {
+    return { value: envValue, source: `environment ${envKey}`, overridden: 'env' };
+  }
+  const legacyEnvKey = legacyHarnessVersionEnvKey(id);
+  const legacyEnvValue = options.env?.[legacyEnvKey]?.trim();
+  if (legacyEnvValue) {
     return {
-      value: envValue,
-      source: `environment ${backendVersionEnvKey(id)}`,
+      value: legacyEnvValue,
+      source: `environment ${legacyEnvKey} (legacy alias of ${envKey})`,
       overridden: 'env',
     };
   }

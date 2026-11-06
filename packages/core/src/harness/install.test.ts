@@ -8,7 +8,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { planBackendInstall, runBackendInstall, type InstallPlan } from './install.js';
+import { planHarnessInstall, runHarnessInstall, type InstallPlan } from './install.js';
 import type { ProcessRunner, RunnerResult } from './types.js';
 
 const directories: string[] = [];
@@ -20,7 +20,7 @@ afterEach(() => {
 });
 
 function tempDirectory(): string {
-  const directory = mkdtempSync(join(tmpdir(), 'disclaude-backend-install-'));
+  const directory = mkdtempSync(join(tmpdir(), 'disclaude-harness-install-'));
   directories.push(directory);
   return directory;
 }
@@ -87,7 +87,7 @@ const PLAN_OPTIONS = {
 describe('path-cli install plans (claude / codex / dsh)', () => {
   it('plans a fresh npm -g install for a missing package', async () => {
     const runner = npmGlobals({});
-    const plan = await planBackendInstall('codex', {
+    const plan = await planHarnessInstall('codex', {
       runner,
       env: { PATH: '/nonexistent' },
       ...PLAN_OPTIONS,
@@ -110,7 +110,7 @@ describe('path-cli install plans (claude / codex / dsh)', () => {
   it('skips idempotently when the target version is installed and on PATH', async () => {
     const { env } = pathWithBinary('codex');
     const runner = npmGlobals({ '@openai/codex': '0.154.0' });
-    const plan = await planBackendInstall('codex', { runner, env, ...PLAN_OPTIONS });
+    const plan = await planHarnessInstall('codex', { runner, env, ...PLAN_OPTIONS });
     expect(plan.action).toBe('skip');
     expect(plan.reason).toContain('@openai/codex@0.154.0');
     expect(plan.reason).toContain('discoverable on PATH');
@@ -120,7 +120,7 @@ describe('path-cli install plans (claude / codex / dsh)', () => {
   it('plans an upgrade from an older installed version', async () => {
     const { env } = pathWithBinary('codex');
     const runner = npmGlobals({ '@openai/codex': '0.151.0' });
-    const plan = await planBackendInstall('codex', { runner, env, ...PLAN_OPTIONS });
+    const plan = await planHarnessInstall('codex', { runner, env, ...PLAN_OPTIONS });
     expect(plan.action).toBe('upgrade');
     expect(plan.reason).toBe('@openai/codex 0.151.0 is installed, target is 0.154.0');
     expect(plan.targets).toEqual([
@@ -130,7 +130,7 @@ describe('path-cli install plans (claude / codex / dsh)', () => {
 
   it('plans a repair when the package is installed but its binary is off PATH', async () => {
     const runner = npmGlobals({ '@deepseek-ai/dsh': '0.1.2-rc.1' });
-    const plan = await planBackendInstall('dsh', {
+    const plan = await planHarnessInstall('dsh', {
       runner,
       env: { PATH: '/nonexistent' },
       ...PLAN_OPTIONS,
@@ -142,27 +142,52 @@ describe('path-cli install plans (claude / codex / dsh)', () => {
 
   it('applies --version and environment overrides with explicit sources', async () => {
     const runner = npmGlobals({});
-    const flagged = await planBackendInstall('codex', {
+    const flagged = await planHarnessInstall('codex', {
       runner,
-      env: { PATH: '/nonexistent', DISCLAUDE_BACKEND_CODEX_VERSION: '0.160.0' },
+      env: { PATH: '/nonexistent', DISCLAUDE_HARNESS_CODEX_VERSION: '0.160.0' },
       flagVersion: '0.199.0',
       ...PLAN_OPTIONS,
     });
     expect(flagged.args).toEqual(['install', '-g', '@openai/codex@0.199.0']);
     expect(flagged.version.overridden).toBe('flag');
 
-    const fromEnv = await planBackendInstall('codex', {
+    const fromEnv = await planHarnessInstall('codex', {
+      runner,
+      env: { PATH: '/nonexistent', DISCLAUDE_HARNESS_CODEX_VERSION: '0.160.0' },
+      ...PLAN_OPTIONS,
+    });
+    expect(fromEnv.args).toEqual(['install', '-g', '@openai/codex@0.160.0']);
+    expect(fromEnv.version.source).toBe('environment DISCLAUDE_HARNESS_CODEX_VERSION');
+    expect(fromEnv.version.overridden).toBe('env');
+  });
+
+  it('still honors the legacy DISCLAUDE_BACKEND_<ID>_VERSION spelling with a migration label', async () => {
+    const runner = npmGlobals({});
+    const fromLegacyEnv = await planHarnessInstall('codex', {
       runner,
       env: { PATH: '/nonexistent', DISCLAUDE_BACKEND_CODEX_VERSION: '0.160.0' },
       ...PLAN_OPTIONS,
     });
-    expect(fromEnv.args).toEqual(['install', '-g', '@openai/codex@0.160.0']);
-    expect(fromEnv.version.overridden).toBe('env');
+    expect(fromLegacyEnv.args).toEqual(['install', '-g', '@openai/codex@0.160.0']);
+    expect(fromLegacyEnv.version.source).toBe(
+      'environment DISCLAUDE_BACKEND_CODEX_VERSION (legacy alias of DISCLAUDE_HARNESS_CODEX_VERSION)'
+    );
+
+    const legacyLoses = await planHarnessInstall('codex', {
+      runner,
+      env: {
+        PATH: '/nonexistent',
+        DISCLAUDE_BACKEND_CODEX_VERSION: '0.160.0',
+        DISCLAUDE_HARNESS_CODEX_VERSION: '0.161.0',
+      },
+      ...PLAN_OPTIONS,
+    });
+    expect(legacyLoses.args).toEqual(['install', '-g', '@openai/codex@0.161.0']);
   });
 
   it('passes a registry mirror through to npm', async () => {
     const runner = npmGlobals({});
-    const plan = await planBackendInstall('codex', {
+    const plan = await planHarnessInstall('codex', {
       runner,
       env: { PATH: '/nonexistent' },
       registry: 'https://mirror.example.com',
@@ -193,7 +218,7 @@ describe('path-cli install plans (claude / codex / dsh)', () => {
     );
     const { env } = pathWithBinary('claude');
     const runner = npmGlobals({ '@anthropic-ai/claude-code': '2.1.263' });
-    const plan = await planBackendInstall('claude', {
+    const plan = await planHarnessInstall('claude', {
       runner,
       env,
       installRoot: root,
@@ -204,7 +229,7 @@ describe('path-cli install plans (claude / codex / dsh)', () => {
     expect(plan.version.source).toContain('claude-agent-sdk');
     expect(plan.notes.join(' ')).toContain('bundled');
 
-    const installing = await planBackendInstall('claude', {
+    const installing = await planHarnessInstall('claude', {
       runner: npmGlobals({}),
       env: { PATH: '/nonexistent' },
       installRoot: root,
@@ -218,7 +243,7 @@ describe('pi runtime plans (production Node module resolution)', () => {
   it('installs both runtime packages without touching package.json or a lockfile', async () => {
     const root = tempDirectory();
     const core = coreFixture(root);
-    const plan = await planBackendInstall('pi', {
+    const plan = await planHarnessInstall('pi', {
       runner: new ScriptedRunner(),
       env: {},
       installRoot: root,
@@ -248,7 +273,7 @@ describe('pi runtime plans (production Node module resolution)', () => {
     const core = coreFixture(root);
     materializePackage(root, '@earendil-works/pi-agent-core', '0.83.0');
     materializePackage(root, '@earendil-works/pi-ai', '0.83.0');
-    const plan = await planBackendInstall('pi', {
+    const plan = await planHarnessInstall('pi', {
       runner: new ScriptedRunner(),
       env: {},
       installRoot: root,
@@ -264,7 +289,7 @@ describe('pi runtime plans (production Node module resolution)', () => {
     const core = coreFixture(root);
     materializePackage(root, '@earendil-works/pi-agent-core', '0.84.4');
     materializePackage(root, '@earendil-works/pi-ai', '0.84.4');
-    const plan = await planBackendInstall('pi', {
+    const plan = await planHarnessInstall('pi', {
       runner: new ScriptedRunner(),
       env: {},
       installRoot: root,
@@ -279,7 +304,7 @@ describe('pi runtime plans (production Node module resolution)', () => {
     const root = tempDirectory();
     const core = coreFixture(root);
     writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - packages/*\n');
-    const plan = await planBackendInstall('pi', {
+    const plan = await planHarnessInstall('pi', {
       runner: new ScriptedRunner(),
       env: {},
       installRoot: root,
@@ -308,7 +333,7 @@ describe('pi runtime plans (production Node module resolution)', () => {
   it('records the pi Node.js requirement in plan notes', async () => {
     const root = tempDirectory();
     const core = coreFixture(root);
-    const plan = await planBackendInstall('pi', {
+    const plan = await planHarnessInstall('pi', {
       runner: new ScriptedRunner(),
       env: {},
       installRoot: root,
@@ -318,10 +343,10 @@ describe('pi runtime plans (production Node module resolution)', () => {
   });
 });
 
-describe('runBackendInstall execution paths', () => {
+describe('runHarnessInstall execution paths', () => {
   const plan = (action: InstallPlan['action']): InstallPlan => ({
     action,
-    backend: 'codex',
+    harness: 'codex',
     reason: 'test',
     sourceTree: false,
     packageManager: 'npm',
@@ -342,21 +367,21 @@ describe('runBackendInstall execution paths', () => {
 
   it('skips without running anything when the plan already matches', async () => {
     const runner = new ScriptedRunner();
-    const execution = await runBackendInstall(plan('skip'), { runner });
+    const execution = await runHarnessInstall(plan('skip'), { runner });
     expect(execution).toMatchObject({ status: 'skipped', executed: false });
     expect(runner.calls).toHaveLength(0);
   });
 
   it('dry-run reports the plan without executing it', async () => {
     const runner = new ScriptedRunner();
-    const execution = await runBackendInstall(plan('install'), { runner, dryRun: true });
+    const execution = await runHarnessInstall(plan('install'), { runner, dryRun: true });
     expect(execution).toMatchObject({ status: 'dry-run', executed: false });
     expect(runner.calls).toHaveLength(0);
   });
 
   it('aborts when confirmation is refused', async () => {
     const runner = new ScriptedRunner();
-    const execution = await runBackendInstall(plan('upgrade'), {
+    const execution = await runHarnessInstall(plan('upgrade'), {
       runner,
       confirm: () => Promise.resolve(false),
     });
@@ -370,7 +395,7 @@ describe('runBackendInstall execution paths', () => {
 
   it('executes the planned command with --yes and reports the action outcome', async () => {
     const runner = new ScriptedRunner([{ code: 0, stdout: 'added 1 package', stderr: 'npm warn' }]);
-    const execution = await runBackendInstall(plan('upgrade'), { runner, assumeYes: true });
+    const execution = await runHarnessInstall(plan('upgrade'), { runner, assumeYes: true });
     expect(execution).toMatchObject({ status: 'upgraded', executed: true });
     expect(runner.calls).toEqual([
       {
@@ -387,7 +412,7 @@ describe('runBackendInstall execution paths', () => {
     const runner = new ScriptedRunner([
       { code: 1, stdout: '', stderr: 'EACCES: permission denied' },
     ]);
-    const execution = await runBackendInstall(plan('install'), { runner, assumeYes: true });
+    const execution = await runHarnessInstall(plan('install'), { runner, assumeYes: true });
     expect(execution).toMatchObject({ status: 'failed', executed: false });
     expect(execution.failure).toBe('npm exited with code 1');
     expect(execution.process?.stderrTail).toContain('EACCES');
@@ -395,7 +420,7 @@ describe('runBackendInstall execution paths', () => {
 
   it('maps repair actions to their own status', async () => {
     const runner = new ScriptedRunner([{ code: 0 }]);
-    const execution = await runBackendInstall(plan('repair'), { runner, assumeYes: true });
+    const execution = await runHarnessInstall(plan('repair'), { runner, assumeYes: true });
     expect(execution.status).toBe('repaired');
   });
 });

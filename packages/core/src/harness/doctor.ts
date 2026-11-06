@@ -1,8 +1,8 @@
 /**
- * `disclaude backend doctor` (Issue #5169): verify each backend runtime is
+ * `disclaude harness doctor` (Issue #5169): verify each harness runtime is
  * discoverable exactly the way the service resolves it at query time.
  *
- * Checks never read or write credentials — backends that own their
+ * Checks never read or write credentials — harnesses that own their
  * authentication (codex OAuth, standalone claude login) only get an explicit
  * next-step instruction, because verifying a session would mean touching the
  * very secrets this CLI promises to leave alone.
@@ -11,12 +11,12 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  backendCatalog,
+  harnessCatalog,
   CLAUDE_AGENT_SDK_PACKAGE,
   nodeSatisfiesPi,
   PI_MIN_NODE,
   PI_RUNTIME_PACKAGES,
-  resolveBackendVersion,
+  resolveHarnessVersion,
 } from './registry.js';
 import {
   bundledClaudeRuntime,
@@ -24,7 +24,7 @@ import {
   npmGlobalPackages,
   resolveNodeModules,
 } from './detect.js';
-import type { BackendId, ProcessRunner } from './types.js';
+import type { HarnessId, ProcessRunner } from './types.js';
 
 export type CheckStatus = 'pass' | 'fail' | 'warn' | 'info';
 
@@ -35,9 +35,9 @@ export interface DoctorCheck {
   hint?: string;
 }
 
-export interface BackendDoctorReport {
-  backend: BackendId;
-  /** True when no required check failed (warn/info do not fail a backend). */
+export interface HarnessDoctorReport {
+  harness: HarnessId;
+  /** True when no required check failed (warn/info do not fail a harness). */
   ok: boolean;
   checks: DoctorCheck[];
 }
@@ -51,28 +51,28 @@ export interface DoctorOptions {
   nodeVersion?: string;
 }
 
-function checkPathCli(id: BackendId, binary: string, found: string | undefined): DoctorCheck {
+function checkPathCli(id: HarnessId, binary: string, found: string | undefined): DoctorCheck {
   if (found) {
     return {
       name: 'cli-on-path',
       status: 'pass',
-      detail: `\`${binary}\` is discoverable on PATH at ${found}; the service spawns \`${binary}\` by name for this backend`,
+      detail: `\`${binary}\` is discoverable on PATH at ${found}; the service spawns \`${binary}\` by name for this harness`,
     };
   }
   return {
     name: 'cli-on-path',
     status: 'fail',
-    detail: `\`${binary}\` is not discoverable on PATH; the service spawns \`${binary}\` by name for this backend`,
-    hint: `Preview with \`disclaude backend install ${id} --dry-run\`, then install without --dry-run and re-run this doctor.`,
+    detail: `\`${binary}\` is not discoverable on PATH; the service spawns \`${binary}\` by name for this harness`,
+    hint: `Preview with \`disclaude harness install ${id} --dry-run\`, then install without --dry-run and re-run this doctor.`,
   };
 }
 
-/** Doctor one backend; probes are offline and side-effect free. */
-export async function doctorBackend(
-  id: BackendId,
+/** Doctor one harness; probes are offline and side-effect free. */
+export async function doctorHarness(
+  id: HarnessId,
   options: DoctorOptions
-): Promise<BackendDoctorReport> {
-  const entry = backendCatalog(id);
+): Promise<HarnessDoctorReport> {
+  const entry = harnessCatalog(id);
   const checks: DoctorCheck[] = [];
   const nodeVersion = options.nodeVersion ?? process.version;
 
@@ -90,7 +90,7 @@ export async function doctorBackend(
         : {
             name: 'bundled-sdk-runtime',
             status: 'fail',
-            detail: `${CLAUDE_AGENT_SDK_PACKAGE} does not resolve from ${options.coreDir}; the claude backend cannot start`,
+            detail: `${CLAUDE_AGENT_SDK_PACKAGE} does not resolve from ${options.coreDir}; the claude harness cannot start`,
             hint: 'Reinstall this disclaude distribution; the runtime ships as its pinned dependency, not as a separate download.',
           }
     );
@@ -100,7 +100,7 @@ export async function doctorBackend(
       status: 'info',
       detail: cli
         ? `\`claude\` is on PATH at ${cli} (standalone CLI for interactive use; the service itself uses the bundled runtime)`
-        : '`claude` is not on PATH. That is optional for the service (it uses the bundled runtime); install it for interactive use with `disclaude backend install claude`.',
+        : '`claude` is not on PATH. That is optional for the service (it uses the bundled runtime); install it for interactive use with `disclaude harness install claude`.',
     });
   } else if (id === 'pi') {
     const satisfies = nodeSatisfiesPi(nodeVersion);
@@ -114,7 +114,7 @@ export async function doctorBackend(
         ? undefined
         : 'Upgrade Node before installing or running the pi runtime (docs/pi-backend.md).',
     });
-    const expected = resolveBackendVersion('pi', { env: options.env });
+    const expected = resolveHarnessVersion('pi', { env: options.env });
     const resolved = resolveNodeModules(options.coreDir, PI_RUNTIME_PACKAGES);
     const missing = PI_RUNTIME_PACKAGES.filter((name) => !resolved[name]?.resolved);
     const mismatched = PI_RUNTIME_PACKAGES.filter(
@@ -143,7 +143,7 @@ export async function doctorBackend(
           (name) =>
             `${name}@${resolved[name]?.version ?? '?'} resolves (expected ${expected.value})`
         ).join('; '),
-        hint: 'The resolvable version differs from the repo pin: discoverable but unvalidated. Reinstall with `disclaude backend install pi` to pin the expected version.',
+        hint: 'The resolvable version differs from the repo pin: discoverable but unvalidated. Reinstall with `disclaude harness install pi` to pin the expected version.',
       });
     }
   } else {
@@ -152,7 +152,7 @@ export async function doctorBackend(
     checks.push(checkPathCli(id, binary, findOnPath(binary, options.env)));
     const globals = await npmGlobalPackages(options.runner);
     const installed = globals[entry.packages[0]];
-    const expected = resolveBackendVersion(id, { env: options.env });
+    const expected = resolveHarnessVersion(id, { env: options.env });
     checks.push({
       name: 'npm-global-package',
       status: 'info',
@@ -163,13 +163,13 @@ export async function doctorBackend(
   }
 
   checks.push({ name: 'auth', status: 'info', detail: entry.auth.nextStep });
-  return { backend: id, ok: !checks.some((check) => check.status === 'fail'), checks };
+  return { harness: id, ok: !checks.some((check) => check.status === 'fail'), checks };
 }
 
 function piInstallHint(options: DoctorOptions, version: string): string {
   const specs = PI_RUNTIME_PACKAGES.map((name) => `${name}@${version}`).join(' ');
   if (existsSync(join(options.installRoot, 'pnpm-workspace.yaml'))) {
-    return `Source worktree: run \`disclaude backend install pi\` or \`corepack pnpm --filter @disclaude/core add --save-optional --save-exact ${specs}\` (docs/pi-backend.md).`;
+    return `Source worktree: run \`disclaude harness install pi\` or \`corepack pnpm --filter @disclaude/core add --save-optional --save-exact ${specs}\` (docs/pi-backend.md).`;
   }
-  return `Run \`disclaude backend install pi\` (installs ${specs} into this install's node_modules).`;
+  return `Run \`disclaude harness install pi\` (installs ${specs} into this install's node_modules).`;
 }

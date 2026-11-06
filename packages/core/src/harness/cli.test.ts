@@ -1,14 +1,14 @@
 /**
- * CLI contract tests for `disclaude backend` (Issue #5169): argument parsing,
+ * CLI contract tests for `disclaude harness` (Issue #5169): argument parsing,
  * JSON output shape, exit codes, dry-run/confirmation wiring and unknown
- * backend errors. The package manager is always a scripted fake.
+ * harness errors. The package manager is always a scripted fake.
  */
 
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { runBackendCli } from './cli.js';
+import { runHarnessCli } from './cli.js';
 import type { InstallPlan } from './install.js';
 import type { ProcessRunner, RunnerResult } from './types.js';
 
@@ -21,7 +21,7 @@ afterEach(() => {
 });
 
 function tempDirectory(): string {
-  const directory = mkdtempSync(join(tmpdir(), 'disclaude-backend-cli-'));
+  const directory = mkdtempSync(join(tmpdir(), 'disclaude-harness-cli-'));
   directories.push(directory);
   return directory;
 }
@@ -95,13 +95,17 @@ describe('help and usage', () => {
   it('prints help for no arguments or --help and exits 0', async () => {
     for (const args of [[], ['--help'], ['-h']]) {
       const lines: string[] = [];
-      const code = await runBackendCli(args, {
+      const code = await runHarnessCli(args, {
         installRoot: '/opt/disclaude',
         write: (line) => lines.push(line),
       });
       expect(code).toBe(0);
       expect(lines.join('\n')).toContain('Usage:');
-      expect(lines.join('\n')).toContain('disclaude backend install');
+      expect(lines.join('\n')).toContain('disclaude harness install');
+      const help = lines.join('\n');
+      expect(help).toContain('DISCLAUDE_HARNESS_<CLAUDE|PI|CODEX|DSH>_VERSION');
+      expect(help).toContain('deprecated alias');
+      expect(help).toContain('agent.agentBackend');
     }
   });
 
@@ -114,7 +118,7 @@ describe('help and usage', () => {
       ['install', 'codex', '--nonsense'],
     ]) {
       const lines: string[] = [];
-      const code = await runBackendCli(args, {
+      const code = await runHarnessCli(args, {
         installRoot: '/opt/disclaude',
         write: (line) => lines.push(line),
       });
@@ -125,11 +129,11 @@ describe('help and usage', () => {
 });
 
 describe('list', () => {
-  it('reports every backend with version sources and current state', async () => {
+  it('reports every harness with version sources and current state', async () => {
     const { root, core } = coreFixture();
     const runner = npmGlobals({ '@openai/codex': '0.151.0' });
     const lines: string[] = [];
-    const code = await runBackendCli(['list'], {
+    const code = await runHarnessCli(['list'], {
       installRoot: root,
       coreDir: core,
       env: { PATH: '/nonexistent' },
@@ -139,13 +143,13 @@ describe('list', () => {
     expect(code).toBe(0);
     const parsed = JSON.parse(lines[0]);
     expect(parsed.ok).toBe(true);
-    expect(parsed.data.backends.map((entry: { id: string }) => entry.id)).toEqual([
+    expect(parsed.data.harnesses.map((entry: { id: string }) => entry.id)).toEqual([
       'claude',
       'pi',
       'codex',
       'dsh',
     ]);
-    const codex = parsed.data.backends.find((entry: { id: string }) => entry.id === 'codex');
+    const codex = parsed.data.harnesses.find((entry: { id: string }) => entry.id === 'codex');
     expect(codex.current).toMatchObject({ state: 'installed' });
     expect(codex.current.versions).toEqual({ '@openai/codex': '0.151.0' });
     expect(codex.current.detail).toContain('NOT on PATH');
@@ -153,13 +157,13 @@ describe('list', () => {
       expectedVersion: '0.154.0',
       versionSource: expect.stringContaining('Dockerfile.service'),
     });
-    const claude = parsed.data.backends.find((entry: { id: string }) => entry.id === 'claude');
+    const claude = parsed.data.harnesses.find((entry: { id: string }) => entry.id === 'claude');
     expect(claude.packages[0].expectedVersion).toBe('2.1.263');
     expect(claude.serviceRuntime).toMatchObject({ claudeCodeVersion: '2.1.263' });
-    const pi = parsed.data.backends.find((entry: { id: string }) => entry.id === 'pi');
+    const pi = parsed.data.harnesses.find((entry: { id: string }) => entry.id === 'pi');
     expect(pi.installTarget).toBe('node-modules');
     expect(pi.current.state).toBe('not-installed');
-    expect(pi.versionEnvKey).toBe('DISCLAUDE_BACKEND_PI_VERSION');
+    expect(pi.versionEnvKey).toBe('DISCLAUDE_HARNESS_PI_VERSION');
   });
 });
 
@@ -179,10 +183,10 @@ describe('install', () => {
   });
   let lines: string[] = [];
 
-  it('rejects unknown backends with the supported list', async () => {
+  it('rejects unknown harnesses with the supported list', async () => {
     lines = [];
     const { root, core } = coreFixture();
-    const code = await runBackendCli(['install', 'gemini'], base(new ScriptedRunner(), core, root));
+    const code = await runHarnessCli(['install', 'gemini'], base(new ScriptedRunner(), core, root));
     expect(code).toBe(1);
     const parsed = JSON.parse(lines[0]);
     expect(parsed.ok).toBe(false);
@@ -190,7 +194,7 @@ describe('install', () => {
     expect(parsed.error.message).toContain('deepseek');
   });
 
-  it('requires a backend name and validates flag values', async () => {
+  it('requires a harness name and validates flag values', async () => {
     lines = [];
     const { root, core } = coreFixture();
     for (const args of [
@@ -199,7 +203,7 @@ describe('install', () => {
       ['install', 'codex', '--version', '-bad version!'],
       ['install', 'codex', '--registry', 'not-a-url'],
     ]) {
-      const code = await runBackendCli(args, base(new ScriptedRunner(), core, root));
+      const code = await runHarnessCli(args, base(new ScriptedRunner(), core, root));
       expect(code, JSON.stringify(args)).toBe(1);
       expect(JSON.parse(lines[0]).ok).toBe(false);
       lines = [];
@@ -210,7 +214,7 @@ describe('install', () => {
     const { root, core } = coreFixture();
     const runner = npmGlobals({});
     lines = [];
-    const code = await runBackendCli(['install', 'codex', '--dry-run'], base(runner, core, root));
+    const code = await runHarnessCli(['install', 'codex', '--dry-run'], base(runner, core, root));
     expect(code).toBe(0);
     const parsed = JSON.parse(lines[0]);
     expect(parsed).toMatchObject({ ok: true, command: 'install' });
@@ -224,7 +228,7 @@ describe('install', () => {
     const { root, core } = coreFixture();
     const runner = npmGlobals({});
     lines = [];
-    const code = await runBackendCli(['install', 'codex'], base(runner, core, root));
+    const code = await runHarnessCli(['install', 'codex'], base(runner, core, root));
     expect(code).toBe(0);
     const parsed = JSON.parse(lines[0]);
     expect(parsed.data).toMatchObject({ status: 'aborted', abortReason: 'not confirmed' });
@@ -236,7 +240,7 @@ describe('install', () => {
     const runner = npmGlobals({});
     runner.queue('', '');
     lines = [];
-    const code = await runBackendCli(['install', 'codex', '--yes'], base(runner, core, root));
+    const code = await runHarnessCli(['install', 'codex', '--yes'], base(runner, core, root));
     expect(code).toBe(0);
     const parsed = JSON.parse(lines[0]);
     expect(parsed.data).toMatchObject({ status: 'installed', executed: true });
@@ -249,12 +253,12 @@ describe('install', () => {
     const runner = npmGlobals({});
     runner.queueError({ code: 1, stderr: 'network unreachable' });
     lines = [];
-    const code = await runBackendCli(['install', 'codex', '--yes'], base(runner, core, root));
+    const code = await runHarnessCli(['install', 'codex', '--yes'], base(runner, core, root));
     expect(code).toBe(1);
     const parsed = JSON.parse(lines[0]);
     expect(parsed.ok).toBe(false);
     expect(parsed.error.message).toContain('exited with code 1');
-    expect(parsed.error.plan.backend).toBe('codex');
+    expect(parsed.error.plan.harness).toBe('codex');
   });
 
   it('skips idempotently when the target version is already installed', async () => {
@@ -263,7 +267,7 @@ describe('install', () => {
     writeFileSync(join(bin, 'codex'), '#!/bin/sh\n', { mode: 0o755 });
     const runner = npmGlobals({ '@openai/codex': '0.154.0' });
     lines = [];
-    const code = await runBackendCli(['install', 'codex', '--yes'], {
+    const code = await runHarnessCli(['install', 'codex', '--yes'], {
       ...base(runner, core, root),
       env: { PATH: `/nonexistent:${bin}` },
     });
@@ -279,23 +283,23 @@ describe('install', () => {
     const runner = npmGlobals({});
     runner.queue('', '');
     lines = [];
-    const code = await runBackendCli(
+    const code = await runHarnessCli(
       ['install', 'deepseek', '--version', '0.2.0', '--yes'],
       base(runner, core, root)
     );
     expect(code).toBe(0);
     const parsed = JSON.parse(lines[0]);
-    expect(parsed.data.plan.backend).toBe('dsh');
+    expect(parsed.data.plan.harness).toBe('dsh');
     expect(parsed.data.plan.args).toEqual(['install', '-g', '@deepseek-ai/dsh@0.2.0']);
     expect(parsed.data.plan.version.overridden).toBe('flag');
   });
 });
 
 describe('doctor', () => {
-  it('fails with exit 1 when a required backend is not discoverable', async () => {
+  it('fails with exit 1 when a required harness is not discoverable', async () => {
     const { root, core } = coreFixture();
     const lines: string[] = [];
-    const code = await runBackendCli(['doctor', 'codex'], {
+    const code = await runHarnessCli(['doctor', 'codex'], {
       installRoot: root,
       coreDir: core,
       env: { PATH: '/nonexistent' },
@@ -305,15 +309,15 @@ describe('doctor', () => {
     expect(code).toBe(1);
     const parsed = JSON.parse(lines[0]);
     expect(parsed.ok).toBe(false);
-    expect(parsed.data.backends[0].ok).toBe(false);
+    expect(parsed.data.harnesses[0].ok).toBe(false);
   });
 
-  it('passes for a discoverable backend and exits 0', async () => {
+  it('passes for a discoverable harness and exits 0', async () => {
     const { root, core } = coreFixture();
     const bin = tempDirectory();
     writeFileSync(join(bin, 'codex'), '#!/bin/sh\n', { mode: 0o755 });
     const lines: string[] = [];
-    const code = await runBackendCli(['doctor', 'codex'], {
+    const code = await runHarnessCli(['doctor', 'codex'], {
       installRoot: root,
       coreDir: core,
       env: { PATH: `/nonexistent:${bin}` },
@@ -321,13 +325,13 @@ describe('doctor', () => {
       write: (line) => lines.push(line),
     });
     expect(code).toBe(0);
-    expect(JSON.parse(lines[0]).data.backends[0].ok).toBe(true);
+    expect(JSON.parse(lines[0]).data.harnesses[0].ok).toBe(true);
   });
 
-  it('doctors every backend when no backend is named', async () => {
+  it('doctors every harness when no harness is named', async () => {
     const { root, core } = coreFixture();
     const lines: string[] = [];
-    const code = await runBackendCli(['doctor'], {
+    const code = await runHarnessCli(['doctor'], {
       installRoot: root,
       coreDir: core,
       env: { PATH: '/nonexistent' },
@@ -337,22 +341,22 @@ describe('doctor', () => {
     });
     expect(code).toBe(1);
     const parsed = JSON.parse(lines[0]);
-    const ids = parsed.data.backends.map((report: { backend: string }) => report.backend);
+    const ids = parsed.data.harnesses.map((report: { harness: string }) => report.harness);
     expect(ids).toEqual(['claude', 'pi', 'codex', 'dsh']);
     // claude passes via the fixture SDK; pi/codex/dsh fail (not installed).
     const byId = Object.fromEntries(
-      parsed.data.backends.map((report: { backend: string; ok: boolean }) => [
-        report.backend,
+      parsed.data.harnesses.map((report: { harness: string; ok: boolean }) => [
+        report.harness,
         report.ok,
       ])
     );
     expect(byId).toEqual({ claude: true, pi: false, codex: false, dsh: false });
   });
 
-  it('rejects unknown doctor backends', async () => {
+  it('rejects unknown doctor harnesses', async () => {
     const { root, core } = coreFixture();
     const lines: string[] = [];
-    const code = await runBackendCli(['doctor', 'gemini'], {
+    const code = await runHarnessCli(['doctor', 'gemini'], {
       installRoot: root,
       coreDir: core,
       env: {},
@@ -360,7 +364,7 @@ describe('doctor', () => {
       write: (line) => lines.push(line),
     });
     expect(code).toBe(1);
-    expect(JSON.parse(lines[0]).error.message).toContain('Unknown backend: gemini');
+    expect(JSON.parse(lines[0]).error.message).toContain('Unknown harness: gemini');
   });
 });
 
@@ -370,7 +374,7 @@ describe('plan content shown to confirmation callbacks', () => {
     const plans: InstallPlan[] = [];
     const runner = npmGlobals({});
     const lines: string[] = [];
-    const code = await runBackendCli(['install', 'codex'], {
+    const code = await runHarnessCli(['install', 'codex'], {
       installRoot: root,
       coreDir: core,
       env: { PATH: '/nonexistent' },

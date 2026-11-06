@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-/** Unified backend runtime install/check CLI; thin router into @disclaude/core. */
+/** Unified agent harness install/check CLI; thin router into @disclaude/core. */
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runBackendCli } from '../packages/core/dist/backends/cli.js';
+import { runHarnessCli } from '../packages/core/dist/harness/cli.js';
 
 // The disclaude install root: where `pi` runtime packages install for
 // production Node module resolution, and where `npm -g`/lockfile-less installs
@@ -10,7 +10,7 @@ import { runBackendCli } from '../packages/core/dist/backends/cli.js';
 const installRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 try {
-  const code = await runBackendCli(process.argv.slice(2), {
+  const code = await runHarnessCli(process.argv.slice(2), {
     installRoot,
     env: process.env,
   });

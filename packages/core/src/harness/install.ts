@@ -1,5 +1,5 @@
 /**
- * Idempotent backend runtime installs for `disclaude backend install`
+ * Idempotent harness runtime installs for `disclaude harness install`
  * (Issue #5169).
  *
  * Install always produces an explicit plan first (action, target versions,
@@ -13,10 +13,10 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  backendCatalog,
+  harnessCatalog,
   nodeSatisfiesPi,
   PI_RUNTIME_PACKAGES,
-  resolveBackendVersion,
+  resolveHarnessVersion,
   type ResolvedVersion,
 } from './registry.js';
 import {
@@ -27,7 +27,7 @@ import {
   npmGlobalPrefix,
   resolveNodeModules,
 } from './detect.js';
-import type { BackendId, ProcessRunner, RunnerResult } from './types.js';
+import type { HarnessId, ProcessRunner, RunnerResult } from './types.js';
 
 export type InstallAction = 'install' | 'upgrade' | 'repair' | 'skip';
 export type InstallStatus =
@@ -48,7 +48,7 @@ export interface InstallPlanTarget {
 }
 
 export interface InstallPlan {
-  backend: BackendId;
+  harness: HarnessId;
   action: InstallAction;
   reason: string;
   /** Source worktree (pnpm) vs prebuilt install (npm) layout. */
@@ -96,15 +96,15 @@ function planClaudeNote(claudeBundled: {
   );
 }
 
-/** Compute the full install plan for one backend without changing anything. */
-export async function planBackendInstall(
-  id: BackendId,
+/** Compute the full install plan for one harness without changing anything. */
+export async function planHarnessInstall(
+  id: HarnessId,
   options: PlanOptions
 ): Promise<InstallPlan> {
-  const entry = backendCatalog(id);
+  const entry = harnessCatalog(id);
   const coreDir = options.coreDir ?? corePackageDir();
   const claudeBundled = id === 'claude' ? bundledClaudeRuntime(coreDir) : undefined;
-  const version = resolveBackendVersion(id, {
+  const version = resolveHarnessVersion(id, {
     flagVersion: options.flagVersion,
     env: options.env,
     claudeBundledVersion: claudeBundled?.claudeCodeVersion,
@@ -144,7 +144,7 @@ export async function planBackendInstall(
     }
     if (action === 'skip') {
       return {
-        backend: id,
+        harness: id,
         action,
         reason,
         sourceTree: false,
@@ -162,7 +162,7 @@ export async function planBackendInstall(
       };
     }
     return {
-      backend: id,
+      harness: id,
       action,
       reason,
       sourceTree: false,
@@ -201,12 +201,12 @@ export async function planBackendInstall(
   );
   if (!nodeSatisfiesPi(process.version)) {
     notes.push(
-      `WARNING: current Node ${process.version} is below the pi minimum; upgrade Node before using the pi backend.`
+      `WARNING: current Node ${process.version} is below the pi minimum; upgrade Node before using the pi harness.`
     );
   }
   if (allAtTarget) {
     return {
-      backend: id,
+      harness: id,
       action: 'skip',
       reason: `runtime packages already resolve at ${version.value} from ${coreDir}`,
       sourceTree,
@@ -234,7 +234,7 @@ export async function planBackendInstall(
       ...registryArgs,
     ];
     return {
-      backend: id,
+      harness: id,
       action: allResolved ? 'upgrade' : 'install',
       reason: allResolved
         ? `runtime packages resolve at ${versions.join(', ')}; target is ${version.value} (source worktrees pin the runtime through core optionalDependencies)`
@@ -258,7 +258,7 @@ export async function planBackendInstall(
   }
   const args = ['install', '--no-save', '--package-lock=false', ...specs, ...registryArgs];
   return {
-    backend: id,
+    harness: id,
     action: allResolved ? 'upgrade' : 'install',
     reason: allResolved
       ? `runtime packages resolve at ${versions.join(', ')}; target is ${version.value}`
@@ -308,8 +308,8 @@ const ACTION_STATUS: Record<
   repair: 'repaired',
 };
 
-/** Execute (or skip/dry-run/abort) a plan produced by {@link planBackendInstall}. */
-export async function runBackendInstall(
+/** Execute (or skip/dry-run/abort) a plan produced by {@link planHarnessInstall}. */
+export async function runHarnessInstall(
   plan: InstallPlan,
   options: ExecuteOptions
 ): Promise<InstallExecution> {

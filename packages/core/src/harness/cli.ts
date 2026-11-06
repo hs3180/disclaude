@@ -1,6 +1,6 @@
 /**
- * `disclaude backend` CLI (Issue #5169): one idempotent entry point to list,
- * install and doctor the agent backend runtimes (claude / pi / codex / dsh).
+ * `disclaude harness` CLI (Issue #5169): one idempotent entry point to list,
+ * install and doctor the agent harness runtimes (claude / pi / codex / dsh).
  *
  * Output contract matches the other unified-CLI commands: one JSON object per
  * invocation on stdout (`{ok, command, data}` or `{ok:false, error}`), nonzero
@@ -12,11 +12,11 @@
 
 import { resolve as resolvePath } from 'node:path';
 import {
-  BACKEND_IDS,
-  backendCatalog,
-  backendVersionEnvKey,
-  resolveBackendId,
-  resolveBackendVersion,
+  HARNESS_IDS,
+  harnessCatalog,
+  harnessVersionEnvKey,
+  resolveHarnessId,
+  resolveHarnessVersion,
 } from './registry.js';
 import {
   bundledClaudeRuntime,
@@ -28,35 +28,35 @@ import {
   type BundledClaudeRuntime,
 } from './detect.js';
 import {
-  planBackendInstall,
-  runBackendInstall,
+  planHarnessInstall,
+  runHarnessInstall,
   type InstallExecution,
   type InstallPlan,
 } from './install.js';
-import { doctorBackend, type BackendDoctorReport } from './doctor.js';
-import { createDefaultRunner, type BackendId, type ProcessRunner } from './types.js';
+import { doctorHarness, type HarnessDoctorReport } from './doctor.js';
+import { createDefaultRunner, type HarnessId, type ProcessRunner } from './types.js';
 
-const HELP = `disclaude backend - install and check agent backend runtimes
+const HELP = `disclaude harness - install and check agent harness runtimes
 
 Usage:
-  disclaude backend list
-  disclaude backend install <claude|pi|codex|dsh> [--version V] [--registry URL] [--dry-run] [--yes]
-  disclaude backend doctor [claude|pi|codex|dsh]
+  disclaude harness list
+  disclaude harness install <claude|pi|codex|dsh> [--version V] [--registry URL] [--dry-run] [--yes]
+  disclaude harness doctor [claude|pi|codex|dsh]
 
 Commands:
-  list     Supported backends: install target, expected version and where it is
+  list     Supported harnesses: install target, expected version and where it is
            pinned, current install state, and auth next steps.
   install  Idempotent install. claude/codex/dsh CLI binaries go into the npm
            global prefix (PATH); the pi runtime installs as optional Node
            modules under production Node module resolution. An already-correct
            install is skipped with its version; a differing version upgrades;
            a package whose binary fell off PATH is repaired.
-  doctor   Verify discoverability the way the service resolves each backend:
+  doctor   Verify discoverability the way the service resolves each harness:
            PATH binaries for codex/dsh, module resolution and Node >= 22.19.0
            for pi, and the pinned agent SDK for the claude service runtime.
 
 Options:
-  --version V       Pin a specific backend version (overrides the repo pin).
+  --version V       Pin a specific harness version (overrides the repo pin).
   --registry URL    npm/pnpm registry mirror, e.g. for offline installs.
   --dry-run         Print the plan (targets, versions, package manager,
                     command, writes/permissions) without installing.
@@ -64,18 +64,25 @@ Options:
   --help, -h        Show this help.
 
 Version defaults and overrides: --version, or environment
-DISCLAUDE_BACKEND_<CLAUDE|PI|CODEX|DSH>_VERSION. Defaults: claude follows the
-Claude Code version bundled in this disclaude's pinned agent SDK; pi follows
-docs/pi-backend.md; codex/dsh follow the Dockerfile.service build pins.
+DISCLAUDE_HARNESS_<CLAUDE|PI|CODEX|DSH>_VERSION (the legacy
+DISCLAUDE_BACKEND_<ID>_VERSION spelling is still honored). Defaults: claude
+follows the Claude Code version bundled in this disclaude's pinned agent SDK;
+pi follows docs/pi-backend.md; codex/dsh follow the Dockerfile.service build
+pins.
 
-This CLI never reads or writes API keys, tokens or login sessions; backends
+Compatibility: 'disclaude backend ...' still works as a deprecated alias of
+'disclaude harness ...'. Pre-existing configuration keeps its spelling: the
+agent.agentBackend config key and docs file names such as docs/pi-backend.md
+are unchanged by this command family.
+
+This CLI never reads or writes API keys, tokens or login sessions; harnesses
 that need independent authentication (codex login, standalone claude) get an
 explicit next step instead.`;
 
 class UsageError extends Error {}
 
 interface ParsedInstallArgs {
-  backend: string;
+  harness: string;
   flagVersion?: string;
   registry?: string;
   dryRun: boolean;
@@ -85,7 +92,7 @@ interface ParsedInstallArgs {
 const VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._+\-]*$/;
 
 function parseInstallArgs(args: string[]): ParsedInstallArgs {
-  const parsed: ParsedInstallArgs = { backend: '', dryRun: false, yes: false };
+  const parsed: ParsedInstallArgs = { harness: '', dryRun: false, yes: false };
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
     const valueFlag = /^--(version|registry)(?:=(.*))?$/.exec(arg);
@@ -123,30 +130,30 @@ function parseInstallArgs(args: string[]): ParsedInstallArgs {
     if (arg.startsWith('--')) {
       throw new UsageError(`Unknown install option: ${arg}`);
     }
-    if (!parsed.backend) {
-      parsed.backend = arg;
+    if (!parsed.harness) {
+      parsed.harness = arg;
       continue;
     }
     throw new UsageError(`Unexpected install argument: ${arg}`);
   }
-  if (!parsed.backend) {
-    throw new UsageError('Expected a backend: claude | pi | codex | dsh');
+  if (!parsed.harness) {
+    throw new UsageError('Expected a harness: claude | pi | codex | dsh');
   }
   return parsed;
 }
 
-function parseDoctorArgs(args: string[]): { backend?: string } {
+function parseDoctorArgs(args: string[]): { harness?: string } {
   if (args.length > 1) {
-    throw new UsageError('doctor takes at most one backend name');
+    throw new UsageError('doctor takes at most one harness name');
   }
   const [first] = args;
   if (first !== undefined && first.startsWith('--')) {
     throw new UsageError(`Unknown doctor option: ${first}`);
   }
-  return first === undefined ? {} : { backend: first };
+  return first === undefined ? {} : { harness: first };
 }
 
-export interface BackendCliOptions {
+export interface HarnessCliOptions {
   /** Disclaude install root or source checkout root. */
   installRoot: string;
   /** @disclaude/core package directory; defaults to the running package. */
@@ -161,8 +168,8 @@ export interface BackendCliOptions {
   write?: (line: string) => void;
 }
 
-export interface BackendListEntry {
-  id: BackendId;
+export interface HarnessListEntry {
+  id: HarnessId;
   label: string;
   aliases: string[];
   installTarget: string;
@@ -184,19 +191,19 @@ export interface BackendListEntry {
   versionEnvKey: string;
 }
 
-async function listBackends(
-  options: Required<Pick<BackendCliOptions, 'runner' | 'env' | 'installRoot'>> & { coreDir: string }
-): Promise<BackendListEntry[]> {
+async function listHarnesses(
+  options: Required<Pick<HarnessCliOptions, 'runner' | 'env' | 'installRoot'>> & { coreDir: string }
+): Promise<HarnessListEntry[]> {
   const globals = await npmGlobalPackages(options.runner);
   const globalPrefix = await npmGlobalPrefix(options.runner);
   const claudeBundled = bundledClaudeRuntime(options.coreDir);
-  return BACKEND_IDS.map((id) => {
-    const entry = backendCatalog(id);
-    const version = resolveBackendVersion(id, {
+  return HARNESS_IDS.map((id) => {
+    const entry = harnessCatalog(id);
+    const version = resolveHarnessVersion(id, {
       env: options.env,
       claudeBundledVersion: claudeBundled.claudeCodeVersion,
     });
-    let current: BackendListEntry['current'];
+    let current: HarnessListEntry['current'];
     if (entry.installTarget === 'node-modules') {
       const resolved = resolveNodeModules(options.coreDir, entry.packages);
       const installedCount = entry.packages.filter((name) => resolved[name]?.resolved).length;
@@ -245,7 +252,7 @@ async function listBackends(
       ...(id === 'claude' ? { serviceRuntime: claudeBundled } : {}),
       auth: entry.auth,
       docs: entry.docs,
-      versionEnvKey: backendVersionEnvKey(id),
+      versionEnvKey: harnessVersionEnvKey(id),
     };
   });
 }
@@ -278,8 +285,8 @@ function createDefaultConfirm(): (plan: InstallPlan) => Promise<boolean> {
   };
 }
 
-/** Run the `disclaude backend` CLI; returns the process exit code. */
-export async function runBackendCli(args: string[], options: BackendCliOptions): Promise<number> {
+/** Run the `disclaude harness` CLI; returns the process exit code. */
+export async function runHarnessCli(args: string[], options: HarnessCliOptions): Promise<number> {
   const write = options.write ?? ((line: string) => console.log(line));
   const env = options.env ?? process.env;
   const runner = options.runner ?? createDefaultRunner(env);
@@ -297,19 +304,19 @@ export async function runBackendCli(args: string[], options: BackendCliOptions):
         if (args.length > 1) {
           throw new UsageError(`Unexpected list argument: ${args[1]}`);
         }
-        const backends = await listBackends({ runner, env, installRoot, coreDir });
-        write(JSON.stringify({ ok: true, command, data: { backends } }));
+        const harnesses = await listHarnesses({ runner, env, installRoot, coreDir });
+        write(JSON.stringify({ ok: true, command, data: { harnesses } }));
         return 0;
       }
       case 'install': {
         const parsed = parseInstallArgs(args.slice(1));
-        const id = resolveBackendId(parsed.backend);
+        const id = resolveHarnessId(parsed.harness);
         if (!id) {
           throw new UsageError(
-            `Unknown backend: ${parsed.backend}. Supported: ${BACKEND_IDS.join(', ')} (alias: deepseek → dsh).`
+            `Unknown harness: ${parsed.harness}. Supported: ${HARNESS_IDS.join(', ')} (alias: deepseek → dsh).`
           );
         }
-        const plan = await planBackendInstall(id, {
+        const plan = await planHarnessInstall(id, {
           runner,
           env,
           installRoot,
@@ -317,7 +324,7 @@ export async function runBackendCli(args: string[], options: BackendCliOptions):
           flagVersion: parsed.flagVersion,
           registry: parsed.registry,
         });
-        const execution: InstallExecution = await runBackendInstall(plan, {
+        const execution: InstallExecution = await runHarnessInstall(plan, {
           runner,
           dryRun: parsed.dryRun,
           assumeYes: parsed.yes,
@@ -351,22 +358,22 @@ export async function runBackendCli(args: string[], options: BackendCliOptions):
       }
       case 'doctor': {
         const parsed = parseDoctorArgs(args.slice(1));
-        const ids: BackendId[] = [];
-        if (parsed.backend !== undefined) {
-          const id = resolveBackendId(parsed.backend);
+        const ids: HarnessId[] = [];
+        if (parsed.harness !== undefined) {
+          const id = resolveHarnessId(parsed.harness);
           if (!id) {
             throw new UsageError(
-              `Unknown backend: ${parsed.backend}. Supported: ${BACKEND_IDS.join(', ')} (alias: deepseek → dsh).`
+              `Unknown harness: ${parsed.harness}. Supported: ${HARNESS_IDS.join(', ')} (alias: deepseek → dsh).`
             );
           }
           ids.push(id);
         } else {
-          ids.push(...BACKEND_IDS);
+          ids.push(...HARNESS_IDS);
         }
-        const reports: BackendDoctorReport[] = [];
+        const reports: HarnessDoctorReport[] = [];
         for (const id of ids) {
           reports.push(
-            await doctorBackend(id, {
+            await doctorHarness(id, {
               runner,
               env,
               coreDir,
@@ -376,11 +383,11 @@ export async function runBackendCli(args: string[], options: BackendCliOptions):
           );
         }
         const allOk = reports.every((report) => report.ok);
-        write(JSON.stringify({ ok: allOk, command, data: { backends: reports } }));
+        write(JSON.stringify({ ok: allOk, command, data: { harnesses: reports } }));
         return allOk ? 0 : 1;
       }
       default:
-        throw new UsageError(`Unknown backend command: ${command}. Use list, install or doctor.`);
+        throw new UsageError(`Unknown harness command: ${command}. Use list, install or doctor.`);
     }
   } catch (error) {
     write(

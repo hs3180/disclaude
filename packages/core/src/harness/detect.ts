@@ -1,8 +1,8 @@
 /**
- * Discovery probes for `disclaude backend` (Issue #5169).
+ * Discovery probes for `disclaude harness` (Issue #5169).
  *
  * Each probe answers exactly the question the service runtime asks at query
- * time, so doctor/list results cannot drift from how backends really resolve:
+ * time, so doctor/list results cannot drift from how harnesses really resolve:
  * PATH lookup for spawned CLI binaries, Node module resolution for the pi
  * runtime packages, and the bundled agent-SDK manifest for the Claude Code CLI
  * the service actually spawns. All probes are offline and read no secrets.
@@ -16,7 +16,7 @@ import type { ProcessRunner } from './types.js';
 
 /**
  * The @disclaude/core package directory. This file sits at
- * `packages/core/src/backends/` in source and `packages/core/dist/backends/`
+ * `packages/core/src/harness/` in source and `packages/core/dist/harness/`
  * in installs, so two levels up is the package root in both layouts — the
  * same module-resolution chain the pi provider resolves through.
  */

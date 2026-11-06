@@ -1,5 +1,5 @@
 /**
- * Tests for backend discovery probes: PATH lookup, npm global inventory
+ * Tests for harness discovery probes: PATH lookup, npm global inventory
  * parsing, Node module resolution and the bundled agent-SDK manifest.
  * Probes run against real temporary directory fixtures — no network, no
  * package installation, no secrets.
@@ -29,7 +29,7 @@ afterEach(() => {
 });
 
 function tempDirectory(): string {
-  const directory = mkdtempSync(join(tmpdir(), 'disclaude-backend-test-'));
+  const directory = mkdtempSync(join(tmpdir(), 'disclaude-harness-test-'));
   directories.push(directory);
   return directory;
 }
@@ -228,8 +228,8 @@ describe('corePackageDir', () => {
   it('resolves two levels up from this module (src and dist layouts share depth)', async () => {
     const { corePackageDir } = await import('./detect.js');
     const { resolve } = await import('node:path');
-    expect(corePackageDir(join('x', 'src', 'backends'))).toBe(resolve('x'));
-    expect(corePackageDir(join('x', 'dist', 'backends'))).toBe(resolve('x'));
+    expect(corePackageDir(join('x', 'src', 'harness'))).toBe(resolve('x'));
+    expect(corePackageDir(join('x', 'dist', 'harness'))).toBe(resolve('x'));
   });
 });
 

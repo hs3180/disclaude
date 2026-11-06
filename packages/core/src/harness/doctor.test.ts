@@ -8,7 +8,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { doctorBackend } from './doctor.js';
+import { doctorHarness } from './doctor.js';
 import type { ProcessRunner, RunnerResult } from './types.js';
 
 const directories: string[] = [];
@@ -20,7 +20,7 @@ afterEach(() => {
 });
 
 function tempDirectory(): string {
-  const directory = mkdtempSync(join(tmpdir(), 'disclaude-backend-doctor-'));
+  const directory = mkdtempSync(join(tmpdir(), 'disclaude-harness-doctor-'));
   directories.push(directory);
   return directory;
 }
@@ -79,7 +79,7 @@ const npmGlobals = (packages: Record<string, string>): ProcessRunner =>
 describe('doctor codex / dsh (PATH CLI is required)', () => {
   it('passes when the binary is discoverable', async () => {
     const { env } = pathEnv('codex');
-    const report = await doctorBackend('codex', {
+    const report = await doctorHarness('codex', {
       runner: npmGlobals({ '@openai/codex': '0.154.0' }),
       env,
       coreDir: coreFixture(tempDirectory()),
@@ -95,7 +95,7 @@ describe('doctor codex / dsh (PATH CLI is required)', () => {
   });
 
   it('fails with an install hint when the binary is missing', async () => {
-    const report = await doctorBackend('codex', {
+    const report = await doctorHarness('codex', {
       runner: npmGlobals({}),
       env: pathEnv().env,
       coreDir: coreFixture(tempDirectory()),
@@ -104,11 +104,11 @@ describe('doctor codex / dsh (PATH CLI is required)', () => {
     expect(report.ok).toBe(false);
     const failed = report.checks.find((check) => check.status === 'fail');
     expect(failed?.name).toBe('cli-on-path');
-    expect(failed?.hint).toContain('disclaude backend install codex');
+    expect(failed?.hint).toContain('disclaude harness install codex');
   });
 
   it('fails for a missing dsh binary and surfaces the auth next step', async () => {
-    const report = await doctorBackend('dsh', {
+    const report = await doctorHarness('dsh', {
       runner: npmGlobals({}),
       env: pathEnv().env,
       coreDir: coreFixture(tempDirectory()),
@@ -128,7 +128,7 @@ describe('doctor claude (bundled SDK runtime is required)', () => {
     materializePackage(root, '@anthropic-ai/claude-agent-sdk', '0.3.263', {
       claudeCodeVersion: '2.1.263',
     });
-    const report = await doctorBackend('claude', {
+    const report = await doctorHarness('claude', {
       runner: new ScriptedRunner(),
       env: pathEnv().env,
       coreDir: core,
@@ -147,7 +147,7 @@ describe('doctor claude (bundled SDK runtime is required)', () => {
   });
 
   it('fails when the agent SDK does not resolve', async () => {
-    const report = await doctorBackend('claude', {
+    const report = await doctorHarness('claude', {
       runner: new ScriptedRunner(),
       env: pathEnv('claude').env,
       coreDir: coreFixture(tempDirectory()),
@@ -165,7 +165,7 @@ describe('doctor pi (module resolution and Node version)', () => {
     const core = coreFixture(root);
     materializePackage(root, '@earendil-works/pi-agent-core', '0.83.0');
     materializePackage(root, '@earendil-works/pi-ai', '0.83.0');
-    const report = await doctorBackend('pi', {
+    const report = await doctorHarness('pi', {
       runner: new ScriptedRunner(),
       env: {},
       coreDir: core,
@@ -180,7 +180,7 @@ describe('doctor pi (module resolution and Node version)', () => {
 
   it('fails with the prebuilt install hint when packages are missing', async () => {
     const root = tempDirectory();
-    const report = await doctorBackend('pi', {
+    const report = await doctorHarness('pi', {
       runner: new ScriptedRunner(),
       env: {},
       coreDir: coreFixture(root),
@@ -190,13 +190,13 @@ describe('doctor pi (module resolution and Node version)', () => {
     expect(report.ok).toBe(false);
     const failed = report.checks.find((check) => check.name === 'runtime-packages');
     expect(failed?.detail).toContain('do not resolve');
-    expect(failed?.hint).toContain('disclaude backend install pi');
+    expect(failed?.hint).toContain('disclaude harness install pi');
   });
 
   it('suggests the pnpm workflow in source worktrees', async () => {
     const root = tempDirectory();
     writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - packages/*\n');
-    const report = await doctorBackend('pi', {
+    const report = await doctorHarness('pi', {
       runner: new ScriptedRunner(),
       env: {},
       coreDir: coreFixture(root),
@@ -212,7 +212,7 @@ describe('doctor pi (module resolution and Node version)', () => {
     const core = coreFixture(root);
     materializePackage(root, '@earendil-works/pi-agent-core', '0.84.4');
     materializePackage(root, '@earendil-works/pi-ai', '0.84.4');
-    const report = await doctorBackend('pi', {
+    const report = await doctorHarness('pi', {
       runner: new ScriptedRunner(),
       env: {},
       coreDir: core,
@@ -227,7 +227,7 @@ describe('doctor pi (module resolution and Node version)', () => {
 
   it('fails the Node check below 22.19.0', async () => {
     const root = tempDirectory();
-    const report = await doctorBackend('pi', {
+    const report = await doctorHarness('pi', {
       runner: new ScriptedRunner(),
       env: {},
       coreDir: coreFixture(root),

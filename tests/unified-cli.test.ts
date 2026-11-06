@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, mkdirSync, copyFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -132,27 +132,35 @@ describe('installed unified CLI argument forwarding', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
-  it('routes backend subcommands to bin/backend.js with the router arg stripped (#5169)', () => {
-    const root = mkdtempSync(join(tmpdir(), 'disclaude-cli-backend-routing-'));
+  it('routes harness subcommands to bin/harness.js with the router arg stripped; backend stays a hinted alias (#5169)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'disclaude-cli-harness-routing-'));
     try {
       mkdirSync(join(root, 'bin'));
       writeFileSync(join(root, 'package.json'), '{"type":"module"}');
       copyFileSync(fileURLToPath(new URL('../bin/disclaude.js', import.meta.url)), join(root, 'bin/disclaude.js'));
-      copyFileSync(fileURLToPath(new URL('../bin/backend.js', import.meta.url)), join(root, 'bin/backend.js'));
-      const target = join(root, 'packages/core/dist/backends');
+      copyFileSync(fileURLToPath(new URL('../bin/harness.js', import.meta.url)), join(root, 'bin/harness.js'));
+      const target = join(root, 'packages/core/dist/harness');
       mkdirSync(target, { recursive: true });
       writeFileSync(join(target, '../../package.json'), '{"type":"module"}');
-      writeFileSync(join(target, 'cli.js'), 'export async function runBackendCli(args) { console.log(JSON.stringify({ok:true,args})); return 0; }');
+      writeFileSync(join(target, 'cli.js'), 'export async function runHarnessCli(args) { console.log(JSON.stringify({ok:true,args})); return 0; }');
       for (const [input, forwarded] of [
-        [['backend', 'list'], ['list']],
-        [['backend', 'install', 'codex', '--dry-run'], ['install', 'codex', '--dry-run']],
-        [['backend', 'doctor', 'pi'], ['doctor', 'pi']],
+        [['harness', 'list'], ['list']],
+        [['harness', 'install', 'codex', '--dry-run'], ['install', 'codex', '--dry-run']],
+        [['harness', 'doctor', 'pi'], ['doctor', 'pi']],
       ]) {
         const out = execFileSync(process.execPath, [join(root, 'bin/disclaude.js'), ...input], {
           encoding: 'utf8', timeout: 10_000,
         });
         expect(JSON.parse(out).args).toEqual(forwarded);
       }
+      // `disclaude backend ...` keeps working as a deprecated alias: same
+      // forwarding, plus a migration hint on stderr (stdout stays JSON).
+      const aliased = spawnSync(process.execPath, [join(root, 'bin/disclaude.js'), 'backend', 'list'], {
+        encoding: 'utf8', timeout: 10_000,
+      });
+      expect(JSON.parse(aliased.stdout).args).toEqual(['list']);
+      expect(aliased.stderr).toContain("'disclaude backend' is a deprecated alias");
+      expect(aliased.stderr).toContain("'disclaude harness'");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

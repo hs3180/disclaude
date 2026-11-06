@@ -1,45 +1,45 @@
 /**
- * Tests for the backend catalog: id/alias resolution and version precedence.
+ * Tests for the harness catalog: id/alias resolution and version precedence.
  */
 
 import { describe, expect, it } from 'vitest';
 import {
-  BACKEND_IDS,
-  backendCatalog,
-  backendVersionEnvKey,
+  HARNESS_IDS,
+  harnessCatalog,
+  harnessVersionEnvKey,
   nodeSatisfiesPi,
   PI_RUNTIME_PACKAGES,
-  resolveBackendId,
-  resolveBackendVersion,
+  resolveHarnessId,
+  resolveHarnessVersion,
 } from './registry.js';
 
-describe('resolveBackendId', () => {
+describe('resolveHarnessId', () => {
   it('accepts every catalog id and normalizes case and whitespace', () => {
-    expect(resolveBackendId('claude')).toBe('claude');
-    expect(resolveBackendId(' pi ')).toBe('pi');
-    expect(resolveBackendId('Codex')).toBe('codex');
-    expect(resolveBackendId('DSH')).toBe('dsh');
+    expect(resolveHarnessId('claude')).toBe('claude');
+    expect(resolveHarnessId(' pi ')).toBe('pi');
+    expect(resolveHarnessId('Codex')).toBe('codex');
+    expect(resolveHarnessId('DSH')).toBe('dsh');
   });
 
   it('maps the deepseek alias to dsh', () => {
-    expect(resolveBackendId('deepseek')).toBe('dsh');
-    expect(resolveBackendId('DeepSeek')).toBe('dsh');
+    expect(resolveHarnessId('deepseek')).toBe('dsh');
+    expect(resolveHarnessId('DeepSeek')).toBe('dsh');
   });
 
-  it('rejects unknown backends', () => {
-    expect(resolveBackendId('gemini')).toBeUndefined();
-    expect(resolveBackendId('')).toBeUndefined();
+  it('rejects unknown harnesses', () => {
+    expect(resolveHarnessId('gemini')).toBeUndefined();
+    expect(resolveHarnessId('')).toBeUndefined();
   });
 });
 
-describe('backend catalog invariants', () => {
+describe('harness catalog invariants', () => {
   it('covers exactly claude, pi, codex and dsh', () => {
-    expect(BACKEND_IDS).toEqual(['claude', 'pi', 'codex', 'dsh']);
+    expect(HARNESS_IDS).toEqual(['claude', 'pi', 'codex', 'dsh']);
   });
 
-  it('gives every backend a documented install target, packages and version source', () => {
-    for (const id of BACKEND_IDS) {
-      const entry = backendCatalog(id);
+  it('gives every harness a documented install target, packages and version source', () => {
+    for (const id of HARNESS_IDS) {
+      const entry = harnessCatalog(id);
       expect(['path-cli', 'node-modules']).toContain(entry.installTarget);
       expect(entry.packages.length).toBeGreaterThan(0);
       expect(entry.versionSource).toBeTruthy();
@@ -60,38 +60,57 @@ describe('backend catalog invariants', () => {
   });
 });
 
-describe('resolveBackendVersion precedence', () => {
+describe('resolveHarnessVersion precedence', () => {
   it('prefers the --version flag over environment and repo pins', () => {
-    const resolved = resolveBackendVersion('codex', {
+    const resolved = resolveHarnessVersion('codex', {
       flagVersion: '0.199.0',
-      env: { DISCLAUDE_BACKEND_CODEX_VERSION: '0.160.0' },
+      env: { DISCLAUDE_HARNESS_CODEX_VERSION: '0.160.0' },
     });
     expect(resolved).toEqual({ value: '0.199.0', source: '--version flag', overridden: 'flag' });
   });
 
   it('honors the documented environment override key', () => {
-    const resolved = resolveBackendVersion('dsh', {
-      env: { DISCLAUDE_BACKEND_DSH_VERSION: ' 0.2.0 ' },
+    const resolved = resolveHarnessVersion('dsh', {
+      env: { DISCLAUDE_HARNESS_DSH_VERSION: ' 0.2.0 ' },
     });
     expect(resolved).toEqual({
       value: '0.2.0',
-      source: 'environment DISCLAUDE_BACKEND_DSH_VERSION',
+      source: 'environment DISCLAUDE_HARNESS_DSH_VERSION',
       overridden: 'env',
     });
-    expect(backendVersionEnvKey('dsh')).toBe('DISCLAUDE_BACKEND_DSH_VERSION');
+    expect(harnessVersionEnvKey('dsh')).toBe('DISCLAUDE_HARNESS_DSH_VERSION');
+  });
+
+  it('still honors the legacy DISCLAUDE_BACKEND_<ID>_VERSION key, labeled and outranked', () => {
+    expect(
+      resolveHarnessVersion('pi', { env: { DISCLAUDE_BACKEND_PI_VERSION: '0.84.0' } })
+    ).toEqual({
+      value: '0.84.0',
+      source:
+        'environment DISCLAUDE_BACKEND_PI_VERSION (legacy alias of DISCLAUDE_HARNESS_PI_VERSION)',
+      overridden: 'env',
+    });
+    expect(
+      resolveHarnessVersion('pi', {
+        env: {
+          DISCLAUDE_BACKEND_PI_VERSION: '0.84.0',
+          DISCLAUDE_HARNESS_PI_VERSION: '0.85.0',
+        },
+      }).value
+    ).toBe('0.85.0');
   });
 
   it('falls back to the repo pin with its source', () => {
-    expect(resolveBackendVersion('codex', {})).toEqual({
+    expect(resolveHarnessVersion('codex', {})).toEqual({
       value: '0.154.0',
       source: 'Dockerfile.service ARG CODEX_VERSION (image build pin)',
       overridden: false,
     });
-    expect(resolveBackendVersion('pi', {}).value).toBe('0.83.0');
+    expect(resolveHarnessVersion('pi', {}).value).toBe('0.83.0');
   });
 
   it('defaults claude to the bundled SDK Claude Code version', () => {
-    expect(resolveBackendVersion('claude', { claudeBundledVersion: '2.1.263' })).toEqual({
+    expect(resolveHarnessVersion('claude', { claudeBundledVersion: '2.1.263' })).toEqual({
       value: '2.1.263',
       source: expect.stringContaining('claude-agent-sdk'),
       overridden: false,
@@ -99,7 +118,7 @@ describe('resolveBackendVersion precedence', () => {
   });
 
   it('labels the claude fallback when the bundled manifest is unavailable', () => {
-    expect(resolveBackendVersion('claude', {})).toEqual({
+    expect(resolveHarnessVersion('claude', {})).toEqual({
       value: 'latest',
       source: expect.stringContaining('latest'),
       overridden: false,
