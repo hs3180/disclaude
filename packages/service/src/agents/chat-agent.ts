@@ -50,6 +50,7 @@ import {
   tagErrorCategory,
   sanitizeDiagnosticText,
   isEgressConnectivityFailure,
+  readTerminalContentModerationFailure,
   StreamingReplyDriver,
   REACTIONS,
   TurnSupersededError,
@@ -2679,6 +2680,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // egress/connectivity problem — drives the failure hint and suppresses
     // the same-window empty-turn replay.
     let turnFailedWithConnectivityIssue = false;
+    // #5463 (rework 2): this turn failed on an upstream content-review verdict
+    // ([1301] family) — a deterministic failure class. Drives the structured
+    // explanation card and suppresses every automatic retry/replay below.
+    let turnFailedContentModeration = false;
     let currentTurnAnchor: string | null | undefined;
     let currentTurnMessageId: string | undefined;
     let currentTurnLifecycleContext: NonNullable<StreamingUserMessage['correlation']> | undefined;
@@ -2733,6 +2738,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         turnToolsSinceHeartbeat = 0;
         turnToolUsage.clear();
         turnFailedWithConnectivityIssue = false;
+        turnFailedContentModeration = false;
       }
       return currentTurnAnchor ?? undefined;
     };
@@ -3264,19 +3270,47 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             // continuation without auto-replay. Bounded telemetry only: the
             // provider guarantees kind/status/length, never tool text.
             const outputLimit = parsed.metadata?.outputLimit as AgentMessageMetadata['outputLimit'] | undefined;
-            this.restartManager.recordFailure(chatId, outputLimit ? 'output-limit' : inputDeliveryFailure ? 'input-delivery' : 'turn_failed');
+            // #5463 (rework 2): an upstream content-review verdict (Z.ai
+            // `[1301]` family) is its own DETERMINISTIC failure class. The
+            // same request would fail identically on retry, so nothing retries
+            // or replays it (no backoff, no clean-session replay, no fallback
+            // model, no payload rewrites — a replay path here could only ever
+            // be a review-bypass channel). The maintainer's requested recovery
+            // is the structured card below: what happened, the diagnostic id,
+            // and the concrete /reset + model-switch commands.
+            const moderation = !outputLimit && !inputDeliveryFailure
+              ? readTerminalContentModerationFailure(parsed)
+              : undefined;
+            turnFailedContentModeration = moderation !== undefined;
+            this.restartManager.recordFailure(chatId, moderation ? 'content-moderation' : outputLimit ? 'output-limit' : inputDeliveryFailure ? 'input-delivery' : 'turn_failed');
             const failureDetail = parsed.terminationDetail || parsed.content || 'Provider turn failed';
             // Issue #5409: a connectivity-class failure (routing discovery,
             // socket errors, dead egress) is environmental — hint at the
             // network path instead of model service/credentials, and mark it
             // so the empty-turn replay below does not burn itself against
             // the same dead window seconds later.
-            turnFailedWithConnectivityIssue = !outputLimit && isEgressConnectivityFailure(failureDetail);
+            turnFailedWithConnectivityIssue = !outputLimit && !moderation && isEgressConnectivityFailure(failureDetail);
             const failure = failureContext(this.activeLifecycleContext, resolveReplyThreadRoot(),
-              outputLimit ? 'provider-output-limit' : inputDeliveryFailure ? 'input-delivery-failed' : 'provider-turn-failed',
+              moderation ? 'content-moderation' : outputLimit ? 'provider-output-limit' : inputDeliveryFailure ? 'input-delivery-failed' : 'provider-turn-failed',
               failureDetail, parsed.sessionId ?? this.queryHandle?.sessionId);
             const lastTool = outputLimit?.lastTool;
-            const outputLimitReceipt = outputLimit
+            // #5463: the review-verdict receipt explains the upstream decision,
+            // carries the classification verdict and the diagnostic id (via
+            // the failure footer below), and gives the maintainer-endorsed
+            // recovery commands: `/reset` for a fresh session and the real
+            // model-switch commands (`/agent list` + `/agent use <预设名>`,
+            // the product's preset mechanism — switching starts a new session).
+            const moderationReceipt = moderation
+              ? `🛡️ 本轮 ${failure.provider} 被上游内容审核拒绝（[${moderation.code}]，可能为对良性内容的误判）。\n` +
+                '上游网关对本次请求做出了确定性的内容审核判决，本轮回复未生成；相同内容重发大概率得到同一结果，系统不会自动重试或重放。\n' +
+                `- 已做判定: content_moderation [${moderation.code}]（确定性审核拒绝，已归为独立失败类别，不做退避重试）\n` +
+                '- 恢复会话: 发送 /reset 重置当前会话（清空上下文、开启新会话），然后重新提问\n' +
+                '- 切换模型: 发送 /agent list 查看可用预设，再发送 /agent use <预设名> 切换模型（将开启新会话，上下文不迁移）\n' +
+                '- 也可以换一种表述重发本条消息，或稍后再试'
+              : undefined;
+            const turnFailedReceipt = moderationReceipt
+              ? moderationReceipt
+              : outputLimit
               ? `❌ 本轮 ${failure.provider} 因模型输出生成上限（max_output_tokens）中断，最终回复没有生成。\n` +
                 `本轮已执行 ${toolCallCount} 次工具调用${lastTool
                   ? `，失败前最后的工具项为 ${lastTool.kind}${lastTool.status ? `（状态 ${lastTool.status}）` : ''}${lastTool.inputLength ? `，输入约 ${lastTool.inputLength} 字符` : ''}`
@@ -3293,12 +3327,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
               // Issue #5654: the non-output-limit failure branches carry the
               // side-effect receipt (the output-limit branch already itemizes
               // its tool activity above).
-              `${outputLimitReceipt}${outputLimit ? '' : formatSideEffectReceipt()}\n${this.formatFailureDiagnostic(failure)}`,
+              `${turnFailedReceipt}${outputLimit || moderation ? '' : formatSideEffectReceipt()}\n${this.formatFailureDiagnostic(failure)}`,
               resolveReplyThreadRoot()
             );
             this.logger.error({ ...failure, event: 'agent_turn_failure', user_visible: delivered,
+              ...(moderation ? { moderationCode: moderation.code } : {}),
               ...(inputDeliveryFailure ? { interactionStatus: 'delivery_failed', nativeCompleted: inputDeliveryFailure.nativeCompleted } : {}),
-            }, 'Provider turn failed');
+            }, moderation
+              ? 'Provider turn rejected by upstream content review (#5463): deterministic verdict, not retried'
+              : 'Provider turn failed');
           }
           // Provider watchdog/process loss is a terminal failure, including
           // when the provider supplies no notice. Keep its message/diagnostic
@@ -3506,6 +3543,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             !upstreamApiError &&
             !sawMidstreamInterrupt &&
             !turnFailedWithConnectivityIssue &&
+            // #5463 (rework 2): a deterministic content-review verdict never
+            // gets the empty-turn reset+replay — resending the identical
+            // payload would hit the identical verdict.
+            !turnFailedContentModeration &&
             !!turnMessage &&
             this.emptyTurnRetryPolicy.canRetry(chatId, turnMessage.messageId, true);
           if (willRetryEmptyTurn) {
@@ -3525,6 +3566,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // its ❌ notice with the egress hint. The generic ⚠️ advice below
           // ("session may be invalid, try resetting") is wrong for a dead
           // egress and would double-notify.
+          // #5463 (rework 2): same for a content-review verdict — the 🛡️
+          // explanation card above already told the user exactly how to reset
+          // and how to switch models.
           if (turnFailedWithConnectivityIssue && isEmptyTurn) {
             this.logger.warn(
               { chatId, messageId: currentTurnMessageId, diagnosticId },
@@ -3532,7 +3576,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                 'empty-turn replay and generic empty-turn notice skipped — egress is likely down'
             );
           }
-          if (isEmptyTurn && !inputDeliveryFailure && !upstreamApiError && !sawMidstreamInterrupt && !willRetryEmptyTurn && !turnFailedWithConnectivityIssue) {
+          if (turnFailedContentModeration && isEmptyTurn) {
+            this.logger.warn(
+              { chatId, messageId: currentTurnMessageId, diagnosticId },
+              'Empty turn follows an upstream content-review verdict (#5463): ' +
+                'empty-turn replay and generic empty-turn notice skipped — the verdict is deterministic; recovery commands are on the explanation card'
+            );
+          }
+          if (isEmptyTurn && !inputDeliveryFailure && !upstreamApiError && !sawMidstreamInterrupt && !willRetryEmptyTurn && !turnFailedWithConnectivityIssue && !turnFailedContentModeration) {
             this.logger.warn(
               {
                 chatId,

@@ -1,10 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  ModerationRecoveryLimiter,
   readContentModerationFailure,
-  readModerationRecoveryPolicy,
+  readTerminalContentModerationFailure,
 } from './moderation-recovery.js';
-import { readCodexModerationRecoveryPolicy } from './providers/codex/moderation-recovery.js';
 
 describe('readContentModerationFailure (#5463)', () => {
   it('classifies the Z.ai [1301] verdict from a failed-result error string', () => {
@@ -37,68 +35,40 @@ describe('readContentModerationFailure (#5463)', () => {
   });
 });
 
-describe('readModerationRecoveryPolicy', () => {
-  it('defaults to an empty fallback chain and a two-per-hour cap', () => {
-    expect(readModerationRecoveryPolicy({})).toEqual({ fallbackModels: [], maxPerChatPerHour: 2 });
-  });
-
-  it('parses, trims, dedupes and orders the generic env chain', () => {
-    const policy = readModerationRecoveryPolicy({
-      DISCLAUDE_MODERATION_FALLBACK_MODELS: ' glm-4.7-flash , glm-4.7-flash,glm-5.2-air ',
-      DISCLAUDE_MODERATION_MAX_PER_CHAT_PER_HOUR: '5',
-    });
-    expect(policy).toEqual({ fallbackModels: ['glm-4.7-flash', 'glm-5.2-air'], maxPerChatPerHour: 5 });
-  });
-
-  it('rejects malformed caps instead of guessing', () => {
-    for (const malformed of ['-1', '2.5', 'NaN', 'three']) {
-      expect(
-        readModerationRecoveryPolicy({ DISCLAUDE_MODERATION_MAX_PER_CHAT_PER_HOUR: malformed })
-          .maxPerChatPerHour
-      ).toBe(2);
-    }
+describe('readTerminalContentModerationFailure (#5463 rework 2)', () => {
+  it('finds the verdict in whichever text channel carried it to the host', () => {
+    // Incident shape: the claude adapter maps the is_error result text into
+    // `content` while `terminationDetail` may stay generic.
     expect(
-      readModerationRecoveryPolicy({ DISCLAUDE_MODERATION_MAX_PER_CHAT_PER_HOUR: '0' }).maxPerChatPerHour
-    ).toBe(0);
-    // Round-1 semantics: Number('') === 0, i.e. an empty value disables
-    // recoveries rather than falling back to the default.
+      readTerminalContentModerationFailure({
+        content: 'API Error: 400 "provider" 敏感内容 [1301]',
+        terminationDetail: 'claude sdk turn failed',
+      })?.code
+    ).toBe('1301');
+    // Codex shape: the verdict survives only inside the termination detail.
     expect(
-      readModerationRecoveryPolicy({ DISCLAUDE_MODERATION_MAX_PER_CHAT_PER_HOUR: '' })
-        .maxPerChatPerHour
-    ).toBe(0);
+      readTerminalContentModerationFailure({
+        content: '❌ Codex turn failed',
+        terminationDetail: 'codex app-server turn failed: rejected [1301]',
+      })?.code
+    ).toBe('1301');
+    // Stderr-derived upstream evidence (claude provider #4322 capture).
+    expect(
+      readTerminalContentModerationFailure({
+        content: '',
+        upstreamApiErrorStderr: 'provider rejected request [1301]',
+      })?.code
+    ).toBe('1301');
   });
 
-  it('keeps the codex env contract on its own names (round-1 compatibility)', () => {
-    // Codex must keep reading DISCLAUDE_CODEX_MODERATION_* and must NOT pick up
-    // the generic names — otherwise a codex deployment silently changes policy.
-    const policy = readCodexModerationRecoveryPolicy({
-      DISCLAUDE_MODERATION_FALLBACK_MODELS: 'glm-4.7-flash',
-      DISCLAUDE_CODEX_MODERATION_FALLBACK_MODELS: 'gpt-5.6-luna,gpt-5.6-luna',
-      DISCLAUDE_CODEX_MODERATION_MAX_PER_CHAT_PER_HOUR: '3',
-    });
-    expect(policy).toEqual({ fallbackModels: ['gpt-5.6-luna'], maxPerChatPerHour: 3 });
-    expect(readCodexModerationRecoveryPolicy({ DISCLAUDE_MODERATION_MAX_PER_CHAT_PER_HOUR: '9' })).toEqual({
-      fallbackModels: [],
-      maxPerChatPerHour: 2,
-    });
-  });
-});
-
-describe('ModerationRecoveryLimiter', () => {
-  it('admits up to the cap per chat in a rolling hour and forgets stale entries', () => {
-    const limiter = new ModerationRecoveryLimiter();
-    const policy = { fallbackModels: [], maxPerChatPerHour: 2 };
-    const t0 = 1_700_000_000_000;
-    expect(limiter.tryAcquire('chat-a', policy, t0)).toBe(true);
-    expect(limiter.tryAcquire('chat-a', policy, t0 + 1)).toBe(true);
-    expect(limiter.tryAcquire('chat-a', policy, t0 + 2)).toBe(false);
-    // A different chat has its own budget; the first chat's entry ages out.
-    expect(limiter.tryAcquire('chat-b', policy, t0 + 2)).toBe(true);
-    expect(limiter.tryAcquire('chat-a', policy, t0 + 3_600_001)).toBe(true);
-  });
-
-  it('zero disables automatic recoveries entirely', () => {
-    const limiter = new ModerationRecoveryLimiter();
-    expect(limiter.tryAcquire('chat-a', { fallbackModels: [], maxPerChatPerHour: 0 })).toBe(false);
+  it('returns undefined for ordinary failures and empty channels', () => {
+    expect(
+      readTerminalContentModerationFailure({
+        content: '❌ Codex turn failed: HTTP 429 rate limited',
+        terminationDetail: 'codex app-server turn failed: HTTP 429',
+        upstreamApiErrorStderr: 'API Error: 529 overloaded',
+      })
+    ).toBeUndefined();
+    expect(readTerminalContentModerationFailure({})).toBeUndefined();
   });
 });

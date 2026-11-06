@@ -146,6 +146,13 @@ export type {
 export type { AgentInputRequest, AgentInputParams, AgentInputQuestion, AgentInputAnswers, AgentInputContext } from './sdk/user-input.js';
 export { AgentInputDeliveryError, validateAgentInputAnswers } from './sdk/user-input.js';
 export { LiveInputRejectedError } from './sdk/index.js';
+// #5463: upstream content-review ([1301]) failure classification — consumed
+// by the ChatAgent turn_failed branch to render the structured explanation card.
+export {
+  readContentModerationFailure,
+  readTerminalContentModerationFailure,
+  type ContentModerationFailure,
+} from './sdk/index.js';
 
 // Agent Infrastructure (Issue #1040, Issue #1501: Simplified to ChatAgent-only)
 // Types and interfaces

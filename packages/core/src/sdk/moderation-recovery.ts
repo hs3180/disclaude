@@ -1,28 +1,24 @@
 /**
- * Shared Z.ai content-moderation failure classification and recovery policy
- * (Issue #5463, rework round 1).
+ * Shared Z.ai content-moderation failure classification (Issue #5463).
  *
  * The original 2026-10-20 incident ran on the NON-codex path: the claude
  * backend talking to an Anthropic-compatible gateway (`ANTHROPIC_BASE_URL`,
  * e.g. Z.ai), where the CLI burned its retries on the deterministic `[1301]`
- * verdict and surfaced a raw `turn_failed` result. Round 1 landed the
- * classification + degradation ladder only in the codex provider; this module
- * is the harness-agnostic core both providers share:
+ * verdict and surfaced a raw `turn_failed` result. Round 1 answered with an
+ * automatic degradation ladder (clean-session replay, fallback model chain,
+ * hourly limiter). Maintainer review (2026-11-06, PR #5694) redirected the
+ * design: 「这种情况自动恢复很难 不如给用户更清晰的提示如何 reset 如何切换
+ * model 而不是盲目重试」 — the ladder is REMOVED; what stays is exactly this
+ * classification, so a deterministic review verdict:
  *
- * - `readContentModerationFailure` — the deterministic `[1301]` signature and
- *   nothing else. Capacity, usage-limit and output-cap 4xx failures stay in
- *   their own classes and never enter this one.
- * - `readModerationRecoveryPolicy` — fallback-model chain + per-chat hourly
- *   admission cap, read from provider-scoped env names.
- * - `ModerationRecoveryLimiter` — provider-instance rolling window; every
- *   attempt for one chat message shares a single budget.
- *
- * Guardrail contract shared by every consumer: replays carry the ORIGINAL
- * payload unmodified (no trimming, no sensitive-word splitting, no
- * rewriting), each replay still passes the target model's own review, a
- * repeat verdict terminates the ladder at once, and past the hourly cap only
- * the structured explanation is emitted. The ladder is containment for
- * false positives, never a review-bypass channel.
+ * - is its own failure class (`content_moderation [1301]`), never confused
+ *   with capacity/overload/output-cap failures;
+ * - is never retried or replayed anywhere (the same request would fail
+ *   identically; replays could also become a review-bypass channel — no
+ *   payload is ever trimmed or split);
+ * - ends in a structured explanation card at the host (`chat-agent.ts`
+ *   `turn_failed` branch) with the diagnostic ID and concrete `/reset` and
+ *   `/agent use` guidance, instead of the generic ❌ provider-failure card.
  */
 
 /** Confirmed upstream content-review failures; never transport uncertainty. */
@@ -48,53 +44,32 @@ export function readContentModerationFailure(value: unknown): ContentModerationF
   return { code: '1301', message: `${message}${details ? `\n${details}` : ''}` };
 }
 
-export interface ModerationRecoveryPolicy {
-  /** Ordered wire model IDs. Empty means clean-session retry only. */
-  fallbackModels: string[];
-  /** Automatic recoveries admitted per chat in a rolling hour; zero disables them. */
-  maxPerChatPerHour: number;
+/**
+ * The text channels a terminal failure result exposes at the host: the
+ * adapter-mapped `content` (is_error result text / `error_during_execution`
+ * errors), the provider's `terminationDetail`, and stderr-derived upstream
+ * evidence. Scan each before concluding the verdict is NOT a review rejection.
+ */
+export interface TerminalModerationFields {
+  content?: unknown;
+  terminationDetail?: unknown;
+  upstreamApiErrorStderr?: unknown;
 }
 
-/** Env variable names a provider reads its policy from (scoped per harness). */
-export interface ModerationRecoveryPolicyEnvNames {
-  fallbackModels: string;
-  maxPerChatPerHour: string;
-}
-
-export function readModerationRecoveryPolicy(
-  env: Record<string, string | undefined> = process.env,
-  configured: Partial<ModerationRecoveryPolicy> = {},
-  names: ModerationRecoveryPolicyEnvNames = {
-    fallbackModels: 'DISCLAUDE_MODERATION_FALLBACK_MODELS',
-    maxPerChatPerHour: 'DISCLAUDE_MODERATION_MAX_PER_CHAT_PER_HOUR',
-  }
-): ModerationRecoveryPolicy {
-  const envModels = env[names.fallbackModels]?.split(',')
-    .map((model) => model.trim())
-    .filter(Boolean);
-  const rawLimit = env[names.maxPerChatPerHour];
-  const parsedLimit = rawLimit === undefined ? undefined : Number(rawLimit);
-  return {
-    fallbackModels: [...new Set(envModels ?? configured.fallbackModels ?? [])],
-    maxPerChatPerHour:
-      parsedLimit !== undefined && Number.isSafeInteger(parsedLimit) && parsedLimit >= 0
-        ? parsedLimit
-        : (configured.maxPerChatPerHour ?? 2),
-  };
-}
-
-/** Provider-instance rolling limiter: all attempts for one chat share one budget. */
-export class ModerationRecoveryLimiter {
-  private readonly admitted = new Map<string, number[]>();
-
-  tryAcquire(chatId: string, policy: ModerationRecoveryPolicy, now = Date.now()): boolean {
-    const recent = (this.admitted.get(chatId) ?? []).filter((time) => now - time < 3_600_000);
-    if (recent.length >= policy.maxPerChatPerHour) {
-      this.admitted.set(chatId, recent);
-      return false;
+/** Classify a terminal `turn_failed` result from its surviving text channels. */
+export function readTerminalContentModerationFailure(
+  terminal: TerminalModerationFields
+): ContentModerationFailure | undefined {
+  const texts = [
+    terminal.content,
+    terminal.terminationDetail,
+    terminal.upstreamApiErrorStderr,
+  ];
+  for (const text of texts) {
+    const failure = readContentModerationFailure(text);
+    if (failure) {
+      return failure;
     }
-    recent.push(now);
-    this.admitted.set(chatId, recent);
-    return true;
   }
+  return undefined;
 }

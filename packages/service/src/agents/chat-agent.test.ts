@@ -134,6 +134,9 @@ vi.mock('@disclaude/core', async (importOriginal) => {
     },
     tagErrorCategory: actual.tagErrorCategory,
     isEgressConnectivityFailure: actual.isEgressConnectivityFailure,
+    // #5463 (rework 2): real classifier — the turn_failed card branch under
+    // test calls it on the terminal's text channels.
+    readTerminalContentModerationFailure: actual.readTerminalContentModerationFailure,
     automaticReplayBlock: actual.automaticReplayBlock,
   };
 });
@@ -6637,6 +6640,133 @@ describe('ChatAgent (service)', () => {
         'turn_failed'
       );
       expect((agent as any).restartManager.recordSuccess).not.toHaveBeenCalled();
+    });
+
+    // Issue #5463 (rework 2): the Z.ai [1301] verdict on the ORIGINAL incident
+    // harness (claude backend via ANTHROPIC_BASE_URL) arrives as an is_error
+    // result → turn_failed terminal whose content carries the verdict text.
+    // Three regression states: classification (verdict vs ordinary failure),
+    // the structured explanation card (misjudgment note, classification
+    // verdict, diagnostic id, concrete /reset + /agent use commands, rephrase
+    // advice), and NO retry of any kind (no empty-turn reset+replay, single
+    // query stream). Maintainer direction 2026-11-06: automatic recovery was
+    // removed in favor of these clear user-facing hints.
+    it.each([
+      ['claude incident shape (verdict in content)', 'content'],
+      ['codex shape (verdict in terminationDetail)', 'terminationDetail'],
+    ] as const)('renders the #5463 content-moderation explanation card and never retries — %s', async (_label, field) => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_moderation_5463',
+        agentBackend: 'claude',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'glm-5.2',
+        apiProtocol: 'anthropic',
+      });
+      const verdictText = 'API Error: 400 "provider": 系统检测到输入或生成内容可能包含不安全或敏感内容 [1301]';
+      async function* moderatedTurnIterator() {
+        yield {
+          parsed: {
+            type: 'result', terminatedReason: 'turn_failed', sessionId: 'moderated-session',
+            ...(field === 'content'
+              ? { content: verdictText, terminationDetail: 'claude sdk turn failed' }
+              : { content: '', terminationDetail: `claude sdk turn failed: ${verdictText}` }),
+          },
+          raw: {},
+        };
+      }
+      const query = vi.fn(() => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: moderatedTurnIterator(),
+      }));
+      (agent as any).createQueryStream = query;
+      (agent as any).isAgentTeamsEnabled = () => false;
+      vi.spyOn((agent as any).emptyTurnRetryPolicy, 'markRetried');
+
+      void agent.processMessage({
+        chatId: 'oc_moderation_5463',
+        payload: '帮我总结这段日志',
+        messageId: 'msg_moderated',
+      });
+
+      await vi.waitFor(() => {
+        expect(
+          localCallbacks.sendMessage.mock.calls.some(
+            (call: any[]) => typeof call[1] === 'string' && call[1].includes('被上游内容审核拒绝')
+          )
+        ).toBe(true);
+      }, { timeout: 1000, interval: 20 });
+
+      const sentText = localCallbacks.sendMessage.mock.calls.map((call: any[]) => call[1]);
+      const card = sentText.find((text: string) => text.includes('被上游内容审核拒绝'));
+      // Card carries every required element: upstream misjudgment note,
+      // classification verdict, /reset guidance, real model-switch commands,
+      // and the rephrase-or-retry-later advice.
+      expect(card).toContain('[1301]');
+      expect(card).toContain('可能为对良性内容的误判');
+      expect(card).toContain('已做判定: content_moderation [1301]');
+      expect(card).toContain('系统不会自动重试或重放');
+      expect(card).toContain('/reset');
+      expect(card).toContain('/agent list');
+      expect(card).toContain('/agent use <预设名>');
+      expect(card).toContain('换一种表述重发本条消息，或稍后再试');
+      // Diagnostic id + classification ride the standard failure footer.
+      expect(card).toContain('诊断 ID:');
+      expect(card).toContain('分类: content-moderation');
+      expect(card).toContain('oc_moderation_5463');
+      // Not the generic provider-failure card, no generic empty-turn notice,
+      // no side-effect receipt on a turn that produced nothing visible.
+      expect(card).not.toContain('执行失败');
+      expect(card).not.toContain('凭据和超时配置');
+      expect(sentText.join('\n')).not.toContain('会话可能已失效');
+      expect(sentText.join('\n')).not.toContain('未生成可交付结果');
+      // No retry of any kind: one query stream, no empty-turn reset+replay.
+      expect(query).toHaveBeenCalledOnce();
+      expect((agent as any).emptyTurnRetryPolicy.markRetried).not.toHaveBeenCalled();
+      expect((agent as any).restartManager.recordFailure).toHaveBeenCalledExactlyOnceWith('oc_moderation_5463', 'content-moderation');
+      expect((agent as any).restartManager.recordSuccess).not.toHaveBeenCalled();
+      ChatAgent.prototype.dispose.call(agent);
+    });
+
+    it('keeps the generic turn-failed card for ordinary failures without the [1301] signature (#5463 non-regression)', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_plain_failed_5463',
+        agentBackend: 'claude',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'glm-5.2',
+        apiProtocol: 'anthropic',
+      });
+      async function* failedTurnIterator() {
+        yield {
+          parsed: { type: 'result', content: '', terminatedReason: 'turn_failed', sessionId: 'plain-failed', terminationDetail: 'API Error: 500 upstream blew up [1300] unrelated' },
+          raw: {},
+        };
+      }
+      (agent as any).createQueryStream = vi.fn(() => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: failedTurnIterator(),
+      }));
+      (agent as any).isAgentTeamsEnabled = () => false;
+
+      void agent.processMessage({ chatId: 'oc_plain_failed_5463', payload: 'run it', messageId: 'msg_plain' });
+
+      await vi.waitFor(() => {
+        expect(
+          localCallbacks.sendMessage.mock.calls.some(
+            (call: any[]) => typeof call[1] === 'string' && call[1].includes('执行失败')
+          )
+        ).toBe(true);
+      }, { timeout: 1000, interval: 20 });
+      const sentText = localCallbacks.sendMessage.mock.calls.map((call: any[]) => call[1]);
+      expect(sentText.join('\n')).not.toContain('被上游内容审核拒绝');
+      // Ordinary failures keep today's accounting (and the #4391 empty-turn
+      // replay budget) — only the moderation class changed behavior.
+      expect((agent as any).restartManager.recordFailure).toHaveBeenCalledWith('oc_plain_failed_5463', 'turn_failed');
+      expect((agent as any).restartManager.recordFailure).not.toHaveBeenCalledWith('oc_plain_failed_5463', 'content-moderation');
+      ChatAgent.prototype.dispose.call(agent);
     });
 
     it.each([true, false])('separates failed input delivery from execution and prevents replay (native completed=%s)', async nativeCompleted => {

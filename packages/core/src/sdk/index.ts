@@ -125,6 +125,17 @@ export type { ProcessListenerSnapshot, ProcessEventListener } from './providers/
 export { LiveInputRejectedError } from './live-input.js';
 
 // ============================================================================
+// 上游内容审核失败分类（#5463）——确定性 [1301] 判决的独立失败类别，
+// 不重试不重放；宿主（chat-agent）据此渲染结构化说明卡。
+// ============================================================================
+export {
+  readContentModerationFailure,
+  readTerminalContentModerationFailure,
+  type ContentModerationFailure,
+  type TerminalModerationFields,
+} from './moderation-recovery.js';
+
+// ============================================================================
 // 工厂函数导出
 // ============================================================================
 

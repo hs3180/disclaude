@@ -27,8 +27,6 @@ import { ClaudeAttemptProcess, type AttemptExit } from './attempt-process.js';
 import { Config } from '../../../config/index.js';
 import type { BaseAgentConfig } from '../../../agents/types.js';
 import { withDiscoveredCompaction } from './compaction.js';
-import { withModerationRecovery } from './moderation-recovery.js';
-import { ModerationRecoveryLimiter } from '../../moderation-recovery.js';
 import { buildClaudeDisallowedTools } from './disallowed-tools.js';
 import { privateSdkSettings } from './private-settings.js';
 import { apiErrorEvidence, ClaudeTranscriptErrors, type ApiErrorEvidence } from './api-error-evidence.js';
@@ -271,9 +269,6 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
 
   private disposed = false;
 
-  /** Provider-instance rolling cap for #5463 moderation recoveries. */
-  private readonly moderationRecoveryLimiter = new ModerationRecoveryLimiter();
-
   configureChat(hooks: ChatAgentHooks): ChatAgentHooks {
     return {
       ...hooks,
@@ -299,40 +294,17 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     input: AsyncGenerator<UserInput>,
     options: ClaudeQueryOptions
   ): StreamQueryResult {
+    const { allowedTools, disallowedTools, ...commonOptions } = options;
+    assertToolOptions(commonOptions);
     if (this.disposed) {
       throw new Error('Provider has been disposed');
     }
+
 
     if (options.autoCompactWindow === 'auto') {
       return withDiscoveredCompaction(input, options, (nextInput, nextOptions) =>
         this.queryStream(nextInput, nextOptions), 'streaming');
     }
-
-    // #5463 (rework): the incident harness for Z.ai `[1301]` content-moderation
-    // verdicts is this claude backend (Anthropic-compatible gateway via
-    // ANTHROPIC_BASE_URL). Wrap the long-lived conversation with the shared
-    // moderation ladder — classification, clean one-shot replay, fallback
-    // model, per-chat hourly cap, structured explanation — before the raw
-    // turn_failed terminal reaches the host.
-    return withModerationRecovery(input, options,
-      (nextInput, nextOptions) => this.runQueryStream(nextInput, nextOptions),
-      this.moderationRecoveryLimiter);
-  }
-
-  /**
-   * One provider attempt: a single long-lived SDK query with streaming input.
-   * Called by {@link queryStream} for the original conversation and by the
-   * #5463 moderation wrapper for clean one-shot replay attempts.
-   */
-  private runQueryStream(
-    input: AsyncGenerator<UserInput>,
-    options: ClaudeQueryOptions
-  ): StreamQueryResult {
-    // Retired ambiguous tool options fail fast for JavaScript callers; the
-    // wrapper paths funnel every attempt (original conversation, compaction
-    // recursion, moderation replays) through here.
-    const { allowedTools, disallowedTools, ...commonOptions } = options;
-    assertToolOptions(commonOptions);
 
     // Issue #3378: Snapshot process listeners BEFORE calling SDK query().
     // The SDK registers process.on('exit'|'SIGINT'|'SIGTERM') handlers during
