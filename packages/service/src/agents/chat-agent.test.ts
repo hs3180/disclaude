@@ -976,6 +976,58 @@ describe('ChatAgent (service)', () => {
       } finally { dispose(agent); }
     });
 
+    it('Issue #5713: interjection confirmation carries the shared busy context and real queue depth', async () => {
+      const { agent, callbacks, push } = owned();
+      try {
+        (agent as any).activeTurnTriggerLine = '原始回合任务摘要';
+        (agent as any).turnStartedAtMsPrivate = Date.now() - 2 * 60_000;
+        (agent as any).pendingTurnMessageIds = ['queued-1'];
+        await agent.processMessage(input());
+        const receipt = callbacks.sendMessage.mock.calls[0]?.[1] as string;
+        expect(receipt).toContain('后端已确认接收');
+        expect(receipt).toContain('\n（当前回合「原始回合任务摘要」已运行 2 分钟，前方还有 1 条排队）');
+        // The steered supplement merged into the running turn is not a queue row.
+        expect((agent as any).pendingTurnMessageIds).toEqual(['queued-1']);
+        expect(push).not.toHaveBeenCalled();
+      } finally { dispose(agent); }
+    });
+
+    it('Issue #5713: steered attachments are named in the confirmation receipt', async () => {
+      const { agent, callbacks } = owned();
+      const shot = { id: 'att-5713', fileName: 'shot.png', source: 'user' as const,
+        localPath: '/tmp/shot_5713.png', createdAt: 1 };
+      try {
+        await agent.processMessage({ chatId: 'owned-steer', payload: 'follow-att', messageId: 'follow-att',
+          threadRootId: 'root-B', attachments: [shot] });
+        const receipt = callbacks.sendMessage.mock.calls[0]?.[1] as string;
+        expect(receipt).toContain('后端已确认接收');
+        expect(receipt).toContain('（含 1 个附件，将随这条输入一起处理）');
+      } finally { dispose(agent); }
+    });
+
+    it('Issue #5713: streaming and interjection receipts share one context contract, status lines stay accurate', async () => {
+      const interjection = owned();        // codex native steer
+      const streaming = owned('claude');   // claude streaming input
+      try {
+        for (const { agent } of [interjection, streaming]) {
+          (agent as any).activeTurnTriggerLine = '同一个运行任务';
+          (agent as any).turnStartedAtMsPrivate = Date.now() - 90_000;
+        }
+        await interjection.agent.processMessage(input());
+        await streaming.agent.processMessage(input());
+        const steerReceipt = interjection.callbacks.sendMessage.mock.calls[0]?.[1] as string;
+        const streamReceipt = streaming.callbacks.sendMessage.mock.calls[0]?.[1] as string;
+        // Each status line states what actually happened to the input.
+        expect(steerReceipt).toContain('后端已确认接收');
+        expect(streamReceipt).toContain('已送入当前会话的输入流');
+        expect(steerReceipt).not.toContain('已送入当前会话的输入流');
+        expect(streamReceipt).not.toContain('后端已确认接收');
+        // One display contract: both carry the same #5394 context block.
+        expect(steerReceipt).toContain('\n（当前回合「同一个运行任务」已运行 1 分钟）');
+        expect(streamReceipt).toContain('\n（当前回合「同一个运行任务」已运行 1 分钟）');
+      } finally { dispose(interjection.agent); dispose(streaming.agent); }
+    });
+
     it('Issue #5434: suppresses a replayed attachment-only input the running turn already consumed', async () => {
       const { agent, push, steer, callbacks } = owned();
       // #5434: a proper inbound image FileRef (id/source/localPath per core type).

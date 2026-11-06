@@ -1185,6 +1185,37 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   }
 
   /**
+   * Issue #5713: the one display contract every busy-input receipt follows —
+   * an accurate status line (what actually happened to THIS input: queued
+   * behind capacity, streamed into the running session, queued behind the
+   * running turn, or backend-confirmed interjection) + the attachment
+   * receipt + the #5394 running-turn context block. A backend that gains
+   * native interjection support renders its confirmation through this same
+   * shape instead of a bare fixed line, so Claude streaming and Codex steer
+   * receipts carry identical context. `queuedAhead` must already exclude
+   * this input: an FIFO row passes depth-1 (its row was just pushed), while
+   * a steered input never enters the FIFO and passes the depth as-is — a
+   * supplement merged into the running turn never counts as its own queue
+   * row either way.
+   */
+  private buildBusyInputReceipt(
+    status: 'queued-capacity' | 'streaming' | 'queued-turn' | 'confirmed-interjection',
+    queuedAhead: number,
+    attachments?: UserMessageParams['attachments'],
+  ): string {
+    const statusLine = status === 'queued-capacity'
+      ? '⏳ 这条消息已接收并排队；模型会话容量释放后会自动处理，无需重新发送。'
+      : status === 'streaming'
+      ? '💬 已送入当前会话的输入流；模型可在执行中接收补充信息，正在运行的工具会继续执行。'
+      : status === 'confirmed-interjection'
+      ? '🎯 后端已确认接收这条补充信息，结果随原回合交付；正在运行的工具会继续执行。'
+      : '⏳ 这条消息已排队，将在当前回合结束后处理。';
+    const attachmentReceipt = attachments?.length
+      ? `（含 ${attachments.length} 个附件，将随这条输入一起处理）` : '';
+    return statusLine + attachmentReceipt + this.describeBusyQueue(queuedAhead);
+  }
+
+  /**
    * Process a message with the AI agent.
    *
    * Returns after input admission, without waiting for the task to finish.
@@ -1625,22 +1656,17 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         }
       }
       if (this.queryHandle?.capacityQueued || busyBeforePush) {
-        // Issue #5394: say what the waiter actually wants to know — the
-        // running turn's summary, its elapsed time and the queue depth ahead
-        // (this input's row was just pushed, so it is excluded from the count).
-        const busyContext = this.describeBusyQueue(Math.max(0, this.pendingTurnMessageIds.length - 1));
-        // Issue #5470 remaining item ③ (T-039): file-class inputs get an
-        // explicit receipt that they are held with the queued input, so the
-        // sender knows the files were not silently dropped.
-        const attachmentReceipt = attachments?.length
-          ? `（含 ${attachments.length} 个附件，将随这条输入一起处理）` : '';
+        // Issue #5394/#5713: the shared busy-input receipt — status line +
+        // attachment receipt + the running turn's summary, elapsed time and
+        // the queue depth ahead (this input's row was just pushed, so it is
+        // excluded from the count).
         void this.callbacks.sendMessage(
           chatId,
-          (this.queryHandle?.capacityQueued
-            ? '⏳ 这条消息已接收并排队；模型会话容量释放后会自动处理，无需重新发送。'
-            : this.queryHandle?.inputDelivery === 'streaming'
-            ? '💬 已送入当前会话的输入流；模型可在执行中接收补充信息，正在运行的工具会继续执行。'
-            : '⏳ 这条消息已排队，将在当前回合结束后处理。') + attachmentReceipt + busyContext,
+          this.buildBusyInputReceipt(
+            this.queryHandle?.capacityQueued ? 'queued-capacity'
+              : this.queryHandle?.inputDelivery === 'streaming' ? 'streaming' : 'queued-turn',
+            Math.max(0, this.pendingTurnMessageIds.length - 1),
+            attachments),
           threadRootId
         ).catch((error) => {
           this.logger.warn(
@@ -1920,7 +1946,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     });
     this.logger.info({ chatId: params.chatId, messageId: params.messageId, sourceMessageId,
       nativeTurnId: acknowledgement.turnId, generation }, 'Busy input acknowledged for its original turn');
-    void notify('🎯 后端已确认接收这条补充信息，结果随原回合交付；正在运行的工具会继续执行。');
+    // Issue #5713: the interjection confirmation is a busy-input receipt and
+    // follows the shared display contract — same running-turn summary,
+    // elapsed time and queue depth as the streaming/queued notices. The FIFO
+    // depth is passed as-is: this input was steered into the running turn and
+    // never queued, so it must not count as its own queue row.
+    void notify(this.buildBusyInputReceipt('confirmed-interjection',
+      this.pendingTurnMessageIds.length, params.attachments));
     return true;
   }
 
