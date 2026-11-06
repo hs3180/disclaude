@@ -383,6 +383,7 @@ export {
   getHandler,
   getAvailableCommands,
   buildHelpMessage,
+  buildWelcomeMessage,
   createControlCommand,
   normalizeCommandData,
   type ControlHandlerContext,
