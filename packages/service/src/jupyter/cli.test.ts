@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { DatalayerJupyterClient } from '@disclaude/core/jupyter';
+import { JupyterDiagnosticError, type DatalayerJupyterClient } from '@disclaude/core/jupyter';
 import { SkillsRegistry } from '../../../core/src/skills/skills-registry.js';
 import {
   parseNotebookOptions,
@@ -46,8 +46,12 @@ function connection() {
       schema: 'disclaude.jupyter-runtime.v1', host: { state: 'available', id: `sha256:${'a'.repeat(64)}` },
       gpus: { state: 'available', uuids: [`GPU-${'b'.repeat(8)}-aaaa-aaaa-aaaa-${'c'.repeat(12)}`] }, kernelId,
     })),
-    response: vi.fn(() => Promise.resolve(new Response('{}', { status: 404 }))),
-    json: vi.fn(() => Promise.resolve({})),
+    response: vi.fn((_route: string, _method = 'GET', _body?: Record<string, unknown>) =>
+      Promise.resolve(new Response('{}', { status: 404 }))
+    ),
+    json: vi.fn((_route: string, _method = 'GET', _body?: Record<string, unknown>) =>
+      Promise.resolve({})
+    ),
     notebookEntry: () => 'https://remote.invalid/lab/tree/research.ipynb',
   };
   const resolve = vi.fn(() =>
@@ -447,31 +451,35 @@ describe('Optional Jupyter CLI boundary', () => {
     ).rejects.toThrow('Invalid Notebook command input');
   });
 
-  it('links a stable remote identity, closes its RTC socket, then unlinks locally', async () => {
-    const directory = root();
-    const f = connection();
-    const linked = await runNotebookCommand(
-      parseNotebookOptions(['link', '--path', 'research.ipynb', '--project-dir', directory]),
-      f.resolve,
-      signal
-    );
-    expect(linked).toMatchObject({
-      documentId: 'document-1',
-      serverNamespace: 'endpoint-fingerprint',
-    });
-    expect(f.doc.close).toHaveBeenCalledOnce();
-    expect(f.client.json).not.toHaveBeenCalled();
-    f.resolve.mockClear();
-    expect(
-      await runNotebookCommand(
-        parseNotebookOptions(['unlink', '--path', 'research.ipynb', '--project-dir', directory]),
+  it.each(['research.ipynb', 'research/nested.ipynb'])(
+    'links a stable remote identity without creating parent directories: %s',
+    async (contentPath) => {
+      const directory = root();
+      const f = connection();
+      const linked = await runNotebookCommand(
+        parseNotebookOptions(['link', '--path', contentPath, '--project-dir', directory]),
         f.resolve,
         signal
-      )
-    ).toEqual({ removed: true });
-    expect(f.resolve).not.toHaveBeenCalled();
-    expect(fs.existsSync(path.join(directory, '.jupyter', 'cli.lock'))).toBe(false);
-  });
+      );
+      expect(linked).toMatchObject({
+        documentId: 'document-1',
+        serverNamespace: 'endpoint-fingerprint',
+      });
+      expect(f.doc.close).toHaveBeenCalledOnce();
+      expect(f.client.response).not.toHaveBeenCalled();
+      expect(f.client.json).not.toHaveBeenCalled();
+      f.resolve.mockClear();
+      expect(
+        await runNotebookCommand(
+          parseNotebookOptions(['unlink', '--path', contentPath, '--project-dir', directory]),
+          f.resolve,
+          signal
+        )
+      ).toEqual({ removed: true });
+      expect(f.resolve).not.toHaveBeenCalled();
+      expect(fs.existsSync(path.join(directory, '.jupyter', 'cli.lock'))).toBe(false);
+    }
+  );
 
   it('creates only the selected remote path and refuses a subsequent overwrite', async () => {
     const directory = root();
@@ -492,6 +500,99 @@ describe('Optional Jupyter CLI boundary', () => {
     f.client.response.mockResolvedValue(new Response('{}', { status: 200 }));
     await expect(runNotebookCommand(options, f.resolve, signal)).rejects.toThrow('already exists');
     expect(f.client.json).toHaveBeenCalledOnce();
+  });
+
+  it('creates each missing remote parent before a nested Notebook', async () => {
+    const directory = root();
+    const f = connection();
+    await runNotebookCommand(
+      parseNotebookOptions(['create', '--path', 'a/b/c.ipynb', '--project-dir', directory]),
+      f.resolve,
+      signal
+    );
+    expect(f.client.json.mock.calls).toEqual([
+      ['api/contents/a', 'PUT', { type: 'directory' }],
+      ['api/contents/a/b', 'PUT', { type: 'directory' }],
+      [
+        'api/contents/a/b/c.ipynb',
+        'PUT',
+        {
+          type: 'notebook',
+          format: 'json',
+          content: { nbformat: 4, nbformat_minor: 5, metadata: {}, cells: [] },
+        },
+      ],
+    ]);
+    expect(f.client.openDocument).toHaveBeenCalledExactlyOnceWith('a/b/c.ipynb');
+  });
+
+  it('treats existing remote parents as idempotent and writes only the Notebook', async () => {
+    const directory = root();
+    const f = connection();
+    f.client.response.mockImplementation((route) =>
+      Promise.resolve(
+        new Response('{}', {
+          status: ['api/contents/a?content=0', 'api/contents/a/b?content=0'].includes(route)
+            ? 200
+            : 404,
+        })
+      )
+    );
+    await runNotebookCommand(
+      parseNotebookOptions(['create', '--path', 'a/b/c.ipynb', '--project-dir', directory]),
+      f.resolve,
+      signal
+    );
+    expect(f.client.json).toHaveBeenCalledExactlyOnceWith(
+      'api/contents/a/b/c.ipynb',
+      'PUT',
+      expect.objectContaining({ type: 'notebook' })
+    );
+  });
+
+  it('reports the rejected parent path and server reason without creating the Notebook', async () => {
+    const directory = root();
+    const f = connection();
+    f.client.response.mockImplementation((route) =>
+      Promise.resolve(
+        new Response('{}', { status: route === 'api/contents/a?content=0' ? 200 : 404 })
+      )
+    );
+    f.client.json.mockImplementation((route) =>
+      route === 'api/contents/a/b'
+        ? Promise.reject(
+            new JupyterDiagnosticError({
+              layer: 'auth',
+              code: 'authentication_rejected',
+              phase: 'request',
+              status: 403,
+              serverBody: '{"reason":"read-only"}',
+              message: 'Jupyter API returned HTTP 403',
+              hint: 'Verify permissions.',
+              outcome: 'rejected',
+            })
+          )
+        : Promise.resolve({})
+    );
+    await expect(
+      runNotebookCommand(
+        parseNotebookOptions(['create', '--path', 'a/b/c.ipynb', '--project-dir', directory]),
+        f.resolve,
+        signal
+      )
+    ).rejects.toMatchObject({
+      diagnostic: {
+        layer: 'auth',
+        status: 403,
+        phase: 'create-parent:a/b',
+        message: expect.stringContaining('a/b'),
+        serverBody: expect.stringContaining('read-only'),
+      },
+    });
+    expect(f.client.json).toHaveBeenCalledExactlyOnceWith('api/contents/a/b', 'PUT', {
+      type: 'directory',
+    });
+    expect(f.client.openDocument).not.toHaveBeenCalled();
   });
 
   it('rejects traversal before credentials or remote writes, preserving malformed config', async () => {
@@ -615,4 +716,117 @@ describe('Optional Jupyter CLI boundary', () => {
     }
     expect(fs.readdirSync(directory)).toEqual([]);
   });
+});
+
+describe('Jupyter CLI wait options (#5320)', () => {
+  it('parses --wait/--timeout for execute and status and rejects other uses', () => {
+    const waitExecute = parseNotebookOptions(['execute', '--wait', '--timeout', '30']);
+    expect(waitExecute.wait).toBe(true);
+    expect(waitExecute.timeoutSeconds).toBe(30);
+    expect(parseNotebookOptions(['execute', '--wait']).timeoutSeconds).toBeUndefined();
+    expect(parseNotebookOptions(['status', '--wait', '--timeout', '0.5']).timeoutSeconds).toBe(0.5);
+    expect(() => parseNotebookOptions(['read-cell', '--wait'])).toThrow(
+      /only valid for execute and status/
+    );
+    expect(() => parseNotebookOptions(['execute', '--timeout', '30'])).toThrow(
+      /--timeout requires --wait/
+    );
+    expect(() => parseNotebookOptions(['execute', '--wait', '--timeout', 'abc'])).toThrow(
+      /Invalid --timeout seconds/
+    );
+    expect(() => parseNotebookOptions(['execute', '--wait', '--timeout', '--verbose'])).toThrow(
+      /requires a positive seconds value/
+    );
+    expect(() => parseNotebookOptions(['execute', '--wait', '--wait'])).toThrow(/Repeated/);
+    expect(() => parseNotebookOptions(['execute', '--wait', '--timeout', '0'])).toThrow(
+      /Invalid --timeout seconds/
+    );
+  });
+
+  it('status --wait holds the Project lock only per poll, never across the wait', async () => {
+    const directory = root();
+    const f = connection();
+    const reference = {
+      connectionId: 'configured',
+      serverNamespace: 'endpoint-fingerprint',
+      documentId: 'document-1',
+      contentPath: 'research.ipynb',
+    };
+    new JupyterProjectConfigStore(directory).linkNotebook(reference);
+    const journal = new DatalayerRunStore(directory);
+    journal.reserve('original', {
+      ...reference,
+      cellId: 'cell',
+      sourceHash: 'a'.repeat(64),
+      kernelId: 'kernel-1',
+    });
+    journal.update('original', {
+      state: 'running',
+      handle: { requestId: 'request-original' } as never,
+      observation: { state: 'running', httpStatus: 202, result: { outputs: [] } },
+    });
+    const gates: Array<(value: unknown) => void> = [];
+    let observations = 0;
+    const client = {
+      ...f.client,
+      observe: vi.fn(
+        () =>
+          new Promise((settled) => {
+            observations += 1;
+            gates.push(settled);
+          })
+      ),
+    };
+    const resolve = vi.fn((): Promise<NotebookCLIConnection> =>
+      Promise.resolve({
+        client: client as unknown as DatalayerJupyterClient,
+        connectionId: 'configured',
+        namespace: 'endpoint-fingerprint',
+      })
+    );
+    const options = parseNotebookOptions([
+      'status',
+      '--project-dir',
+      directory,
+      '--input-file',
+      '-',
+      '--wait',
+      '--timeout',
+      '12',
+    ]);
+    const waiting = runNotebookCommand(options, resolve, signal, () =>
+      JSON.stringify({ notebookId: notebookIdentifier(reference), runId: 'original' })
+    );
+    const running = { state: 'running', httpStatus: 202, result: { outputs: [] } };
+    // The initial status query runs under runNotebookCommand's lock.
+    await vi.waitFor(() => expect(observations).toBe(1));
+    await expect(withNotebookLock(directory, () => Promise.resolve())).rejects.toMatchObject({
+      code: 'EEXIST',
+    });
+    gates[0](running);
+    // Each wait poll re-acquires the lock for its own journal-writing query.
+    await vi.waitFor(() => expect(observations).toBe(2), { timeout: 4000 });
+    await expect(withNotebookLock(directory, () => Promise.resolve())).rejects.toMatchObject({
+      code: 'EEXIST',
+    });
+    gates[1]({
+      state: 'running',
+      httpStatus: 202,
+      result: { outputs: [{ output_type: 'stream', name: 'stdout', text: 'mid-run' }] },
+    });
+    // Between polls the lock is free: progress queries keep working mid-wait.
+    await vi.waitFor(() =>
+      expect(withNotebookLock(directory, () => Promise.resolve('free'))).resolves.toBe('free')
+    );
+    await vi.waitFor(() => expect(observations).toBe(3), { timeout: 4000 });
+    gates[2]({
+      state: 'completed',
+      httpStatus: 200,
+      result: { execution_count: 1, outputs: [] },
+    });
+    const result = (await waiting) as { state: string; wait: { state: string } };
+    expect(result.state).toBe('completed');
+    expect(result.wait.state).toBe('completed');
+    expect(fs.existsSync(path.join(directory, '.jupyter', 'cli.lock'))).toBe(false);
+  }, 15000);
 });

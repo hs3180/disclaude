@@ -33,6 +33,8 @@ export class ChannelManager {
   private channels: Map<string, IChannel> = new Map();
   /** Issue #3773: chatId → Channel mapping for multi-channel routing */
   private chatIdChannelMap: Map<string, IChannel> = new Map();
+  /** Cross-channel collisions stay fail-closed instead of being silently reassigned. */
+  private ambiguousChatOwners: Map<string, Set<string>> = new Map();
 
   /**
    * Register a communication channel.
@@ -41,9 +43,7 @@ export class ChannelManager {
   register(channel: IChannel): void {
     if (this.channels.has(channel.id)) {
       logger.warn({ channelId: channel.id }, 'Channel already registered, replacing');
-      for (const [chatId, owner] of this.chatIdChannelMap) {
-        if (owner.id === channel.id) { this.chatIdChannelMap.delete(chatId); }
-      }
+      this.forgetChannelRoutes(channel.id);
     }
 
     this.channels.set(channel.id, channel);
@@ -111,9 +111,7 @@ export class ChannelManager {
   unregister(channelId: string): boolean {
     const removed = this.channels.delete(channelId);
     if (removed) {
-      for (const [chatId, channel] of this.chatIdChannelMap) {
-        if (channel.id === channelId) { this.chatIdChannelMap.delete(chatId); }
-      }
+      this.forgetChannelRoutes(channelId);
       logger.info({ channelId }, 'Channel unregistered');
     }
     return removed;
@@ -133,13 +131,37 @@ export class ChannelManager {
    */
   registerChatId(chatId: string, channel: IChannel): void {
     const existing = this.chatIdChannelMap.get(chatId);
+    const ambiguous = this.ambiguousChatOwners.get(chatId);
+    if (ambiguous) {
+      ambiguous.add(channel.id);
+      return;
+    }
     if (existing && existing.id !== channel.id) {
-      logger.debug(
-        { chatId, fromChannelId: existing.id, toChannelId: channel.id },
-        'ChatId ownership reassigned to different channel'
+      this.ambiguousChatOwners.set(chatId, new Set([existing.id, channel.id]));
+      this.chatIdChannelMap.delete(chatId);
+      logger.warn(
+        { chatId, channelIds: [existing.id, channel.id] },
+        'ChatId is owned by multiple channels; default delivery is disabled until ownership is unique'
       );
+      return;
     }
     this.chatIdChannelMap.set(chatId, channel);
+  }
+
+  private forgetChannelRoutes(channelId: string): void {
+    for (const [chatId, owner] of this.chatIdChannelMap) {
+      if (owner.id === channelId) { this.chatIdChannelMap.delete(chatId); }
+    }
+    for (const [chatId, owners] of this.ambiguousChatOwners) {
+      owners.delete(channelId);
+      if (owners.size === 0) { this.ambiguousChatOwners.delete(chatId); }
+    }
+  }
+
+  /** True while a chatId has colliding owners and default delivery must fail closed. */
+  isChatOwnershipAmbiguous(chatId: string): boolean {
+    const owners = this.ambiguousChatOwners.get(chatId);
+    return owners !== undefined && this.getAll().filter(channel => owners.has(channel.id)).length > 1;
   }
 
   /**
@@ -165,8 +187,11 @@ export class ChannelManager {
   resolveChannelForChatId(chatId: string): IChannel | undefined {
     // Fast path: check in-memory map first
     const cached = this.chatIdChannelMap.get(chatId);
-    const matches = this.getAll().filter(channel => channel === cached || channel.ownsChatId(chatId));
+    const ambiguous = this.ambiguousChatOwners.get(chatId);
+    const matches = this.getAll().filter(channel =>
+      channel === cached || ambiguous?.has(channel.id) || channel.ownsChatId(chatId));
     if (matches.length > 1) { throw new Error('Ambiguous chat ownership; use an unambiguous chat ID'); }
+    this.ambiguousChatOwners.delete(chatId);
     if (matches[0]) { this.registerChatId(chatId, matches[0]); }
     return matches[0];
   }
@@ -296,5 +321,6 @@ export class ChannelManager {
   clear(): void {
     this.channels.clear();
     this.chatIdChannelMap.clear();
+    this.ambiguousChatOwners.clear();
   }
 }

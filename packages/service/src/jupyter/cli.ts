@@ -31,7 +31,7 @@ Commands:
   tools                 Show command input schemas; no connection required
   check                 Inspect the configured Datalayer interfaces
   link                  Link an existing remote .ipynb to this Project
-  create                Create and link a new remote .ipynb; refuse overwrite
+  create                Create missing parents, then create/link .ipynb; refuse overwrite
   unlink                Remove a local reference; retain remote Notebook/kernel
   ${commands.join(', ')}
                         Every command above takes exactly one JSON object through
@@ -51,6 +51,13 @@ Options:
   --interactive        Prompt for credentials with hidden input
   --no-interactive     Never prompt (for agent/automation calls)
   --verbose            Emit safe credential/HTTP phase records on stderr
+  --wait               execute/status only: block until a terminal state
+  --timeout S          Requires --wait; seconds before waiting gives up
+                        (default 600; fractional allowed). A wait timeout stops
+                        only this CLI wait; it never stops or cancels the
+                        kernel execution. Terminal results distinguish
+                        completed/failed/cancelled; wait:{state:"timeout"}
+                        plus the still-running state marks a wait timeout.
 
 Credentials: environment > .env > interactive input. Connection is lazy.
 The selected env-file path is reported; credential values and cookies stay private.
@@ -60,6 +67,19 @@ Failures expose error.layer/code/status/serverBody/hint; exit codes: schema=2,
 auth=3, dns=4, tcp=5, http=6, cas=7, local=8, unknown=1.
 Each command closes its RTC sockets. Kernel memory stays on remote Jupyter.
 execute submits once and returns runId; use status/stop for the original run.
+execute/status --wait [--timeout S] blocks until the run reaches completed,
+failed, cancelled or rejected, or until the wait timeout; the wait timeout
+never cancels the kernel run — re-query status with the same runId and
+stdout.nextCursor. status stdout is incremental: omit stdoutCursor for the
+new-session tail, then pass stdout.nextCursor for duplicate-free, gap-free
+deltas of the same run. Long runs: submit without --wait and run at most one
+background watcher, status --wait --timeout 86400 for the same runId, as a
+background shell task — the harness notifies on its exit exactly once and
+wait.state distinguishes completion from a wait timeout (re-arm only then;
+two live watchers on one runId produce two notifications). The wait loop
+holds no lock while sleeping: other commands in the same Project keep
+working; a transient lock collision with an in-flight poll is a retriable
+error, not a run-state change.
 status labels source as live or local-journal; connection failures retain last-known facts.
 reconcile queries every nonterminal original handle after restoring credentials/connection.
 interrupt targets an existing kernelId, or a uniquely bound notebookId; no runId.
@@ -81,6 +101,9 @@ export interface NotebookCLIOptions {
   tokenEnv?: string;
   interactive?: boolean;
   verbose?: boolean;
+  wait?: boolean;
+  /** Seconds; requires --wait. */
+  timeoutSeconds?: number;
 }
 export interface NotebookCLIConnection {
   client: DatalayerJupyterClient;
@@ -286,6 +309,25 @@ export function parseNotebookOptions(args: string[]): NotebookCLIOptions {
       options.interactive = flag === '--interactive';
       continue;
     }
+    if (flag === '--wait') {
+      if (seen.has('wait')) { invalid('Repeated wait option'); }
+      seen.add('wait'); options.wait = true; continue;
+    }
+    if (flag === '--timeout') {
+      if (seen.has('timeout')) { invalid('Repeated timeout option'); }
+      const raw = args[i + 1];
+      if (raw === undefined || raw.startsWith('--')) {
+        invalid('--timeout requires a positive seconds value');
+      }
+      const seconds = Number(raw);
+      if (!Number.isFinite(seconds) || seconds <= 0 || seconds > 86400) {
+        invalid('Invalid --timeout seconds; use a positive number of seconds up to 86400');
+      }
+      seen.add('timeout');
+      options.timeoutSeconds = seconds;
+      i++;
+      continue;
+    }
     const name = names[flag as keyof typeof names];
     if (!name || seen.has(name) || !args[i + 1] || args[i + 1].startsWith('--')) {
       invalid('Unknown, repeated or empty Jupyter option');
@@ -295,6 +337,12 @@ export function parseNotebookOptions(args: string[]): NotebookCLIOptions {
   }
   if (options.passwordEnv && options.tokenEnv) {
     invalid('Choose one authentication mode');
+  }
+  if (options.wait && !['execute', 'status'].includes(options.command)) {
+    invalid('--wait is only valid for execute and status');
+  }
+  if (options.timeoutSeconds !== undefined && !options.wait) {
+    invalid('--timeout requires --wait');
   }
   if (!/^[A-Za-z0-9_-]{1,200}$/.test(options.connectionId)) {
     invalid('Invalid connection ID');
@@ -322,8 +370,74 @@ function notebookInput(file: string | undefined, read: (file: string) => string)
   }
 }
 
-/** One local command lock prevents CLI processes from losing journal updates. */
-export async function withNotebookLock<T>(root: string, operation: () => Promise<T>): Promise<T> {
+const waitTerminalStates = new Set(['completed', 'failed', 'cancelled', 'rejected']);
+
+/**
+ * Wait loop for execute/status --wait. It only ever queries notebook_status;
+ * it never calls stop/interrupt, so a wait timeout leaves the kernel run
+ * untouched. Ambiguous unknown/loss observations keep polling until the
+ * timeout instead of guessing a terminal outcome.
+ *
+ * `poll` wraps each status observation (the CLI passes withNotebookLock so
+ * every journal-writing query stays serialized) while the sleep between
+ * polls stays outside it — a long --wait must never hold the Project CLI
+ * lock, or concurrent commands (progress status, follow-up execute, stop)
+ * would fail for the whole wait.
+ */
+export async function awaitNotebookTerminal(
+  tools: NotebookTools,
+  input: Record<string, unknown>,
+  first: unknown,
+  timeoutSeconds: number,
+  signal: AbortSignal,
+  poll?: (statusInput: Record<string, unknown>) => Promise<unknown>
+): Promise<unknown> {
+  const started = Date.now();
+  const deadline = started + timeoutSeconds * 1000;
+  const notebookId = String(input.notebookId ?? '');
+  const runId = String((first as { runId?: unknown })?.runId ?? input.runId ?? '');
+  const status = tools.tools.find((tool) => tool.name === 'notebook_status');
+  if (!notebookId || !runId || !status) {
+    throw new Error('Waiting needs the original notebookId and runId');
+  }
+  const delay = Math.max(50, Math.min(1000, (timeoutSeconds * 1000) / 8));
+  const observeStatus =
+    poll ?? ((statusInput: Record<string, unknown>) => status.execute(statusInput, { signal }));
+  let last = first as Record<string, unknown>;
+  let stdoutCursor: string | undefined;
+  for (;;) {
+    const observed = (last as { stdout?: { nextCursor?: unknown } }).stdout;
+    if (typeof observed?.nextCursor === 'string') {
+      stdoutCursor = observed.nextCursor;
+    }
+    if (waitTerminalStates.has(String(last.state))) {
+      return {
+        ...last,
+        wait: { state: String(last.state), waitedMs: Date.now() - started, timeoutSeconds },
+      };
+    }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      return {
+        ...last,
+        wait: {
+          state: 'timeout',
+          waitedMs: Date.now() - started,
+          timeoutSeconds,
+          runPreserved: true,
+          hint: 'Only this CLI wait timed out; the kernel execution was not stopped or cancelled. Re-run status (optionally with --wait) for the same runId and stdout.nextCursor.',
+        },
+      };
+    }
+    await new Promise((resolve) => setTimeout(resolve, Math.min(delay, remaining)));
+    signal.throwIfAborted();
+    last = (await observeStatus(
+      { notebookId, runId, ...(stdoutCursor ? { stdoutCursor } : {}) }
+    )) as Record<string, unknown>;
+  }
+}
+
+/** One local command lock prevents CLI processes from losing journal updates. */export async function withNotebookLock<T>(root: string, operation: () => Promise<T>): Promise<T> {
   const directory = path.join(fs.realpathSync(root), '.jupyter');
   try {
     fs.mkdirSync(directory, { mode: 0o700 });
@@ -389,7 +503,8 @@ export async function runNotebookCommand(
     if (options.command === 'check') {
       return await (await connection()).client.inspectConnection();
     }
-    return await withNotebookLock(root, async () => {
+    let waitInput: Record<string, unknown> | undefined;
+    const initial = await withNotebookLock(root, async () => {
       signal.throwIfAborted();
       if (['link', 'create', 'unlink'].includes(options.command)) {
         // Unified input style (#5321): the same JSON object contract as every
@@ -459,6 +574,32 @@ export async function runNotebookCommand(
               message: 'Remote Notebook already exists; refusing overwrite', hint: 'Choose another path or explicitly link the existing Notebook.', outcome: 'not-submitted' });
           }
           signal.throwIfAborted();
+          const segments = ref.contentPath.split('/');
+          for (let index = 0; index < segments.length - 1; index++) {
+            const parentPath = segments.slice(0, index + 1).join('/');
+            const parentRoute = `api/contents/${segments.slice(0, index + 1).map(encodeURIComponent).join('/')}`;
+            const parent = await client.response(`${parentRoute}?content=0`);
+            if (parent.status !== 404) {
+              if (!parent.ok) {
+                throw await client.responseError(parent, `create-parent-preflight:${parentPath}`);
+              }
+              await parent.body?.cancel();
+              continue;
+            }
+            await parent.body?.cancel();
+            signal.throwIfAborted();
+            try {
+              await client.json(parentRoute, 'PUT', { type: 'directory' });
+            } catch (error) {
+              if (!(error instanceof JupyterDiagnosticError)) { throw error; }
+              throw new JupyterDiagnosticError({
+                ...error.diagnostic,
+                phase: `create-parent:${parentPath}`,
+                message: `Could not create remote parent directory "${parentPath}": ${error.diagnostic.message}`,
+                hint: `Check Jupyter permissions for "${parentPath}" and inspect the server reason before retrying.`,
+              });
+            }
+          }
           await client.json(route, 'PUT', {
             type: 'notebook',
             format: 'json',
@@ -482,6 +623,7 @@ export async function runNotebookCommand(
         }
       }
       const input = notebookInput(options.inputFile, readInput);
+      waitInput = input as Record<string, unknown>;
       if (options.command === 'interrupt') {
         return interruptKernel(root, input, connection, signal);
       }
@@ -500,8 +642,39 @@ export async function runNotebookCommand(
         throw new Error('Unknown Notebook operation');
       }
       const result = await tool.execute(input as Record<string, unknown>, { signal });
+      if (options.wait) {
+        return result;
+      }
       return materializeImages(root, result);
     });
+    if (!options.wait) {
+      return initial;
+    }
+    // #5320: the wait loop runs outside the Project CLI lock and re-acquires
+    // it per status poll, so a long --wait (default 600s) never starves other
+    // commands in the same Project — progress `status`, follow-up `execute`
+    // and `stop` keep working while a backgrounded `status --wait` watcher
+    // bridges run completion through the harness's existing background-task
+    // notification. The lock stays fail-closed: a collision with an in-flight
+    // poll is a retriable error, never a run-state change.
+    const statusTool = tools.tools.find((candidate) => candidate.name === 'notebook_status');
+    return materializeImages(
+      root,
+      await awaitNotebookTerminal(
+        tools,
+        waitInput as Record<string, unknown>,
+        initial,
+        options.timeoutSeconds ?? 600,
+        signal,
+        (statusInput) =>
+          withNotebookLock(root, () => {
+            if (!statusTool) {
+              throw new Error('Waiting needs the notebook_status tool');
+            }
+            return statusTool.execute(statusInput, { signal });
+          })
+      )
+    );
   } finally {
     await tools.close();
   }
