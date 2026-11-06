@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.18] - 2026-11-06
+
+### Added
+
+- Wait for a Notebook run inside one turn and read stdout incrementally:
+  `jupyter execute` and `status` accept `--wait` and `--timeout S` (default
+  600, at most 86400); the wait loop only ever queries `notebook_status` and
+  never calls stop/interrupt, so it returns on
+  `completed`/`failed`/`cancelled`/`rejected` and a timeout reports
+  `wait:{state:"timeout",runPreserved:true}` with the still-running state
+  instead of guessing or killing the kernel execution. `notebook_status`
+  gains an incremental `stdout` view: a first query without `stdoutCursor`
+  returns the recent tail, passing back `stdout.nextCursor` returns exactly
+  the bytes after that cursor for the same run (no duplicates, no gaps,
+  idempotent re-queries, `reset` when retention no longer covers the cursor,
+  `skippedBytes` when a single delta exceeds the cap), and the wait loop
+  carries the cursor chain across polls. The wait loop leaves the fail-closed
+  `withNotebookLock` while sleeping (initial query inside, each poll in a
+  brief lock, sleep outside), so a long wait no longer starves concurrent
+  commands in the same Project, and the poll function is injectable for
+  backward compatibility. The Jupyter skill documents the watcher contract:
+  submit without `--wait`, arm at most one background
+  `status --wait --timeout 86400` watcher per runId, and let the existing
+  background-task notification deliver its exit exactly once — re-arm only
+  after a wait timeout, never run two live watchers (#5320; #5701).
+
 ## [0.6.17] - 2026-11-06
 
 ### Added

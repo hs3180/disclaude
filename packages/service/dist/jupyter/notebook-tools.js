@@ -46,6 +46,27 @@ async function streamedSha256(body) {
     }
     return hasher.digest('hex');
 }
+const stdoutTailLimit = 4000;
+const stdoutDeltaLimit = 100_000;
+const encodeStdoutCursor = (runId, offset) => Buffer.from(JSON.stringify({ v: 1, runId, offset }), 'utf8').toString('base64url');
+const decodeStdoutCursor = (cursor) => {
+    try {
+        const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+        if (parsed.v !== 1 ||
+            typeof parsed.runId !== 'string' ||
+            typeof parsed.offset !== 'number' ||
+            !Number.isSafeInteger(parsed.offset) ||
+            parsed.offset < 0) {
+            throw new Error('malformed cursor');
+        }
+        const { runId, offset } = parsed;
+        return { runId, offset };
+    }
+    catch {
+        throw new JupyterDiagnosticError({ layer: 'schema', code: 'invalid_stdout_cursor', phase: 'input',
+            message: 'Invalid stdout cursor', hint: 'Pass the untouched stdout.nextStdoutCursor from the same run, or omit it for new-session tail semantics.', outcome: 'not-submitted' });
+    }
+};
 const errorOutputDescription = 'Error previews expose output_type="error", ename:string, evalue:string and traceback:string[]. Tracebacks retain the last 20 frames, at most 1000 characters per frame and 8000 total. errorName/errorValue are deprecated aliases retained for this release.';
 function boundedErrorOutput(output) {
     const ename = (typeof output.ename === 'string' ? output.ename : 'Error').slice(0, 128).replace(/[\uD800-\uDBFF]$/, '');
@@ -245,7 +266,15 @@ export class NotebookTools {
                 expectedSourceHash: sourceHash,
                 runId: text,
             }, (input, invocation) => this.execute(input, invocation)),
-            this.tool('notebook_status', 'Query the original runId without replay. source distinguishes live lookup from local journal facts; client-error/server-unknown preserve the last confirmed state.', { ...notebookId, runId: text }, (input) => this.observe(this.record(String(input.notebookId), String(input.runId)))),
+            this.tool('notebook_status', 'Query the original runId without replay. source distinguishes live lookup from local journal facts; client-error/server-unknown preserve the last confirmed state. stdout is incremental: a first query without stdoutCursor returns only the recent tail (new-session semantics); passing back stdout.nextCursor returns exactly the bytes after that cursor for the same run, with no duplicates and no gaps; if the server-side stream shrank below the cursor the scope becomes reset and the tail is returned again.', {
+                ...notebookId,
+                runId: text,
+                stdoutCursor: {
+                    type: 'string',
+                    optional: true,
+                    description: 'Opaque nextStdoutCursor from a previous stdout block of this same run; omit it for new-session tail semantics.',
+                },
+            }, (input) => this.observe(this.record(String(input.notebookId), String(input.runId)), input.stdoutCursor)),
             this.tool('notebook_reconcile', 'Read the original handles of all nonterminal Project runs after connection recovery. Never submits or replays a cell; each result labels live versus local-journal evidence.', {}, async (_input, invocation) => {
                 const runs = [];
                 for (const record of this.journal.records().filter((r) => !terminal.has(r.state))) {
@@ -318,13 +347,22 @@ export class NotebookTools {
         ];
     }
     tool(name, description, properties, execute) {
+        // `optional: true` marks host-validated optional fields; it is host-only and
+        // never published in the JSON schema handed to callers.
+        const optional = new Set(Object.entries(properties)
+            .filter(([, schema]) => schema.optional === true)
+            .map(([field]) => field));
+        const published = Object.fromEntries(Object.entries(properties).map(([field, schema]) => {
+            const { optional: _hostOnly, ...rest } = schema;
+            return [field, rest];
+        }));
         return {
             name,
             description,
             inputSchema: {
                 type: 'object',
-                properties,
-                required: Object.keys(properties),
+                properties: published,
+                required: Object.keys(published).filter((field) => !optional.has(field)),
                 additionalProperties: false,
             },
             outputSchema: { type: 'object', ...(['notebook_read_cell', 'notebook_describe', 'notebook_status'].includes(name)
@@ -338,11 +376,12 @@ export class NotebookTools {
                     Object.keys(input).some((field) => !Object.hasOwn(properties, field)) ||
                     Object.entries(properties).some(([field, raw]) => {
                         const schema = raw;
-                        return (!Object.hasOwn(input, field) ||
-                            (schema.type === 'integer'
-                                ? !Number.isSafeInteger(input[field])
-                                : typeof input[field] !== schema.type) ||
-                            (schema.enum !== undefined && !schema.enum.includes(input[field])));
+                        return ((!Object.hasOwn(input, field) && !optional.has(field)) ||
+                            (Object.hasOwn(input, field) &&
+                                ((schema.type === 'integer'
+                                    ? !Number.isSafeInteger(input[field])
+                                    : typeof input[field] !== schema.type) ||
+                                    (schema.enum !== undefined && !schema.enum.includes(input[field])))));
                     })) {
                     throw new JupyterDiagnosticError({ layer: 'schema', code: 'invalid_tool_input',
                         message: 'Invalid Notebook command input; read its schema with jupyter tools',
@@ -936,7 +975,7 @@ export class NotebookTools {
         }
         return this.options.useClient(ref.connectionId, ref.serverNamespace, operation);
     }
-    async observe(record) {
+    async observe(record, stdoutCursor) {
         let current = record;
         let source = 'local-journal';
         if (!terminal.has(record.state) && record.handle) {
@@ -986,6 +1025,7 @@ export class NotebookTools {
             ...(current.loss ? { lastKnownState: current.state, failure: current.loss } : {}),
             sourceHash: current.target.sourceHash,
             cellId: current.target.cellId,
+            stdout: this.stdoutView(current, stdoutCursor),
             ...(current.handle ? { requestId: current.handle.requestId } : {}),
             ...(typeof current.observation?.result?.original_result_entry === 'string'
                 ? { originalResultEntry: current.observation.result.original_result_entry }
@@ -1008,6 +1048,63 @@ export class NotebookTools {
                     }
                     : { result: this.summary(current.observation.result) }
                 : {}),
+        };
+    }
+    /**
+     * Incremental stdout view over the run's accumulated stream outputs.
+     * The cursor is a client-held opaque offset; no server or journal state is
+     * required, so repeated queries with the same cursor are idempotent deltas.
+     */
+    stdoutView(record, cursor) {
+        const outputs = record.observation?.result?.outputs;
+        const full = Array.isArray(outputs)
+            ? outputs.reduce((accumulated, output) => {
+                const item = output;
+                if (item.output_type !== 'stream' ||
+                    (item.name !== undefined && item.name !== 'stdout')) {
+                    return accumulated;
+                }
+                const chunk = Array.isArray(item.text)
+                    ? item.text.join('')
+                    : typeof item.text === 'string'
+                        ? item.text
+                        : '';
+                return accumulated + chunk;
+            }, '')
+            : '';
+        const total = full.length;
+        let scope = 'tail';
+        let offset = Math.max(0, total - stdoutTailLimit);
+        if (cursor !== undefined) {
+            const parsed = decodeStdoutCursor(String(cursor));
+            if (parsed.runId !== record.runId) {
+                throw new JupyterDiagnosticError({ layer: 'schema', code: 'invalid_stdout_cursor', phase: 'input',
+                    message: 'stdout cursor belongs to another run', hint: 'Pass the nextStdoutCursor of this same runId, or omit it for new-session tail semantics.', outcome: 'not-submitted' });
+            }
+            if (parsed.offset <= total) {
+                scope = 'delta';
+                ({ offset } = parsed);
+            }
+            else {
+                // The retained server stream no longer covers the cursor (rollover or
+                // retention shrink). Report it instead of silently duplicating bytes.
+                scope = 'reset';
+                offset = Math.max(0, total - stdoutTailLimit);
+            }
+        }
+        let text = full.slice(offset);
+        const skippedBytes = Math.max(0, text.length - stdoutDeltaLimit);
+        if (skippedBytes > 0) {
+            text = text.slice(skippedBytes);
+        }
+        return {
+            scope,
+            offset,
+            totalBytes: total,
+            nextCursor: encodeStdoutCursor(record.runId, total),
+            text,
+            ...(scope === 'reset' ? { resetReason: 'retained-stdout-no-longer-covers-cursor' } : {}),
+            ...(skippedBytes > 0 ? { skippedBytes } : {}),
         };
     }
     summary(result) {
