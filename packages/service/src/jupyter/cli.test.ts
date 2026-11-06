@@ -127,6 +127,144 @@ describe('Optional Jupyter CLI boundary', () => {
     expect(f.resolve).not.toHaveBeenCalled();
   });
 
+  it('lists every command except itself with one JSON input schema each', async () => {
+    const f = connection();
+    const entries = (await runNotebookCommand(
+      parseNotebookOptions(['tools', '--project-dir', root()]),
+      f.resolve,
+      signal
+    )) as Array<{
+      command: string;
+      inputSchema: { type: string; properties: Record<string, unknown>; required: string[]; additionalProperties: boolean };
+    }>;
+    // Regression lock (#5321): the whole command surface, lifecycle included,
+    // is discoverable from tools output alone, in one JSON input style.
+    expect(entries.map((entry) => entry.command)).toEqual([
+      'list', 'describe', 'read-cell', 'insert-cell', 'edit-cell', 'move-cell',
+      'delete-cell', 'execute', 'status', 'reconcile', 'stop', 'observe-image',
+      'import-file', 'download-report', 'export',
+      'check', 'link', 'create', 'unlink', 'interrupt', 'runtime-probe',
+    ]);
+    for (const entry of entries) {
+      expect(entry.inputSchema.type).toBe('object');
+      expect(entry.inputSchema.additionalProperties).toBe(false);
+    }
+    const lifecycleSchema = entries.find((entry) => entry.command === 'create')?.inputSchema;
+    for (const command of ['link', 'create', 'unlink']) {
+      expect(entries.find((entry) => entry.command === command)?.inputSchema).toEqual(lifecycleSchema);
+    }
+    expect(lifecycleSchema).toMatchObject({
+      type: 'object',
+      properties: { path: { type: 'string' } },
+      required: ['path'],
+      additionalProperties: false,
+    });
+    expect(entries.find((entry) => entry.command === 'check')?.inputSchema).toMatchObject({
+      type: 'object',
+      properties: {},
+      required: [],
+      additionalProperties: false,
+    });
+    expect(f.resolve).not.toHaveBeenCalled();
+  });
+
+  it('publishes the phantom first cell, FIFO execute ordering and Project-relative filePath contracts in tools', async () => {
+    const f = connection();
+    const entries = (await runNotebookCommand(
+      parseNotebookOptions(['tools', '--project-dir', root()]),
+      f.resolve,
+      signal
+    )) as Array<{
+      command: string;
+      description: string;
+      inputSchema: { properties: { filePath?: { description?: string } } };
+    }>;
+    expect(entries.find((entry) => entry.command === 'describe')?.description)
+      .toContain('RTC-seeded phantom empty code cell');
+    expect(entries.find((entry) => entry.command === 'describe')?.description)
+      .toContain('SHA-256 of the empty string');
+    expect(entries.find((entry) => entry.command === 'describe')?.description)
+      .toContain('removedSeedCellId');
+    const execute = entries.find((entry) => entry.command === 'execute')?.description;
+    expect(execute).toContain('submission order');
+    expect(execute).toContain('per-kernel FIFO queue');
+    expect(execute).toContain('superseded');
+    expect(entries.find((entry) => entry.command === 'import-file')?.inputSchema.properties.filePath?.description)
+      .toContain('Project-relative');
+    expect(f.resolve).not.toHaveBeenCalled();
+  });
+
+  it('locks the documented contracts in the Skill and module READMEs', () => {
+    const skillReadme = fs.readFileSync(path.join(repository, 'skills/jupyter/README.md'), 'utf8');
+    const skill = fs.readFileSync(path.join(repository, 'skills/jupyter/SKILL.md'), 'utf8');
+    const moduleReadme = fs.readFileSync(path.join(repository, 'packages/service/src/jupyter/README.md'), 'utf8');
+    for (const document of [skillReadme, skill]) {
+      expect(document).toContain('phantom empty code cell');
+      expect(document).toContain('removedSeedCellId');
+      expect(document).toContain('e3b0c442');
+      expect(document).toContain('per-kernel FIFO');
+      expect(document).toContain('Project-relative');
+      expect(document).toContain('{"path"');
+    }
+    // Lifecycle commands are documented in the unified JSON input style.
+    expect(skillReadme).toContain('`--path` is the shorthand');
+    expect(skill).toContain('`--path` is the shorthand');
+    expect(moduleReadme).toContain('every command except itself');
+  });
+
+  it('runs link/create/unlink through the unified JSON input like every other command', async () => {
+    const directory = root();
+    const f = connection();
+    const linked = await runNotebookCommand(
+      parseNotebookOptions(['link', '--input-file', '-', '--project-dir', directory]),
+      f.resolve,
+      signal,
+      () => '{"path":"research.ipynb"}'
+    );
+    expect(linked).toMatchObject({ documentId: 'document-1', serverNamespace: 'endpoint-fingerprint' });
+    expect(f.doc.close).toHaveBeenCalledOnce();
+    f.resolve.mockClear();
+    expect(
+      await runNotebookCommand(
+        parseNotebookOptions(['unlink', '--input-file', '-', '--project-dir', directory]),
+        f.resolve,
+        signal,
+        () => '{"path":"research.ipynb"}'
+      )
+    ).toEqual({ removed: true });
+    expect(f.resolve).not.toHaveBeenCalled();
+    await runNotebookCommand(
+      parseNotebookOptions(['create', '--input-file', '-', '--project-dir', directory]),
+      f.resolve,
+      signal,
+      () => '{"path":"research.ipynb"}'
+    );
+    expect(f.client.json).toHaveBeenCalledWith(
+      'api/contents/research.ipynb',
+      'PUT',
+      expect.objectContaining({ type: 'notebook' })
+    );
+  });
+
+  it.each([
+    ['{"path":123}'],
+    ['{"other":true}'],
+    ['{}'],
+    ['[]'],
+    ['{"path":"../other.ipynb"}'],
+  ])('rejects lifecycle JSON input that does not match the published schema: %s', async (raw) => {
+    const f = connection();
+    await expect(
+      runNotebookCommand(
+        parseNotebookOptions(['link', '--input-file', '-', '--project-dir', root()]),
+        f.resolve,
+        signal,
+        () => raw
+      )
+    ).rejects.toThrow(/lifecycle command input|relative Notebook path/);
+    expect(f.resolve).not.toHaveBeenCalled();
+  });
+
   it('interrupts an explicit kernel with no Notebook reference, run ID, journal or RTC', async () => {
     const directory = root();
     const f = connection();
@@ -271,12 +409,21 @@ describe('Optional Jupyter CLI boundary', () => {
       ['list', '--path', 'x.ipynb'],
       ['check', '--input-file', '-'],
       ['status', '--input-file', '-', '--input-file', 'x'],
+      ['link', '--path', 'x.ipynb', '--input-file', '-'],
+      ['create', '--input-file', '-', '--path', 'x.ipynb'],
     ]) {
       expect(() => parseNotebookOptions(args)).toThrow();
     }
     expect(parseNotebookOptions(['status', '--input-file', '-', '--no-interactive'])).toMatchObject(
       { command: 'status', inputFile: '-', interactive: false }
     );
+    expect(parseNotebookOptions(['link', '--input-file', '-', '--no-interactive'])).toMatchObject(
+      { command: 'link', inputFile: '-', interactive: false }
+    );
+    expect(parseNotebookOptions(['unlink', '--path', 'x.ipynb'])).toMatchObject({
+      command: 'unlink',
+      contentPath: 'x.ipynb',
+    });
   });
 
   it('lists schemas and references without reading credentials, creating files or connecting', async () => {
