@@ -10,7 +10,7 @@ import { WeChatStateStore } from '../../packages/service/src/channels/wechat/sta
 const exec = promisify(execFile);
 function cli(dir: string, args: string[], fixture?: { bot?: string; user?: string; fail?: boolean; expired?: boolean; preboot?: boolean }) {
   return exec(process.execPath, ['bin/disclaude.js', 'wechat', ...args, '--state-dir', dir], {
-    env: { ...process.env, LOG_LEVEL: 'silent', LOG_TO_FILE: 'false', WECHAT_FIXTURE_BOT: fixture?.bot,
+    env: { ...process.env, LOG_LEVEL: 'error', LOG_TO_FILE: 'false', WECHAT_FIXTURE_BOT: fixture?.bot,
       WECHAT_FIXTURE_USER: fixture?.user,
       NODE_OPTIONS: fixture ? `--import ${JSON.stringify(resolve(fixture.preboot ? 'tests/fixtures/wechat-preboot-lock.mjs' : 'tests/fixtures/wechat-login-gateway.mjs'))}` : '',
       WECHAT_FIXTURE_FAILURE: fixture?.fail ? '1' : undefined,

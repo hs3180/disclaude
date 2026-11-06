@@ -23,14 +23,21 @@ path/document identity.
 
 ```sh
 disclaude jupyter check --no-interactive
-disclaude jupyter create --path research/analysis.ipynb --no-interactive
+disclaude jupyter create --input-file - --no-interactive <<'JSON'
+{"path":"research/analysis.ipynb"}
+JSON
 disclaude jupyter list
 disclaude jupyter tools
 ```
 
-The remote parent directory must already exist. `create` checks the selected
-path and refuses to overwrite an existing resource. `link` reads an existing
-Notebook and returns its stable document ID and opaque `notebookId`.
+`tools` lists every command except itself — including `check` and the
+`link`/`create`/`unlink` lifecycle commands — each with the JSON input schema
+used through `--input-file`. Every command takes exactly one JSON object this
+way; `link`/`create`/`unlink` also accept the `--path PATH` shorthand for the
+same `path` field. The remote parent directory must already exist. `create`
+checks the selected path and refuses to overwrite an existing resource. `link`
+reads an existing Notebook and returns its stable document ID and opaque
+`notebookId`. `unlink` removes only the local reference.
 
 Use the returned ID and the schemas from `tools` for later commands:
 
@@ -95,15 +102,43 @@ bounded previews; reports and images are files, not embedded binary stdout.
 | --- | --- |
 | `tools`, `list` | Read schemas/local references and journal; no connection or file creation |
 | `check` | Discover authenticated remote interfaces; no Notebook/kernel creation |
-| `link`, `create`, `unlink` | Manage Project references; `create` also creates the remote Notebook; unlink preserves it and its kernel |
+| `link`, `create`, `unlink` | Manage Project references through one JSON `{"path":...}` object (`--path` is the shorthand); `create` also creates the remote Notebook; unlink preserves it and its kernel |
 | `describe`, `read-cell` | Read live RTC cells and bounded outputs |
 | `insert-cell`, `edit-cell`, `move-cell`, `delete-cell` | Change explicitly identified shared cells |
 | `execute`, `status`, `stop` | Submit once, query or cancel the original execution handle |
 | `interrupt` | Send one interrupt to an explicitly selected existing kernel; no run ID or execution journal required |
-| `import-file` | Copy a regular Project-local file, up to 512 MB, into the remote input directory in one command; files above 2 MB upload in server-reassembled chunks and are hash-verified; return hash, size and kernel-relative path |
+| `import-file` | Copy one regular Project-local file by Project-relative `filePath`, up to 512 MB, into the remote input directory in one command; files above 2 MB upload in server-reassembled chunks and are hash-verified; return hash, size and kernel-relative path |
 | `observe-image` | Save one bounded image artifact for the harness to inspect |
 | `export`, `download-report` | Create matching remote HTML/ipynb snapshot; download also retains local files and up to four raster previews |
 | `patch` | Existing upstream repair installer, using Jupyter Terminal only |
+
+### Documented contracts
+
+**Phantom first cell after `create`.** A Notebook created with zero cells is
+seeded by the RTC server with exactly one phantom empty code cell before any
+user content exists. `describe` lists it as the first row: a server-generated
+UUID `cellId` whose `sourceHash` is the SHA-256 of the empty string
+(`e3b0c442…7852b855`). It is server seeding, not content: do not execute or
+edit it as findings. The first appended `insert-cell` (empty `beforeCellId`)
+removes the seed and reports `removedSeedCellId`; later appends leave cells
+untouched.
+
+**Multi-cell `execute` ordering.** `execute` submissions accepted for one
+kernel run in server-side submission order: the repaired nbmodel queue is a
+per-kernel FIFO with one worker, so cells submitted as A then B then C execute
+in that order, never in parallel or reordered. One exception: an older request
+still queued for the same `cellId` is superseded by a newer queued submission
+for that cell. The CLI additionally refuses a new `execute` while the kernel
+reports busy — query the existing run first.
+
+**`import-file` accepts Project-relative paths only.** `filePath` is resolved
+against the Project directory (`--project-dir`). It must name one existing
+regular file inside that Project after resolution: absolute paths, `..`
+traversal out of the Project, symlinks and non-regular files are rejected, and
+the file is re-verified against changes while being read (at most 2 MB). Host
+paths and kernel paths belong to separate environments; use the returned
+`kernelRelativePath` in remote code. Whole directory trees and object-storage
+(S3/URL pull) transfers are out of scope; import files one by one.
 
 ### Error output previews
 

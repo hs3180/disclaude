@@ -18,7 +18,7 @@
  * @see Issue #1556 - WeChat Channel Feature Enhancement
  */
 
-import { createLogger, BaseChannel, type OutgoingMessage, type ChannelCapabilities, type IncomingMessage } from '@disclaude/core';
+import { buildWelcomeMessage, createLogger, BaseChannel, type OutgoingMessage, type ChannelCapabilities, type IncomingMessage } from '@disclaude/core';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { WeChatApiClient, WeChatApiError } from './api-client.js';
@@ -33,7 +33,7 @@ import { tmpdir } from 'node:os';
 import { dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { WeChatTypingController } from './typing-controller.js';
-import { emptyWelcomeState, WeChatWelcome, WECHAT_WELCOME_TEXT } from './welcome.js';
+import { emptyWelcomeState, WeChatWelcome } from './welcome.js';
 
 const logger = createLogger('WeChatChannel');
 
@@ -178,7 +178,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
         const welcomeClient = this.client;
         this.welcome = new WeChatWelcome(store ? await store.loadWelcome(botId) : emptyWelcomeState(botId),
           state => store ? store.saveWelcome(state) : Promise.resolve(), peer => this.contexts.get(peer),
-          (peer, contextToken) => welcomeClient.sendText({ to: peer, content: WECHAT_WELCOME_TEXT, contextToken }),
+          (peer, contextToken) => welcomeClient.sendText({ to: peer, content: buildWelcomeMessage('wechat'), contextToken }),
           (peer, event) => logger.info({ channelId: this.id, peerHash: createHash('sha256').update(peer).digest('hex').slice(0, 12), event }, 'WeChat onboarding'));
       } catch { logger.warn({ channelId: this.id }, 'Welcome state unavailable; task reception continues without resetting it'); }
       this.messageListener.start();

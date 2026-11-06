@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { handleHelp } from './help.js';
+import { buildWelcomeMessage, handleHelp } from './help.js';
 import type { ControlCommand } from '../../types/channel.js';
 import type { ControlHandlerContext } from '../types.js';
 
@@ -82,6 +82,18 @@ describe('handleHelp', () => {
     const result = await handleHelp(mockCommand, mockContext);
     expect(result.message).toContain('| 命令 | 说明 | 用法 |');
     expect(result.message).toContain('|------|------|------|');
+  });
+
+  it('keeps automatic welcomes plain, concise and separate from the full help view', () => {
+    for (const channel of ['wechat', 'feishu'] as const) {
+      const welcome = buildWelcomeMessage(channel);
+      expect(welcome).toContain('/help');
+      expect(welcome.match(/「[^」]+」/g)).toHaveLength(3);
+      expect(welcome).not.toMatch(/backend|command|preset|[*`|#\[]/i);
+      expect(welcome.length).toBeLessThan(220);
+    }
+    expect(buildWelcomeMessage('wechat')).not.toContain('完整命令列表');
+    expect(buildWelcomeMessage('feishu')).toContain('完整命令列表');
   });
 
   it('should return consistent result regardless of command data', async () => {

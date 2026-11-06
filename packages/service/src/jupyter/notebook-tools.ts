@@ -135,7 +135,7 @@ export class NotebookTools {
       ),
       this.tool(
         'notebook_describe',
-        'Read live RTC cells, including unsaved human edits. Use cellId for later operations.',
+        'Read live RTC cells, including unsaved human edits. Use cellId for later operations. A freshly created zero-cell Notebook lists one RTC-seeded phantom empty code cell first: a server UUID cellId whose sourceHash is the SHA-256 of the empty string. It is server seeding, not content; the first appended insert-cell removes it (removedSeedCellId).',
         notebookId,
         async (input) => this.describe(await this.bound(String(input.notebookId)), 64)
       ),
@@ -302,7 +302,7 @@ export class NotebookTools {
       ),
       this.tool(
         'notebook_execute',
-        'Submit the exact live code cell once to the remote nbmodel queue. Persist and reuse runId; unknown submissions must not be replayed. Poll notebook_status for completion.',
+        'Submit the exact live code cell once to the remote nbmodel queue. Persist and reuse runId; unknown submissions must not be replayed. Poll notebook_status for completion. Ordering: accepted submissions to one kernel run in server-side submission order (per-kernel FIFO queue); an older still-queued request for the same cellId is superseded by a newer one. The CLI refuses a new submission while the kernel reports busy.',
         {
           ...cellId,
           expectedSourceHash: sourceHash,
@@ -398,7 +398,14 @@ export class NotebookTools {
       this.tool(
         'notebook_import_file',
         'Copy an explicitly selected Project-local file to the remote Notebook input directory in one command. Files above 2 MB upload in server-reassembled chunks and are hash-verified; nothing incomplete is left behind. Return its kernel-relative path, SHA-256 and size; limit 512 MB.',
-        { ...notebookId, filePath: text },
+        {
+          ...notebookId,
+          filePath: {
+            type: 'string',
+            description:
+              'Project-relative path of one existing regular file (resolved against --project-dir; absolute, escaping or symlinked paths are rejected; at most 512 MB).',
+          },
+        },
         (input, invocation) => this.importFile(input, invocation)
       ),
       this.tool(
