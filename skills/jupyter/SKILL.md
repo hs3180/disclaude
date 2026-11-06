@@ -12,8 +12,9 @@ for the current JSON input schemas and [README.md](./README.md) for setup.
 
 1. Run `list` for Project-local references and recent run IDs, not remote inventory.
    Check its credential state; configured credentials are not an authentication probe. Use
-   `link --path research/analysis.ipynb` for an existing Notebook, or `create`
-   for a new, explicitly selected remote path. Keep findings, code and conclusions
+   `link --input-file -` with `{"path":"research/analysis.ipynb"}` for an existing
+   Notebook (`--path` is the shorthand), or `create` with the same JSON input for
+   a new, explicitly selected remote path. Keep findings, code and conclusions
    in that remote Notebook. Project bindings remain managed by `/project`.
 2. Before GPU work on two existing kernels, run `runtime-probe` for each with
    `--input-file -` and JSON `{"kernelId":"existing-kernel-id"}`. The command
@@ -29,14 +30,23 @@ for the current JSON input schemas and [README.md](./README.md) for setup.
    Raw hostnames, GPU names, processes, utilization and environment values are
    deliberately not exposed.
 3. Use `describe` and `read-cell` to read live shared cells by stable ID.
-   Error previews expose `ename`, `evalue` and bounded `traceback[]`; inspect
+   Right after `create`, `describe` lists one RTC-seeded phantom empty code cell
+   first — a server UUID `cellId` whose `sourceHash` is the empty-string
+   SHA-256 (`e3b0c442…7852b855`); it is server seeding, not content, and the
+   first appended `insert-cell` removes it (`removedSeedCellId`). Error
+   previews expose `ename`, `evalue` and bounded `traceback[]`; inspect
    the recent traceback lines and any truncation flag before diagnosing code. Edit,
    move or delete only the intended cell, using its latest `sourceHash`.
    Copy the full 64-hex hash; a conflict reports expected/actual values and asks
    for a fresh read. Preserve human content. These checks remain client-side,
    not atomic server CAS.
-3. Pass command arguments through `--input-file FILE` or `--input-file -`.
-   Use a unique `runId` with `execute`; it submits once and returns promptly.
+3. Pass command arguments through `--input-file FILE` or `--input-file -`;
+   every command, including `link`/`create`/`unlink`, takes one JSON object
+   this way. Use a unique `runId` with `execute`; it submits once and returns
+   promptly. Multiple accepted `execute` submissions to one kernel run in
+   server-side submission order (per-kernel FIFO queue); an older still-queued
+   request for the same `cellId` is superseded by a newer one, and the CLI
+   refuses a new submission while the kernel reports busy.
    Continue with `status` for the original run. Reuse the same ID after a lost
    response; never invent a new ID to replay an uncertain execution.
    Check `source`: `live` is a current remote observation; `local-journal` is
@@ -61,9 +71,13 @@ for the current JSON input schemas and [README.md](./README.md) for setup.
    execution, or a subsequent kernel observation. Do not automatically retry an
    unknown interrupt or substitute it for a failed `stop`.
 5. To use an incoming attachment, copy the supplied local attachment into this
-   Project, then `import-file` with its Project-relative path. Read the returned
-   hash/size and use `kernelRelativePath` in remote code. Host and kernel paths
-   belong to separate environments.
+   Project, then `import-file` with its Project-relative `filePath`: the path
+   is resolved against the Project directory and must stay inside it —
+   absolute paths, traversal out of the Project, symlinks and non-regular
+   files are rejected (limit 2 MB, one file per invocation; whole directory
+   trees and object-storage/URL pull transfers are out of scope). Read the
+   returned hash/size and use `kernelRelativePath` in remote code. Host and
+   kernel paths belong to separate environments.
 6. Use `observe-image` to obtain a local image artifact and inspect that file
    with the harness's image tool. MIME names alone do not establish plot content.
    Output provenance can be historical after a source edit.
