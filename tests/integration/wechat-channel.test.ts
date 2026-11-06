@@ -9,7 +9,7 @@ import { promisify } from 'node:util';
 import nock from 'nock';
 import { WeChatChannel } from '../../packages/service/src/channels/wechat/wechat-channel.js';
 import { WeChatStateStore } from '../../packages/service/src/channels/wechat/state-store.js';
-import { WECHAT_WELCOME_TEXT } from '../../packages/service/src/channels/wechat/welcome.js';
+import { buildWelcomeMessage } from '@disclaude/core';
 import { WECHAT_WIRED_DESCRIPTOR } from '../../packages/service/src/channels/wired-descriptors.js';
 import { HttpApiServer } from '../../packages/service/src/http-api-server.js';
 
@@ -41,7 +41,7 @@ describe('WeChat channel protocol integration', () => {
     nock('https://ilinkai.weixin.qq.com').persist().post('/ilink/bot/getconfig').reply(200, { ret: 0, typing_ticket: 'ticket' });
     nock('https://ilinkai.weixin.qq.com').persist().post('/ilink/bot/sendtyping').reply(200, { ret: 0 });
     const welcome = nock('https://ilinkai.weixin.qq.com').post('/ilink/bot/sendmessage', body =>
-      body.msg.to_user_id === peer && body.msg.context_token === 'private-context' && body.msg.item_list[0].text_item.text === WECHAT_WELCOME_TEXT)
+      body.msg.to_user_id === peer && body.msg.context_token === 'private-context' && body.msg.item_list[0].text_item.text === buildWelcomeMessage('wechat'))
       .reply(200, { ret: 0, message_id: 'welcome-ack' });
     nock('https://ilinkai.weixin.qq.com').persist().post('/ilink/bot/getupdates').reply(async () => {
       polls++;

@@ -380,17 +380,17 @@ describe('ChannelManager', () => {
       expect(manager.getChannelForChatId('unknown-chat')).toBeUndefined();
     });
 
-    it('should update mapping when chatId is reassigned', () => {
+    it('fails closed on cross-channel reassignment and recovers after one owner leaves', async () => {
       const feishuChannel = createMockChannel('feishu');
-      const restChannel = createMockChannel('rest');
-      manager.register(feishuChannel);
-      manager.register(restChannel);
-
-      manager.registerChatId('chat-1', feishuChannel);
-      expect(manager.getChannelForChatId('chat-1')).toBe(feishuChannel);
-
-      manager.registerChatId('chat-1', restChannel);
-      expect(manager.getChannelForChatId('chat-1')).toBe(restChannel);
+      const wechatChannel = createMockChannel('wechat:account');
+      manager.register(feishuChannel); manager.register(wechatChannel);
+      manager.registerChatId('shared-chat', feishuChannel); manager.registerChatId('shared-chat', wechatChannel);
+      expect(manager.getChannelForChatId('shared-chat')).toBeUndefined();
+      await expect(manager.sendToChat({ chatId: 'shared-chat', type: 'text', text: 'no misroute' })).rejects.toThrow('Ambiguous');
+      expect(feishuChannel.sendMessage).not.toHaveBeenCalled(); expect(wechatChannel.sendMessage).not.toHaveBeenCalled();
+      manager.unregister(wechatChannel.id);
+      await expect(manager.sendToChat({ chatId: 'shared-chat', type: 'text', text: 'healthy owner' })).resolves.toBeUndefined();
+      expect(feishuChannel.sendMessage).toHaveBeenCalledTimes(1); expect(wechatChannel.sendMessage).not.toHaveBeenCalled();
     });
 
     it('should auto-register chatId on incoming message via setupHandlers', async () => {
