@@ -107,7 +107,7 @@ bounded previews; reports and images are files, not embedded binary stdout.
 | `insert-cell`, `edit-cell`, `move-cell`, `delete-cell` | Change explicitly identified shared cells |
 | `execute`, `status`, `stop` | Submit once, query or cancel the original execution handle |
 | `interrupt` | Send one interrupt to an explicitly selected existing kernel; no run ID or execution journal required |
-| `import-file` | Copy one regular Project-local file by Project-relative `filePath`, up to 2 MB, into the remote input directory; return hash, size and kernel-relative path |
+| `import-file` | Copy one regular Project-local file by Project-relative `filePath`, up to 512 MB, into the remote input directory in one command; files above 2 MB upload in server-reassembled chunks and are hash-verified; return hash, size and kernel-relative path |
 | `observe-image` | Save one bounded image artifact for the harness to inspect |
 | `export`, `download-report` | Create matching remote HTML/ipynb snapshot; download also retains local files and up to four raster previews |
 | `patch` | Existing upstream repair installer, using Jupyter Terminal only |
@@ -229,6 +229,16 @@ permissions. The caller owns cleanup after inspection/delivery. Remote snapshots
 and inputs remain on Jupyter; the CLI does not delete user resources.
 
 ## Limits
+
+`import-file` moves one explicitly selected regular file per invocation and
+refuses anything above 512 MB, symlinks and paths outside the Project. Files
+above 2 MB use chunked Contents uploads (jupyter-server `LargeFileManager`
+semantics) and a SHA-256 readback over the server's files route; a server that
+rejects chunked models or the files route fails closed, deletes its partial
+remote file and reports a retryable diagnostic instead of leaving a truncated
+result. A repeat import of identical content reports `existing` without
+re-uploading. Directory recursion and object-storage/URL pull modes are not
+implemented; they are listed as out of scope, not pending here.
 
 The CLI provides no atomic server-side cell CAS or multi-client ownership fence.
 Client source checks detect observed conflicts but cannot eliminate a concurrent
