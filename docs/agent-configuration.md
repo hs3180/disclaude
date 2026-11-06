@@ -108,12 +108,15 @@ connection before replacing the current chat's session. Failed preflight preserv
 the existing session. No credentials are required for dormant API bindings when
 the default runtime is native.
 
-Selection precedence for each incoming session is `/agent use` (explicit,
-process-lifetime) > an administrator's durable chat binding (`/agent bind
-<chatId> <preset>`, `#5476`) > the owning application's `channels.<app>.agent`
-default > the global default marker. `binding`/`unbind` query and clear the
-durable binding. These three binding operations are restricted to actor ids
-listed in `messaging.admin.actorIds`; each attempt is logged with actor, target
+Selection precedence for each incoming session is `/agent use <preset>`
+(explicit, process-lifetime) > an administrator's durable chat binding
+(`/agent use <preset> --bind <chatId>`, `#5476`) > the owning application's
+`channels.<app>.agent` default > the global default marker. The durable
+binding rides on the same `/agent use` verb rather than separate commands:
+`/agent use --bind <chatId>` (without a preset) queries the binding and the
+effective preset, while `/agent use --unbind <chatId>` clears it. These
+binding operations are restricted to actor ids listed in
+`messaging.admin.actorIds`; each attempt is logged with actor, target
 chat and preset as an `agent-binding` audit record. A binding takes effect on
 the target chat's next message, survives restarts through
 `workspace/.disclaude/agent-bindings.json`, and refuses to replace a busy

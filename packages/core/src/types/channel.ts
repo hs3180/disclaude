@@ -157,8 +157,12 @@ export interface CommandDataMap {
   project: { subcommand: string; workingDir?: string };
   /** /reset — reset agent, optionally skip history loading (Issue #3696) */
   reset: { skipContext?: boolean };
-  /** /agent — inspect/select presets or manage durable chat bindings (#5476) */
-  agent: { subcommand: string; preset?: string; targetChatId?: string };
+  /**
+   * /agent — inspect/select presets. `use` additionally carries the durable
+   * chat-binding qualifiers `--bind <chatId>` / `--unbind <chatId>` (#5476):
+   * an empty-string id means the flag was typed without its value.
+   */
+  agent: { subcommand: string; preset?: string; bindChatId?: string; unbindChatId?: string };
   steer: { prompt?: string };
   /** Explicit Goal record commands; execution is a separate capability. */
   goal: { args?: string[] };

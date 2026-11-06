@@ -51,13 +51,28 @@ export function normalizeCommandData<T extends ControlCommandType>(
     case 'agent': {
       const args = Array.isArray(rawData.args) ? rawData.args as string[] : [];
       const subcommand = (args[0] ?? 'current').toLowerCase();
-      const bindArgs = subcommand === 'bind' && args.length >= 3;
-      const targetChatId = bindArgs ? args[1] : subcommand !== 'bind' ? args[1] : undefined;
-      const preset = bindArgs ? args[2] : subcommand === 'use' ? args[1] : undefined;
+      if (subcommand !== 'use') {
+        return { subcommand, ...(args[1] ? { preset: args[1] } : {}) };
+      }
+      // `/agent use <preset> [--bind <chatId>]` switches this session and/or
+      // durably binds a chat; `--bind <chatId>` alone queries and
+      // `--unbind <chatId>` clears (#5476). Flags may appear in any order; a
+      // flag without a value keeps an empty-string id so the handler can show
+      // usage instead of silently dropping the qualifier.
+      let preset: string | undefined;
+      let bindChatId: string | undefined;
+      let unbindChatId: string | undefined;
+      for (let i = 1; i < args.length; i++) {
+        const arg = args[i];
+        if (arg === '--bind') { bindChatId = args[++i] ?? ''; continue; }
+        if (arg === '--unbind') { unbindChatId = args[++i] ?? ''; continue; }
+        preset ??= arg;
+      }
       return {
         subcommand,
         ...(preset ? { preset } : {}),
-        ...(targetChatId ? { targetChatId } : {}),
+        ...(bindChatId !== undefined ? { bindChatId } : {}),
+        ...(unbindChatId !== undefined ? { unbindChatId } : {}),
       };
     }
     case 'steer': {

@@ -271,12 +271,12 @@ describe('createDefaultMessageHandler', () => {
       chatId: 'peer@im.wechat',
       userId: 'admin@im.wechat',
       messageId: 'wx-1',
-      content: '/agent bind peer@im.wechat assistant',
+      content: '/agent use assistant --bind peer@im.wechat',
       metadata: { threadRootId: 'wx-topic' },
     }));
     expect(controlHandler).toHaveBeenCalledWith(expect.objectContaining({
       type: 'agent', chatId: 'peer@im.wechat', actorId: 'admin@im.wechat', sourceMessageId: 'wx-1',
-      threadRootId: 'wx-topic', data: { subcommand: 'bind', preset: 'assistant', targetChatId: 'peer@im.wechat' },
+      threadRootId: 'wx-topic', data: { subcommand: 'use', preset: 'assistant', bindChatId: 'peer@im.wechat' },
     }));
     expect(channel.sendMessage).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
       chatId: 'peer@im.wechat', threadId: 'wx-topic', text: 'binding updated',

@@ -62,9 +62,9 @@ channels:
     enabled: false
     # Optional absolute path, same as login --state-dir; default ~/.disclaude/wechat
     # stateDir: /absolute/path/to/private/wechat-account
-    # Per-app default agent, below a durable /agent bind and above the global
-    # default (#5476). Dynamic accounts may instead set it on their
-    # channels.wechat:<registration-id> block.
+    # Per-app default agent, below a durable /agent use --bind binding and
+    # above the global default (#5476). Dynamic accounts may instead set it on
+    # their channels.wechat:<registration-id> block.
     # agent: assistant
   feishu:
     enabled: true
@@ -84,7 +84,7 @@ workspace:
   dir: ./workspace
 
 # Explicit actor ids allowed to query/mutate durable agent bindings through
-# /agent bind|binding|unbind (#5476). Actor ids are channel-provided user ids,
+# /agent use --bind/--unbind (#5476). Actor ids are channel-provided user ids,
 # not the admin output chat below.
 messaging:
   admin:

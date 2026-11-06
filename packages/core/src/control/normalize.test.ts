@@ -63,6 +63,40 @@ describe('normalizeCommandData', () => {
     });
   });
 
+  describe('agent command', () => {
+    it('should keep the plain use form on the preset argument', () => {
+      const result = normalizeCommandData('agent', { args: ['use', 'fast'] });
+      expect(result).toEqual({ subcommand: 'use', preset: 'fast' });
+    });
+
+    it('should parse the durable-binding qualifier after the preset (#5476)', () => {
+      const result = normalizeCommandData('agent', { args: ['use', 'fast', '--bind', 'oc_target'] });
+      expect(result).toEqual({ subcommand: 'use', preset: 'fast', bindChatId: 'oc_target' });
+    });
+
+    it('should accept the durable-binding qualifier before the preset (#5476)', () => {
+      const result = normalizeCommandData('agent', { args: ['use', '--bind', 'oc_target', 'fast'] });
+      expect(result).toEqual({ subcommand: 'use', preset: 'fast', bindChatId: 'oc_target' });
+    });
+
+    it('should parse the query and clear forms without a preset (#5476)', () => {
+      expect(normalizeCommandData('agent', { args: ['use', '--bind', 'oc_target'] }))
+        .toEqual({ subcommand: 'use', bindChatId: 'oc_target' });
+      expect(normalizeCommandData('agent', { args: ['use', '--unbind', 'oc_target'] }))
+        .toEqual({ subcommand: 'use', unbindChatId: 'oc_target' });
+    });
+
+    it('should keep a flag without its value so the handler can show usage', () => {
+      const result = normalizeCommandData('agent', { args: ['use', 'fast', '--bind'] });
+      expect(result).toEqual({ subcommand: 'use', preset: 'fast', bindChatId: '' });
+    });
+
+    it('should keep chat ids case-sensitive', () => {
+      const result = normalizeCommandData('agent', { args: ['USE', '--bind', 'peer@im.wechat'] });
+      expect(result).toEqual({ subcommand: 'use', bindChatId: 'peer@im.wechat' });
+    });
+  });
+
   describe('commands without data', () => {
     it('should return undefined for help', () => {
       const result = normalizeCommandData('help', { args: [] });
