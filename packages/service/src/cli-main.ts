@@ -525,13 +525,13 @@ export async function main(): Promise<void> {
   logger.info({ workspaceDir }, 'ProjectManager initialized');
 
   // Issue #5400 (PR A): registry of each chat's most recent failure context,
-  // recorded by ChatAgent for the /issue feedback entry.
+  // recorded by ChatAgent for the /feedback entry (#5428).
   const failureRegistry = new ChatFailureRegistry();
 
   const agentPool = new ChatSessionPool({
     agentPresets: Config.getAgentPresets(),
     turnRecovery,
-    // Issue #5400: per-chat last-failure registry backing the /issue entry.
+    // Issue #5400: per-chat last-failure registry backing the /feedback entry.
     failureRecorder: (failure) => failureRegistry.record(failure),
     messageBuilderOptions: createFeishuMessageBuilderOptions(),
     cwdProvider: projectManager.createCwdProvider(),
@@ -583,7 +583,7 @@ export async function main(): Promise<void> {
         service.getDebugGroupService().setDebugGroup(chatId, name),
       clearDebugGroup: () => service.getDebugGroupService().clearDebugGroup(),
     },
-    // Issue #5400: /issue reads the chat's last failure from this registry
+    // Issue #5400: /feedback reads the chat's last failure from this registry
     // (recorded by ChatAgent); the Feishu descriptor setup adds the
     // confirmation-card hook on top of it.
     failureRegistry,

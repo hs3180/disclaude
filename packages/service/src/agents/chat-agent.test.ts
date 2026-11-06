@@ -4072,7 +4072,7 @@ describe('ChatAgent (service)', () => {
       } finally { agent.dispose(); }
     });
 
-    it('records the fatal failure for the per-chat /issue registry (#5400)', async () => {
+    it('records the fatal failure for the per-chat /feedback registry (#5400)', async () => {
       const callbacks = createMockCallbacks();
       const recorded: any[] = [];
       const agent = new ChatAgent({ chatId: 'loop-failure', callbacks, apiKey: 'key', model: 'model', agentBackend: 'codex',

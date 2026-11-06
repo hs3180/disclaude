@@ -2,11 +2,12 @@
  * Feishu confirmation-card flow for one-click GitHub issue reporting
  * (Issue #5400, PR B).
  *
- * `/issue` → the control command reads the chat's last failure record and
- * calls `start()` here, which sends a card with the SANITIZED diagnostic
- * summary plus an optional user note field. Card callbacks are handled
- * DIRECTLY (never routed through the LLM agent), so reporting keeps working
- * when the agent runtime itself is the thing that failed.
+ * `/feedback` (compat alias `/issue`) → the control command reads the chat's
+ * last failure record and calls `start()` here, which sends a card with the
+ * SANITIZED diagnostic summary plus an optional user note field. Card
+ * callbacks are handled DIRECTLY (never routed through the LLM agent), so
+ * reporting keeps working when the agent runtime itself is the thing that
+ * failed.
  *
  * Terminal states are always painted on the card: submitted (with a clickable
  * issue link), cancelled, or failed with an explicit reason — the failure

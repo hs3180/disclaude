@@ -139,7 +139,10 @@ export type ControlCommandType =
   | 'agent'
   | 'steer'
   | 'goal'
-  // One-click GitHub issue reporting of the chat's last failure (Issue #5400)
+  // One-click GitHub issue reporting of the chat's last failure (Issue #5400;
+  // #5428: /feedback is the canonical entry)
+  | 'feedback'
+  // Backward-compatible alias; /feedback is the canonical entry (#5428).
   | 'issue';
 
 /**

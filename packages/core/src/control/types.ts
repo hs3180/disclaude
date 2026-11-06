@@ -113,7 +113,7 @@ export interface ControlHandlerContext {
   shutdown?: () => Promise<void>;
 
   /**
-   * Issue #5400: per-chat last-failure records backing /issue.
+   * Issue #5400: per-chat last-failure records backing /feedback (#5428).
    * The registry is fed by ChatAgent's failureRecorder wiring.
    */
   failureRegistry?: {
@@ -125,8 +125,8 @@ export interface ControlHandlerContext {
 
   /**
    * Issue #5400: channel hook that renders the sanitized confirmation card
-   * for a failure record (Feishu interactive card). Absent → /issue answers
-   * with text-only guidance instead.
+   * for a failure record (Feishu interactive card). Absent → /feedback answers
+   * with text-only guidance instead (#5428).
    */
   issueReporting?: {
     sendConfirmation(

@@ -66,13 +66,14 @@ describe('tryHandleSlashCommand', () => {
     expect(deps.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining('用户直接发送') }));
   });
 
-  it('no longer routes /feedback as a control entry; only /issue reports failures', async () => {
-    // Single-entry contract (PR #5697 rework): the registry exposes no
-    // 'feedback' command, so dispatch fails and the router leaves the text to
-    // ordinary chat handling instead of answering with a control reply.
-    const { deps } = makeDeps({ hasControlHandler: true, controlResponse: { success: false, error: 'Unknown command: feedback' } });
-    expect(await tryHandleSlashCommand(input('/feedback'), deps)).toBe(false);
-    expect(deps.sendMessage).not.toHaveBeenCalled();
+  it('routes /feedback through the canonical control entry', async () => {
+    // Maintainer decision (PR #5697 comment 6679335183): /feedback is the
+    // canonical failure-reporting entry, so the router dispatches it like any
+    // other control command and relays the handler's reply.
+    const { deps } = makeDeps({ hasControlHandler: true, controlResponse: { success: true, message: 'accepted' } });
+    expect(await tryHandleSlashCommand(input('/feedback'), deps)).toBe(true);
+    expect(deps.emitControl).toHaveBeenCalledWith(expect.objectContaining({ type: 'feedback', chatId: 'oc_x' }));
+    expect(deps.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: 'accepted' }));
   });
 
   it('carries the raw platform source ID outside Goal arguments into control dispatch', async () => {

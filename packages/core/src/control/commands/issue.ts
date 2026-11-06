@@ -3,14 +3,14 @@ import type { CommandHandler, ControlHandlerContext } from '../types.js';
 import { createPrefilledIssueUrl, DEFAULT_ISSUE_REPOSITORY } from '../../feedback/index.js';
 
 /**
- * /issue (Issue #5400): offer one-click GitHub reporting of this chat's most
- * recent failure. The heavy lifting (sanitized summary card, GitHub App
- * client, dedup) lives behind the channel hook; the command itself stays
- * available even when the agent runtime is down — it only reads the failure
- * registry and delegates.
+ * /feedback (Issue #5400; #5428 renames the unified entry to /feedback):
+ * offer one-click GitHub reporting of this chat's most recent failure. The
+ * heavy lifting (sanitized summary card, GitHub App client, dedup) lives
+ * behind the channel hook; the command itself stays available even when the
+ * agent runtime is down — it only reads the failure registry and delegates.
  */
-export const handleIssue: CommandHandler<'issue'> = async (
-  command: ControlCommand<'issue'>,
+export const handleFeedback: CommandHandler<'feedback'> = async (
+  command: ControlCommand<'feedback'>,
   context: ControlHandlerContext
 ): Promise<ControlResponse> => {
   if (!context.failureRegistry) {
@@ -20,7 +20,7 @@ export const handleIssue: CommandHandler<'issue'> = async (
   if (!record) {
     return {
       success: true,
-      message: 'ℹ️ 本会话暂无可上报的失败记录。出现报错提示（含诊断 ID）后再使用 /issue。',
+      message: 'ℹ️ 本会话暂无可上报的失败记录。出现报错提示（含诊断 ID）后再使用 /feedback。',
     };
   }
   if (!context.issueReporting) {
@@ -51,13 +51,22 @@ export const handleIssue: CommandHandler<'issue'> = async (
         }
       : {
           success: false,
-          message: `上报确认卡发送失败：${sent.error}。失败记录已保留，可稍后重试 /issue。`,
+          message: `上报确认卡发送失败：${sent.error}。失败记录已保留，可稍后重试 /feedback。`,
         };
   } catch (error) {
     return {
       success: false,
-      message: '上报确认卡发送失败，失败记录已保留，可稍后重试 /issue。',
+      message: '上报确认卡发送失败，失败记录已保留，可稍后重试 /feedback。',
       error: error instanceof Error ? error.message : String(error),
     };
   }
+};
+
+/** /issue remains a compatible alias while /feedback is the canonical entry (#5428). */
+export const handleIssue: CommandHandler<'issue'> = async (command, context) => {
+  const response = await handleFeedback({ ...command, type: 'feedback' }, context);
+  return {
+    ...response,
+    message: `${response.message ?? ''}\n/issue 已统一为 /feedback 的兼容别名，后续请使用 /feedback。`.trim(),
+  };
 };

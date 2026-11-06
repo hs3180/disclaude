@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ControlCommand } from '../../types/channel.js';
 import type { ControlHandlerContext } from '../types.js';
 import { ChatFailureRegistry, type ChatFailureRecord } from '../../feedback/index.js';
-import { handleIssue } from './issue.js';
+import { handleFeedback } from './issue.js';
 import { commandRegistry } from './index.js';
 import { createControlHandler } from '../handler.js';
 
@@ -22,17 +22,17 @@ function context(overrides: Partial<ControlHandlerContext> = {}): ControlHandler
   };
 }
 
-const command: ControlCommand<'issue'> = { type: 'issue', chatId: 'chat-1' };
+const command: ControlCommand<'feedback'> = { type: 'feedback', chatId: 'chat-1' };
 
-describe('/issue command', () => {
+describe('/feedback command', () => {
   it('is unavailable guidance when the registry is not wired', async () => {
-    const response = await handleIssue(command, context());
+    const response = await handleFeedback(command, context());
     expect(response.success).toBe(false);
     expect(response.message).toContain('未启用');
   });
 
   it('tells the user when the chat has no failure record', async () => {
-    const response = await handleIssue(
+    const response = await handleFeedback(
       command,
       context({ failureRegistry: new ChatFailureRegistry() })
     );
@@ -43,7 +43,7 @@ describe('/issue command', () => {
   it('answers with a copyable prefilled URL when the channel cannot render cards', async () => {
     const registry = new ChatFailureRegistry();
     registry.record(record);
-    const response = await handleIssue(command, context({ failureRegistry: registry, serviceVersion: '0.6.0' }));
+    const response = await handleFeedback(command, context({ failureRegistry: registry, serviceVersion: '0.6.0' }));
     expect(response.success).toBe(true);
     expect(response.message).toContain('复制链接');
     expect(response.message).toContain('https://github.com/hs3180/disclaude/issues/new?');
@@ -54,8 +54,8 @@ describe('/issue command', () => {
     const registry = new ChatFailureRegistry();
     registry.record(record);
     const sendConfirmation = vi.fn().mockResolvedValue({ ok: true });
-    const response = await handleIssue(
-      { type: 'issue', chatId: 'chat-1', threadRootId: 'om-thread', actorId: 'ou-alice' },
+    const response = await handleFeedback(
+      { type: 'feedback', chatId: 'chat-1', threadRootId: 'om-thread', actorId: 'ou-alice' },
       context({ failureRegistry: registry, issueReporting: { sendConfirmation } })
     );
     expect(sendConfirmation).toHaveBeenCalledExactlyOnceWith(record, {
@@ -73,7 +73,7 @@ describe('/issue command', () => {
     const sendConfirmation = vi
       .fn()
       .mockResolvedValue({ ok: false, error: 'card was not delivered' });
-    const response = await handleIssue(
+    const response = await handleFeedback(
       command,
       context({ failureRegistry: registry, issueReporting: { sendConfirmation } })
     );
@@ -83,23 +83,30 @@ describe('/issue command', () => {
     expect(registry.get('chat-1')).toBeDefined();
   });
 
-  it('keeps /issue as the single failure-reporting slash entry (no /feedback alias)', async () => {
-    // Reviewer decision (PR #5697): only one entry point survives; /feedback is
-    // no longer a registered command and dispatching it must be rejected.
-    expect(commandRegistry.map(c => c.type)).not.toContain('feedback');
+  it('keeps /issue as a compatible alias of the canonical /feedback entry', async () => {
+    // Maintainer decision (PR #5697 comment 6679335183): /feedback is the
+    // canonical reporting entry; /issue stays dispatchable with the same
+    // behavior plus a migration hint pointing at /feedback.
+    const types = commandRegistry.map(c => c.type);
+    expect(types).toContain('feedback');
+    expect(types).toContain('issue');
     const registry = new ChatFailureRegistry();
     registry.record(record);
     const dispatch = createControlHandler(context({ failureRegistry: registry }));
-    const response = await dispatch({ type: 'feedback', chatId: 'chat-1' } as unknown as ControlCommand);
-    expect(response.success).toBe(false);
-    expect(response.error).toContain('Unknown command');
+    const canonical = await dispatch({ type: 'feedback', chatId: 'chat-1' });
+    const alias = await dispatch({ type: 'issue', chatId: 'chat-1' });
+    expect(canonical.success).toBe(true);
+    expect(alias.success).toBe(true);
+    expect(alias.message).toContain(canonical.message!);
+    expect(alias.message).toContain('兼容别名');
+    expect(alias.message).toContain('/feedback');
   });
 
   it('does not crash the command when the hook throws', async () => {
     const registry = new ChatFailureRegistry();
     registry.record(record);
     const sendConfirmation = vi.fn().mockRejectedValue(new Error('boom'));
-    const response = await handleIssue(
+    const response = await handleFeedback(
       command,
       context({ failureRegistry: registry, issueReporting: { sendConfirmation } })
     );

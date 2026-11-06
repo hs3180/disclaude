@@ -2588,7 +2588,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       logPath: `${sanitizeDiagnosticText(process.env.LOG_DIR ?? './logs')}/disclaude-combined*.log`,
       failureClass, timestamp: new Date().toISOString(), detail: sanitizeDiagnosticText(detail) };
     // Issue #5400: every user-visible failure context also feeds the per-chat
-    // last-failure registry behind /issue. The recorder must never break the
+    // last-failure registry behind /feedback. The recorder must never break the
     // failure path itself.
     try {
       this.failureRecorder?.({
@@ -3247,7 +3247,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             // remain valid; only the question never reached the user. The
             // structured context (failureClass input-delivery-failed + reason)
             // keeps the cause — e.g. a missing reply anchor on a push-initialized
-            // conversation (#5430) — traceable via /issue and the diagnostic ID.
+            // conversation (#5430) — traceable via /feedback and the diagnostic ID.
             this.restartManager.recordFailure(chatId, 'input-delivery');
             const failure = failureContext(this.activeLifecycleContext, resolveReplyThreadRoot(), 'input-delivery-failed',
               parsed.terminationDetail || inputDeliveryFailure?.reason || 'Async question was not delivered',

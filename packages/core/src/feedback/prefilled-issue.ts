@@ -33,7 +33,7 @@ export function createPrefilledIssueDraft(
     '### Reproduction clues',
     'Search the service log by diagnostic ID. Missing context is marked unavailable; add observed and expected behavior before submitting if useful.',
     '',
-    '> Prefilled by disclaude `/issue`. No chat, session, message or user identifiers are included.',
+    '> Prefilled by disclaude `/feedback`. No chat, session, message or user identifiers are included.',
   ].join('\n');
   return { title: `[feedback] ${failureClass}: ${headline} (diag ${diagnosticId.slice(0, 8)})`.slice(0, 160), body };
 }
