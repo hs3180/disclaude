@@ -2058,6 +2058,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     const inputGeneration = this.sessionGeneration + 1;
     if (this.callbacks.requestAgentInput) {
+      // #5467: capability must track the same per-turn conditions that reject
+      // async questions at runtime (once-mode, superseded session generation)
+      // so the provider can announce the incapability in the prompt up-front
+      // instead of letting the model discover it through a rejection.
+      sdkOptions.asyncUserInputCapable = () => !this.onceMode && this.sessionGeneration === inputGeneration;
       sdkOptions.onUserInput = async (request, context) => {
         if (!context || context.chatId !== chatId || !this.callbacks.requestAgentInput) {
           throw new Error('This channel cannot answer SDK input requests');

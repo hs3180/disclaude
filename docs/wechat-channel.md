@@ -43,7 +43,7 @@ agents:
       transport: app-server
 llms:
   daily:
-    model: gpt-6-luna
+    model: your-codex-model
 channels:
   wechat:
     enabled: true

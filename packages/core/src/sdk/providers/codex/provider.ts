@@ -98,8 +98,7 @@ import {
   userInputText,
   type CodexThreadEvent,
 } from './exec-adapter.js';
-import type { SkillsRegistry } from '../../../skills/index.js';
-import { codexNativeSkillRoots, codexSkillsRegistry } from './skill-sources.js';
+import { codexNativeSkillRoots } from './skill-sources.js';
 import { CODEX_OVERLOAD_MAX_RETRIES, CODEX_OVERLOAD_MAX_WAIT_MS, codexOverloadRetryDelay, readCodexOverloadFailure,
   waitForCodexOverloadRetry, codexCapacityRecoveryDelay, readCodexCapacityRecoveryPolicy,
   codexWriterConflictRetryDelay, readCodexWriterConflictPolicy,
@@ -371,8 +370,6 @@ export class CodexAgentProvider implements IAgentSDKProvider {
    * /reset, idle GC) deliberately does NOT stash — reset means reset.
    */
   private readonly threadStash = new Map<string, string>();
-  private readonly skillsRegistries = new Map<string, SkillsRegistry>();
-  private readonly reportedSkillRevisions = new WeakMap<SkillsRegistry, string>();
   /** Anonymous-stream key counter (queryStream without options.sessionKey). */
   private anonSessionCounter = 0;
 
@@ -403,24 +400,6 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       ...hooks,
       messageBuilderOptions: withCodexSourceCitations(hooks.messageBuilderOptions),
     };
-  }
-
-  private skillsManifestFor(projectRoot: string | undefined, executionRoot = projectRoot): string {
-    if (!projectRoot || !executionRoot) {return '';}
-    const key = JSON.stringify([projectRoot, executionRoot]);
-    let registry = this.skillsRegistries.get(key);
-    if (!registry) {
-      registry = codexSkillsRegistry(projectRoot, this.builtinRoot, executionRoot);
-      this.skillsRegistries.set(key, registry);
-    }
-    const resolution = registry.resolve();
-    if (this.reportedSkillRevisions.get(registry) !== resolution.revision) {
-      this.reportedSkillRevisions.set(registry, resolution.revision);
-      if (resolution.diagnostics.length) {
-        logger.warn({ diagnostics: resolution.diagnostics }, 'Skill discovery diagnostics');
-      }
-    }
-    return resolution.manifest;
   }
 
   // --------------------------------------------------------------------------
@@ -629,7 +608,21 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     if ((native ? native.transport ?? 'exec' : this.transportMode) === 'app-server') {
       return this.queryAppServer(input, options, sandboxDecision.sandbox, binary, codexModel, requestedEffort);
     }
-    const skillsManifest = this.skillsManifestFor(options.projectRoot ?? options.cwd, options.cwd ?? process.cwd());
+    // Native skill discovery (#5520, following #5546): codex exec has NO
+    // mechanism to register Disclaude-managed skill directories. Native extra
+    // roots exist only on the app-server protocol (skills/extraRoots/set,
+    // verified with Codex CLI 0.140.0-0.164.0; offline probes on 0.151.0 show
+    // exec natively scans only <cwd>/.codex/skills and $CODEX_HOME/skills,
+    // with no flag, env var or config override for extra roots). Fail fast
+    // with the supported alternative — never inject a fabricated skills
+    // manifest into the prompt. Same contract as the host-tools check below.
+    if (codexNativeSkillRoots(options.projectRoot ?? options.cwd, this.builtinRoot).length) {
+      throw new Error(
+        'Codex exec cannot natively load Disclaude skill directories: the CLI has no exec-side registration mechanism ' +
+        '(native loading uses the app-server protocol skills/extraRoots/set, verified with Codex CLI 0.140.0-0.164.0). ' +
+        'Set agents.<name>.codex.transport: app-server. No prompt manifest was injected and no model turn was submitted.'
+      );
+    }
     if (options.tools?.length) {
       throw new Error('Codex host tools require agents.<name>.codex.transport: app-server; codex exec cannot dispatch host tools.');
     }
@@ -1088,11 +1081,12 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           touchStallWatchdog();
           const contextualPrompt = resumeTarget === undefined && continuationContext
             ? `${continuationContext}\n${prompt}` : prompt;
+          // #5520: the prompt is the bare user request — skills are never
+          // prefixed here; a transport that cannot register them natively
+          // fails fast at queryStream entry instead.
           const { promise, handle } = runner.run(
             {
-              prompt: skillsManifest
-                ? `${skillsManifest}\n\nUser request:\n${contextualPrompt}`
-                : contextualPrompt,
+              prompt: contextualPrompt,
               correlation,
               resumeSessionId: resumeTarget,
               sandboxMode: sandboxDecision.sandbox,
@@ -1998,7 +1992,12 @@ export class CodexAgentProvider implements IAgentSDKProvider {
                   || activeTurnId !== boundTurn || !options.onUserInput) { throw new Error('Input request has no active channel turn'); }
                 turnCanRetry = false;
                 noteCapacityProgress();
-                if (request.kind === 'async-message' && (!next.value.inputContext || !options.onAsyncUserInputAnswer)) {
+                if (request.kind === 'async-message' && (!next.value.inputContext || !options.onAsyncUserInputAnswer
+                  || options.asyncUserInputCapable?.() === false)) {
+                  // #5467: same capability mismatch the prompt note announces —
+                  // reject as a structured "unsupported" error before host
+                  // wiring runs, so the question degrades to plain text
+                  // instead of surfacing a host rejection in the chat.
                   throw new CodexAsyncInputDeliveryError('unsupported');
                 }
                 // Even a non-blocking question can leave the model idle while the
@@ -2086,13 +2085,15 @@ export class CodexAgentProvider implements IAgentSDKProvider {
                 sessionKey,
                 // #5467: when wiring already proves this session cannot receive
                 // async question forms (no interactive channel, no input
-                // context, or no answer host), say so up-front instead of
-                // letting the model discover it through a runtime rejection —
-                // codex >=0.162 registers the async question tool from the
-                // model catalog regardless of our enablement flags, so the
-                // prompt is the layer we control. Blocking questions are
-                // unaffected (they ride onUserInput only).
+                // context, no answer host, or the per-turn capability probe
+                // reporting a once-mode/stale host session), say so up-front
+                // instead of letting the model discover it through a runtime
+                // rejection — codex >=0.162 registers the async question tool
+                // from the model catalog regardless of our enablement flags,
+                // so the prompt is the layer we control. Blocking questions
+                // are unaffected (they ride onUserInput only).
                 !options.onUserInput || !options.onAsyncUserInputAnswer || !next.value.inputContext
+                  || options.asyncUserInputCapable?.() === false
                   ? `${userInput}\n\n[Session note] This conversation cannot receive asynchronous question forms. When you need clarification, ask the user directly in your reply text instead of using an async question tool.`
                   : userInput,
                 {

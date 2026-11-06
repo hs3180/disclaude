@@ -6,6 +6,7 @@ import { JupyterProjectConfigStore } from './project-config-store.js';
 
 const commands = [
   'list',
+  'runtime-probe',
   'describe',
   'read-cell',
   'insert-cell',
@@ -29,16 +30,19 @@ export const notebookHelp = `Usage: disclaude jupyter <command> [options]
 Commands:
   tools                 Show command input schemas; no connection required
   check                 Inspect the configured Datalayer interfaces
-  link --path PATH      Link an existing remote .ipynb to this Project
-  create --path PATH    Create and link a new remote .ipynb; refuse overwrite
-  unlink --path PATH    Remove a local reference; retain remote Notebook/kernel
+  link                  Link an existing remote .ipynb to this Project
+  create                Create and link a new remote .ipynb; refuse overwrite
+  unlink                Remove a local reference; retain remote Notebook/kernel
   ${commands.join(', ')}
-                        Use the JSON schema from tools and --input-file FILE
+                        Every command above takes exactly one JSON object through
+                        --input-file; read each schema with jupyter tools.
+                        link/create/unlink also accept the --path shorthand for
+                        the JSON path field.
 
 Options:
   --project-dir DIR     Project/workspace directory (default: current directory)
   --input-file FILE     JSON object; '-' reads stdin (default: {} for list)
-  --path PATH           Relative remote Contents .ipynb path for link/create/unlink
+  --path PATH           Shorthand for the link/create/unlink JSON path field
   --connection-id ID    Local connection label (default: configured)
   --jupyter URL         Endpoint or 'configured' (default: configured)
   --env-file FILE       Private .env (otherwise cwd, Project, workspace marker, environment workspace)
@@ -84,6 +88,19 @@ export interface NotebookCLIConnection {
   namespace: string;
 }
 
+const runtimeProbeCommand = {
+  command: 'runtime-probe',
+  description: 'Probe an existing kernel with fixed host-owned code. Returns a hashed host ID and sorted GPU UUIDs; unknown never means safe to run. No Notebook writeback.',
+  inputSchema: {
+    type: 'object', properties: { kernelId: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,256}$' } },
+    required: ['kernelId'], additionalProperties: false,
+  },
+  outputSchema: {
+    type: 'object', required: ['schema', 'host', 'gpus'],
+    description: 'disclaude.jupyter-runtime.v1; host.id is sha256:<64 lowercase hex> or null; gpus.uuids is a sorted unique GPU-* list or null with state=unknown.',
+  },
+};
+
 const interruptCommand = {
   command: 'interrupt',
   description:
@@ -97,6 +114,44 @@ const interruptCommand = {
     anyOf: [{ required: ['kernelId'] }, { required: ['notebookId'] }],
     additionalProperties: false,
   },
+};
+
+/** One JSON object input for every lifecycle command; identical to the --path flag. */
+const lifecycleInputSchema = {
+  type: 'object',
+  properties: {
+    path: {
+      type: 'string',
+      description:
+        'Relative remote Contents .ipynb path: no leading slash, backslash, "."/".." segment or control characters, at most 1024 bytes; identical to the --path shorthand.',
+    },
+  },
+  required: ['path'],
+  additionalProperties: false,
+};
+const checkCommand = {
+  command: 'check',
+  description:
+    'Inspect the configured Datalayer interfaces through one authenticated connection. Takes no input fields; creates no Notebook, document or kernel.',
+  inputSchema: { type: 'object', properties: {}, required: [], additionalProperties: false },
+};
+const linkCommand = {
+  command: 'link',
+  description:
+    'Link an existing remote .ipynb to this Project: open it once, store its stable document identity and return the opaque notebookId used by every later command. Never creates, overwrites or restarts a resource.',
+  inputSchema: lifecycleInputSchema,
+};
+const createCommand = {
+  command: 'create',
+  description:
+    'Create and link a new remote .ipynb at the selected relative path; an existing resource is never overwritten. The remote parent directory must already exist. The new Notebook starts with zero cells; describe shows the RTC-seeded phantom empty first cell until the first appended insert-cell removes it.',
+  inputSchema: lifecycleInputSchema,
+};
+const unlinkCommand = {
+  command: 'unlink',
+  description:
+    'Remove one local Project reference selected by path; the remote Notebook, its content and its kernel are retained. Returns removed:false when no reference matches.',
+  inputSchema: lifecycleInputSchema,
 };
 
 /** Resolve only existing bindings. No RTC connection, execution journal or kernel creation. */
@@ -244,11 +299,12 @@ export function parseNotebookOptions(args: string[]): NotebookCLIOptions {
   if (!/^[A-Za-z0-9_-]{1,200}$/.test(options.connectionId)) {
     invalid('Invalid connection ID');
   }
-  if (['link', 'create', 'unlink'].includes(options.command) !== !!options.contentPath) {
-    invalid('--path is required only for link/create/unlink');
+  const lifecycle = ['link', 'create', 'unlink'].includes(options.command);
+  if (lifecycle && !!options.contentPath === !!options.inputFile) {
+    invalid('link/create/unlink take exactly one input: --path PATH or --input-file with {"path":...}');
   }
-  if (!commands.includes(options.command) && options.inputFile) {
-    invalid('--input-file is only valid for Notebook operations');
+  if (!lifecycle && (options.contentPath || (!commands.includes(options.command) && options.inputFile))) {
+    invalid('--path is required only for link/create/unlink; --input-file is only valid for Notebook operations');
   }
   return options;
 }
@@ -319,7 +375,12 @@ export async function runNotebookCommand(
           inputSchema,
           outputSchema,
         })),
+        checkCommand,
+        linkCommand,
+        createCommand,
+        unlinkCommand,
         interruptCommand,
+        runtimeProbeCommand,
       ];
     }
     if (options.command === 'list') {
@@ -331,13 +392,29 @@ export async function runNotebookCommand(
     return await withNotebookLock(root, async () => {
       signal.throwIfAborted();
       if (['link', 'create', 'unlink'].includes(options.command)) {
-        if (!options.contentPath) {
+        // Unified input style (#5321): the same JSON object contract as every
+        // other command; --path stays a shorthand for the "path" field.
+        const input = options.inputFile ? notebookInput(options.inputFile, readInput) : undefined;
+        if (
+          input !== undefined &&
+          (!input ||
+            typeof input !== 'object' ||
+            Array.isArray(input) ||
+            Object.keys(input).length !== 1 ||
+            typeof (input as { path?: unknown }).path !== 'string')
+        ) {
+          throw new JupyterDiagnosticError({ layer: 'schema', code: 'invalid_tool_input', phase: 'input',
+            message: 'Invalid lifecycle command input; read its schema with jupyter tools',
+            hint: 'Pass exactly {"path":"<relative .ipynb>"} from the command schema in jupyter tools, or use the --path shorthand.', outcome: 'not-submitted' });
+        }
+        const contentPath = options.contentPath ?? (input as { path: string } | undefined)?.path;
+        if (!contentPath) {
           throw new Error('Notebook path is required');
         }
         const ref = {
           connectionId: options.connectionId,
           serverNamespace: 'validation',
-          contentPath: options.contentPath,
+          contentPath,
         };
         // Validate path before accessing the remote resource, without writing config.
         if (
@@ -407,6 +484,15 @@ export async function runNotebookCommand(
       const input = notebookInput(options.inputFile, readInput);
       if (options.command === 'interrupt') {
         return interruptKernel(root, input, connection, signal);
+      }
+      if (options.command === 'runtime-probe') {
+        if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length !== 1 ||
+          typeof (input as { kernelId?: unknown }).kernelId !== 'string' ||
+          !/^[A-Za-z0-9_-]{1,256}$/.test((input as { kernelId: string }).kernelId)) {
+          throw new Error('Invalid runtime probe input; an existing kernelId is required');
+        }
+        signal.throwIfAborted();
+        return (await connection()).client.probeRuntime((input as { kernelId: string }).kernelId, signal);
       }
       const name = `notebook_${options.command.replaceAll('-', '_')}`;
       const tool = tools.tools.find((t) => t.name === name);

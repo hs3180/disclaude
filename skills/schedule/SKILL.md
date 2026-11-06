@@ -156,7 +156,7 @@ Schedule content prompt here
 | `enabled` | No | `true` | Whether schedule is active |
 | `chatId` | Yes | - | Chat ID for execution context |
 | `createdAt` | No | - | Creation timestamp |
-| `model` | No | - | Model to use for execution (e.g., "sonnet", "opus") |
+| `model` | No | - | Optional deployment-supported model or alias; current user instructions and deployment configuration decide the selection |
 | `timezone` | No | `Asia/Shanghai` | IANA timezone for cron scheduling (e.g., `"UTC"`, `"America/New_York"`). Validated against the IANA database (Issue #3860). |
 | `timeoutMs` | No | `7200000` (2 h) | For prompt schedules, max wait for the agent turn: not a kill switch, and the turn may continue in the background (#3894/#4648/#4649). For direct `command` schedules, this is a hard process-group timeout: the scheduler sends TERM and escalates to KILL after a bounded grace. |
 | `cooldownPeriod` | No | - | Cooldown in ms; prevents re-execution for this duration after a run completes (Issue #869). |

@@ -2,7 +2,8 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import nock from 'nock';
-import { DatalayerJupyterClient } from './datalayer-client.js';
+import { WebSocketServer, type WebSocket } from 'ws';
+import { DatalayerJupyterClient, normalizeRuntimeProbe } from './datalayer-client.js';
 
 const servers: Server[] = [];
 afterEach(async () => {
@@ -56,6 +57,88 @@ async function fixture(
   });
   return { client, requests, baseUrl };
 }
+
+describe('runtime probe schema', () => {
+  const a = `GPU-${'a'.repeat(8)}-aaaa-aaaa-aaaa-${'a'.repeat(12)}`;
+  const b = `GPU-${'b'.repeat(8)}-bbbb-bbbb-bbbb-${'b'.repeat(12)}`;
+  it('sorts and deduplicates multiple GPU UUIDs and exposes only a hashed host ID', () => {
+    const result = normalizeRuntimeProbe({ host: `sha256:${'c'.repeat(64)}`, uuids: [b, a, b], hostname: 'private', processes: ['secret'] });
+    expect(result).toEqual({ schema: 'disclaude.jupyter-runtime.v1', host: { state: 'available', id: `sha256:${'c'.repeat(64)}` }, gpus: { state: 'available', uuids: [a, b] } });
+    expect(JSON.stringify(result)).not.toContain('private');
+  });
+  it.each([null, [], [a, 'not-a-uuid'], 'unavailable'])('keeps no-GPU/unavailable metadata explicit: %s', (uuids) => {
+    expect(normalizeRuntimeProbe({ host: 'private-hostname', uuids })).toEqual({
+      schema: 'disclaude.jupyter-runtime.v1', host: { state: 'unknown', id: null },
+      gpus: { state: 'unknown', reason: 'no_gpu_or_unavailable', uuids: null },
+    });
+  });
+  it('keeps the schema field names and their order stable for both states', () => {
+    const available = normalizeRuntimeProbe({ host: `sha256:${'c'.repeat(64)}`, uuids: [a] });
+    expect(Object.keys(available)).toEqual(['schema', 'host', 'gpus']);
+    expect(Object.keys(available.host)).toEqual(['state', 'id']);
+    expect(Object.keys(available.gpus)).toEqual(['state', 'uuids']);
+    const unknown = normalizeRuntimeProbe({});
+    expect(Object.keys(unknown.host)).toEqual(['state', 'id']);
+    expect(Object.keys(unknown.gpus)).toEqual(['state', 'reason', 'uuids']);
+  });
+});
+
+describe('runtime probe transport', () => {
+  const a = `GPU-${'a'.repeat(8)}-aaaa-aaaa-aaaa-${'a'.repeat(12)}`;
+  const b = `GPU-${'b'.repeat(8)}-bbbb-bbbb-bbbb-${'b'.repeat(12)}`;
+  async function kernelChannel(reply: (ws: WebSocket, msgId: string, content: Record<string, unknown>) => void) {
+    const paths: string[] = [];
+    const server = createServer();
+    const sockets = new WebSocketServer({ noServer: true });
+    server.on('upgrade', (request, socket, head) => {
+      paths.push(request.url!);
+      sockets.handleUpgrade(request, socket, head, (ws) => {
+        ws.on('message', (raw) => {
+          const message = JSON.parse(raw.toString()) as { header?: { msg_id?: string; msg_type?: string }; content?: Record<string, unknown> };
+          if (message.header?.msg_type === 'execute_request') {
+            reply(ws, message.header.msg_id!, message.content ?? {});
+          }
+        });
+      });
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/prefix/`;
+    nock.enableNetConnect((authority) => authority === new URL(baseUrl).host);
+    const client = new DatalayerJupyterClient({ baseUrl, authorization: () => Promise.resolve('token fixture') });
+    return { client, paths };
+  }
+
+  it('executes only the fixed host-owned probe code and normalizes its stream marker', async () => {
+    const observed: Array<Record<string, unknown>> = [];
+    const f = await kernelChannel((ws, msgId, content) => {
+      observed.push(content);
+      ws.send(JSON.stringify({
+        header: { msg_type: 'stream' }, parent_header: { msg_id: msgId }, channel: 'iopub',
+        content: { name: 'stdout', text: `noise\n__DISCLAUDE_RUNTIME_V1__{"host":"sha256:${'c'.repeat(64)}","uuids":["${b}","${a}","${b}"]}` },
+      }));
+    });
+    expect(await f.client.probeRuntime('kernel')).toEqual({
+      schema: 'disclaude.jupyter-runtime.v1',
+      host: { state: 'available', id: `sha256:${'c'.repeat(64)}` },
+      gpus: { state: 'available', uuids: [a, b] },
+    });
+    expect(f.paths).toHaveLength(1);
+    expect(f.paths[0]).toMatch(/^\/prefix\/api\/kernels\/kernel\/channels\?session_id=[0-9a-f-]{36}$/);
+    expect(observed).toEqual([expect.objectContaining({ silent: false, store_history: false, user_expressions: {}, allow_stdin: false, stop_on_error: true })]);
+    expect(String(observed[0].code)).toContain('_disclaude_runtime_probe');
+    expect(String(observed[0].code)).not.toContain('kernel');
+  });
+
+  it('returns an explicit probe-unavailable unknown, not a fabricated empty GPU list, without a marker', async () => {
+    const f = await kernelChannel((ws) => ws.close());
+    expect(await f.client.probeRuntime('kernel')).toEqual({
+      schema: 'disclaude.jupyter-runtime.v1',
+      host: { state: 'unknown', id: null },
+      gpus: { state: 'unknown', reason: 'probe_unavailable', uuids: null },
+    });
+  });
+});
 
 describe('original request observation failures', () => {
   it.each([

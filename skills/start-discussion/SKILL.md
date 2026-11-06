@@ -19,8 +19,9 @@ Agent 识别到需要深入讨论的话题后，创建飞书讨论群、通过 `
 
 ## Single Responsibility
 
-- ✅ Create a Feishu discussion group via `lark-cli`
-- ✅ Inject initialization context via `push_to_agent` MCP tool
+- ✅ Create a Feishu discussion group via `lark-cli`, owned by the triggering user
+- ✅ Send and pin its first positioning post, then reply with a migration card in the source thread via the handoff script
+- ✅ Inject initialization context via `push_to_agent` MCP tool only after that handoff succeeds
 - ✅ Record mapping in `workspace/bot-chat-mapping.json`
 - ✅ Return immediately — non-blocking by design
 - ❌ DO NOT wait for user response in the discussion group
@@ -31,6 +32,7 @@ Agent 识别到需要深入讨论的话题后，创建飞书讨论群、通过 `
 ## Context Variables
 
 When invoked, you receive:
+
 - **Chat ID**: Source chat where the discussion topic was identified
 - **Message ID**: The triggering message ID
 - **Sender Open ID**: The user who triggered the discussion
@@ -46,28 +48,32 @@ Analyze the current conversation and determine:
 3. **Background**: Relevant context — chat history excerpts, file references, error logs, etc.
 4. **Participants**: Open IDs of additional users to include (optional — sender is always included automatically)
 
-### Step 2: Create Discussion Group
+### Step 2: Create Group and Complete the Handoff
 
-Use `lark-cli` to create a new Feishu group. **Always include the triggering user** (Sender Open ID) in the group:
-
-```bash
-# Create group with the triggering user
-lark-cli im +chat-create --name "讨论: {topic}" --description "Agent 发起的讨论: {topic}" --users "{sender_open_id}"
-```
-
-If additional participants need to be included, merge them into the same `--users` list:
+Run the bundled handoff script exactly once. It uses argument arrays (never a shell) and performs this ordered chain: create with `--owner {sender_open_id}` → send the first **群定位声明** → pin that message → reply with a migration card in the source thread. The script stops at the first failed stage; do not blindly rerun it after a partial result.
 
 ```bash
-lark-cli im +chat-create --name "讨论: {topic}" --description "Agent 发起的讨论: {topic}" --users "{sender_open_id},ou_xxx,ou_yyy"
+node skills/start-discussion/scripts/create-discussion.mjs <<'JSON'
+{
+  "topic": "{topic}",
+  "senderOpenId": "{sender_open_id}",
+  "sourceMessageId": "{triggering message_id}",
+  "participants": ["ou_xxx", "ou_yyy"],
+  "ledgerRule": "本群台账只记录本群决策与交付，原群历史不重复搬运。",
+  "idempotencyKey": "discussion-{short-uuid}"
+}
+JSON
 ```
 
-**Parse the response** to extract the new group's `chatId` (format: `oc_xxx`).
+`participants`, `ledgerRule`, and `idempotencyKey` are optional. The triggering user is always included and made owner. Successful JSON output contains `chatId`, `ownerOpenId`, `firstPostMessageId`, `pinned: true`, and `migrationMessageId`; retain these for the next steps. The first post states 本群管什么 / 原群保留什么 / 执行流水去处 / 台账规则. The source-thread card points to the new group and states that this thread no longer receives the topic's execution stream.
 
-If `lark-cli` is not available, report the error and stop:
+If `lark-cli` is not available, report the unchanged command error and stop:
 
 ```bash
 lark-cli --version || echo "ERROR: lark-cli not found in PATH"
 ```
+
+**Direct-command boundary**: a bare `lark-cli im +chat-create` bypasses this handoff and is not intercepted by the service. It is unsupported for this skill; if used outside the skill, the caller must explicitly supply `--owner` and complete and verify the same first-post/pin/source-reply chain. There is no claim of rollback or atomicity across Feishu API calls: on a stage error, inspect the already-created group before retrying.
 
 ### Step 3: Inject Context via `push_to_agent`
 
@@ -78,6 +84,7 @@ push_to_agent(chatId: "{new group chatId}", message: "{initialization prompt}")
 ```
 
 The initialization prompt should include:
+
 - The discussion topic and purpose
 - The source chat ID (for traceability)
 - Background materials and the specific question to discuss
@@ -115,29 +122,33 @@ echo '{ ... updated JSON ... }' > workspace/bot-chat-mapping.json.tmp \
 
 ### Step 5: Confirm and Return
 
-Report to the **source chat** that the discussion has been initiated:
+The script has already posted the migration card in the **source thread**; do not depend on the agent remembering a second manual message. Confirm that its output has `pinned: true` and `migrationMessageId`, then report completion if needed:
 
-> 已创建讨论群「{topic}」，上下文已发送。我将继续当前工作，讨论结果稍后会处理。
+> 已创建讨论群「{topic}」，首帖定位声明已置顶，原 thread 已发迁移卡。我将继续当前工作，讨论结果稍后会处理。
 
 **Do NOT wait for any response** — return immediately.
 
 ## lark-cli Command Reference
 
-| Operation | Command |
-|-----------|---------|
-| Create group | `lark-cli im +chat-create --name "..." --description "..." --users "{sender_open_id}"` |
-| Create group with extra participants | `lark-cli im +chat-create --name "..." --users "{sender_open_id},ou_xxx,ou_yyy"` |
-| Add members | `lark-cli im chat.members create --params '{"chat_id":"oc_xxx","member_id_type":"open_id","succeed_type":1}' --data '{"id_list":["ou_aaa"]}'` |
-| Dissolve group | `lark-cli api DELETE /open-apis/im/v1/chats/oc_xxx` |
+| Operation                               | Command                                                                                                                                       |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Complete discussion handoff (preferred) | `node skills/start-discussion/scripts/create-discussion.mjs` with the JSON input above                                                        |
+| Create group                            | `lark-cli im +chat-create --name "..." --description "..." --users "{sender_open_id}" --owner "{sender_open_id}"`                             |
+| Create group with extra participants    | `lark-cli im +chat-create --name "..." --users "{sender_open_id},ou_xxx,ou_yyy" --owner "{sender_open_id}"`                                   |
+| Send first positioning post             | `lark-cli im +messages-send --chat-id "oc_xxx" --text "【群定位声明】..."`                                                                    |
+| Pin positioning post                    | `lark-cli im pins create --data '{"message_id":"om_xxx"}'`                                                                                    |
+| Reply with source-thread migration card | `lark-cli im +messages-reply --message-id "om_source" --reply-in-thread --text "【话题迁移】..."`                                             |
+| Add members                             | `lark-cli im chat.members create --params '{"chat_id":"oc_xxx","member_id_type":"open_id","succeed_type":1}' --data '{"id_list":["ou_aaa"]}'` |
+| Dissolve group                          | `lark-cli api DELETE /open-apis/im/v1/chats/oc_xxx`                                                                                           |
 
 ## Error Handling
 
-| Error | Action |
-|-------|--------|
-| `lark-cli` not in PATH | Report to source chat: "无法创建讨论群，lark-cli 未安装" |
-| Group creation fails | Report error, do not create mapping entry |
-| Mapping file write fails | Report warning (group was created, mapping is a cache) |
-| `push_to_agent` fails | Report to source chat; the group was created but agent was not initialized |
+| Error                    | Action                                                                     |
+| ------------------------ | -------------------------------------------------------------------------- |
+| `lark-cli` not in PATH   | Report to source chat: "无法创建讨论群，lark-cli 未安装"                   |
+| Group creation fails     | Report error, do not create mapping entry                                  |
+| Mapping file write fails | Report warning (group was created, mapping is a cache)                     |
+| `push_to_agent` fails    | Report to source chat; the group was created but agent was not initialized |
 
 ## Design Principles
 
@@ -160,8 +171,8 @@ Concretely, when composing the initialization prompt (Step 3):
 
 ## Integration with Other Skills
 
-| Skill | Relationship |
-|-------|-------------|
-| External review automation | May manage review groups separately |
-| `daily-chat-review` | May trigger `start-discussion` when repetitive issues detected |
-| `daily-soul-question` | May trigger `start-discussion` for deep reflection topics |
+| Skill                      | Relationship                                                   |
+| -------------------------- | -------------------------------------------------------------- |
+| External review automation | May manage review groups separately                            |
+| `daily-chat-review`        | May trigger `start-discussion` when repetitive issues detected |
+| `daily-soul-question`      | May trigger `start-discussion` for deep reflection topics      |
