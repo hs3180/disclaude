@@ -83,23 +83,20 @@ describe('/feedback command', () => {
     expect(registry.get('chat-1')).toBeDefined();
   });
 
-  it('keeps /issue as a compatible alias of the canonical /feedback entry', async () => {
-    // Maintainer decision (PR #5697 comment 6679335183): /feedback is the
-    // canonical reporting entry; /issue stays dispatchable with the same
-    // behavior plus a migration hint pointing at /feedback.
+  it('no longer registers /issue; typing it falls back to unknown-command handling', async () => {
+    // Maintainer decision (PR #5697 comment 6683623135, superseding the
+    // earlier alias decision): /issue is fully removed — no registration, no
+    // compat alias, no migration hint. /feedback is the only reporting entry,
+    // and /issue input follows the existing unknown-command path.
     const types = commandRegistry.map(c => c.type);
     expect(types).toContain('feedback');
-    expect(types).toContain('issue');
+    expect(types).not.toContain('issue');
     const registry = new ChatFailureRegistry();
     registry.record(record);
     const dispatch = createControlHandler(context({ failureRegistry: registry }));
-    const canonical = await dispatch({ type: 'feedback', chatId: 'chat-1' });
-    const alias = await dispatch({ type: 'issue', chatId: 'chat-1' });
-    expect(canonical.success).toBe(true);
-    expect(alias.success).toBe(true);
-    expect(alias.message).toContain(canonical.message!);
-    expect(alias.message).toContain('兼容别名');
-    expect(alias.message).toContain('/feedback');
+    const response = await dispatch({ type: 'issue' } as unknown as ControlCommand);
+    expect(response.success).toBe(false);
+    expect(response.error).toContain('Unknown command: issue');
   });
 
   it('does not crash the command when the hook throws', async () => {

@@ -2,7 +2,7 @@
  * Feishu confirmation-card flow for one-click GitHub issue reporting
  * (Issue #5400, PR B).
  *
- * `/feedback` (compat alias `/issue`) → the control command reads the chat's
+ * `/feedback` → the control command reads the chat's
  * last failure record and calls `start()` here, which sends a card with the
  * SANITIZED diagnostic summary plus an optional user note field. Card
  * callbacks are handled DIRECTLY (never routed through the LLM agent), so

@@ -9,7 +9,7 @@ import { handleTrigger } from './passive.js';
 import { handleProject } from './project.js';
 import { handleAgent } from './agent.js';
 import { handleSteer } from './steer.js';
-import { handleFeedback, handleIssue } from './issue.js';
+import { handleFeedback } from './issue.js';
 import { handleGoal } from './goal.js';
 
 /**
@@ -34,8 +34,6 @@ export const commandRegistry: CommandDefinition[] = [
     showInHelp: (c, command) => c.agentPool.canSteer?.(command.chatId, command.threadRootId) === true },
   { type: 'feedback', handler: handleFeedback as CommandDefinition['handler'], description: '一键上报本会话最近一次失败为 GitHub issue', usage: '/feedback',
     isAvailable: c => !!c.failureRegistry },
-  { type: 'issue', handler: handleIssue as CommandDefinition['handler'], description: '/feedback 的兼容别名', usage: '/issue',
-    isAvailable: c => !!c.failureRegistry, showInHelp: () => false },
   { type: 'goal', handler: handleGoal as CommandDefinition['handler'], description: '一键启动本聊天当前项目的目标', usage: '/goal <目标> | <验收要求…>',
     isAvailable: c => !!c.goalStore && !!c.projectManager },
 ];

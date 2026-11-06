@@ -98,7 +98,7 @@ workspace:
 #     FEISHU_REGION: cn
 
 # One-click GitHub issue reporting (Issue #5400). Optional; when absent the
-# /issue entry reports that reporting is not configured. The App needs read/write
+# /feedback entry reports that reporting is not configured. The App needs read/write
 # access to issues on the repository. privateKey is a secret: it must reference
 # the service environment (PEM content; literal or \n-escaped newlines).
 # github:
