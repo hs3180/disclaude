@@ -14,6 +14,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { DisclaudeService } from './service.js';
 import type { ChannelApiHandlers, IChannel } from '@disclaude/core';
+import {
+  buildInteractiveCard,
+  validateInteractiveParams,
+} from './platforms/feishu/card-builders/interactive-message-builder.js';
 
 const TEST_CHAT = 'oc_interactive_test';
 
@@ -185,5 +189,71 @@ describe('DisclaudeService.sendInteractive (Issue #4279 — registration path)',
 
     await expect(node.sendInteractive(TEST_CHAT, BASE_PARAMS)).rejects.toThrow('card send failed');
     expect(registerSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('DisclaudeService.sendInteractive — executable next-step candidate card (Issue #5472)', () => {
+  /**
+   * Reproduces the "add dependency retirement steps to the acceptance flow"
+   * scenario: the requested work is done, and the single concrete follow-up is
+   * offered as a real clickable card — built by the same card builder the
+   * Feishu channel uses — gated on the user's click, bound to the current
+   * topic thread, and deduplicated across retries.
+   */
+  it('delivers a real single-option candidate card; click resolves the full action prompt; retry sends no second card', async () => {
+    const followUpPrompt = '[user] 继续本次验收:为验收流程补充依赖退役步骤(移除被替换的旧依赖、更新调用方引用、跑回归),完成后回报结果。';
+    const params = {
+      question: '验收流程已通过。要把依赖退役步骤加入本次验收吗?',
+      options: [{ text: '增加依赖退役步骤', value: 'add-retirement-steps', type: 'primary' as const }],
+      title: '后续步骤',
+      actionPrompts: { 'add-retirement-steps': followUpPrompt },
+      threadRootId: 'om_topic_root',
+      idempotencyKey: 'next-step:om_acceptance_done',
+    };
+    // The channel handler validates and builds the REAL card payload, exactly
+    // as the Feishu channel's sendInteractive capability does in production.
+    let builtCard: ReturnType<typeof buildInteractiveCard> | undefined;
+    const sendInteractive = vi.fn().mockImplementation((_chatId: string, p: typeof params) => {
+      const validationError = validateInteractiveParams(p);
+      if (validationError) {throw new Error(validationError);}
+      builtCard = buildInteractiveCard(p);
+      return Promise.resolve({ messageId: 'om_next_step_card', card: builtCard });
+    });
+    const node = makeNode(sendInteractive);
+
+    const res = await node.sendInteractive(TEST_CHAT, params);
+
+    // Delivery receipt: one send, the service accepted it.
+    expect(sendInteractive).toHaveBeenCalledTimes(1);
+    expect(res).toEqual({ success: true, messageId: 'om_next_step_card' });
+
+    // The delivered payload is a real card whose single action element carries
+    // one clickable button for the single candidate (no padding options).
+    const card = builtCard!;
+    const action = card.elements.find(element => element.tag === 'action');
+    expect(action).toBeDefined();
+    const buttons = (action as { actions: Array<{ text: { content: string }; value: string; type: string }> }).actions;
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]).toMatchObject({
+      text: { content: '增加依赖退役步骤' },
+      value: 'add-retirement-steps',
+      type: 'primary',
+    });
+
+    // Click gating: sending the card itself performs no follow-up work — the
+    // only registered effect is the click-time prompt template, bound to the
+    // original chat and topic thread so a click resumes this session.
+    const store = node.getInteractiveContextStore();
+    expect(store.getThreadRootId('om_next_step_card', TEST_CHAT)).toBe('om_topic_root');
+    expect(store.getMessageIdByIdempotencyKey(TEST_CHAT, 'next-step:om_acceptance_done')).toBe('om_next_step_card');
+    // Resolution is chat-scoped: another chat cannot trigger this card's prompt.
+    expect(store.generatePrompt('om_next_step_card', 'oc_someone_else', 'add-retirement-steps')).toBeUndefined();
+    // The click itself resolves to the full executable action prompt.
+    expect(store.generatePrompt('om_next_step_card', TEST_CHAT, 'add-retirement-steps')).toBe(followUpPrompt);
+
+    // Retry with the same idempotency key must not produce a second card.
+    const retry = await node.sendInteractive(TEST_CHAT, params);
+    expect(retry).toEqual({ success: true, messageId: 'om_next_step_card' });
+    expect(sendInteractive).toHaveBeenCalledTimes(1);
   });
 });
