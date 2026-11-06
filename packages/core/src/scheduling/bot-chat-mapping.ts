@@ -447,6 +447,12 @@ export class BotChatMappingStore {
   ): Promise<{ previousChatId: string | null; persisted: boolean }> {
     const key = makeMainGroupKey(workdir);
     const previousChatId = (await this.getMainGroup(workdir)) ?? null;
+    // Idempotent re-declaration: the same chat again is a no-op — no rewrite,
+    // no persistence churn. Callers detect it via previousChatId === chatId.
+    if (previousChatId === chatId) {
+      logger.info({ workdir: normalizeWorkdir(workdir), chatId }, 'Main group re-declared unchanged (idempotent no-op)');
+      return { previousChatId, persisted: false };
+    }
     const result = await this.set(key, { chatId, purpose: MAIN_GROUP_PURPOSE, workdir: normalizeWorkdir(workdir) });
     logger.info({ workdir: normalizeWorkdir(workdir), chatId, previousChatId }, 'Main group declared');
     return { previousChatId, persisted: result.persisted };

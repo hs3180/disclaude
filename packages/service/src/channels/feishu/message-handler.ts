@@ -46,7 +46,7 @@ import type { MentionDetector } from './mention-detector.js';
 import { evaluateMessageFilters } from './message-filters.js';
 import { FeishuPrivateInput } from './private-input.js';
 import { FeishuAgentInput } from './agent-input.js';
-import { evaluateMainGroupRedirect, buildRedirectHint, type MainGroupRedirect, type MainGroupRoutingDeps } from './main-group-routing.js';
+import { evaluateMainGroupRedirect, buildRedirectHint, tryAcquireRedirectHintSlot, type MainGroupRedirect, type MainGroupRoutingDeps } from './main-group-routing.js';
 import { FeishuTaskQuestionCards } from './task-question-cards.js';
 import type { TaskQuestionFlowPorts } from '../../agents/task-question-flow.js';
 import { FeishuIssueReport } from './issue-report.js';
@@ -305,13 +305,15 @@ export class MessageHandler {
 
   /**
    * Issue #5396: check whether a group message belongs to a project whose
-   * declared main group is a different chat. Failures degrade to "no redirect"
-   * — a broken mapping store must never block message processing.
+   * declared main group is a different chat. Only bot-@mentioned messages
+   * count as task messages (minimal completable set — ambient chatter is
+   * never intercepted). Failures degrade to "no redirect" — a broken mapping
+   * store must never block message processing.
    */
-  private async checkMainGroupRedirect(chatId: string, chatType: string | undefined): Promise<MainGroupRedirect | null> {
+  private async checkMainGroupRedirect(chatId: string, chatType: string | undefined, mentionsBot: boolean): Promise<MainGroupRedirect | null> {
     if (!this.mainGroupRouting) { return null; }
     try {
-      return await evaluateMainGroupRedirect(this.mainGroupRouting, { chatId, chatType });
+      return await evaluateMainGroupRedirect(this.mainGroupRouting, { chatId, chatType, mentionsBot });
     } catch (error) {
       logger.warn({ err: error, chatId }, 'Main-group routing check failed; message proceeds normally');
       return null;
@@ -320,10 +322,15 @@ export class MessageHandler {
 
   /**
    * Issue #5396: send the main-group redirect hint (busy-state summary only,
-   * no message content) and report whether the message was consumed.
+   * no message content), rate-limited per chat — message retries must not
+   * re-spam identical hints. Returns whether a hint was actually sent.
    */
   private async sendMainGroupRedirectHint(redirect: MainGroupRedirect, chatId: string): Promise<boolean> {
     if (!this.mainGroupRouting) { return false; }
+    if (!tryAcquireRedirectHintSlot(chatId)) {
+      logger.debug({ chatId }, 'Main-group redirect hint suppressed (cooldown window)');
+      return false;
+    }
     const text = buildRedirectHint(redirect, this.mainGroupRouting);
     await this.callbacks.sendMessage({ chatId, type: 'text', text });
     logger.info(
@@ -1367,10 +1374,14 @@ export class MessageHandler {
         metadata: Object.keys(fileMetadata).length > 0 ? fileMetadata : undefined,
       };
       registerFeishuInputSource(incoming, message_id, sender?.sender_type);
-      // Issue #5396: a task message in a non-main project group gets a
-      // redirect hint instead of a second parallel execution stream.
-      const fileMainGroupRedirect = await this.checkMainGroupRedirect(chat_id, chat_type);
-      if (fileMainGroupRedirect && (await this.sendMainGroupRedirectHint(fileMainGroupRedirect, chat_id))) {
+      // Issue #5396: a bot-@mentioned task message in a non-main project
+      // group gets a redirect hint (rate-limited per chat) instead of a
+      // second parallel execution stream. The message is consumed even when
+      // the hint itself is suppressed — the cooldown limits the reply, not
+      // the redirect decision.
+      const fileMainGroupRedirect = await this.checkMainGroupRedirect(chat_id, chat_type, fileBotMentioned);
+      if (fileMainGroupRedirect) {
+        await this.sendMainGroupRedirectHint(fileMainGroupRedirect, chat_id);
         return;
       }
       await this.callbacks.emitMessage(incoming);
@@ -1646,11 +1657,14 @@ export class MessageHandler {
       attachments: quotedAttachments,
     };
     registerFeishuInputSource(incoming, message_id, sender?.sender_type);
-    // Issue #5396: a task message in a non-main project group gets a redirect
-    // hint instead of a second parallel execution stream. Slash commands were
-    // already consumed above, so /main-group itself is never blocked here.
-    const mainGroupRedirect = await this.checkMainGroupRedirect(chat_id, chat_type);
-    if (mainGroupRedirect && (await this.sendMainGroupRedirectHint(mainGroupRedirect, chat_id))) {
+    // Issue #5396: a bot-@mentioned task message in a non-main project group
+    // gets a redirect hint (rate-limited per chat) instead of a second
+    // parallel execution stream. Slash commands were already consumed above,
+    // so /main-group itself is never blocked here. Non-mention chatter is not
+    // a task message and proceeds through the normal trigger-mode machinery.
+    const mainGroupRedirect = await this.checkMainGroupRedirect(chat_id, chat_type, botMentioned);
+    if (mainGroupRedirect) {
+      await this.sendMainGroupRedirectHint(mainGroupRedirect, chat_id);
       return;
     }
     await this.callbacks.emitMessage(incoming);

@@ -1,10 +1,12 @@
 /**
  * Tests for main-group routing (Issue #5396).
  *
- * Covers the redirect decision matrix (non-main project group → redirect;
- * main group / unmapped chat / disabled hints / non-group chats → proceed
- * normally) and the content-safety invariant: redirect replies carry the
- * main-group chatId and a busy-state summary only — never message content.
+ * Covers the redirect decision matrix (non-main project group + bot mention →
+ * redirect; main group / unmapped chat / disabled hints / non-group chats /
+ * messages that do not @mention the bot → proceed normally), the per-chat
+ * hint cooldown (retries must not re-spam hints), and the content-safety
+ * invariant: redirect replies carry the main-group chatId and a busy-state
+ * summary only — never message content.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -13,6 +15,9 @@ import {
   evaluateMainGroupRedirect,
   buildRedirectHint,
   buildMigrationGuidance,
+  tryAcquireRedirectHintSlot,
+  resetRedirectHintCooldowns,
+  MAIN_GROUP_HINT_COOLDOWN_MS,
   type MainGroupRoutingDeps,
   type MainGroupStoreLike,
 } from './main-group-routing.js';
@@ -58,7 +63,7 @@ describe('evaluateMainGroupRedirect (Issue #5396)', () => {
       entries: [{ chatId: 'oc_main', workdir: WORKDIR }, { chatId: 'oc_side', workdir: WORKDIR }],
       mainGroups: { [WORKDIR]: 'oc_main' },
     });
-    const redirect = await evaluateMainGroupRedirect(makeDeps({ store }), { chatId: 'oc_side', chatType: 'group' });
+    const redirect = await evaluateMainGroupRedirect(makeDeps({ store }), { chatId: 'oc_side', chatType: 'group', mentionsBot: true });
     expect(redirect).toEqual({ mainChatId: 'oc_main', workdir: WORKDIR });
   });
 
@@ -67,22 +72,22 @@ describe('evaluateMainGroupRedirect (Issue #5396)', () => {
       entries: [{ chatId: 'oc_main', workdir: WORKDIR }],
       mainGroups: { [WORKDIR]: 'oc_main' },
     });
-    expect(await evaluateMainGroupRedirect(makeDeps({ store }), { chatId: 'oc_main', chatType: 'group' })).toBeNull();
+    expect(await evaluateMainGroupRedirect(makeDeps({ store }), { chatId: 'oc_main', chatType: 'group', mentionsBot: true })).toBeNull();
   });
 
   it('behaves exactly as before when no declaration exists (no mapping / single group)', async () => {
     const store = makeStore({ entries: [{ chatId: 'oc_only', workdir: WORKDIR }] });
-    expect(await evaluateMainGroupRedirect(makeDeps({ store }), { chatId: 'oc_only', chatType: 'group' })).toBeNull();
+    expect(await evaluateMainGroupRedirect(makeDeps({ store }), { chatId: 'oc_only', chatType: 'group', mentionsBot: true })).toBeNull();
   });
 
   it('ignores unmapped chats — no project context means no redirect', async () => {
     const store = makeStore({ mainGroups: { [WORKDIR]: 'oc_main' } });
-    expect(await evaluateMainGroupRedirect(makeDeps({ store }), { chatId: 'oc_stranger', chatType: 'group' })).toBeNull();
+    expect(await evaluateMainGroupRedirect(makeDeps({ store }), { chatId: 'oc_stranger', chatType: 'group', mentionsBot: true })).toBeNull();
   });
 
   it('ignores mapping entries without a workdir', async () => {
     const store = makeStore({ entries: [{ chatId: 'oc_side' }], mainGroups: { [WORKDIR]: 'oc_main' } });
-    expect(await evaluateMainGroupRedirect(makeDeps({ store }), { chatId: 'oc_side', chatType: 'group' })).toBeNull();
+    expect(await evaluateMainGroupRedirect(makeDeps({ store }), { chatId: 'oc_side', chatType: 'group', mentionsBot: true })).toBeNull();
   });
 
   it('never redirects p2p or topic chats', async () => {
@@ -90,9 +95,9 @@ describe('evaluateMainGroupRedirect (Issue #5396)', () => {
       entries: [{ chatId: 'oc_side', workdir: WORKDIR }],
       mainGroups: { [WORKDIR]: 'oc_main' },
     });
-    expect(await evaluateMainGroupRedirect(makeDeps({ store }), { chatId: 'oc_side', chatType: 'p2p' })).toBeNull();
-    expect(await evaluateMainGroupRedirect(makeDeps({ store }), { chatId: 'oc_side', chatType: 'topic' })).toBeNull();
-    expect(await evaluateMainGroupRedirect(makeDeps({ store }), { chatId: 'oc_side' })).toBeNull();
+    expect(await evaluateMainGroupRedirect(makeDeps({ store }), { chatId: 'oc_side', chatType: 'p2p', mentionsBot: true })).toBeNull();
+    expect(await evaluateMainGroupRedirect(makeDeps({ store }), { chatId: 'oc_side', chatType: 'topic', mentionsBot: true })).toBeNull();
+    expect(await evaluateMainGroupRedirect(makeDeps({ store }), { chatId: 'oc_side', mentionsBot: true })).toBeNull();
   });
 
   it('can be disabled by configuration (feishu.mainGroupRoutingHint: false)', async () => {
@@ -100,7 +105,34 @@ describe('evaluateMainGroupRedirect (Issue #5396)', () => {
       entries: [{ chatId: 'oc_side', workdir: WORKDIR }],
       mainGroups: { [WORKDIR]: 'oc_main' },
     });
-    expect(await evaluateMainGroupRedirect(makeDeps({ store, enabled: false }), { chatId: 'oc_side', chatType: 'group' })).toBeNull();
+    expect(await evaluateMainGroupRedirect(makeDeps({ store, enabled: false }), { chatId: 'oc_side', chatType: 'group', mentionsBot: true })).toBeNull();
+  });
+
+  it('never redirects ambient chatter — a non-mention message is not a task message', async () => {
+    const store = makeStore({
+      entries: [{ chatId: 'oc_side', workdir: WORKDIR }],
+      mainGroups: { [WORKDIR]: 'oc_main' },
+    });
+    expect(await evaluateMainGroupRedirect(makeDeps({ store }), { chatId: 'oc_side', chatType: 'group', mentionsBot: false })).toBeNull();
+  });
+});
+
+describe('redirect hint cooldown (Issue #5396 idempotency)', () => {
+  it('sends at most one hint per chat per cooldown window', () => {
+    resetRedirectHintCooldowns();
+    expect(tryAcquireRedirectHintSlot('oc_side')).toBe(true);
+    expect(tryAcquireRedirectHintSlot('oc_side')).toBe(false);
+    expect(tryAcquireRedirectHintSlot('oc_side')).toBe(false);
+    // A different chat is unaffected.
+    expect(tryAcquireRedirectHintSlot('oc_other')).toBe(true);
+  });
+
+  it('allows a new hint after the cooldown window elapses', () => {
+    resetRedirectHintCooldowns();
+    const t0 = 1_000_000;
+    expect(tryAcquireRedirectHintSlot('oc_side', t0)).toBe(true);
+    expect(tryAcquireRedirectHintSlot('oc_side', t0 + MAIN_GROUP_HINT_COOLDOWN_MS - 1)).toBe(false);
+    expect(tryAcquireRedirectHintSlot('oc_side', t0 + MAIN_GROUP_HINT_COOLDOWN_MS)).toBe(true);
   });
 });
 
@@ -111,6 +143,7 @@ describe('redirect hint content safety (Issue #5396)', () => {
     expect(text).toContain('oc_main');
     expect(text).toContain('有任务执行中');
     expect(text).toContain('/main-group');
+    expect(text).toContain('/discuss'); // side talk is pointed at the discussion path
     expect(text).not.toContain('正文');
     expect(text).not.toContain(WORKDIR); // hint stays in the group, no paths leaked
   });

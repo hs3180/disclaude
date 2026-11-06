@@ -765,6 +765,14 @@ describe('BotChatMappingStore main-group declarations (Issue #5396)', () => {
     expect(await store.getMainGroup('/data/workspace/proj-b')).toBe('oc_new');
   });
 
+  it('re-declaring the same main group is an idempotent no-op', async () => {
+    const store = new BotChatMappingStore({ filePath });
+    await store.declareMainGroup('/data/workspace/proj-b2', 'oc_main');
+    const again = await store.declareMainGroup('/data/workspace/proj-b2', 'oc_main');
+    expect(again).toEqual({ previousChatId: 'oc_main', persisted: false });
+    expect(await store.getMainGroup('/data/workspace/proj-b2')).toBe('oc_main');
+  });
+
   it('clearMainGroup removes the declaration and reports absence', async () => {
     const store = new BotChatMappingStore({ filePath });
     await store.declareMainGroup('/data/workspace/proj-c', 'oc_c');

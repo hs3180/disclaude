@@ -338,6 +338,16 @@ describe('/main-group (Issue #5396)', () => {
     expect(d.sendMessage.mock.calls[1][0].text).toContain('主群迁移');
   });
 
+  it('re-declaring the same group is an idempotent no-op: honest reply, no migration notice', async () => {
+    const { store, mainGroups } = makeStore([{ chatId: 'oc_new', workdir: '/data/workspace/proj' }], { '/data/workspace/proj': 'oc_new' });
+    const d = deps(store);
+    expect(await tryHandleSlashCommand(groupInput('/main-group'), d)).toBe(true);
+    expect(d.sendMessage).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(d.sendMessage).mock.calls[0][0].text).toContain('已是');
+    expect(vi.mocked(d.sendMessage).mock.calls[0][0].text).not.toContain('主群迁移');
+    expect(mainGroups['/data/workspace/proj']).toBe('oc_new');
+  });
+
   it('supports --workdir for explicit declaration and --clear for removal', async () => {
     const { store, mainGroups } = makeStore([], { '/data/workspace/proj2': 'oc_x' });
     const d = deps(store);

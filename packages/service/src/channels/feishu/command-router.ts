@@ -192,13 +192,25 @@ export async function tryHandleSlashCommand(
     }
 
     const { previousChatId } = await store.declareMainGroup(workdir, input.chatId);
+    // Idempotent re-declaration: the same group again is a no-op with an
+    // honest reply — never a second "declared" notice, never a migration
+    // notice to the group that is still the main group.
+    if (previousChatId === input.chatId) {
+      await deps.sendMessage({
+        ...replyTarget,
+        type: 'text',
+        text: `本群已是项目（workdir: ${workdir}）的主战场群，无需重复声明。`,
+      });
+      return true;
+    }
     await deps.sendMessage({
       ...replyTarget,
       type: 'text',
       text: `已将本群声明为项目（workdir: ${workdir}）的主战场群。`,
     });
-    // One-time migration guidance to the previous main group (Issue #5396).
-    if (previousChatId && previousChatId !== input.chatId) {
+    // One-time migration guidance to the previous main group (Issue #5396):
+    // sent exactly once per actual switch, never on idempotent re-declaration.
+    if (previousChatId) {
       await deps.sendMessage({
         chatId: previousChatId,
         type: 'text',
