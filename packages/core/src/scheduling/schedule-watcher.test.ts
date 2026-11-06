@@ -428,6 +428,36 @@ describe('ScheduleFileScanner', () => {
       expect(task!.model).toBeUndefined();
     });
 
+    it('parses finalReplyOnly booleans and rejects non-boolean values (#5715)', async () => {
+      mockReadFile.mockResolvedValue(makeScheduleContent({ finalReplyOnly: 'true' }));
+      const on = await scanner.parseFile(`${MOCK_DIR}/final-only-on/SCHEDULE.md`);
+      expect(on).not.toBeNull();
+      expect(on!.finalReplyOnly).toBe(true);
+
+      mockReadFile.mockResolvedValue(makeScheduleContent({ finalReplyOnly: 'false' }));
+      const off = await scanner.parseFile(`${MOCK_DIR}/final-only-off/SCHEDULE.md`);
+      expect(off).not.toBeNull();
+      expect(off!.finalReplyOnly).toBe(false);
+
+      mockReadFile.mockResolvedValue(makeScheduleContent({ finalReplyOnly: 'yes' }));
+      const invalid = await scanner.parseFile(`${MOCK_DIR}/final-only-invalid/SCHEDULE.md`);
+      expect(invalid).toBeNull();
+    });
+
+    it('preserves finalReplyOnly through write and YAML reload (#5715)', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-final-only-roundtrip', name: 'Greeting roundtrip',
+        cron: '0 9 * * *', prompt: 'Send the greeting.', chatId: 'oc_test123',
+        enabled: true, createdAt: '2026-11-06T00:00:00Z', finalReplyOnly: true,
+      };
+      const filePath = await scanner.writeTask(task);
+      mockReadFile.mockResolvedValue(mockWriteFile.mock.calls[0][1]);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).toContain('finalReplyOnly: true');
+      expect(await scanner.parseFile(filePath)).toMatchObject({ finalReplyOnly: true });
+    });
+
     it('should parse quoted model value (stripping quotes)', async () => {
       const content = [
         '---',

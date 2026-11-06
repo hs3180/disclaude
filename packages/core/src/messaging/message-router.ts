@@ -67,6 +67,12 @@ export interface UserMessageParams {
    * on it. Issue #4587 (part 1).
    */
   threadRootId?: string;
+  /**
+   * Round-level short-notification delivery (#5715): this turn delivers its
+   * final body only; commentary/narration stay private. Scoped to the single
+   * turn — the session's callbacks and later turns are untouched.
+   */
+  finalReplyOnly?: boolean;
 }
 
 // ============================================================================
@@ -98,7 +104,7 @@ export interface IAgentMessageHandler {
     chatId: string,
     payload: string,
     messageId: string,
-    options?: { waitForCompletion?: boolean; agentSession?: Message['agentSession']; replyRootId?: string | null }
+    options?: { waitForCompletion?: boolean; agentSession?: Message['agentSession']; replyRootId?: string | null; finalReplyOnly?: boolean }
   ): Promise<void>;
 }
 
@@ -235,7 +241,8 @@ export class MessageRouter {
       message.payload,
       message.id,
       { waitForCompletion: message.waitForCompletion, ...(message.agentSession ? { agentSession: message.agentSession } : {}),
-        ...(message.replyRootId !== undefined ? { replyRootId: message.replyRootId } : {}) }
+        ...(message.replyRootId !== undefined ? { replyRootId: message.replyRootId } : {}),
+        ...(message.finalReplyOnly === true ? { finalReplyOnly: true } : {}) }
     );
   }
 }

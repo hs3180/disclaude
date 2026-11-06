@@ -82,4 +82,13 @@ export interface ScheduledTask {
    * Issue #1338: Smart model selection per task scenario.
    */
   model?: string;
+  /**
+   * Short-notification delivery for this schedule's rounds (#5715): suppress
+   * the scheduler's informational start notice and deliver the agent turn's
+   * final body only — commentary/narration stay private for that round.
+   * Round-scoped by construction: the flag travels with each triggered
+   * SystemMessage and never mutates the session's channel callbacks, so the
+   * chat's normal progress delivery is unchanged before and after the round.
+   */
+  finalReplyOnly?: boolean;
 }
