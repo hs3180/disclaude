@@ -3,6 +3,11 @@
  * Feishu comments and routes each new comment batch back to the Project agent
  * that produced the research (T-089 / #5197).
  *
+ * Rework note (review 6677596913): this poller is never auto-started. It is
+ * the engine of an on-demand watch session (`disclaude research watch start`,
+ * see watch-service.ts) — while no session is running there is no monitor
+ * instance and therefore zero resident cost.
+ *
  * Polling model (Feishu comment subscription/events are UNKNOWN offline — if a
  * real event mechanism becomes available, `DocCommentSource` is the seam to
  * replace):
@@ -21,7 +26,7 @@
  *   limits, indistinguishable offline) back off exponentially per document
  *   with jitter, capped; permission errors back off the same way but keep
  *   their kind in reports so they are actionable.
- * - Delivery wakes the original Project agent (see service wiring); the
+ * - Delivery wakes the original Project agent (see watch-service wiring); the
  *   monitor itself never edits documents, replies to comments, or answers —
  *   adoption / follow-up questions / reasoned rejection are the agent's call
  *   per the research-workflow skill.
@@ -172,8 +177,9 @@ export function buildResearchCommentNotificationMessage(notification: ResearchCo
 }
 
 /**
- * Bounded comment poller with persisted checkpoints. Construct, `start()`, and
- * `stop()` on service lifecycle; `tick()` is public for tests and operators.
+ * Bounded comment poller with persisted checkpoints. Constructed and started
+ * only by an explicit watch session (watch-service.ts); `start()`/`stop()`
+ * bound the session and `tick()` is public for tests and operators.
  */
 export class DocCommentMonitor {
   private readonly options: Required<Pick<DocCommentMonitorOptions,
@@ -244,17 +250,28 @@ export class DocCommentMonitor {
   }
 
   /** Ops/test view of the checkpoint. */
-  getStatus(): { running: boolean; trackedDocs: number; docs: Record<string, Pick<DocWatchState, 'baselineDone' | 'consecutiveFailures' | 'processedIds' | 'lastError'>> } {
-    const docs: Record<string, Pick<DocWatchState, 'baselineDone' | 'consecutiveFailures' | 'processedIds' | 'lastError'>> = {};
+  getStatus(): {
+    running: boolean;
+    pollIntervalMs: number;
+    trackedDocs: number;
+    docs: Record<string, Pick<DocWatchState, 'baselineDone' | 'consecutiveFailures' | 'processedIds' | 'lastError' | 'nextAttemptAtMs'>>;
+  } {
+    const docs: Record<string, Pick<DocWatchState, 'baselineDone' | 'consecutiveFailures' | 'processedIds' | 'lastError' | 'nextAttemptAtMs'>> = {};
     for (const [token, state] of Object.entries(this.state.docs)) {
       docs[token] = {
         baselineDone: state.baselineDone,
         consecutiveFailures: state.consecutiveFailures,
         processedIds: [...state.processedIds],
         lastError: state.lastError,
+        ...(state.nextAttemptAtMs !== undefined ? { nextAttemptAtMs: state.nextAttemptAtMs } : {}),
       };
     }
-    return { running: this.running, trackedDocs: Object.keys(this.state.docs).length, docs };
+    return {
+      running: this.running,
+      pollIntervalMs: this.options.pollIntervalMs,
+      trackedDocs: Object.keys(this.state.docs).length,
+      docs,
+    };
   }
 
   /** One poll cycle over all registered documents. Public for tests/ops. */

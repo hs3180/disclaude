@@ -30,8 +30,6 @@ import {
   MessageRouter as InputMessageRouter,
   // Issue #4279: FeishuCard type for REST sendCard parity.
   type FeishuCard,
-  // T-089 (#5197): system message for research doc comment notifications.
-  type SystemMessage,
 } from '@disclaude/core';
 import { DebugGroupService, getDebugGroupService } from './services/debug-group-service.js';
 import { ChannelManager } from './channel-manager.js';
@@ -39,14 +37,6 @@ import { InteractiveContextStore } from './interactive-context.js';
 import { AgentPoolMessageHandler } from './messaging/agent-pool-handler.js';
 import { startBrowserRuntime, type BrowserRuntime } from './browser-control/runtime.js';
 import { createScheduleDiagnosticReporter } from './scheduling/schedule-diagnostic-reporter.js';
-// T-089 (#5197): research output document comment monitoring
-import { ResearchDocWatchRegistry } from './research/doc-watch-registry.js';
-import { createLarkCliDocCommentSource } from './research/feishu-doc-comment-source.js';
-import {
-  DocCommentMonitor,
-  buildResearchCommentNotificationMessage,
-} from './research/doc-comment-monitor.js';
-import { randomUUID } from 'node:crypto';
 
 const logger = createLogger('DisclaudeService');
 
@@ -112,9 +102,6 @@ export class DisclaudeService extends EventEmitter {
   protected cooldownManager?: CooldownManager;
   /** Issue #4648 residual ⑥: file-backed failure streaks (survive restarts) */
   protected taskFailureStore?: TaskFailureStore;
-
-  /** T-089 (#5197): research output doc comment monitor (polls only registered docs). */
-  protected researchDocCommentMonitor?: DocCommentMonitor;
 
   // Input MessageRouter for unified routing (Issue #3582 Phase 3)
   protected inputMessageRouter?: InputMessageRouter;
@@ -326,9 +313,10 @@ export class DisclaudeService extends EventEmitter {
       await this.startSchedulerSafely();
     }
 
-    // T-089 (#5197): research doc comment monitor — non-fatal, no-op with an
-    // empty registration directory.
-    this.startResearchDocCommentMonitorSafely();
+    // T-089 rework (#5197, review 6677596913): research doc comment watching is
+    // NOT auto-started. It exists only as an on-demand watch session started via
+    // `disclaude research watch start` (REST /api/research/watch/* wired in
+    // cli-main.ts); when nobody is watching there is no monitor and no timer.
 
     this.running = true;
     this.emit('started');
@@ -362,60 +350,6 @@ export class DisclaudeService extends EventEmitter {
   }
 
   /**
-   * T-089 (#5197): start the research output doc comment monitor.
-   *
-   * Polls ONLY documents registered under
-   * `{workspace}/.disclaude/research-doc-watch/docs/` and routes each new
-   * comment batch to the registered Project chat's agent as a system message.
-   * Non-fatal: a monitor failure never blocks service startup, and with an
-   * empty registry the loop is a no-op directory read per interval.
-   */
-  protected startResearchDocCommentMonitorSafely(): void {
-    try {
-      const workspaceDir = Config.getWorkspaceDir();
-      const watchDir = path.join(workspaceDir, '.disclaude', 'research-doc-watch');
-      const monitor = new DocCommentMonitor({
-        registry: new ResearchDocWatchRegistry({ watchDir }),
-        source: createLarkCliDocCommentSource(),
-        watchDir,
-        deliver: async notification => {
-          // Read lazily: cli-main.ts initializes the router after start().
-          const router = this.inputMessageRouter;
-          if (!router) {
-            throw new Error('InputMessageRouter not initialized; research comment notification deferred to next poll');
-          }
-          const systemMessage: SystemMessage = {
-            id: `research-comment-${randomUUID()}`,
-            replyRootId: null,
-            source: 'system',
-            trigger: 'command',
-            payload: buildResearchCommentNotificationMessage(notification),
-            chatId: notification.chatId,
-            data: {
-              monitor: notification.monitor,
-              docToken: notification.docToken,
-              commentIds: notification.comments.map(comment => comment.commentId),
-            },
-            createdAt: new Date().toISOString(),
-            // Advance the checkpoint only after the agent turn really finished,
-            // so a crash between routing and processing redelivers the batch.
-            waitForCompletion: true,
-          };
-          await router.route(systemMessage);
-        },
-      });
-      monitor.start();
-      this.researchDocCommentMonitor = monitor;
-    } catch (error) {
-      logger.error(
-        { err: error, instanceId: this.instanceId },
-        '⚠️ Research doc comment monitor failed to start — research doc comments will not be watched. ' +
-        'DisclaudeService continues without it. Check logs above for details.'
-      );
-    }
-  }
-
-  /**
    * Stop the disclaude service.
    */
   async stop(): Promise<void> {
@@ -429,12 +363,6 @@ export class DisclaudeService extends EventEmitter {
 
     // Stop Scheduler (Issue #1377)
     await this.stopScheduler();
-
-    // T-089 (#5197): stop the research doc comment monitor. Fire-and-forget:
-    // stop() clears the loop timer synchronously; an in-flight tick (possibly
-    // awaiting an agent turn) must not block service shutdown.
-    void this.researchDocCommentMonitor?.stop();
-    this.researchDocCommentMonitor = undefined;
 
     await this.browserRuntime?.stop();
     this.browserRuntime = undefined;
