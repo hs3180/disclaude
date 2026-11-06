@@ -118,6 +118,8 @@ function parseScheduleFrontmatter(content: string): {
       case 'clearContext':
       case 'freshSession':
       case 'skipHistory':
+      // #5715: round-level short-notification delivery flag.
+      case 'finalReplyOnly':
         frontmatter[key] = value;
         break;
       case 'cooldownPeriod':
@@ -362,7 +364,7 @@ export class ScheduleFileScanner {
           'Define exactly one of a prompt body or the command field.',
         );
       }
-      for (const key of ['freshSession', 'skipHistory', 'clearContext']) {
+      for (const key of ['freshSession', 'skipHistory', 'clearContext', 'finalReplyOnly']) {
         if (frontmatter[key] !== undefined && typeof frontmatter[key] !== 'boolean') {
           throw new ScheduleFileParseError('invalid-context-options', `${key} must be true or false.`);
         }
@@ -405,6 +407,7 @@ export class ScheduleFileScanner {
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
         timezone: frontmatter['timezone'] as string | undefined,
         model: frontmatter['model'] as string | undefined,
+        finalReplyOnly: frontmatter['finalReplyOnly'] as boolean | undefined,
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };
@@ -512,6 +515,11 @@ export class ScheduleFileScanner {
     }
     if (task.model) {
       frontmatter.push(`model: ${JSON.stringify(task.model)}`);
+    }
+    // #5715: persist explicitly-set false too — an edited schedule must not
+    // silently fall back to the default progress delivery on rewrite.
+    if (task.finalReplyOnly !== undefined) {
+      frontmatter.push(`finalReplyOnly: ${task.finalReplyOnly}`);
     }
     if (task.command) {
       frontmatter.push(`command: ${JSON.stringify(task.command)}`);

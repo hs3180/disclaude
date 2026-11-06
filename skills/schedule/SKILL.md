@@ -163,6 +163,7 @@ Schedule content prompt here
 | `command` | No | - | Execute a shell command directly, without an agent turn. Mutually exclusive with the markdown body prompt; exactly one must be provided (Issue #4798). The process receives `DISCLAUDE_SCHEDULE_ID`, `DISCLAUDE_SCHEDULE_NAME`, and `DISCLAUDE_CHAT_ID`. |
 | `freshSession` | No | `true` | Use an isolated agent/native session for each tick; preserve the user's live chat and project/delivery identity. Explicit `false` reuses the live chat and can accumulate context. |
 | `skipHistory` | No | `false` | Suppress the bounded history snapshot in an isolated session. Requires `freshSession: true`. |
+| `finalReplyOnly` | No | `false` | Short-notification delivery for this schedule's rounds (#5715): skip the scheduler's "开始执行" notice and deliver the agent turn's final body only — commentary and narration stay private for that round. Round-scoped: the flag rides with each triggered turn and never changes the chat's normal progress delivery. Error/timeout notices still fire. |
 | `clearContext` | No | unset | Legacy alias: `true` means fresh session + no history; explicit `false` retains legacy live-chat reuse unless `freshSession` is set. It no longer resets the user's agent. |
 
 Migration examples (0.5.0): omit all three fields for fresh session + history;
@@ -236,6 +237,7 @@ enabled: false
 - `cooldownPeriod`: Post-run cooldown (ms)
 - `freshSession`: Isolate each execution from the user's persistent session (default true)
 - `skipHistory`: Omit the initial history snapshot (requires a fresh session)
+- `finalReplyOnly`: Final-body-only delivery for each round (short-notification mode, #5715)
 - `clearContext`: Legacy alias; never resets the user's persistent agent (see Field Reference)
 - Content (body text)
 

@@ -935,10 +935,15 @@ ${task.prompt ?? ''}`;
       // the task never routed, the whole run was lost, and it was counted as
       // a consecutive failure toward the chronic alert. No retry (#507):
       // fail once, warn, keep routing without a reply root.
-      const startMessageId = await this.sendInformationalNotification(
-        task,
-        `⏰ 定时任务「${task.name}」开始执行...`
-      );
+      // #5715: short-notification rounds skip this notice — the round should
+      // surface exactly one message, the turn's final body. Failure/timeout
+      // notices below still fire: quiet mode is not allowed to hide errors.
+      const startMessageId = task.finalReplyOnly === true
+        ? undefined
+        : await this.sendInformationalNotification(
+          task,
+          `⏰ 定时任务「${task.name}」开始执行...`
+        );
 
       {
         const systemMessage: SystemMessage = {
@@ -969,6 +974,9 @@ ${task.prompt ?? ''}`;
           // cancelled and may still finish — see the TaskTimeoutError
           // branch in the catch); long-running tasks should set timeoutMs.
           waitForCompletion: true,
+          // #5715: round-level final-only delivery rides with the message;
+          // the flag dies with this round (never mutates session callbacks).
+          ...(task.finalReplyOnly === true ? { finalReplyOnly: true } : {}),
         };
         sourceMessageId = systemMessage.id;
 

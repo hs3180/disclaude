@@ -821,6 +821,40 @@ describe('Scheduler', () => {
       expect(routedMessage.replyRootId).toBeNull();
     });
 
+    it('finalReplyOnly rounds skip the start notice and carry the flag on the routed message (#5715)', async () => {
+      const task = createTask({ id: 'final-only-1', finalReplyOnly: true });
+      scheduler.addTask(task);
+
+      fireJob(scheduler.getActiveJobs());
+      await vi.waitFor(() => {
+        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // Quiet round: exactly one user-visible delivery, the turn's final
+      // body — the informational start notice is suppressed.
+      expect(mockCallbacks.sendMessage).not.toHaveBeenCalled();
+
+      const routedMessage = getRoutedMessage();
+      expect(routedMessage.finalReplyOnly).toBe(true);
+      expect(routedMessage.replyRootId).toBeNull();
+    });
+
+    it('rounds without finalReplyOnly keep the start notice and the flag unset (#5715)', async () => {
+      const task = createTask({ id: 'final-only-default' });
+      scheduler.addTask(task);
+
+      fireJob(scheduler.getActiveJobs());
+      await vi.waitFor(() => {
+        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('开始执行'),
+      );
+      expect(getRoutedMessage().finalReplyOnly).toBeUndefined();
+    });
+
     it.each(['om_actual_start', 'sched-invalid-start'])('uses only a platform notification as the reply root (%s)', async messageId => {
       vi.mocked(mockCallbacks.sendMessage).mockResolvedValueOnce(messageId);
       const task = createTask({ id: 'reply-root' });

@@ -304,6 +304,26 @@ describe('AgentPoolMessageHandler', () => {
       });
     });
 
+    it('forwards the round-level finalReplyOnly directive to the agent turn (#5715)', async () => {
+      const mockAgent = createMockAgent();
+      vi.mocked(options.agentPool.getOrCreateChatAgent).mockReturnValue(mockAgent);
+
+      await handler.handleSystemMessage('chat-1', 'greeting round', 'msg-sched-1', { finalReplyOnly: true });
+
+      expect(mockAgent.processMessage).toHaveBeenCalledWith(expect.objectContaining({
+        chatId: 'chat-1',
+        messageId: 'msg-sched-1',
+        finalReplyOnly: true,
+      }));
+      // Unset flag stays absent — ordinary rounds are untouched.
+      await handler.handleSystemMessage('chat-1', 'ordinary round', 'msg-sched-2');
+      expect(mockAgent.processMessage).toHaveBeenLastCalledWith({
+        chatId: 'chat-1',
+        payload: 'ordinary round',
+        messageId: 'msg-sched-2',
+      });
+    });
+
     it('should return a resolved promise', async () => {
       const result = handler.handleSystemMessage('chat-1', 'payload', 'msg-1');
       await expect(result).resolves.toBeUndefined();

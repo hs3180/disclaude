@@ -7846,6 +7846,127 @@ describe('Issue #5399: streaming busy-input admission budget', () => {
   });
 });
 
+describe('Issue #5715: round-level finalReplyOnly for scheduled short-notification rounds', () => {
+  const makeAgent = () => {
+    // No debug group in these rounds: debug forwarding (#3809) is a separate
+    // diagnostic channel and would pollute sendMessage observations. Likewise
+    // stub the Agent Teams probe — a directly-constructed agent lacks it and
+    // tool-less results hit the #3706 warning path.
+    mockGetDebugGroup.mockReturnValue(null);
+    const cb = createMockCallbacks();
+    const agent = new ChatAgent({
+      chatId: 'sched-quiet-chat',
+      callbacks: cb,
+      apiKey: 'test-key',
+      model: 'test-model',
+      apiProtocol: 'anthropic',
+      apiBaseUrl: 'https://api.example.com',
+    });
+    (agent as any).isAgentTeamsEnabled = vi.fn(() => false);
+    return { agent, cb };
+  };
+  const iteratorFor = (events: unknown[]) => ({
+    handle: { close: vi.fn(), cancel: vi.fn() },
+    iterator: (async function* () { yield* events as Iterable<{ parsed: unknown }>; })(),
+  });
+  // One persistent session serves both turns (a normal result keeps the
+  // session alive; the follow-up is pushed into the same channel), so both
+  // turns' events must come from ONE generator. The gate between the event
+  // sets stands in for the SDK streaming the second turn's output.
+  const twoTurnIteratorFor = (firstEvents: unknown[], secondEvents: unknown[]) => {
+    let releaseSecond!: () => void;
+    const gate = new Promise<void>(resolve => { releaseSecond = resolve; });
+    const stream = {
+      handle: { close: vi.fn(), cancel: vi.fn() },
+      iterator: (async function* () {
+        yield* firstEvents as Iterable<{ parsed: unknown }>;
+        await gate;
+        yield* secondEvents as Iterable<{ parsed: unknown }>;
+      })(),
+    };
+    return { stream, releaseSecond };
+  };
+  const sentTexts = (cb: ReturnType<typeof createMockCallbacks>) =>
+    cb.sendMessage.mock.calls.map(([, text]) => text).filter((text): text is string => typeof text === 'string');
+  const cleanup = (agent: ChatAgent) => { agent.reset(); ChatAgent.prototype.dispose.call(agent); };
+
+  it('quiet round: the send proxy receives only the final body once (commentary/narration private)', async () => {
+    const { agent, cb } = makeAgent();
+    (agent as any).createQueryStream.mockReturnValueOnce(iteratorFor([
+      { parsed: { type: 'text', content: '读取近期问候记录。', metadata: { phase: 'commentary' } } },
+      { parsed: { type: 'tool_use', content: 'private-tool', metadata: { narration: '正在生成今日问候。' } } },
+      { parsed: { type: 'text', content: '2026-11-07 星期六,早上好!今天是周末。', metadata: { phase: 'final_answer' } } },
+      { parsed: { type: 'result', content: '' } },
+    ]));
+    try {
+      await agent.processMessage({ chatId: 'sched-quiet-chat', payload: '每日问候', messageId: 'sched-quiet-1', finalReplyOnly: true });
+      await agent.turnCompleteFor('sched-quiet-1');
+      // Exactly one delivery: the final body, date and weekday intact.
+      expect(sentTexts(cb)).toEqual(['2026-11-07 星期六,早上好!今天是周末。']);
+      expect(JSON.stringify(cb.sendMessage.mock.calls)).not.toContain('读取近期问候记录');
+      expect(JSON.stringify(cb.sendMessage.mock.calls)).not.toContain('正在生成今日问候');
+      expect(JSON.stringify(cb.sendMessage.mock.calls)).not.toContain('private-tool');
+    } finally { cleanup(agent); }
+  });
+
+  it('round-scoped: the next ordinary turn in the same session regains progress delivery', async () => {
+    const { agent, cb } = makeAgent();
+    const { stream, releaseSecond } = twoTurnIteratorFor(
+      [
+        { parsed: { type: 'text', content: '读取近期问候记录。', metadata: { phase: 'commentary' } } },
+        { parsed: { type: 'text', content: '2026-11-07 星期六,早上好!', metadata: { phase: 'final_answer' } } },
+        { parsed: { type: 'result', content: '' } },
+      ],
+      [
+        { parsed: { type: 'text', content: '先检查当前状态。', metadata: { phase: 'commentary' } } },
+        { parsed: { type: 'tool_use', content: 'private-command', metadata: { narration: '状态显示已登录,接下来检查路由。' } } },
+        { parsed: { type: 'text', content: '检查完成。', metadata: { phase: 'final_answer' } } },
+        { parsed: { type: 'result', content: '' } },
+      ]
+    );
+    (agent as any).createQueryStream.mockReturnValueOnce(stream);
+    try {
+      await agent.processMessage({ chatId: 'sched-quiet-chat', payload: '每日问候', messageId: 'sched-quiet-2', finalReplyOnly: true });
+      await agent.turnCompleteFor('sched-quiet-2');
+      expect(sentTexts(cb)).toEqual(['2026-11-07 星期六,早上好!']);
+      cb.sendMessage.mockClear();
+      // Ordinary multi-step user task in the same session: informative
+      // progress again, final reply separate and exactly once.
+      await agent.processMessage({ chatId: 'sched-quiet-chat', payload: '帮我检查路由', messageId: 'user-task-1' });
+      releaseSecond();
+      await agent.turnCompleteFor('user-task-1');
+      expect(sentTexts(cb)).toEqual(['先检查当前状态。', '状态显示已登录,接下来检查路由。', '检查完成。']);
+    } finally { releaseSecond(); cleanup(agent); }
+  });
+
+  it('interleaves correctly: a flagged round after an ordinary turn is quiet again', async () => {
+    const { agent, cb } = makeAgent();
+    const { stream, releaseSecond } = twoTurnIteratorFor(
+      [
+        { parsed: { type: 'text', content: '先检查当前状态。', metadata: { phase: 'commentary' } } },
+        { parsed: { type: 'text', content: '检查完成。', metadata: { phase: 'final_answer' } } },
+        { parsed: { type: 'result', content: '' } },
+      ],
+      [
+        { parsed: { type: 'text', content: '读取近期问候记录。', metadata: { phase: 'commentary' } } },
+        { parsed: { type: 'text', content: '2026-11-07 星期六,早上好!', metadata: { phase: 'final_answer' } } },
+        { parsed: { type: 'result', content: '' } },
+      ]
+    );
+    (agent as any).createQueryStream.mockReturnValueOnce(stream);
+    try {
+      await agent.processMessage({ chatId: 'sched-quiet-chat', payload: '普通任务', messageId: 'user-task-2' });
+      await agent.turnCompleteFor('user-task-2');
+      expect(sentTexts(cb)).toEqual(['先检查当前状态。', '检查完成。']);
+      cb.sendMessage.mockClear();
+      await agent.processMessage({ chatId: 'sched-quiet-chat', payload: '每日问候', messageId: 'sched-quiet-3', finalReplyOnly: true });
+      releaseSecond();
+      await agent.turnCompleteFor('sched-quiet-3');
+      expect(sentTexts(cb)).toEqual(['2026-11-07 星期六,早上好!']);
+    } finally { releaseSecond(); cleanup(agent); }
+  });
+});
+
 describe('Issue #5654: narration-silent heartbeat and side-effect receipts', () => {
   const makeAgent = () => {
     const cb = createMockCallbacks();

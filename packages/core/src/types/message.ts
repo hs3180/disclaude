@@ -121,6 +121,13 @@ export interface SystemMessage extends Message {
   data?: Record<string, unknown>;
   /** If true, handler should await agent turn completion (Issue #4063: Loop Runner) */
   waitForCompletion?: boolean;
+  /**
+   * Round-level short-notification delivery (#5715): deliver this turn's
+   * final body only, keeping commentary/narration private for the round.
+   * Set from a schedule's `finalReplyOnly` frontmatter; scoped to the single
+   * turn it rides on — the session's normal delivery mode is untouched.
+   */
+  finalReplyOnly?: boolean;
 }
 
 // ============================================================================

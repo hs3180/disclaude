@@ -214,6 +214,21 @@ describe('MessageRouter', () => {
       await router.route(message);
       expect(handler.handleSystemMessage).toHaveBeenCalledWith(message.chatId, message.payload, message.id, { waitForCompletion: true, agentSession: message.agentSession });
     });
+    it('forwards the round-level finalReplyOnly directive (#5715)', async () => {
+      const handler = createMockHandler();
+      const router = new MessageRouter({ handler });
+      const message = createSystemMessage({ finalReplyOnly: true, waitForCompletion: true });
+      await router.route(message);
+      expect(handler.handleSystemMessage).toHaveBeenCalledWith(
+        message.chatId, message.payload, message.id,
+        { waitForCompletion: true, finalReplyOnly: true }
+      );
+      // Unset stays unset — normal rounds are unaffected.
+      await router.route(createSystemMessage());
+      expect(handler.handleSystemMessage).toHaveBeenLastCalledWith(
+        'oc_chat456', 'Run daily maintenance', 'msg-sys-1', { waitForCompletion: undefined }
+      );
+    });
     it('should route SystemMessage to handleSystemMessage', async () => {
       const handler = createMockHandler();
       const router = new MessageRouter({ handler });

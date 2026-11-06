@@ -415,6 +415,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   private readonly busyMessageAdmissions = new Map<string, Promise<void>>();
   private readonly turnsWithLiveInput = new Set<string>();
 
+  // #5715: messageIds of admitted turns that requested round-level
+  // final-only delivery (a schedule's `finalReplyOnly` frontmatter). The flag
+  // is consumed with the turn's own anchor and never mutates this.callbacks,
+  // so the session's normal progress delivery is untouched before and after
+  // the round — including live-chat-reuse schedules on the shared agent.
+  private readonly finalOnlyTurnMessageIds = new Set<string>();
+
   // Issue #5464: EXPLICIT thread identity of each turn's starter message
   // (`replyRootId ?? threadRootId` — no sticky orchestrator fallback), keyed by
   // the starter's messageId. Busy-input steering compares the incoming
@@ -720,6 +727,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.pendingLifecycleContexts.splice(contextIndex, 1);
       this.pendingTurnMessageIds.splice(messageIndex, 1);
       this.pendingTurnAnchors.splice(messageIndex, 1);
+      this.finalOnlyTurnMessageIds.delete(context.sourceMessageId);
       // A folded instruction changes the original input: never automatically
       // replay an apparently empty turn with unknown tool-side effects.
       this.turnsWithLiveInput.add(ownerMessageId as string);
@@ -763,9 +771,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   private removePendingTurn(runId: string): void {
     const index = this.pendingLifecycleContexts.findIndex(context => context.runId === runId);
     if (index >= 0) {
+      const removedMessageId = this.pendingTurnMessageIds[index];
       this.pendingLifecycleContexts.splice(index, 1);
       this.pendingTurnMessageIds.splice(index, 1);
       this.pendingTurnAnchors.splice(index, 1);
+      if (removedMessageId !== undefined) { this.finalOnlyTurnMessageIds.delete(removedMessageId); }
     }
     if (this.activeLifecycleContext?.runId === runId && !this.isProcessingMessage) {
       this.activeLifecycleContext = undefined;
@@ -1231,6 +1241,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       threadContext,
       threadRootId,
       replyRootId,
+      finalReplyOnly,
     } = params;
     // Issue #644: Verify chatId matches bound chatId
     if (chatId !== this.boundChatId) {
@@ -1424,6 +1435,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         if (oldest !== undefined) { this.turnStartAnchors.delete(oldest); }
       }
       this.pendingTurnMessageIds.push(messageId);
+      // #5715: the turn's own delivery directive rides in the same FIFO.
+      if (finalReplyOnly === true) { this.finalOnlyTurnMessageIds.add(messageId); }
       // Issue #5464: remember this turn starter's EXPLICIT thread identity so a
       // later busy input can tell whether it belongs to the running turn. The
       // anchor above may fall back to the chat-level sticky root; the steer
@@ -1447,6 +1460,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         return !entry || entry.settled;
       };
       while (this.pendingTurnMessageIds.length > MAX_TURN_COMPLETIONS && rowIsSettled(this.pendingTurnMessageIds[0])) {
+        this.finalOnlyTurnMessageIds.delete(this.pendingTurnMessageIds[0]);
         this.pendingTurnMessageIds.shift();
         this.pendingTurnAnchors.shift();
       }
@@ -2160,6 +2174,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // enqueue site), so a live anchor is never eaten here.
     this.pendingTurnAnchors = [];
     this.pendingTurnMessageIds = [];
+    this.finalOnlyTurnMessageIds.clear();
     this.pendingLifecycleContexts = [];
 
     // Issue #4649 (review ③): fresh session — the OLD session's queued
@@ -2216,6 +2231,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.pendingLifecycleContexts = [];
       this.pendingTurnMessageIds = [];
       this.pendingTurnAnchors = [];
+      this.finalOnlyTurnMessageIds.clear();
       this.activeTurnMessageId = undefined;
       for (const transport of [this.channel, this.queryHandle]) {
         try { transport?.close(); }
@@ -2658,7 +2674,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     let userVisibleOutputCount = 0;
     let turnResultText = '';
     let turnResultTruncated = false;
-    const bufferAssistantText = this.callbacks.finalReplyOnly === true ||
+    // #5715: per-turn final-only override. Base is the channel's own mode
+    // (REST callbacks set finalReplyOnly); a scheduled short-notification
+    // round ORs in its admission flag. Both re-derive every time a turn's
+    // anchor is consumed below, so a quiet round never leaks its mode into
+    // neighboring turns of the same session.
+    let turnFinalReplyOnly = this.callbacks.finalReplyOnly === true;
+    let bufferAssistantText = turnFinalReplyOnly ||
       this.chatType === 'group' || this.chatType === 'topic';
     let pendingAssistantChunks: string[] = [];
     // 2026-09-08: 本轮是否收到 proxy 的 mid-stream 中断标记(带 MIDSTREAM_MARKER 的
@@ -2694,6 +2716,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         turnHasTerminal = false;
         currentTurnAnchor = this.pendingTurnAnchors.shift();
         currentTurnMessageId = this.pendingTurnMessageIds.shift();
+        // #5715: adopt this turn's own delivery directive (schedule finalReplyOnly).
+        turnFinalReplyOnly = (currentTurnMessageId !== undefined &&
+          this.finalOnlyTurnMessageIds.delete(currentTurnMessageId)) ||
+          this.callbacks.finalReplyOnly === true;
+        bufferAssistantText = turnFinalReplyOnly ||
+          this.chatType === 'group' || this.chatType === 'topic';
         currentTurnLifecycleContext = this.pendingLifecycleContexts.shift();
         this.activeLifecycleContext = currentTurnLifecycleContext;
         this.didDeliverUserVisibleThisTurn = false;
@@ -2778,7 +2806,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
      * activeTurnNarration (#5394 keeps resolving model wording only).
      */
     const maybeSendProgressHeartbeat = async (): Promise<void> => {
-      if (this.callbacks.finalReplyOnly === true) { return; }
+      if (turnFinalReplyOnly) { return; }
       const now = Date.now();
       const silenceMs = now - turnLastProgressAtMs;
       if (silenceMs < HEARTBEAT_SILENCE_MS || turnToolsSinceHeartbeat === 0) { return; }
@@ -2830,6 +2858,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.pendingLifecycleContexts = [];
       this.pendingTurnMessageIds = [];
       this.pendingTurnAnchors = [];
+      this.finalOnlyTurnMessageIds.clear();
       this.activeTurnMessageId = undefined;
       const classification = tagErrorCategory(error);
       for (const { context, anchor } of affected) {
@@ -2979,7 +3008,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         // A completed public commentary item is its own message, as in the
         // Codex stream. It never joins a final card or structured result.
         if (parsed.type === 'text' && parsed.metadata?.phase === 'commentary') {
-          if (this.callbacks.finalReplyOnly !== true && parsed.content) {
+          if (!turnFinalReplyOnly && parsed.content) {
             try {
               // Oversized payloads embedded in progress text fold to a
               // one-line summary; ordinary narration passes through intact.
@@ -3016,7 +3045,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
               ? parsed.metadata.narration
               : '';
           if (coNarrated) { pendingAssistantChunks.push(coNarrated); }
-          if (this.callbacks.finalReplyOnly === true) {
+          if (turnFinalReplyOnly) {
             // Structured workflows consume the terminal answer only.
             pendingAssistantChunks = [];
           } else if (pendingAssistantChunks.length > 0) {
@@ -4419,6 +4448,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // the session.
     this.pendingTurnAnchors = [];
     this.pendingTurnMessageIds = [];
+    this.finalOnlyTurnMessageIds.clear();
     this.pendingLifecycleContexts = [];
 
     // Issue #4063: Clear per-turn completion state
@@ -4555,6 +4585,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // durable journal entries carry the IDs into startup reconciliation.
     this.pendingTurnAnchors = [];
     this.pendingTurnMessageIds = [];
+    this.finalOnlyTurnMessageIds.clear();
     this.pendingLifecycleContexts = [];
     this.abortController?.abort();
     try { this.channel?.close(); } catch (error) {
