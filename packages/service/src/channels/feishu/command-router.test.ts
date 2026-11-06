@@ -66,10 +66,13 @@ describe('tryHandleSlashCommand', () => {
     expect(deps.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining('用户直接发送') }));
   });
 
-  it('routes /feedback through the compatible /issue alias entry', async () => {
-    const { deps } = makeDeps({ hasControlHandler: true, controlResponse: { success: true, message: 'accepted' } });
-    await tryHandleSlashCommand(input('/feedback'), deps);
-    expect(deps.emitControl).toHaveBeenCalledWith(expect.objectContaining({ type: 'feedback', chatId: 'oc_x' }));
+  it('no longer routes /feedback as a control entry; only /issue reports failures', async () => {
+    // Single-entry contract (PR #5697 rework): the registry exposes no
+    // 'feedback' command, so dispatch fails and the router leaves the text to
+    // ordinary chat handling instead of answering with a control reply.
+    const { deps } = makeDeps({ hasControlHandler: true, controlResponse: { success: false, error: 'Unknown command: feedback' } });
+    expect(await tryHandleSlashCommand(input('/feedback'), deps)).toBe(false);
+    expect(deps.sendMessage).not.toHaveBeenCalled();
   });
 
   it('carries the raw platform source ID outside Goal arguments into control dispatch', async () => {

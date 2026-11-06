@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ControlCommand } from '../../types/channel.js';
 import type { ControlHandlerContext } from '../types.js';
 import { ChatFailureRegistry, type ChatFailureRecord } from '../../feedback/index.js';
-import { handleIssue, handleFeedback } from './issue.js';
+import { handleIssue } from './issue.js';
+import { commandRegistry } from './index.js';
+import { createControlHandler } from '../handler.js';
 
 const record: ChatFailureRecord = {
   chatId: 'chat-1',
@@ -81,13 +83,16 @@ describe('/issue command', () => {
     expect(registry.get('chat-1')).toBeDefined();
   });
 
-  it('keeps /feedback compatible and points to the canonical /issue entry', async () => {
+  it('keeps /issue as the single failure-reporting slash entry (no /feedback alias)', async () => {
+    // Reviewer decision (PR #5697): only one entry point survives; /feedback is
+    // no longer a registered command and dispatching it must be rejected.
+    expect(commandRegistry.map(c => c.type)).not.toContain('feedback');
     const registry = new ChatFailureRegistry();
     registry.record(record);
-    const response = await handleFeedback({ type: 'feedback', chatId: 'chat-1' }, context({ failureRegistry: registry }));
-    expect(response.success).toBe(true);
-    expect(response.message).toContain('兼容别名');
-    expect(response.message).toContain('/issue');
+    const dispatch = createControlHandler(context({ failureRegistry: registry }));
+    const response = await dispatch({ type: 'feedback', chatId: 'chat-1' } as unknown as ControlCommand);
+    expect(response.success).toBe(false);
+    expect(response.error).toContain('Unknown command');
   });
 
   it('does not crash the command when the hook throws', async () => {

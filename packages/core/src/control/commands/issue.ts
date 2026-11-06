@@ -61,12 +61,3 @@ export const handleIssue: CommandHandler<'issue'> = async (
     };
   }
 };
-
-/** /feedback remains a compatible alias while /issue is the single canonical entry. */
-export const handleFeedback: CommandHandler<'feedback'> = async (command, context) => {
-  const response = await handleIssue({ ...command, type: 'issue' }, context);
-  return {
-    ...response,
-    message: `${response.message ?? ''}\n/feedback 已统一为 /issue 的兼容别名，后续请使用 /issue。`.trim(),
-  };
-};
