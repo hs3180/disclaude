@@ -62,6 +62,33 @@ export interface ImportFileLimits {
   /** Raw bytes per chunk request (base64 expands this by 4/3). */
   chunkBytes?: number;
 }
+const stdoutTailLimit = 4000;
+const stdoutDeltaLimit = 100_000;
+const encodeStdoutCursor = (runId: string, offset: number): string =>
+  Buffer.from(JSON.stringify({ v: 1, runId, offset }), 'utf8').toString('base64url');
+const decodeStdoutCursor = (cursor: string): { runId: string; offset: number } => {
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as {
+      v?: unknown;
+      runId?: unknown;
+      offset?: unknown;
+    };
+    if (
+      parsed.v !== 1 ||
+      typeof parsed.runId !== 'string' ||
+      typeof parsed.offset !== 'number' ||
+      !Number.isSafeInteger(parsed.offset) ||
+      parsed.offset < 0
+    ) {
+      throw new Error('malformed cursor');
+    }
+    const { runId, offset } = parsed as { runId: string; offset: number };
+    return { runId, offset };
+  } catch {
+    throw new JupyterDiagnosticError({ layer: 'schema', code: 'invalid_stdout_cursor', phase: 'input',
+      message: 'Invalid stdout cursor', hint: 'Pass the untouched stdout.nextStdoutCursor from the same run, or omit it for new-session tail semantics.', outcome: 'not-submitted' });
+  }
+};
 const errorOutputDescription = 'Error previews expose output_type="error", ename:string, evalue:string and traceback:string[]. Tracebacks retain the last 20 frames, at most 1000 characters per frame and 8000 total. errorName/errorValue are deprecated aliases retained for this release.';
 
 function boundedErrorOutput(output: Record<string, unknown>): Record<string, unknown> {
@@ -312,9 +339,21 @@ export class NotebookTools {
       ),
       this.tool(
         'notebook_status',
-        'Query the original runId without replay. source distinguishes live lookup from local journal facts; client-error/server-unknown preserve the last confirmed state.',
-        { ...notebookId, runId: text },
-        (input) => this.observe(this.record(String(input.notebookId), String(input.runId)))
+        'Query the original runId without replay. source distinguishes live lookup from local journal facts; client-error/server-unknown preserve the last confirmed state. stdout is incremental: a first query without stdoutCursor returns only the recent tail (new-session semantics); passing back stdout.nextCursor returns exactly the bytes after that cursor for the same run, with no duplicates and no gaps; if the server-side stream shrank below the cursor the scope becomes reset and the tail is returned again.',
+        {
+          ...notebookId,
+          runId: text,
+          stdoutCursor: {
+            type: 'string',
+            optional: true,
+            description: 'Opaque nextStdoutCursor from a previous stdout block of this same run; omit it for new-session tail semantics.',
+          },
+        },
+        (input) =>
+          this.observe(
+            this.record(String(input.notebookId), String(input.runId)),
+            input.stdoutCursor
+          )
       ),
       this.tool(
         'notebook_reconcile',
@@ -429,13 +468,26 @@ export class NotebookTools {
     properties: Record<string, unknown>,
     execute: (input: Record<string, unknown>, context: ToolContext) => Promise<unknown>
   ): ToolDefinition {
+    // `optional: true` marks host-validated optional fields; it is host-only and
+    // never published in the JSON schema handed to callers.
+    const optional = new Set(
+      Object.entries(properties)
+        .filter(([, schema]) => (schema as { optional?: boolean }).optional === true)
+        .map(([field]) => field)
+    );
+    const published = Object.fromEntries(
+      Object.entries(properties).map(([field, schema]) => {
+        const { optional: _hostOnly, ...rest } = schema as Record<string, unknown>;
+        return [field, rest];
+      })
+    );
     return {
       name,
       description,
       inputSchema: {
         type: 'object',
-        properties,
-        required: Object.keys(properties),
+        properties: published,
+        required: Object.keys(published).filter((field) => !optional.has(field)),
         additionalProperties: false,
       },
       outputSchema: { type: 'object', ...(['notebook_read_cell', 'notebook_describe', 'notebook_status'].includes(name)
@@ -451,11 +503,12 @@ export class NotebookTools {
           Object.entries(properties).some(([field, raw]) => {
             const schema = raw as { type: string; enum?: string[] };
             return (
-              !Object.hasOwn(input, field) ||
-              (schema.type === 'integer'
-                ? !Number.isSafeInteger(input[field])
-                : typeof input[field] !== schema.type) ||
-              (schema.enum !== undefined && !schema.enum.includes(input[field] as string))
+              (!Object.hasOwn(input, field) && !optional.has(field)) ||
+              (Object.hasOwn(input, field) &&
+                ((schema.type === 'integer'
+                  ? !Number.isSafeInteger(input[field])
+                  : typeof input[field] !== schema.type) ||
+                  (schema.enum !== undefined && !schema.enum.includes(input[field] as string))))
             );
           })
         ) {
@@ -1177,7 +1230,10 @@ export class NotebookTools {
     }
     return this.options.useClient(ref.connectionId, ref.serverNamespace, operation);
   }
-  private async observe(record: DatalayerRunRecord): Promise<unknown> {
+  private async observe(
+    record: DatalayerRunRecord,
+    stdoutCursor?: unknown
+  ): Promise<unknown> {
     let current = record;
     let source: 'live' | 'local-journal' = 'local-journal';
     if (!terminal.has(record.state) && record.handle) {
@@ -1226,6 +1282,7 @@ export class NotebookTools {
       ...(current.loss ? { lastKnownState: current.state, failure: current.loss } : {}),
       sourceHash: current.target.sourceHash,
       cellId: current.target.cellId,
+      stdout: this.stdoutView(current, stdoutCursor),
       ...(current.handle ? { requestId: current.handle.requestId } : {}),
       ...(typeof current.observation?.result?.original_result_entry === 'string'
         ? { originalResultEntry: current.observation.result.original_result_entry }
@@ -1250,6 +1307,65 @@ export class NotebookTools {
         : {}),
     };
   }
+  /**
+   * Incremental stdout view over the run's accumulated stream outputs.
+   * The cursor is a client-held opaque offset; no server or journal state is
+   * required, so repeated queries with the same cursor are idempotent deltas.
+   */
+  private stdoutView(record: DatalayerRunRecord, cursor: unknown): Record<string, unknown> {
+    const outputs = (record.observation?.result as { outputs?: unknown } | undefined)?.outputs;
+    const full = Array.isArray(outputs)
+      ? outputs.reduce((accumulated: string, output) => {
+          const item = output as Record<string, unknown>;
+          if (
+            item.output_type !== 'stream' ||
+            (item.name !== undefined && item.name !== 'stdout')
+          ) {
+            return accumulated;
+          }
+          const chunk = Array.isArray(item.text)
+            ? item.text.join('')
+            : typeof item.text === 'string'
+              ? item.text
+              : '';
+          return accumulated + chunk;
+        }, '')
+      : '';
+    const total = full.length;
+    let scope: 'tail' | 'delta' | 'reset' = 'tail';
+    let offset = Math.max(0, total - stdoutTailLimit);
+    if (cursor !== undefined) {
+      const parsed = decodeStdoutCursor(String(cursor));
+      if (parsed.runId !== record.runId) {
+        throw new JupyterDiagnosticError({ layer: 'schema', code: 'invalid_stdout_cursor', phase: 'input',
+          message: 'stdout cursor belongs to another run', hint: 'Pass the nextStdoutCursor of this same runId, or omit it for new-session tail semantics.', outcome: 'not-submitted' });
+      }
+      if (parsed.offset <= total) {
+        scope = 'delta';
+        ({ offset } = parsed);
+      } else {
+        // The retained server stream no longer covers the cursor (rollover or
+        // retention shrink). Report it instead of silently duplicating bytes.
+        scope = 'reset';
+        offset = Math.max(0, total - stdoutTailLimit);
+      }
+    }
+    let text = full.slice(offset);
+    const skippedBytes = Math.max(0, text.length - stdoutDeltaLimit);
+    if (skippedBytes > 0) {
+      text = text.slice(skippedBytes);
+    }
+    return {
+      scope,
+      offset,
+      totalBytes: total,
+      nextCursor: encodeStdoutCursor(record.runId, total),
+      text,
+      ...(scope === 'reset' ? { resetReason: 'retained-stdout-no-longer-covers-cursor' } : {}),
+      ...(skippedBytes > 0 ? { skippedBytes } : {}),
+    };
+  }
+
   private summary(result: Record<string, unknown>): Record<string, unknown> {
     return {
       ...('execution_count' in result ? { executionCount: result.execution_count } : {}),
