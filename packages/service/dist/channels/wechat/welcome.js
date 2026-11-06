@@ -1,4 +1,3 @@
-export const WECHAT_WELCOME_TEXT = '👋 我是 Disclaude。把问题、任务或相关文件发给我，并说明你希望得到的结果。需要用法说明，直接说「怎么用」。';
 export function emptyWelcomeState(botId) { return { version: 1, botId, peers: {} }; }
 const text = (value) => typeof value === 'string' && value.length > 0 && value.length <= 512;
 export function validWelcomeState(value) {

@@ -80,7 +80,7 @@ export class NotebookTools {
                 notebooks: this.refs().map((ref) => ({ ...ref, notebookId: key(ref) })),
                 recentRuns: this.recentRuns(),
             })),
-            this.tool('notebook_describe', 'Read live RTC cells, including unsaved human edits. Use cellId for later operations.', notebookId, async (input) => this.describe(await this.bound(String(input.notebookId)), 64)),
+            this.tool('notebook_describe', 'Read live RTC cells, including unsaved human edits. Use cellId for later operations. A freshly created zero-cell Notebook lists one RTC-seeded phantom empty code cell first: a server UUID cellId whose sourceHash is the SHA-256 of the empty string. It is server seeding, not content; the first appended insert-cell removes it (removedSeedCellId).', notebookId, async (input) => this.describe(await this.bound(String(input.notebookId)), 64)),
             this.tool('notebook_read_cell', 'Read a live shared cell and its outputs by stable cell ID.', cellId, async (input) => {
                 const bound = await this.bound(String(input.notebookId));
                 await bound.doc.flush();
@@ -214,7 +214,7 @@ export class NotebookTools {
                 await bound.doc.flush();
                 return { state: 'deleted', cellId: stableId, revision: bound.doc.snapshot().revision };
             }),
-            this.tool('notebook_execute', 'Submit the exact live code cell once to the remote nbmodel queue. Persist and reuse runId; unknown submissions must not be replayed. Poll notebook_status for completion.', {
+            this.tool('notebook_execute', 'Submit the exact live code cell once to the remote nbmodel queue. Persist and reuse runId; unknown submissions must not be replayed. Poll notebook_status for completion. Ordering: accepted submissions to one kernel run in server-side submission order (per-kernel FIFO queue); an older still-queued request for the same cellId is superseded by a newer one. The CLI refuses a new submission while the kernel reports busy.', {
                 ...cellId,
                 expectedSourceHash: sourceHash,
                 runId: text,
@@ -280,7 +280,13 @@ export class NotebookTools {
                 };
                 return result;
             }),
-            this.tool('notebook_import_file', 'Copy an explicitly selected Project-local file to the remote Notebook input directory. Return its kernel-relative path, SHA-256 and size; limit 2 MB.', { ...notebookId, filePath: text }, (input, invocation) => this.importFile(input, invocation)),
+            this.tool('notebook_import_file', 'Copy one explicitly selected Project-local file to the remote Notebook input directory. filePath is resolved against the Project directory and must stay inside it: absolute paths, traversal outside the Project, symlinks and non-regular files are rejected. Return its kernel-relative path, SHA-256 and size; limit 2 MB.', {
+                ...notebookId,
+                filePath: {
+                    type: 'string',
+                    description: 'Project-relative path of one existing regular file (resolved against --project-dir; absolute, escaping or symlinked paths are rejected; at most 2 MB).',
+                },
+            }, (input, invocation) => this.importFile(input, invocation)),
             this.tool('notebook_download_report', 'Export and download matching ipynb/HTML and up to four bounded PNG/JPEG previews into Project artifacts. Return file paths, revision and hashes. Delivery uses the independent channel tool.', notebookId, (input, invocation) => this.downloadReport(String(input.notebookId), invocation)),
             this.tool('notebook_export', 'Export HTML and an ipynb snapshot from the same live revision on the remote server. Images stay in the report; return links and revision metadata.', notebookId, async (input) => this.export(await this.bound(String(input.notebookId)))),
         ];

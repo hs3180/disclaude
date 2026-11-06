@@ -11,7 +11,7 @@
  *
  * @module channels/wired-descriptors
  */
-import { createInboundAttachment, createControlHandler, buildHelpMessage, Config, GitHubIssueClient, resolveGitHubIssueTarget, } from "../../../core/dist/index.js";
+import { createInboundAttachment, createControlHandler, buildWelcomeMessage, Config, GitHubIssueClient, resolveGitHubIssueTarget, } from "../../../core/dist/index.js";
 import { persistentFileStorageProvider } from './rest/file-storage.js';
 import { RestChannel } from './rest-channel.js';
 import { FeishuChannel } from './feishu-channel.js';
@@ -160,7 +160,7 @@ export const FEISHU_WIRED_DESCRIPTOR = {
             if (helpContext.isCommandAllowed && !helpContext.isCommandAllowed(command)) {
                 return undefined;
             }
-            return buildHelpMessage(command, helpContext, true);
+            return buildWelcomeMessage('feishu');
         };
         const welcomeService = new WelcomeService({
             generateWelcomeMessage,

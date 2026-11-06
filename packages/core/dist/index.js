@@ -99,7 +99,7 @@ export { ChannelLoader, addChannel, removeChannel, setChannelEnabled, getChannel
 // File module (Issue #1041 - migrated from worker-node)
 export { AttachmentManager, attachmentManager } from './file/index.js';
 // Control module - unified control command handling
-export { createControlHandler, commandRegistry, getHandler, getAvailableCommands, buildHelpMessage, createControlCommand, normalizeCommandData, } from './control/index.js';
+export { createControlHandler, commandRegistry, getHandler, getAvailableCommands, buildHelpMessage, buildWelcomeMessage, createControlCommand, normalizeCommandData, } from './control/index.js';
 // Internal Event Bus (Issue #4031: decoupled event propagation)
 export { InternalEventBus, eventBus } from './event-bus.js';
 export { ProjectManager, 

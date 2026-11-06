@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.16] - 2026-11-06
+
+### Changed
+
+- Layer the automatic welcome message for non-technical first-time users and
+  trim it to channel capabilities (#5475; #5704). A task-oriented
+  `buildWelcomeMessage(channel)` template now backs both the WeChat and Feishu
+  automatic welcome paths: plain text with three ready-to-send examples
+  ("总结这份文件的重点" style), no Markdown residue and no backend/command/
+  preset jargon, ending in a /help pointer. The explicit `/help` command keeps
+  the full dynamic command view. The WeChat welcome text is evaluated at send
+  time via `getWeChatWelcomeText()` instead of a module-load constant, and the
+  WeChat CLI status output stays pure JSON (log-level fallback no longer
+  leaks ConfigLoader info lines into `wechat status` stdout).
+- Include the Notebook lifecycle commands in the Jupyter `tools` schema and
+  unify their JSON input contract, documenting four existing contracts
+  (#5321; #5706). `disclaude jupyter tools` now lists all 21 commands
+  (adding `check`, `link`, `create`, `unlink` with `type: object` /
+  `additionalProperties: false` schemas); `link`/`create`/`unlink` accept
+  `--input-file` JSON (`--path` stays as an equivalent shorthand, and
+  providing both or neither is rejected before any remote call). The phantom
+  empty first cell of a fresh Notebook (empty-string SHA-256, reported via
+  `removedSeedCellId` on first append), per-kernel FIFO execution with
+  same-cell superseding, and the Project-relative single-file constraint of
+  `import-file` are now stated in the schema descriptions, module README and
+  the Jupyter skill instead of being discovered by trial and error.
+
 ## [0.6.15] - 2026-11-05
 
 ### Added
