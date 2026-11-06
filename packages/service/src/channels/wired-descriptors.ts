@@ -15,7 +15,7 @@
 import {
   createInboundAttachment,
   createControlHandler,
-  buildHelpMessage,
+  buildWelcomeMessage,
   Config,
   GitHubIssueClient,
   resolveGitHubIssueTarget,
@@ -215,7 +215,7 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
     const generateWelcomeMessage = (chatId: string, chatType: import('@disclaude/core').ChatType): string | undefined => {
       const command = { type: 'help' as const, chatId, chatType, ...(chatId.startsWith('ou_') ? { actorId: chatId } : {}) };
       if (helpContext.isCommandAllowed && !helpContext.isCommandAllowed(command)) { return undefined; }
-      return buildHelpMessage(command, helpContext, true);
+      return buildWelcomeMessage('feishu');
     };
     const welcomeService = new WelcomeService({
       generateWelcomeMessage,

@@ -55,6 +55,8 @@ card was sent.`;
 
 const COMMAND_HELP: Record<string, string> = {
   capabilities: 'Read actual active channel capabilities without sending.\n--chat <id> Optional: filter to the channel that owns this peer.\nAn empty result means no active channel owns this chat. WeChat replies use private saved context; omit --parent.',
+  card_help: 'Offline Card JSON 2.0 component index, search and field help.\n--query <terms> Keyword search across component names, fields and summaries.\n--component <tag> Full field help for one catalog component.\nJSON output only. Covers a documented subset (see the spec block); it is not full-spec compatibility. No chat, credentials, sends or uploads.',
+  card_check: 'Offline Card JSON 2.0 validation against the covered subset.\n--card <json> | --card-file <path|-> | card JSON on stdin\nValid: exit 0 and {"ok":true,"valid":true}. Invalid: exit 1 and issues[] with stable CARD_* codes, an RFC 6901 pointer, a reason and a help command.\nUnknown components are reported as not verified (partial catalog), never as proven compatible. No chat, credentials, sends or uploads.',
   send_text: 'Send plain text.\n--text <text> | --text-file <path|-> | stdin\n--mentions <json> Optional array of {openId, name?}.',
   send_file: 'Send an existing file.\n--file <path> Required file path.',
   send_card: 'Send a display-only card.\n--card <json> | --card-file <path|-> | card JSON on stdin\nCard must be a JSON object. Dry-run does not upload or resolve images.',
@@ -77,6 +79,8 @@ Usage:
 
 Commands and inputs:
   capabilities     Discover active channel capabilities; optional --chat <id>. Read-only.
+  card_help        Offline Card JSON 2.0 component index/search/field help (partial snapshot).
+  card_check       Offline Card JSON 2.0 validation with stable CARD_* codes and JSON Pointer.
   send_text        Send plain text: --text <text>, --text-file <path>, or stdin.
   send_file        Send a file: --file <path>.
   send_card        Send a display-only card: --card <json>, --card-file <path>, or stdin.
