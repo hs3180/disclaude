@@ -240,6 +240,121 @@ describe('WiredChannelDescriptors', () => {
         question: 'Choose', options: [{ text: 'Continue', value: 'continue' }],
       })).rejects.toThrow('message_id');
     });
+
+    it('wires the agent config card to the shared selection services and the command surface (#4914)', async () => {
+      const requestAgentConfigCard = vi.fn().mockResolvedValue({ ok: true });
+      const mockChannel = Object.assign(createMockChannel('feishu'), {
+        getTriggerModeManager: () => ({ getMode: vi.fn(), setMode: vi.fn() }),
+        setWelcomeService: vi.fn(),
+        requestAgentConfigCard,
+      });
+      const listAgentPresets = vi.fn().mockReturnValue([
+        { name: 'default', agentBackend: 'claude', model: 'claude-sonnet' },
+      ]);
+      const getActiveAgentPreset = vi.fn().mockReturnValue(
+        { name: 'default', agentBackend: 'claude', model: 'claude-sonnet' });
+      const switchAgentPreset = vi.fn().mockReturnValue({
+        ok: true, active: { name: 'default', agentBackend: 'claude', model: 'claude-sonnet' }, sessionBoundary: 'new-session' as const,
+      });
+      const isCommandAllowed = vi.fn().mockReturnValue(true);
+      const context = createMockContext({
+        controlHandlerContext: {
+          agentPool: {
+            reset: vi.fn(), stop: vi.fn(),
+            listAgentPresets, getActiveAgentPreset, switchAgentPreset,
+          },
+          isCommandAllowed,
+        },
+      });
+      const config: import('./feishu-channel.js').FeishuChannelConfig = { appId: 'test', appSecret: 'test' };
+      await FEISHU_WIRED_DESCRIPTOR.setup!(mockChannel, config, context);
+
+      // The injected access ports route to the SAME services as /agent.
+      const access = config.agentConfigAccess!;
+      expect(access.listPresets()).toEqual([{ name: 'default', agentBackend: 'claude', model: 'claude-sonnet' }]);
+      expect(access.getActivePreset('oc_1')).toMatchObject({ name: 'default' });
+      access.switchAgentPreset('oc_1', 'default');
+      expect(switchAgentPreset).toHaveBeenCalledExactlyOnceWith('oc_1', 'default', undefined);
+      expect(access.isCommandAllowed?.({ type: 'agent', chatId: 'oc_1', data: { subcommand: 'use' } })).toBe(true);
+      expect(isCommandAllowed).toHaveBeenCalled();
+
+      // End-to-end: /agent config through the wired control handler opens the channel card.
+      const controlHandler = vi.mocked(mockChannel.onControl).mock.calls[0][0] as import('@disclaude/core').ControlHandler;
+      const response = await controlHandler({
+        type: 'agent', chatId: 'oc_1', actorId: 'ou_actor', data: { subcommand: 'config' },
+      });
+      expect(response.success).toBe(true);
+      expect(requestAgentConfigCard).toHaveBeenCalledWith({ chatId: 'oc_1', actorId: 'ou_actor' });
+    });
+
+    it('gates the contextual config hint on a model-class failure and a real preset choice (#4914)', () => {
+      const twoPresets = [
+        { name: 'default', agentBackend: 'claude', model: 'claude-sonnet' },
+        { name: 'fast', agentBackend: 'pi', model: 'glm-fast' },
+      ];
+      const listAgentPresets = vi.fn().mockReturnValue(twoPresets);
+      const context = createMockContext({
+        controlHandlerContext: { agentPool: { reset: vi.fn(), stop: vi.fn(), listAgentPresets } },
+      });
+      const callbacks = FEISHU_WIRED_DESCRIPTOR.createCallbacks(createMockChannel('feishu'), context)('oc_1');
+      const suggest = callbacks.suggestAgentConfig!;
+      expect(suggest('oc_1', 'Error code: 404 - The model `gpt-5.6` does not exist or you do not have access to it.'))
+        .toContain('/agent config');
+      expect(suggest('oc_1', 'Selected model is at capacity. Please try a different model.'))
+        .toContain('/agent config');
+      // Unrelated failures stay untouched.
+      expect(suggest('oc_1', 'upstream request failed: overloaded_error (529)')).toBeUndefined();
+      expect(suggest('oc_1', 'workspace routing discovery failed: connect ETIMEDOUT')).toBeUndefined();
+      // A model failure without a real choice (single preset) stays silent.
+      listAgentPresets.mockReturnValueOnce([twoPresets[0]]);
+      expect(suggest('oc_1', 'model not found: glm-4.7')).toBeUndefined();
+      // Channels without the card never wire the hint.
+      const restCallbacks = REST_WIRED_DESCRIPTOR.createCallbacks(createMockChannel('rest'), createMockContext())('c1');
+      expect(restCallbacks.suggestAgentConfig).toBeUndefined();
+    });
+
+    it('adds the one-line config entry to first-contact welcomes only when a real choice exists (#4914)', async () => {
+      const welcomeForPresets = async (presets: Array<{ name: string; agentBackend: string; model: string }>) => {
+        const mockChannel = Object.assign(createMockChannel('feishu'), {
+          getTriggerModeManager: () => ({ getMode: vi.fn(), setMode: vi.fn() }),
+          setWelcomeService: vi.fn(),
+          requestAgentConfigCard: vi.fn().mockResolvedValue({ ok: true }),
+          // Native P2P welcome delivery goes through sendWelcomeMessage.
+          sendWelcomeMessage: vi.fn().mockResolvedValue(undefined),
+        });
+        const context = createMockContext({
+          controlHandlerContext: {
+            agentPool: {
+              reset: vi.fn(), stop: vi.fn(),
+              listAgentPresets: vi.fn().mockReturnValue(presets),
+              getActiveAgentPreset: vi.fn().mockReturnValue(presets[0]),
+              switchAgentPreset: vi.fn(),
+            },
+          },
+        });
+        await FEISHU_WIRED_DESCRIPTOR.setup!(mockChannel, { appId: 'test', appSecret: 'test' }, context);
+        const [[welcomeService]] = vi.mocked(mockChannel.setWelcomeService).mock.calls;
+        await welcomeService.handleP2PChatEntered('ou_newcomer', 'p2p');
+        const { sendMessage } = vi.mocked(mockChannel);
+        const sent = sendMessage.mock.calls
+          .map(call => String((call[0] as { text?: string }).text ?? ''));
+        const native = (mockChannel as unknown as { sendWelcomeMessage: ReturnType<typeof vi.fn> })
+          .sendWelcomeMessage.mock.calls.map((call: unknown[]) => String(call[1] ?? ''));
+        return [...sent, ...native];
+      };
+
+      const twoPresets = [
+        { name: 'default', agentBackend: 'claude', model: 'claude-sonnet' },
+        { name: 'fast', agentBackend: 'pi', model: 'glm-fast' },
+      ];
+      const welcomedWithChoice = await welcomeForPresets(twoPresets);
+      expect(welcomedWithChoice.some(t => t.includes('/agent config') && t.includes('模型预设'))).toBe(true);
+      // Task examples stay intact — the config line is appended, not a replacement.
+      expect(welcomedWithChoice.some(t => (t.match(/「[^」]+」/g) ?? []).length === 3)).toBe(true);
+
+      const welcomedWithoutChoice = await welcomeForPresets([twoPresets[0]]);
+      expect(welcomedWithoutChoice.some(t => t.includes('/agent config'))).toBe(false);
+    });
   });
 
   describe('WECHAT_WIRED_DESCRIPTOR (Issue #1554)', () => {

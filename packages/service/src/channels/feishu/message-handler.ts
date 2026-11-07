@@ -49,6 +49,7 @@ import { FeishuAgentInput } from './agent-input.js';
 import { FeishuTaskQuestionCards } from './task-question-cards.js';
 import type { TaskQuestionFlowPorts } from '../../agents/task-question-flow.js';
 import { FeishuIssueReport } from './issue-report.js';
+import { FeishuAgentConfigCards, type FeishuAgentConfigAccess } from './agent-config-cards.js';
 import { FeishuPrivateWorkflows, type PrivateWorkflowRequest } from './private-workflows.js';
 import { tryHandleSlashCommand, tryHandleGuidance } from './command-router.js';
 import type { WelcomeService } from '../../platforms/feishu/welcome-service.js';
@@ -215,7 +216,10 @@ export class MessageHandler {
   private taskQuestionCards?: FeishuTaskQuestionCards;
   private taskQuestionHost?: { appId: string; ports: Omit<TaskQuestionFlowPorts, 'send' | 'reconcileCard'> };
   private issueReport?: FeishuIssueReport;
+  private agentConfigCards?: FeishuAgentConfigCards;
   private readonly issueClient?: () => GitHubIssueClient | undefined;
+  /** #4914: preset catalog + selection ports for the native config card. */
+  private readonly agentConfigAccess?: () => FeishuAgentConfigAccess | undefined;
   private welcomeService?: WelcomeService;
 
   setWelcomeService(service: WelcomeService): void { this.welcomeService = service; }
@@ -249,6 +253,13 @@ export class MessageHandler {
     if (!this.issueReport) { return Promise.resolve({ ok: false, error: 'Feishu issue reporting is unavailable' }); }
     return this.issueReport.start(record, target);
   }
+
+  /** #4914: send the /agent config card for the requesting actor. */
+  requestAgentConfigCard(target: { chatId: string; threadRootId?: string; actorId?: string }):
+    Promise<{ ok: true } | { ok: false; error: string }> {
+    if (!this.agentConfigCards) { return Promise.resolve({ ok: false, error: 'Feishu agent config cards are unavailable' }); }
+    return this.agentConfigCards.open(target);
+  }
   private readonly privateWorkflows: FeishuPrivateWorkflows;
 
   requestPrivateWorkflow(request: PrivateWorkflowRequest): Promise<{ actionId: string }> {
@@ -276,6 +287,8 @@ export class MessageHandler {
     privateInput?: ActionBoundInput;
     /** Issue #5400: resolved GitHub App client supplier for issue reporting. */
     issueClient?: () => GitHubIssueClient | undefined;
+    /** #4914: preset catalog/selection ports; injected by descriptor setup. */
+    agentConfigAccess?: () => FeishuAgentConfigAccess | undefined;
   }) {
     this.triggerModeManager = options.triggerModeManager;
     this.mentionDetector = options.mentionDetector;
@@ -287,6 +300,7 @@ export class MessageHandler {
     this.controlHandler = false;
     this.tenantAccessToken = options.tenantAccessToken;
     this.issueClient = options.issueClient;
+    this.agentConfigAccess = options.agentConfigAccess;
     if (options.privateInput) {this.privateInput = new FeishuPrivateInput(options.privateInput, options.callbacks.sendMessage, this.updatePrivateCard);}
 
   }
@@ -308,6 +322,8 @@ export class MessageHandler {
     if (this.taskQuestionHost) { this.taskQuestionCards = new FeishuTaskQuestionCards(client, this.taskQuestionHost.appId, this.taskQuestionHost.ports); }
     this.issueReport?.close();
     this.issueReport = new FeishuIssueReport(client, this.issueClient ?? (() => undefined));
+    this.agentConfigCards?.close();
+    this.agentConfigCards = new FeishuAgentConfigCards(client, this.agentConfigAccess ?? (() => undefined));
     this.controlHandler = this.getHasControlHandler();
     logger.debug({ controlHandler: this.controlHandler }, 'MessageHandler initialized');
   }
@@ -1626,6 +1642,13 @@ export class MessageHandler {
     if (FeishuIssueReport.isCallback(rawData)) {
       void this.issueReport?.submit(rawData).catch(() => logger.warn('Issue report callback could not be handled'));
       return;
+    }
+    // #4914: /agent config cards are presenter-only workflows over the same
+    // preset selection service; they never enter the agent turn path. Must be
+    // matched before the private-input form fallback (form_value payloads).
+    if (FeishuAgentConfigCards.isCallback(rawData)) {
+      void this.agentConfigCards?.submit(rawData).catch(() => logger.warn('Agent config card callback could not be handled'));
+      return { toast: { type: 'info', content: '已收到操作，配置卡片将更新；若长时间未更新请重新发起 /agent config。' } };
     }
     if (FeishuPrivateInput.isPrivateCallback(rawData)) {
       const action = rawData.action as { tag?: unknown } | undefined;
