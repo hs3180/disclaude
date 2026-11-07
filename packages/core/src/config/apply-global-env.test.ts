@@ -6,7 +6,7 @@ import type { LoadedConfig } from './types.js';
 const key = '__DISCLAUDE_TEST_PROTECT_KEY__';
 const configuration = (): LoadedConfig => ({ _fromFile: true,
   agents: { default: { backend: 'codex', llm: 'daily' } },
-  llms: { daily: { model: 'gpt-6-luna' } }, env: { [key]: 'file-value' } });
+  llms: { daily: { defaultModel: 'gpt-6-luna' } }, env: { [key]: 'file-value' } });
 
 describe('applyGlobalEnv with an owned configuration', () => {
   beforeEach(() => {vi.stubEnv(key, undefined); setLoadedConfig(configuration());});

@@ -71,6 +71,8 @@ import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 import type { InterruptedServiceTurn, ServiceTurnRecoveryStore } from '../service-turn-recovery.js';
 import { HistoryManager } from './history-manager.js';
 import crypto from 'node:crypto';
+import { SERVICE_VERSION } from '../version.js';
+import { appendFailureReportLink } from './failure-report-link.js';
 
 // Type alias for backward compatibility within this module
 type UserInput = AgentUserInput;
@@ -2586,7 +2588,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       logPath: `${sanitizeDiagnosticText(process.env.LOG_DIR ?? './logs')}/disclaude-combined*.log`,
       failureClass, timestamp: new Date().toISOString(), detail: sanitizeDiagnosticText(detail) };
     // Issue #5400: every user-visible failure context also feeds the per-chat
-    // last-failure registry behind /issue. The recorder must never break the
+    // last-failure registry behind /feedback. The recorder must never break the
     // failure path itself.
     try {
       this.failureRecorder?.({
@@ -2599,9 +2601,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   }
 
   private formatFailureDiagnostic(failure: ReturnType<ChatAgent['createFailureContext']>): string {
-    return `诊断 ID: ${failure.diagnosticId}\nRun ID: ${failure.runId ?? 'unavailable'}\n会话 ID: ${failure.sessionId}\n消息 ID: ${failure.sourceMessageId ?? 'unavailable'}\n` +
+    const diagnostic = `诊断 ID: ${failure.diagnosticId}\nRun ID: ${failure.runId ?? 'unavailable'}\n会话 ID: ${failure.sessionId}\n消息 ID: ${failure.sourceMessageId ?? 'unavailable'}\n` +
       `Chat ID: ${failure.chatId}；Thread: ${failure.threadRootId}\nUTC: ${failure.timestamp}；Backend: ${failure.backend ?? failure.provider}；分类: ${failure.failureClass}\n` +
       `错误: ${failure.detail}\n日志: ${failure.logPath}（或服务 stderr），按诊断 ID 检索。`;
+    return appendFailureReportLink(
+      diagnostic,
+      failure,
+      SERVICE_VERSION,
+      this.callbacks.getCapabilities?.(this.boundChatId)?.supportsMarkdown === true,
+    );
   }
 
   /**
@@ -3239,7 +3247,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             // remain valid; only the question never reached the user. The
             // structured context (failureClass input-delivery-failed + reason)
             // keeps the cause — e.g. a missing reply anchor on a push-initialized
-            // conversation (#5430) — traceable via /issue and the diagnostic ID.
+            // conversation (#5430) — traceable via /feedback and the diagnostic ID.
             this.restartManager.recordFailure(chatId, 'input-delivery');
             const failure = failureContext(this.activeLifecycleContext, resolveReplyThreadRoot(), 'input-delivery-failed',
               parsed.terminationDetail || inputDeliveryFailure?.reason || 'Async question was not delivered',

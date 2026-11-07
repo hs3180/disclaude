@@ -139,8 +139,9 @@ export type ControlCommandType =
   | 'agent'
   | 'steer'
   | 'goal'
-  // One-click GitHub issue reporting of the chat's last failure (Issue #5400)
-  | 'issue';
+  // One-click GitHub issue reporting of the chat's last failure (Issue #5400;
+  // #5428: /feedback is the canonical and only entry — /issue was removed)
+  | 'feedback';
 
 /**
  * Typed data schema for each command type (Issue #3529).

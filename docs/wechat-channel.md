@@ -43,7 +43,7 @@ agents:
       transport: app-server
 llms:
   daily:
-    model: your-codex-model
+    defaultModel: your-codex-model
 channels:
   wechat:
     enabled: true

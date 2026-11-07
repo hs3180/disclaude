@@ -170,6 +170,9 @@ describe('composeIssueDraft', () => {
     expect(draft.body).toContain('Provider aborted the turn; [REDACTED AUTH]');
     expect(draft.body).toContain('现象如描述');
     expect(draft.body).not.toContain('synthetic-note-secret');
+    expect(draft.body).not.toContain('session-9');
+    expect(draft.body).not.toContain('om-source');
+    expect(draft.body).not.toContain('chat-1');
   });
 
   it('marks a missing note explicitly instead of inventing one', () => {

@@ -5,7 +5,7 @@ describe('native Codex settings', () => {
   it('uses the bound LLM unless the host explicitly overrides it', () => {
     expect(resolveCodexModelSetting({ configured: 'gpt-6-luna' })).toEqual({
       value: 'gpt-6-luna',
-      source: 'llms.model',
+      source: 'llms.defaultModel',
     });
     expect(
       resolveCodexModelSetting({ configured: 'gpt-6-luna', environment: 'gpt-5.6-luna' })

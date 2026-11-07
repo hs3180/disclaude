@@ -35,7 +35,7 @@ fs.appendFileSync('/data/workspace/schedule-runs.ndjson', JSON.stringify({boot, 
     let createdContainer = false;
     const config = {
       agents: { default: { backend: 'dsh', llm: 'native', mode: 'standard' } },
-      llms: { native: { model: 'deepseek-flash', api: {
+      llms: { native: { defaultModel: 'deepseek-flash', api: {
         protocol: 'openai', baseUrl: 'https://api.deepseek.com/v1', apiKey: '$DEEPSEEK_API_KEY',
       } } },
       workspace: { dir: '/data/workspace' },

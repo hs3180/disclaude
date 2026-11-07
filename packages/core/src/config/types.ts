@@ -53,7 +53,36 @@ export type CodexReasoningEffort =
   | 'max'
   | 'ultra';
 
+/**
+ * Claude's multi-agent model tiers (review 2026-11-06): the models that
+ * pretend to be Claude Code's opus/sonnet/haiku slots. Every tier is
+ * optional; an omitted tier falls back to the bound provider's
+ * `defaultModel`, so configuring only the provider default points all three
+ * tiers at that one model.
+ */
+export interface ClaudeModelTiers {
+  /** Model serving the opus (heavyweight) tier. */
+  opus?: string;
+  /** Model serving the sonnet (default) tier. */
+  sonnet?: string;
+  /** Model serving the haiku (fast/background) tier. */
+  haiku?: string;
+}
+
+export interface ClaudeAgentConfig {
+  /** Full Claude catalog identity used for the provider default model. */
+  behavesAs?: string;
+  /** Claude model names (including Opus/Sonnet/Haiku slots) mapped to provider IDs. */
+  modelOverrides?: Record<string, string>;
+  /** Three-tier opus/sonnet/haiku model mapping for Claude Code multi-agent use. */
+  models?: ClaudeModelTiers;
+  /** Claude-specific environment, including ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL. */
+  env?: Record<string, string>;
+}
+
 export interface AgentConfig {
+  /** Claude-only model and environment settings. */
+  claude?: ClaudeAgentConfig;
   /** Agent runtime. */
   agentBackend?: 'claude' | 'pi' | 'codex' | 'dsh';
   /** DSH composition. Changes apply after service restart. Default: standard. */
@@ -106,11 +135,20 @@ export interface AgentConfig {
 /** Supported LLM wire formats, independent of model vendor. */
 export type ApiProtocol = 'anthropic' | 'openai';
 
-/** A model and its API connection. Codex account bindings may omit api. */
+/** An LLM provider connection with an optional default model. */
 export interface LlmConfig {
-  /** Explicit model for every public named binding, including native Codex. */
-  model: string;
-  /** Native Codex/DSH reasoning effort; omission keeps the model's default. */
+  /**
+   * Default model for this provider. Agents bound to the provider can use
+   * ANY model it serves; this key only pins the default used when nothing
+   * more specific selects one. Optional — omit it to keep each bound
+   * runtime's native selection.
+   */
+  defaultModel?: string;
+  /**
+   * Optional default reasoning effort for this provider's models. It is a
+   * provider-level default, not a harness setting: runtimes that cannot
+   * apply an effort ignore it. Omission keeps the model's own default.
+   */
   reasoningEffort?: CodexReasoningEffort;
   /** Maximum live host sessions sharing this LLM, across named agents. */
   maxConcurrentSessions?: number;
@@ -120,21 +158,7 @@ export interface LlmConfig {
     /** Explicit environment reference: $VARIABLE or ${VARIABLE}. */
     apiKey?: string;
   };
-  /**
-   * Claude-side model identity for an ID Claude Code does not know (gateway
-   * or provider-specific IDs, Issue #5410). A full Claude model ID (for
-   * example claude-opus-5) whose catalog entry — context window, capability
-   * and effort defaults — Claude Code applies to `model` while still sending
-   * `model` on the wire. Aliases are not auto-resolved; pin the ID per
-   * deployment so a Claude Code upgrade cannot silently re-target it.
-   */
-  behavesAs?: string;
-  /**
-   * Raw Claude Code modelOverrides map (Anthropic model ID → provider ID) for
-   * multi-slot mappings. Mutually exclusive with behavesAs.
-   */
-  modelOverrides?: Record<string, string>;
-  /** Native runtime settings, including ANTHROPIC_DEFAULT_*_MODEL aliases. */
+  /** Provider-level native runtime settings. Claude model names belong in agent.claude. */
   env?: Record<string, string>;
 }
 
@@ -160,7 +184,7 @@ export interface AgentPreset extends AgentConfig {
   llm: string;
   reasoningEffort?: CodexReasoningEffort;
   maxConcurrentSessions?: number;
-  /** Resolved Claude Code modelOverrides map (Issue #5410); claude runtimes only. */
+  /** Resolved Claude Code modelOverrides map (Issues #5410, #5679); compiled for every preset sharing the binding, applied by Claude runtimes only. */
   modelOverrides?: Record<string, string>;
 }
 export type AgentPresets = Record<string, AgentPreset>;
@@ -498,7 +522,7 @@ export interface LoadedConfig extends DisclaudeConfig {
  * Configuration validation error.
  */
 export interface ConfigValidationError {
-  /** Field path that failed validation (e.g., 'llms.chat.model') */
+  /** Field path that failed validation (e.g., 'llms.chat.defaultModel') */
   field: string;
   /** Human-readable error message */
   message: string;

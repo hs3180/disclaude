@@ -244,7 +244,7 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
     feishuChannel.setWelcomeService(welcomeService);
 
     // Issue #5400: resolve the GitHub App client from the `github` config
-    // section once per setup; a broken section degrades /issue to text-only
+    // section once per setup; a broken section degrades /feedback to text-only
     // guidance instead of failing the channel.
     try {
       const target = resolveGitHubIssueTarget(Config.getRawConfig());
@@ -252,7 +252,7 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
     } catch (error) {
       context.logger.warn(
         { err: error },
-        'github feedback configuration could not be resolved; /issue submission stays disabled'
+        'github feedback configuration could not be resolved; /feedback submission stays disabled'
       );
     }
     helpContext.issueReporting = {

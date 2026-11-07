@@ -293,7 +293,7 @@ export class MessageHandler {
     }
   }
 
-  /** Issue #5400: send the /issue confirmation card for the chat's last failure. */
+  /** Issue #5400: send the /feedback confirmation card for the chat's last failure. */
   requestIssueReport(
     record: ChatFailureRecord,
     target: { chatId: string; threadRootId?: string; actorId?: string }
@@ -1922,7 +1922,7 @@ export class MessageHandler {
         .catch(() => logger.warn('Agent input callback could not be handled'));
       return;
     }
-    // Issue #5400: /issue confirmation cards resolve without an agent turn,
+    // Issue #5400: /feedback confirmation cards resolve without an agent turn,
     // so reporting still works when the agent runtime itself has failed.
     if (FeishuIssueReport.isCallback(rawData)) {
       void this.issueReport
