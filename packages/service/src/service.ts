@@ -511,13 +511,14 @@ export class DisclaudeService extends EventEmitter {
    * the REST face is localhost-bound and the caller is co-located.
    *
    * @returns upload metadata (fileKey/fileType/fileName/fileSize) plus the
-   *   delivered message_id when the channel confirms one (Issue #5630)
+   *   delivered message_id when the channel confirms one (Issue #5630) and the
+   *   actual delivery position — thread-reply vs chat-root (Issue #5722)
    */
   async uploadFile(
     chatId: string,
     filePath: string,
     threadId?: string,
-  ): Promise<{ success: boolean; fileKey?: string; fileType?: string; fileName?: string; fileSize?: number; messageId?: string }> {
+  ): Promise<{ success: boolean; fileKey?: string; fileType?: string; fileName?: string; fileSize?: number; messageId?: string; deliveryPosition?: 'thread-reply' | 'chat-root'; threadId?: string; rootId?: string }> {
     const h = this.resolveApiHandlers(chatId);
     if (!h) {
       throw new Error('No channel handlers available');
@@ -578,10 +579,11 @@ export class DisclaudeService extends EventEmitter {
     if (!h) {
       throw new Error('No channel handlers available');
     }
-    // The channel handler returns Promise<void> (the REST API layer synthesizes
-    // success/messageId); REST confirms acceptance with { success: true }.
-    await h.sendCard(chatId, card, threadId, description);
-    return { success: true };
+    // Issue #5722: the channel handler now returns the platform message_id when
+    // the channel reports one (sendCard previously discarded it), so the REST
+    // layer can echo the delivery position like sendMessage/uploadFile.
+    const messageId = await h.sendCard(chatId, card, threadId, description);
+    return { success: true, ...(typeof messageId === 'string' && messageId ? { messageId } : {}) };
   }
 
   /**
