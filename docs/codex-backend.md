@@ -43,12 +43,13 @@ agents:
       maxConcurrentRuns: 2
 llms:
   daily:
-    model: your-codex-model
+    defaultModel: your-codex-model
     reasoningEffort: your-supported-effort
     maxConcurrentSessions: 3
 ```
 
-`llms.daily.model` is required and must be non-empty. After it passes validation,
+`llms.daily.defaultModel` is optional — omit it and Codex keeps its own model
+selection. When set, it must pass validation before
 `CODEX_MODEL` may explicitly override the default Codex binding; named non-default
 bindings retain their own models. The override cannot fill a missing declaration.
 Model reasoning and session concurrency

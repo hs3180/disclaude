@@ -41,7 +41,7 @@ const { mockGetConfigFromFile } = vi.hoisted(() => ({
     agents: { default: { backend: 'claude', llm: 'default', sdkTimeoutMs: 600_000 } },
     llms: {
       default: {
-        model: 'glm-4',
+        defaultModel: 'glm-4',
         api: { protocol: 'anthropic', apiKey: '$TEST_LLM_DEFAULT_KEY' },
       },
     },

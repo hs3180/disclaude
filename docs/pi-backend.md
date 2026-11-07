@@ -31,7 +31,7 @@ agents:
     llm: assistant
 llms:
   assistant:
-    model: your-model-id
+    defaultModel: your-model-id
     api:
       protocol: openai
       apiKey: $ASSISTANT_API_KEY

@@ -12,7 +12,7 @@ import { registerExternalSecretEnvironmentNames } from './secret-environment.js'
 afterEach(() => { vi.unstubAllEnvs(); setLoadedConfig(null); });
 const config = (): DisclaudeConfig => ({
   agents: { daily: { backend: 'codex', llm: 'native', default: true }, a: { backend: 'claude', llm: 'a' }, b: { backend: 'claude', llm: 'b' } },
-  llms: { native: { model: 'gpt-6-luna' }, a: { model: 'a', api: { protocol: 'anthropic', baseUrl: 'https://a.example', apiKey: '$OPAQUE_A' } }, b: { model: 'b', api: { protocol: 'anthropic', baseUrl: 'https://b.example', apiKey: '$OPAQUE_B' } } },
+  llms: { native: { defaultModel: 'gpt-6-luna' }, a: { defaultModel: 'a', api: { protocol: 'anthropic', baseUrl: 'https://a.example', apiKey: '$OPAQUE_A' } }, b: { defaultModel: 'b', api: { protocol: 'anthropic', baseUrl: 'https://b.example', apiKey: '$OPAQUE_B' } } },
 });
 
 describe('persistent external secrets', () => {
@@ -58,9 +58,12 @@ describe('persistent external secrets', () => {
     vi.stubEnv('HOST_PASSWORD', 'synthetic-host-password'); vi.stubEnv('SELECTED_TOOL', 'synthetic-tool-value');
     vi.stubEnv('DISCLAUDE_API_TOKEN', 'owned-channel-control');
     const value = config();
-    value.llms!.a.env = { TOOL_TOKEN: '$SELECTED_TOOL', ANTHROPIC_DEFAULT_HAIKU_MODEL: 'small-model' };
+    delete value.llms!.a.defaultModel;
+    value.llms!.a.env = { TOOL_TOKEN: '$SELECTED_TOOL' };
+    value.agents!.a.claude = { env: { ANTHROPIC_DEFAULT_HAIKU_MODEL: 'small-model' } };
     const resolved = resolveConfiguredAgents(value); expect(resolved.ok).toBe(true);
     if (!resolved.ok) { throw new Error(resolved.errors.join('; ')); }
+    expect(resolved.presets.a.model).toBe('');
     for (const name of ['a', 'b', 'daily']) {
       const preset = resolved.presets[name];
       const env = buildSdkEnv(preset.apiKey, preset.apiBaseUrl, {}, false, undefined,

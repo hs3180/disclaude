@@ -13,7 +13,7 @@ it.each(['task', 'chat', 'legacy'])('runs factory-supplied tools through the act
     const configPath = join(root, 'config.json');
     writeFileSync(configPath, JSON.stringify({ workspace: { dir: root },
       agents: { default: { backend: 'claude', llm: 'default' } },
-      llms: { default: { model: 'offline-default', api: { protocol: 'anthropic', apiKey: '$TEST_LLM_DEFAULT_KEY' } } },
+      llms: { default: { defaultModel: 'offline-default', api: { protocol: 'anthropic', apiKey: '$TEST_LLM_DEFAULT_KEY' } } },
     }));
     const script = `
       import assert from 'node:assert/strict';

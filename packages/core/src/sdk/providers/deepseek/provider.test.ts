@@ -287,6 +287,71 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
       await rm(fixture.dir, { recursive: true, force: true });
     }
   });
+
+  it('sends a shared binding wire model verbatim to the DSH harness (Issue #5679)', async () => {
+    vi.stubEnv('SHARED_GATEWAY_KEY', 'shared-test-key');
+    const { resolveConfiguredAgents } = await import('../../../config/resolved-agents.js');
+    const { dshOptions } = await import('../../factory.js');
+    const resolved = resolveConfiguredAgents({
+      agents: {
+        assistant: {
+          backend: 'claude', llm: 'shared', default: true,
+          claude: { behavesAs: 'claude-sonnet-4-5' },
+        },
+        research: { backend: 'dsh', llm: 'shared', mode: 'minimal' },
+      },
+      llms: {
+        shared: {
+          defaultModel: 'group/hq-degrade',
+          api: {
+            protocol: 'anthropic',
+            baseUrl: 'https://gateway.example',
+            apiKey: '$SHARED_GATEWAY_KEY',
+          },
+        },
+      },
+    });
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) {
+      return;
+    }
+    // The production factory mapping: the bound LLM's model becomes the DSH
+    // API connection model without alias resolution or Claude mappings.
+    const fixture = await sdkFixture();
+    const provider = new DeepSeekHarnessProvider({
+      ...dshOptions(resolved.presets.research),
+      binary: fixture.binary,
+      dshHome: fixture.dir,
+    });
+    try {
+      // BaseAgent passes the preset's model as the per-query selection, the
+      // same value the API route registers as its catalog entry.
+      await collect(
+        provider.queryStream(oneInput(), {
+          settingSources: [],
+          model: resolved.presets.research.model,
+        }).iterator
+      );
+      const requests = (await readFile(join(fixture.dir, 'requests.jsonl'), 'utf8'))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+      // What the harness is told to select:
+      expect(requests.find((request) => request.method === 'initialize').params.model).toBe(
+        'group/hq-degrade'
+      );
+      // What the API route actually serves:
+      const overlay = JSON.parse(await readFile(join(fixture.dir, 'overlay.json'), 'utf8'));
+      const inserted = overlay.find((entry: { insert?: unknown }) => entry.insert).insert;
+      const route = Object.values(inserted[0].config.providers)[0] as { models: { id: string }[] };
+      expect(route.models).toEqual([
+        { id: 'group/hq-degrade', name: 'group/hq-degrade', input: ['text'] },
+      ]);
+    } finally {
+      provider.dispose();
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
+  });
   it('rejects invalid modes and custom arguments that could override the selected mode', () => {
     expect(() => new DeepSeekHarnessProvider({ mode: 'typo' as never })).toThrow('DSH mode');
     expect(

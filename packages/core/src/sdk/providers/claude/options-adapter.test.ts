@@ -198,6 +198,20 @@ describe('adaptOptions', () => {
     expect(result.settings).toEqual({ modelOverrides: { 'claude-opus-4-7': 'kimi-k3' } });
   });
 
+  it('sends the shared binding wire model with its compiled capability mapping (Issue #5679)', () => {
+    const result = adaptOptions({
+      settingSources: ['user', 'project', 'local'],
+      model: 'group/hq-degrade',
+      modelOverrides: { 'claude-sonnet-4-5': 'group/hq-degrade' },
+    });
+    // The SDK query carries the wire model; the mapping only attaches the
+    // Claude catalog entry, so Claude Code still sends group/hq-degrade.
+    expect(result.model).toBe('group/hq-degrade');
+    expect(result.settings).toEqual({
+      modelOverrides: { 'claude-sonnet-4-5': 'group/hq-degrade' },
+    });
+  });
+
   it('should pass through stderr callback (Issue #2920)', () => {
     const stderrFn = (_data: string) => { /* test callback */ };
     const result = adaptOptions({
