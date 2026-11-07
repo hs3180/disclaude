@@ -51,7 +51,6 @@ function showHelp() {
       '  board-report write Report task artifacts/review proposals (agents; JSON payload on stdin)',
       '  channel <command>  Send channel messages through the service',
       '  harness <command>  Install and check agent harness runtimes (list/install/doctor)',
-      "  backend <command>  Deprecated alias of 'harness' (still forwarded)",
       '  wechat <command>   Log in to personal WeChat or diagnose saved login',
       '  browser <cmd>      Inspect coordinated browser control',
       '  plugins <cmd>      Install, update or remove optional first-party diagnostics',
@@ -110,12 +109,10 @@ const ROUTES = {
     jsonOutput: !['help', '--help', '-h'].includes(args[1]),
   },
   // Issue #5169: unified idempotent agent harness install/check
-  // (list/install/doctor) covering claude/pi/codex/dsh. `backend` stays as a
-  // deprecated compatibility alias (maintenance review on #5709): it forwards
-  // to the same script after printing a migration hint on stderr, so stdout
-  // JSON stays machine-parseable for both spellings.
+  // (list/install/doctor) covering claude/pi/codex/dsh. The old 'backend'
+  // spelling is not kept as an alias (maintenance review on #5709): it fails
+  // loudly with the equivalent harness command instead of routing.
   harness: { file: resolve(ROOT, 'bin/harness.js') },
-  backend: { file: resolve(ROOT, 'bin/harness.js'), deprecatedAliasOf: 'harness' },
   // Status is a cross-platform, read-only doctor. Lifecycle commands remain
   // routed to their native managers; those scripts expect the selector in argv.
   'chromium-cdp': {
@@ -151,6 +148,17 @@ if (command === '--version' || command === '-v') {
   process.exit(0);
 }
 
+// The 'backend' spelling of the harness command family was removed
+// (maintenance review on #5709). Old invocations must not silently route:
+// fail with a non-zero exit and point at the equivalent harness command.
+if (command === 'backend') {
+  const rest = args.slice(1).join(' ').trim();
+  console.error("Error: 'disclaude backend' no longer exists; the command family is 'disclaude harness'.");
+  console.error(`Equivalent command: 'disclaude harness ${rest || '--help'}'.`);
+  console.error("Run 'disclaude harness --help' for usage.");
+  process.exit(1);
+}
+
 const route = ROUTES[command];
 if (!route) {
   console.error(`Unknown command: ${command}`);
@@ -163,12 +171,6 @@ if (!existsSync(target)) {
   console.error(`Error: Target not found at ${target}`);
   console.error('Did you forget to run "npm run build"?');
   process.exit(1);
-}
-
-if (route.deprecatedAliasOf) {
-  console.error(
-    `Note: 'disclaude ${command}' is a deprecated alias; use 'disclaude ${route.deprecatedAliasOf}' instead.`
-  );
 }
 
 // Forward user args. keepCommand routes (chromium-cdp) preserve the command in

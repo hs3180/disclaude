@@ -132,7 +132,7 @@ describe('installed unified CLI argument forwarding', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
-  it('routes harness subcommands to bin/harness.js with the router arg stripped; backend stays a hinted alias (#5169)', () => {
+  it('routes harness subcommands to bin/harness.js with the router arg stripped; the retired backend spelling errors with guidance (#5169)', () => {
     const root = mkdtempSync(join(tmpdir(), 'disclaude-cli-harness-routing-'));
     try {
       mkdirSync(join(root, 'bin'));
@@ -153,14 +153,19 @@ describe('installed unified CLI argument forwarding', () => {
         });
         expect(JSON.parse(out).args).toEqual(forwarded);
       }
-      // `disclaude backend ...` keeps working as a deprecated alias: same
-      // forwarding, plus a migration hint on stderr (stdout stays JSON).
-      const aliased = spawnSync(process.execPath, [join(root, 'bin/disclaude.js'), 'backend', 'list'], {
+      // `disclaude backend ...` is not an alias any more (maintenance review
+      // on #5709): it must not route. It exits non-zero with an explicit
+      // error on stderr pointing at the equivalent harness command, and
+      // stdout stays empty (no JSON forwarded from anywhere).
+      const retired = spawnSync(process.execPath, [join(root, 'bin/disclaude.js'), 'backend', 'list'], {
         encoding: 'utf8', timeout: 10_000,
       });
-      expect(JSON.parse(aliased.stdout).args).toEqual(['list']);
-      expect(aliased.stderr).toContain("'disclaude backend' is a deprecated alias");
-      expect(aliased.stderr).toContain("'disclaude harness'");
+      expect(retired.status).toBe(1);
+      expect(retired.stdout).toBe('');
+      expect(retired.stderr).toContain("'disclaude backend' no longer exists");
+      expect(retired.stderr).toContain("'disclaude harness'");
+      expect(retired.stderr).toContain("'disclaude harness list'");
+      expect(retired.stderr).toContain("'disclaude harness --help'");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -104,7 +104,7 @@ describe('help and usage', () => {
       expect(lines.join('\n')).toContain('disclaude harness install');
       const help = lines.join('\n');
       expect(help).toContain('DISCLAUDE_HARNESS_<CLAUDE|PI|CODEX|DSH>_VERSION');
-      expect(help).toContain('deprecated alias');
+      expect(help).toContain("'disclaude backend ...' no longer runs");
       expect(help).toContain('agent.agentBackend');
     }
   });

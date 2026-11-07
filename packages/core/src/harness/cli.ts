@@ -70,8 +70,9 @@ follows the Claude Code version bundled in this disclaude's pinned agent SDK;
 pi follows docs/pi-backend.md; codex/dsh follow the Dockerfile.service build
 pins.
 
-Compatibility: 'disclaude backend ...' still works as a deprecated alias of
-'disclaude harness ...'. Pre-existing configuration keeps its spelling: the
+Compatibility: 'disclaude backend ...' no longer runs — the command family is
+'disclaude harness ...' only, and old 'backend' invocations fail with the
+equivalent harness command. Pre-existing configuration keeps its spelling: the
 agent.agentBackend config key and docs file names such as docs/pi-backend.md
 are unchanged by this command family.
 
