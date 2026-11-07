@@ -8,6 +8,7 @@ import { notebookSnapshotHash, type DatalayerJupyterClient } from '@disclaude/co
 import type { ToolContext } from '@disclaude/core';
 import { NotebookTools, type NotebookToolOptions } from './notebook-tools.js';
 import { DatalayerRunStore } from './datalayer-run-store.js';
+import { awaitNotebookTerminal } from './cli.js';
 import { JupyterProjectConfigStore } from './project-config-store.js';
 
 const roots: string[] = [];
@@ -117,10 +118,11 @@ async function fixture() {
       operation: (value: DatalayerJupyterClient) => Promise<T>
     ) => operation(client as unknown as DatalayerJupyterClient),
   } satisfies Pick<NotebookToolOptions, 'useClient'>;
-  const create = () =>
+  const create = (importFileLimits?: NotebookToolOptions['importFileLimits']) =>
     new NotebookTools({
       projectDir: root,
       useClient: (id, namespace, operation) => connections.useClient(id, namespace, operation),
+      ...(importFileLimits ? { importFileLimits } : {}),
     });
   const session = create();
   const call = (owner: NotebookTools, name: string, input: Record<string, unknown>) =>
@@ -442,17 +444,181 @@ describe('Optional Datalayer Notebook tools', () => {
 
   it('refuses symlinks, files outside the Project and oversized input before remote writes', async () => {
     const f = await fixture();
+    const session = f.create({ maxBytes: 4096 });
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'disclaude-outside-input-'));
     roots.push(outside);
     fs.writeFileSync(path.join(outside, 'data.csv'), 'outside');
     fs.symlinkSync(path.join(outside, 'data.csv'), path.join(f.root, 'link'));
-    fs.writeFileSync(path.join(f.root, 'large'), Buffer.alloc(2_000_001));
-    for (const filePath of ['link', path.join(outside, 'data.csv'), 'large']) {
+    fs.writeFileSync(path.join(f.root, 'large'), Buffer.alloc(4097));
+    for (const [file, message] of [
+      ['link', 'regular file inside this Project'],
+      [path.join(outside, 'data.csv'), 'regular file inside this Project'],
+      ['large', 'exceeds the import-file limit of 4096 bytes'],
+    ] as const) {
       await expect(
-        f.call(f.session, 'notebook_import_file', { notebookId: f.args.notebookId, filePath })
-      ).rejects.toThrow('regular file inside this Project');
+        f.call(session, 'notebook_import_file', { notebookId: f.args.notebookId, filePath: file })
+      ).rejects.toThrow(message);
     }
     expect(f.client.json).not.toHaveBeenCalled();
+  });
+
+  it('uploads one file above the small-file limit in verified chunks and keeps re-imports idempotent', async () => {
+    const f = await fixture();
+    const session = f.create({ smallFileBytes: 1000, chunkBytes: 1000, maxBytes: 100_000 });
+    const content = Buffer.alloc(2500, 7);
+    fs.writeFileSync(path.join(f.root, 'data.parquet'), content);
+    const remote = new Map<string, Buffer>();
+    let finalized = false;
+    const chunks: number[] = [];
+    Object.assign(f.client, {
+      response: vi.fn((route: string) => {
+        const [pathPart, query] = route.split('?');
+        if (pathPart.startsWith('files/')) {
+          const value = finalized ? remote.get(`api/contents/${pathPart.slice('files/'.length)}`) : undefined;
+          return Promise.resolve(
+            value ? new Response(value) : new Response('{}', { status: 404 })
+          );
+        }
+        if (query?.includes('content=0')) {
+          const value = finalized ? remote.get(pathPart) : undefined;
+          return Promise.resolve(
+            value
+              ? new Response(JSON.stringify({ type: 'file', size: value.length }))
+              : new Response('{}', { status: 404 })
+          );
+        }
+        return Promise.resolve(new Response('{}', { status: 404 }));
+      }),
+      responseText: (value: Response) => value.text(),
+      json: vi.fn((route: string, method?: string, body?: Record<string, unknown>) => {
+        if (method === 'PUT' && typeof body?.chunk === 'number' && typeof body.content === 'string') {
+          expect(body.type).toBe('file');
+          chunks.push(body.chunk);
+          if (body.chunk === 1) {
+            remote.delete(route);
+            chunks.length = 0;
+            chunks.push(1);
+            remote.set(route, Buffer.alloc(0));
+          }
+          const assembled = remote.get(route)!;
+          remote.set(route, Buffer.concat([assembled, Buffer.from(body.content, 'base64')]));
+          if (body.chunk === -1) {
+            finalized = true;
+          }
+          return Promise.resolve({ type: 'file', size: remote.get(route)!.length });
+        }
+        if (method === 'DELETE') {
+          remote.delete(route);
+          finalized = false;
+          return Promise.resolve(undefined);
+        }
+        return Promise.resolve({ path: route });
+      }),
+    });
+    const input = { notebookId: f.args.notebookId, filePath: 'data.parquet' };
+    const imported = (await f.call(session, 'notebook_import_file', input)) as {
+      remotePath: string;
+      chunks: number;
+      transport: string;
+      verifiedBy: string;
+    };
+    expect(chunks).toEqual([1, 2, -1]);
+    const storedAt = (name: string): Buffer | undefined => remote.get(`api/contents/${name}`);
+    expect(imported).toMatchObject({
+      state: 'imported',
+      transport: 'chunked',
+      chunks: 3,
+      verifiedBy: 'sha256-readback',
+      size: 2500,
+      sha256: createHash('sha256').update(content).digest('hex'),
+    });
+    expect(storedAt(imported.remotePath)?.length).toBe(2500);
+    // Re-import: content-addressed name plus matching metadata size, no re-upload.
+    expect(await f.call(session, 'notebook_import_file', input)).toMatchObject({
+      state: 'existing',
+      remotePath: imported.remotePath,
+    });
+    const putCalls = f.client.json.mock.calls.filter(
+      ([, method, body]) => method === 'PUT' && typeof body?.chunk === 'number'
+    ).length;
+    expect(putCalls).toBe(3);
+    // A stale truncated partial (size mismatch under the content-addressed
+    // name) is removed and the import retried instead of being blocked.
+    finalized = true;
+    remote.set(`api/contents/${imported.remotePath}`, content.subarray(0, 1000));
+    expect(await f.call(session, 'notebook_import_file', input)).toMatchObject({
+      state: 'imported',
+      chunks: 3,
+    });
+    expect(storedAt(imported.remotePath)?.length).toBe(2500);
+  });
+
+  it('removes the remote partial when a chunk fails or verification cannot prove the content', async () => {
+    const f = await fixture();
+    const failing = f.create({ smallFileBytes: 10, chunkBytes: 1000, maxBytes: 100_000 });
+    const verified = f.create({ smallFileBytes: 10, chunkBytes: 1000, maxBytes: 100_000 });
+    fs.writeFileSync(path.join(f.root, 'data.bin'), Buffer.alloc(2500, 9));
+    const deleted: string[] = [];
+    let stored = Buffer.alloc(0);
+    let chunkFailuresRemaining = 1;
+    const wire = (session: NotebookTools, filesResponse: (route: string) => Response) => {
+      Object.assign(f.client, {
+        response: vi.fn((route: string) => {
+          if (route.startsWith('files/')) {
+            return Promise.resolve(filesResponse(route));
+          }
+          if (route.split('?')[1]?.includes('content=0')) {
+            return Promise.resolve(
+              stored.length
+                ? new Response(JSON.stringify({ type: 'file', size: stored.length }))
+                : new Response('{}', { status: 404 })
+            );
+          }
+          return Promise.resolve(new Response('{}', { status: 404 }));
+        }),
+        responseText: (value: Response) => value.text(),
+        json: vi.fn((route: string, method?: string, body?: Record<string, unknown>) => {
+          if (method === 'PUT' && typeof body?.chunk === 'number' && typeof body.content === 'string') {
+            if (body.chunk === 1) {
+              stored = Buffer.alloc(0);
+            }
+            if (body.chunk === 2 && chunkFailuresRemaining > 0) {
+              chunkFailuresRemaining--;
+              stored = Buffer.concat([stored, Buffer.from(body.content, 'base64')]);
+              throw new Error('simulated network failure mid-upload');
+            }
+            stored = Buffer.concat([stored, Buffer.from(body.content, 'base64')]);
+            return Promise.resolve({ type: 'file', size: stored.length });
+          }
+          if (method === 'DELETE') {
+            deleted.push(route);
+            stored = Buffer.alloc(0);
+            return Promise.resolve(undefined);
+          }
+          return Promise.resolve({ path: route });
+        }),
+      });
+      return session;
+    };
+    const input = { notebookId: f.args.notebookId, filePath: 'data.bin' };
+    // 1) A failing chunk removes the partial and reports a retryable failure.
+    await expect(f.call(wire(failing, () => new Response('{}', { status: 404 })), 'notebook_import_file', input))
+      .rejects.toThrow(/simulated network failure mid-upload/);
+    expect(deleted).toHaveLength(1);
+    // 2) An unavailable verification route fails closed and removes the upload.
+    await expect(f.call(wire(verified, () => new Response('gone', { status: 404 })), 'notebook_import_file', input))
+      .rejects.toThrow(/verification/i);
+    expect(deleted).toHaveLength(2);
+    // 3) A hash mismatch fails closed and removes the reassembled bytes.
+    await expect(
+      f.call(
+        wire(f.create({ smallFileBytes: 10, chunkBytes: 1000, maxBytes: 100_000 }), () => new Response('other bytes')),
+        'notebook_import_file',
+        input
+      )
+    ).rejects.toThrow(/hash mismatch/);
+    expect(deleted).toHaveLength(3);
+    expect(stored.length).toBe(0);
   });
 
   it('refuses an attachment import write when its Project reference is removed during the read', async () => {
@@ -1146,5 +1312,209 @@ describe('Optional Datalayer Notebook tools', () => {
       })
     ).toMatchObject({ state: 'completed', requestId: 'original-request' });
     expect(f.client.submitCell).toHaveBeenCalledOnce();
+  });
+});
+
+describe('incremental stdout cursor and --wait outcomes (#5320)', () => {
+  type StdoutBlock = {
+    scope: 'tail' | 'delta' | 'reset';
+    text: string;
+    offset: number;
+    totalBytes: number;
+    nextCursor: string;
+    skippedBytes?: number;
+    resetReason?: string;
+  };
+  const accept = { state: 'accepted', handle: { kernelId: 'kernel', requestId: 'run-cursor' } };
+
+  it('serves new-session tails then duplicate-free, gap-free deltas across growing polls', async () => {
+    const f = await fixture();
+    f.client.submitCell.mockResolvedValue(accept as never);
+    let text = 'line-1\nline-2\n';
+    f.client.observe.mockImplementation(() =>
+      Promise.resolve({
+        state: 'running',
+        httpStatus: 202,
+        result: { outputs: [{ output_type: 'stream', name: 'stdout', text }] },
+      }) as never
+    );
+    await f.call(f.session, 'notebook_execute', f.args);
+    const statusArgs = { notebookId: f.args.notebookId, runId: 'original' };
+    const first = (await f.call(f.session, 'notebook_status', statusArgs)) as {
+      stdout: StdoutBlock;
+    };
+    expect(first.stdout.scope).toBe('tail');
+    expect(first.stdout.text).toBe('line-1\nline-2\n');
+    expect(first.stdout.offset).toBe(0);
+    expect(first.stdout.totalBytes).toBe(14);
+    text += 'line-3\n';
+    const second = (await f.call(f.session, 'notebook_status', {
+      ...statusArgs,
+      stdoutCursor: first.stdout.nextCursor,
+    })) as { stdout: StdoutBlock };
+    expect(second.stdout.scope).toBe('delta');
+    expect(second.stdout.text).toBe('line-3\n');
+    const replay = (await f.call(f.session, 'notebook_status', {
+      ...statusArgs,
+      stdoutCursor: first.stdout.nextCursor,
+    })) as { stdout: StdoutBlock };
+    expect(replay.stdout.scope).toBe('delta');
+    expect(replay.stdout.text).toBe('line-3\n');
+    f.client.observe.mockResolvedValue({
+      state: 'completed',
+      httpStatus: 200,
+      result: {
+        execution_count: 1,
+        outputs: [{ output_type: 'stream', name: 'stdout', text: `${text}final\n` }],
+      },
+    } as never);
+    const terminal = (await f.call(f.session, 'notebook_status', {
+      ...statusArgs,
+      stdoutCursor: second.stdout.nextCursor,
+    })) as { state: string; stdout: StdoutBlock };
+    expect(terminal.state).toBe('completed');
+    expect(terminal.stdout.scope).toBe('delta');
+    expect(terminal.stdout.text).toBe('final\n');
+    await f.session.close();
+  });
+
+  it('caps new-session tails and explicitly flags skipped bytes in oversized deltas', async () => {
+    const f = await fixture();
+    f.client.submitCell.mockResolvedValue(accept as never);
+    const text = `${'a'.repeat(6000)}${'b'.repeat(4000)}`;
+    f.client.observe.mockResolvedValue({
+      state: 'running',
+      httpStatus: 202,
+      result: { outputs: [{ output_type: 'stream', name: 'stdout', text }] },
+    } as never);
+    await f.call(f.session, 'notebook_execute', f.args);
+    const statusArgs = { notebookId: f.args.notebookId, runId: 'original' };
+    const tail = (await f.call(f.session, 'notebook_status', statusArgs)) as {
+      stdout: StdoutBlock;
+    };
+    expect(tail.stdout.scope).toBe('tail');
+    expect(tail.stdout.text).toBe('b'.repeat(4000));
+    expect(tail.stdout.offset).toBe(6000);
+    await f.session.close();
+    const huge = `${'c'.repeat(150000)}`;
+    f.client.observe.mockResolvedValue({
+      state: 'running',
+      httpStatus: 202,
+      result: { outputs: [{ output_type: 'stream', name: 'stdout', text: huge }] },
+    } as never);
+    const fresh = f.create();
+    const delta = (await f.call(fresh, 'notebook_status', {
+      ...statusArgs,
+      stdoutCursor: Buffer.from(JSON.stringify({ v: 1, runId: 'original', offset: 0 }), 'utf8').toString('base64url'),
+    })) as { stdout: StdoutBlock };
+    expect(delta.stdout.scope).toBe('delta');
+    expect(delta.stdout.text).toBe('c'.repeat(100000));
+    expect(delta.stdout.skippedBytes).toBe(50000);
+    await fresh.close();
+  });
+
+  it('rejects malformed and foreign-run cursors, and reports resets instead of duplicating', async () => {
+    const f = await fixture();
+    f.client.submitCell.mockResolvedValue(accept as never);
+    f.client.observe.mockImplementation(() =>
+      Promise.resolve({
+        state: 'running',
+        httpStatus: 202,
+        result: { outputs: [{ output_type: 'stream', name: 'stdout', text: stream }] },
+      }) as never
+    );
+    let stream = 'a'.repeat(8000);
+    await f.call(f.session, 'notebook_execute', f.args);
+    const statusArgs = { notebookId: f.args.notebookId, runId: 'original' };
+    await f.call(f.session, 'notebook_execute', { ...f.args, runId: 'other' });
+    const other = (await f.call(f.session, 'notebook_status', {
+      notebookId: f.args.notebookId,
+      runId: 'other',
+    })) as { stdout: StdoutBlock };
+    await expect(
+      f.call(f.session, 'notebook_status', { ...statusArgs, stdoutCursor: other.stdout.nextCursor })
+    ).rejects.toMatchObject({ diagnostic: { code: 'invalid_stdout_cursor' } });
+    await expect(
+      f.call(f.session, 'notebook_status', { ...statusArgs, stdoutCursor: 'not-a-cursor' })
+    ).rejects.toMatchObject({ diagnostic: { code: 'invalid_stdout_cursor' } });
+    const before = (await f.call(f.session, 'notebook_status', statusArgs)) as {
+      stdout: StdoutBlock;
+    };
+    stream = 'b'.repeat(4000);
+    const after = (await f.call(f.session, 'notebook_status', {
+      ...statusArgs,
+      stdoutCursor: before.stdout.nextCursor,
+    })) as { stdout: StdoutBlock };
+    expect(after.stdout.scope).toBe('reset');
+    expect(after.stdout.text).toBe(stream);
+    expect(after.stdout.resetReason).toBe('retained-stdout-no-longer-covers-cursor');
+    await f.session.close();
+  });
+
+  it('awaitNotebookTerminal mirrors terminal states and never cancels the run on wait timeout', async () => {
+    const f = await fixture();
+    f.client.submitCell.mockResolvedValue(accept as never);
+    f.client.observe.mockResolvedValue({
+      state: 'running',
+      httpStatus: 202,
+      result: { outputs: [] },
+    } as never);
+    const submitted = await f.call(f.session, 'notebook_execute', f.args);
+    const timedOut = (await awaitNotebookTerminal(
+      f.session,
+      f.args,
+      submitted,
+      0.2,
+      invocation.signal
+    )) as { state: string; wait: { state: string; runPreserved: boolean } };
+    expect(timedOut.state).toBe('running');
+    expect(timedOut.wait.state).toBe('timeout');
+    expect(timedOut.wait.runPreserved).toBe(true);
+    expect(f.client.stopRequest).not.toHaveBeenCalled();
+    f.client.observe.mockResolvedValue({
+      state: 'completed',
+      httpStatus: 200,
+      result: {
+        execution_count: 1,
+        outputs: [{ output_type: 'stream', name: 'stdout', text: 'done' }],
+      },
+    } as never);
+    const done = (await awaitNotebookTerminal(
+      f.session,
+      f.args,
+      timedOut,
+      5,
+      invocation.signal
+    )) as { state: string; wait: { state: string } };
+    expect(done.state).toBe('completed');
+    expect(done.wait.state).toBe('completed');
+    expect(f.client.stopRequest).not.toHaveBeenCalled();
+    await f.session.close();
+  });
+
+  it('distinguishes failed and cancelled terminal outcomes under --wait', async () => {
+    for (const state of ['failed', 'cancelled'] as const) {
+      const f = await fixture();
+      f.client.submitCell.mockResolvedValue(accept as never);
+      f.client.observe.mockResolvedValue({
+        state,
+        httpStatus: 500,
+        result: {
+          error: { ename: state === 'cancelled' ? 'KeyboardInterrupt' : 'ValueError', evalue: 'x' },
+        },
+      } as never);
+      const submitted = await f.call(f.session, 'notebook_execute', f.args);
+      const outcome = (await awaitNotebookTerminal(
+        f.session,
+        f.args,
+        submitted,
+        5,
+        invocation.signal
+      )) as { state: string; wait: { state: string } };
+      expect(outcome.state).toBe(state);
+      expect(outcome.wait.state).toBe(state);
+      expect(f.client.stopRequest).not.toHaveBeenCalled();
+      await f.session.close();
+    }
   });
 });

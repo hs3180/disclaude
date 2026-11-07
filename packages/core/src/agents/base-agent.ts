@@ -191,7 +191,7 @@ export abstract class BaseAgent implements Disposable {
       const bundled = bundledClaudeCodeVersion();
       if (bundled && lacksModelOverrides(bundled)) {
         throw new AppError(
-          `modelOverrides requires Claude Code >= 2.1.200, but the bundled Claude Code is v${bundled}; upgrade @anthropic-ai/claude-agent-sdk or remove behavesAs/modelOverrides from llms.${config.llm ?? 'default'}`,
+          `modelOverrides requires Claude Code >= 2.1.200, but the bundled Claude Code is v${bundled}; upgrade @anthropic-ai/claude-agent-sdk or remove the agent's claude.modelOverrides`,
           ErrorCategory.CONFIGURATION
         );
       }

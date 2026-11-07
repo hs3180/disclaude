@@ -163,7 +163,7 @@ agents:
     llm: default
 llms:
   default:
-    model: claude-3-5-sonnet-20241022
+    defaultModel: claude-3-5-sonnet-20241022
     api:
       protocol: anthropic
 
@@ -176,7 +176,7 @@ logging:
     expect(result._fromFile).toBe(true);
     expect(result._source).toBeDefined();
     expect(result.workspace?.dir).toBe('/custom/workspace');
-    expect(result.llms?.default.model).toBe('claude-3-5-sonnet-20241022');
+    expect(result.llms?.default.defaultModel).toBe('claude-3-5-sonnet-20241022');
     expect(result.logging?.level).toBe('debug');
   });
 
@@ -249,7 +249,7 @@ describe('getConfigFromFile', () => {
       _fromFile: true,
       workspace: { dir: '/workspace' },
       agents: { default: { backend: 'claude', llm: 'default' } },
-      llms: { default: { model: 'test-model', api: { protocol: 'anthropic' } } },
+      llms: { default: { defaultModel: 'test-model', api: { protocol: 'anthropic' } } },
     };
 
     const result = getConfigFromFile(loadedConfig);
@@ -257,7 +257,7 @@ describe('getConfigFromFile', () => {
     expect(result).toEqual({
       workspace: { dir: '/workspace' },
       agents: { default: { backend: 'claude', llm: 'default' } },
-      llms: { default: { model: 'test-model', api: { protocol: 'anthropic' } } },
+      llms: { default: { defaultModel: 'test-model', api: { protocol: 'anthropic' } } },
     });
     expect(result).not.toHaveProperty('_source');
     expect(result).not.toHaveProperty('_fromFile');
@@ -283,7 +283,7 @@ describe('getConfigFromFile', () => {
       agents: {
         default: { backend: 'claude', llm: 'default', permissionMode: 'bypassPermissions' },
       },
-      llms: { default: { model: 'model', api: { protocol: 'anthropic' } } },
+      llms: { default: { defaultModel: 'model', api: { protocol: 'anthropic' } } },
       channels: { feishu: { appId: 'app123', appSecret: 'secret' } },
     };
 
@@ -302,7 +302,7 @@ describe('validateConfig', () => {
       workspace: { dir: '/workspace' },
       logging: { level: 'debug' },
       agents: { default: { backend: 'claude', llm: 'default' } },
-      llms: { default: { model: 'claude-3-5-sonnet-20241022', api: { protocol: 'anthropic' } } },
+      llms: { default: { defaultModel: 'claude-3-5-sonnet-20241022', api: { protocol: 'anthropic' } } },
     };
 
     const result = validateConfig(config);
@@ -336,14 +336,14 @@ describe('validateConfig', () => {
     expect(validateConfig(config2 as unknown as Record<string, unknown>)).toBe(false);
   });
 
-  it('should reject invalid agent.model', () => {
+  it('should reject an invalid provider defaultModel', () => {
     const config1 = {
       agents: { default: { backend: 'claude', llm: 'default' } },
-      llms: { default: { model: 123, api: { protocol: 'anthropic' } } },
+      llms: { default: { defaultModel: 123, api: { protocol: 'anthropic' } } },
     };
     const config2 = {
       agents: { default: { backend: 'claude', llm: 'default' } },
-      llms: { default: { model: ['array'], api: { protocol: 'anthropic' } } },
+      llms: { default: { defaultModel: ['array'], api: { protocol: 'anthropic' } } },
     };
 
     expect(validateConfig(config1 as unknown as Record<string, unknown>)).toBe(false);
@@ -363,7 +363,7 @@ describe('validateConfig', () => {
       workspace: { dir: '/workspace' },
       logging: { level: 'info' },
       agents: { default: { backend: 'claude', llm: 'default' } },
-      llms: { default: { model: 'model-name', api: { protocol: 'anthropic' } } },
+      llms: { default: { defaultModel: 'model-name', api: { protocol: 'anthropic' } } },
     };
 
     expect(validateConfig(config)).toBe(true);
@@ -398,7 +398,7 @@ describe('validateConfig', () => {
       workspace: { dir: '/custom/dir' },
       logging: { level: 'debug', file: '/var/log/service.log' },
       agents: { default: { backend: 'claude', llm: 'default', permissionMode: 'default' } },
-      llms: { default: { model: 'claude-model', api: { protocol: 'anthropic' } } },
+      llms: { default: { defaultModel: 'claude-model', api: { protocol: 'anthropic' } } },
       channels: {
         feishu: {
           appId: 'app-id',
@@ -447,7 +447,7 @@ agents:
     llm: default
 llms:
   default:
-    model: claude-3-5-sonnet-20241022
+    defaultModel: claude-3-5-sonnet-20241022
     api:
       protocol: anthropic
 
@@ -505,7 +505,7 @@ describe('setLoadedConfig / getPreloadedConfig', () => {
       _source: '/test/config.yaml',
       _fromFile: true,
       agents: { default: { backend: 'claude', llm: 'default' } },
-      llms: { default: { model: 'test-model', api: { protocol: 'anthropic' } } },
+      llms: { default: { defaultModel: 'test-model', api: { protocol: 'anthropic' } } },
     };
 
     setLoadedConfig(config);
@@ -514,7 +514,7 @@ describe('setLoadedConfig / getPreloadedConfig', () => {
     expect(result).toBeDefined();
     expect(result?._source).toBe('/test/config.yaml');
     expect(result?._fromFile).toBe(true);
-    expect(result?.llms?.default.model).toBe('test-model');
+    expect(result?.llms?.default.defaultModel).toBe('test-model');
   });
 
   it('should overwrite previously set config', () => {

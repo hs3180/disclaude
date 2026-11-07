@@ -17,12 +17,12 @@ const configuration = (): DisclaudeConfig => ({
     other: { backend: 'pi', llm: 'other' },
   },
   llms: {
-    daily: { model: 'gpt-6-luna', reasoningEffort: 'max', maxConcurrentSessions: 3 },
+    daily: { defaultModel: 'gpt-6-luna', reasoningEffort: 'max', maxConcurrentSessions: 3 },
     proxy: {
-      model: 'glm-5.3',
+      defaultModel: 'glm-5.3',
       api: { protocol: 'anthropic', baseUrl: 'https://proxy.example', apiKey: '$PROXY_KEY' },
     },
-    other: { model: 'other-model', api: { protocol: 'openai', apiKey: '$OTHER_KEY' } },
+    other: { defaultModel: 'other-model', api: { protocol: 'openai', apiKey: '$OTHER_KEY' } },
   },
   channels: { feishu: { appId: 'test-app', appSecret: '$FEISHU_APP_SECRET' } },
 });
@@ -42,7 +42,7 @@ describe('named runtime and LLM configuration', () => {
       const config = configuration();
       config.agents!.dsh = { backend: 'dsh', llm: 'selected', mode: 'minimal' };
       config.llms!.selected = {
-        model: 'glm-5.3',
+        defaultModel: 'glm-5.3',
         api: { protocol, baseUrl: 'https://selected.example/v1', apiKey: '${DSH_KEY}' },
       };
       const result = resolveConfiguredAgents(config);
@@ -64,7 +64,7 @@ describe('named runtime and LLM configuration', () => {
     (api) => {
       const config = configuration();
       config.agents!.dsh = { backend: 'dsh', llm: 'selected' };
-      config.llms!.selected = { model: 'glm-5.3', api: api as never };
+      config.llms!.selected = { defaultModel: 'glm-5.3', api: api as never };
       expect(resolveConfiguredAgents(config)).toEqual({
         ok: false,
         errors: [
@@ -79,7 +79,7 @@ describe('named runtime and LLM configuration', () => {
     const config = configuration();
     config.agents!.dsh = { backend: 'dsh', llm: 'selected' };
     config.llms!.selected = {
-      model: 'glm-5.3',
+      defaultModel: 'glm-5.3',
       api: { protocol: 'openai', baseUrl: 'https://selected.example/v1', apiKey: '$DSH_KEY' },
     };
     expect(validateRequiredConfig(config).valid).toBe(true);
@@ -93,7 +93,7 @@ describe('named runtime and LLM configuration', () => {
   it('keeps minimal DSH settings on a named DSH agent with a Codex default', () => {
     const config = configuration();
     config.llms!.native = {
-      model: 'glm-5.3',
+      defaultModel: 'glm-5.3',
       api: { protocol: 'openai', baseUrl: 'https://dsh.example/v1', apiKey: '$DSH_TEST_KEY' },
     };
     config.agents!.dsh = {
@@ -119,7 +119,7 @@ describe('named runtime and LLM configuration', () => {
   it('rejects the legacy backend with migration guidance', () => {
     const config = configuration();
     config.llms!.native = {
-      model: 'glm-5.3',
+      defaultModel: 'glm-5.3',
       api: { protocol: 'openai', baseUrl: 'https://dsh.example/v1', apiKey: '$DSH_TEST_KEY' },
     };
     config.agents!.dsh = { backend: 'deepseek' as never, llm: 'native' };
@@ -134,7 +134,7 @@ describe('named runtime and LLM configuration', () => {
     (backend) => {
       const config = configuration();
       config.llms!.native = {
-        model: 'glm-5.3',
+        defaultModel: 'glm-5.3',
         api: { protocol: 'openai', baseUrl: 'https://dsh.example/v1', apiKey: '$DSH_TEST_KEY' },
       };
       const binding = backend === 'codex' ? 'daily' : backend === 'dsh' ? 'native' : 'proxy';
@@ -168,7 +168,7 @@ describe('named runtime and LLM configuration', () => {
     (mode) => {
       const config = configuration();
       config.llms!.native = {
-        model: 'glm-5.3',
+        defaultModel: 'glm-5.3',
         api: { protocol: 'openai', baseUrl: 'https://dsh.example/v1', apiKey: '$DSH_TEST_KEY' },
       };
       config.agents!.dsh = { backend: 'dsh', llm: 'native', mode, dshHome: '/selected-home' };
@@ -197,7 +197,7 @@ describe('named runtime and LLM configuration', () => {
   it.each([null, false, 42, '', 'typo', {}])('rejects malformed mode (%j)', (mode) => {
     const config = configuration();
     config.llms!.native = {
-      model: 'glm-5.3',
+      defaultModel: 'glm-5.3',
       api: { protocol: 'openai', baseUrl: 'https://dsh.example/v1', apiKey: '$DSH_TEST_KEY' },
     };
     config.agents!.dsh = { backend: 'dsh', llm: 'native', mode: mode as never };
@@ -212,7 +212,7 @@ describe('named runtime and LLM configuration', () => {
     (mode) => {
       const config = configuration();
       config.llms!.native = {
-        model: 'glm-5.3',
+        defaultModel: 'glm-5.3',
         api: { protocol: 'openai', baseUrl: 'https://dsh.example/v1', apiKey: '$DSH_TEST_KEY' },
       };
       config.agents!.dsh = {
@@ -246,7 +246,7 @@ describe('named runtime and LLM configuration', () => {
   it.each([null, false, 42, '', '   ', {}])('rejects malformed dshHome (%j)', (dshHome) => {
     const config = configuration();
     config.llms!.native = {
-      model: 'glm-5.3',
+      defaultModel: 'glm-5.3',
       api: { protocol: 'openai', baseUrl: 'https://dsh.example/v1', apiKey: '$DSH_TEST_KEY' },
     };
     config.agents!.dsh = { backend: 'dsh', llm: 'native', dshHome: dshHome as never };
@@ -261,7 +261,7 @@ describe('named runtime and LLM configuration', () => {
     (dshHome) => {
       const config = configuration();
       config.llms!.native = {
-        model: 'glm-5.3',
+        defaultModel: 'glm-5.3',
         api: { protocol: 'openai', baseUrl: 'https://dsh.example/v1', apiKey: '$DSH_TEST_KEY' },
       };
       config.agents!.dsh = {
@@ -290,7 +290,7 @@ describe('named runtime and LLM configuration', () => {
   ])('rejects malformed or ignored DSH settings (%j)', (dsh) => {
     const config = configuration();
     config.llms!.native = {
-      model: 'glm-5.3',
+      defaultModel: 'glm-5.3',
       api: { protocol: 'openai', baseUrl: 'https://dsh.example/v1', apiKey: '$DSH_TEST_KEY' },
     };
     config.agents!.dsh = { backend: 'dsh', llm: 'native', dsh } as never;
@@ -369,32 +369,38 @@ describe('named runtime and LLM configuration', () => {
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env.OPENAI_BASE_URL).toBeUndefined();
   });
-  it.each([undefined, '', '   '])('requires an explicit Codex model (%j)', (model) => {
+  it('allows an omitted provider default model without environment fallback', () => {
     vi.stubEnv('CODEX_MODEL', 'gpt-6-luna');
     const config = configuration();
-    Object.assign(config.llms!.daily, { model });
-    const result = resolveConfiguredAgents(config);
-    expect(result).toEqual({ ok: false, errors: [
-      'llms.daily.model must be an explicit non-empty string; set this LLM model before upgrading (docs/agent-configuration.md)',
+    delete config.llms!.daily.defaultModel;
+    expect(resolveConfiguredAgents(config)).toMatchObject({ ok: true, presets: { daily: { model: '' } } });
+  });
+  it.each(['', '   '])('rejects a blank provider default model (%j)', (model) => {
+    const config = configuration();
+    config.llms!.daily.defaultModel = model;
+    expect(resolveConfiguredAgents(config)).toEqual({ ok: false, errors: [
+      'llms.daily.defaultModel must be a non-empty string when set',
     ] });
-    expect(validateRequiredConfig(config).valid).toBe(false);
+  });
+  it('rejects the pre-rename provider model key with migration guidance', () => {
+    const config = configuration();
+    (config.llms!.proxy as unknown as Record<string, unknown>).model = 'glm-5.3';
+    expect(resolveConfiguredAgents(config)).toEqual({ ok: false, errors: [
+      'llms.proxy.model has been renamed to llms.proxy.defaultModel; agents can use any model of this provider and defaultModel only sets the default',
+    ] });
   });
   it.each([
     ['proxy', 'ANTHROPIC_MODEL'],
     ['other', 'OPENAI_MODEL'],
-  ])('does not fill llms.%s.model from %s', (name, variable) => {
+  ])('does not fill an omitted llms.%s.defaultModel from %s', (name, variable) => {
     vi.stubEnv(variable, 'inherited-model');
     const config = configuration();
     config.env = { [variable]: 'global-model' };
-    Object.assign(config.llms![name], { model: undefined });
-    expect(resolveConfiguredAgents(config)).toEqual({ ok: false, errors: [
-      `llms.${name}.model must be an explicit non-empty string; set this LLM model before upgrading (docs/agent-configuration.md)`,
-    ] });
-    config.llms![name].model = 'explicit-model';
+    delete config.llms![name].defaultModel;
     const result = resolveConfiguredAgents(config);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.presets[name === 'proxy' ? 'assistant' : 'other'].model).toBe('explicit-model');
+      expect(result.presets[name === 'proxy' ? 'assistant' : 'other'].model).toBe('');
     }
   });
   it('keeps explicit models independent for two agents on the same backend', () => {
@@ -402,7 +408,7 @@ describe('named runtime and LLM configuration', () => {
     const config = configuration();
     config.agents!.second = { backend: 'claude', llm: 'second' };
     config.llms!.second = {
-      model: 'second-explicit-model',
+      defaultModel: 'second-explicit-model',
       api: { protocol: 'anthropic', baseUrl: 'https://second.example', apiKey: '$SECOND_KEY' },
     };
     expect(resolveConfiguredAgents(config)).toMatchObject({ ok: true, presets: {
@@ -410,11 +416,11 @@ describe('named runtime and LLM configuration', () => {
       second: { agentBackend: 'claude', model: 'second-explicit-model', apiBaseUrl: 'https://second.example' },
     } });
   });
-  it('rejects an empty resolved Codex model before its native credential exemption', () => {
+  it('accepts an empty resolved model as the runtime default', () => {
     const result = resolveConfiguredAgents(configuration());
     if (!result.ok) { throw new Error(result.errors.join('\n')); }
     result.presets.daily.model = '';
-    expect(validateResolvedAgent(result.presets.daily)).toBe('llms.daily.model must be an explicit non-empty string');
+    expect(validateResolvedAgent(result.presets.daily)).toBeUndefined();
   });
   it('resolves braced references and never expands embedded or shell expressions', () => {
     const config = configuration();
@@ -442,7 +448,7 @@ describe('named runtime and LLM configuration', () => {
     config.agents!.secondary = { backend: 'codex', llm: 'daily' };
     config.agents!.independent = { backend: 'codex', llm: 'independent' };
     config.llms!.independent = {
-      model: 'gpt-6-luna',
+      defaultModel: 'gpt-6-luna',
       reasoningEffort: 'low',
       maxConcurrentSessions: 1,
     };
@@ -487,7 +493,7 @@ describe('named runtime and LLM configuration', () => {
       c.llms!.daily.api = { protocol: 'anthropic' };
     },
     (c: DisclaudeConfig) => {
-      c.llms!.daily.model = 'claude-sonnet';
+      c.llms!.daily.defaultModel = 'claude-sonnet';
     },
     (c: DisclaudeConfig) => {
       c.agents!.daily.codex = { maxConcurrentRuns: 0 };
@@ -519,7 +525,7 @@ describe('named runtime and LLM configuration', () => {
   });
   it('compiles behavesAs into a single-entry modelOverrides map (Issue #5410)', () => {
     const config = configuration();
-    config.llms!.proxy.behavesAs = 'claude-opus-5';
+    config.agents!.assistant.claude = { ...config.agents!.assistant.claude, behavesAs: 'claude-opus-5' };
     const result = resolveConfiguredAgents(config);
     expect(result.ok).toBe(true);
     if (!result.ok) {
@@ -529,7 +535,7 @@ describe('named runtime and LLM configuration', () => {
   });
   it('projects a raw multi-slot modelOverrides map verbatim', () => {
     const config = configuration();
-    config.llms!.proxy.modelOverrides = { 'claude-opus-5': 'kimi-k3', 'claude-sonnet-4-5': 'kimi-k3-flash' };
+    config.agents!.assistant.claude = { ...config.agents!.assistant.claude, modelOverrides: { 'claude-opus-5': 'kimi-k3', 'claude-sonnet-4-5': 'kimi-k3-flash' } };
     const result = resolveConfiguredAgents(config);
     expect(result.ok).toBe(true);
     if (!result.ok) {
@@ -542,32 +548,31 @@ describe('named runtime and LLM configuration', () => {
   });
   it.each([
     (c: DisclaudeConfig) => {
-      c.llms!.proxy.behavesAs = 'opus';
+      c.agents!.assistant.claude = { behavesAs: 'opus' };
     },
     (c: DisclaudeConfig) => {
-      c.llms!.proxy.behavesAs = 'claude_OPUS';
+      c.agents!.assistant.claude = { behavesAs: 'claude_OPUS' };
     },
     (c: DisclaudeConfig) => {
-      c.llms!.proxy.behavesAs = '';
+      c.agents!.assistant.claude = { behavesAs: '' };
     },
     (c: DisclaudeConfig) => {
-      c.llms!.proxy.behavesAs = 'claude-opus-5';
-      c.llms!.proxy.modelOverrides = { 'claude-opus-5': 'kimi-k3' };
+      c.agents!.assistant.claude = { behavesAs: 'claude-opus-5', modelOverrides: { 'claude-opus-5': 'kimi-k3' } };
     },
     (c: DisclaudeConfig) => {
-      c.llms!.proxy.modelOverrides = { opus: 'kimi-k3' };
+      c.agents!.assistant.claude = { modelOverrides: { opus: 'kimi-k3' } };
     },
     (c: DisclaudeConfig) => {
-      c.llms!.proxy.modelOverrides = { 'claude-opus-5': '  ' };
+      c.agents!.assistant.claude = { modelOverrides: { 'claude-opus-5': '  ' } };
     },
     (c: DisclaudeConfig) => {
-      c.llms!.proxy.modelOverrides = {};
+      c.agents!.assistant.claude = { modelOverrides: {} };
     },
     (c: DisclaudeConfig) => {
-      c.llms!.proxy.modelOverrides = 'claude-opus-5' as unknown as Record<string, string>;
+      c.agents!.assistant.claude = { modelOverrides: 'claude-opus-5' as unknown as Record<string, string> };
     },
     (c: DisclaudeConfig) => {
-      c.llms!.daily.behavesAs = 'claude-opus-5';
+      (c.llms!.daily as unknown as Record<string, unknown>).behavesAs = 'claude-opus-5';
     },
   ])('rejects malformed or mis-scoped model override declarations', (mutate) => {
     const config = configuration();
@@ -582,7 +587,7 @@ describe('named runtime and LLM configuration', () => {
   });
   it('rejects the bare alias with explicit pinning guidance', () => {
     const config = configuration();
-    config.llms!.proxy.behavesAs = 'opus';
+    config.agents!.assistant.claude = { ...config.agents!.assistant.claude, behavesAs: 'opus' };
     const result = resolveConfiguredAgents(config);
     expect(result.ok).toBe(false);
     if (result.ok) {
@@ -604,7 +609,7 @@ describe('named runtime and LLM configuration', () => {
       miniswe: { binary: 'mini', executionEnvironment: 'local', timeoutMs: 90_000 },
     };
     config.llms!['mini-openai'] = {
-      model: 'openai/gpt-5.4',
+      defaultModel: 'openai/gpt-5.4',
       api: { protocol: 'openai', baseUrl: 'https://litellm.example/v1', apiKey: '$MINISWE_KEY' },
     };
     const result = resolveConfiguredAgents(config);
@@ -625,7 +630,7 @@ describe('named runtime and LLM configuration', () => {
 
   it('requires the bound LLM api connection for mini-swe (no interactive fallback)', () => {
     const config = configuration();
-    config.llms!.bare = { model: 'openai/gpt-5.4' };
+    config.llms!.bare = { defaultModel: 'openai/gpt-5.4' };
     config.agents!.mini = { backend: 'miniswe', llm: 'bare' };
     expect(resolveConfiguredAgents(config)).toEqual({
       ok: false,
@@ -640,7 +645,7 @@ describe('named runtime and LLM configuration', () => {
     const config = configuration();
     config.agents!.mini = { backend: 'miniswe', llm: 'mini-openai' };
     config.llms!['mini-openai'] = {
-      model: 'openai/gpt-5.4',
+      defaultModel: 'openai/gpt-5.4',
       api: { protocol: 'openai', baseUrl: 'https://litellm.example/v1', apiKey: '$MINISWE_KEY' },
     };
     const result = resolveConfiguredAgents(config);
@@ -696,6 +701,334 @@ describe('named runtime and LLM configuration', () => {
     expect(resolveConfiguredAgents(config)).toEqual({
       ok: false,
       errors: ['agents.assistant.miniswe requires backend: miniswe'],
+    });
+  });
+
+  describe('shared bindings across harnesses (Issue #5679)', () => {
+    it('serves one wire model to Claude and DSH from a single binding', () => {
+      const config = configuration();
+      config.llms!.proxy.defaultModel = 'group/hq-degrade';
+      config.agents!.assistant.claude = { ...config.agents!.assistant.claude, behavesAs: 'claude-sonnet-4-5' };
+      config.agents!.research = { backend: 'dsh', llm: 'proxy' };
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        return;
+      }
+      // The wire model is identical for both providers; only the Claude
+      // preset carries the capability mapping.
+      expect(result.presets.assistant).toMatchObject({
+        agentBackend: 'claude',
+        model: 'group/hq-degrade',
+        modelOverrides: { 'claude-sonnet-4-5': 'group/hq-degrade' },
+      });
+      expect(result.presets.research).toMatchObject({
+        agentBackend: 'dsh',
+        model: 'group/hq-degrade',
+      });
+    });
+
+    it('keeps Claude mappings off a Pi-only agent', () => {
+      const config = configuration();
+      config.agents!.assistant.claude = { behavesAs: 'claude-sonnet-4-5' };
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        return;
+      }
+      expect(result.presets.other).toMatchObject({
+        agentBackend: 'pi',
+        model: 'other-model',
+        modelOverrides: undefined,
+      });
+    });
+
+    it('rejects the old provider-level Claude mapping with migration guidance', () => {
+      const config = configuration();
+      (config.llms!.daily as unknown as Record<string, unknown>).behavesAs = 'claude-opus-5';
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        return;
+      }
+      expect(result.errors.join('\n')).toContain(
+        'has moved to agents.<name>.claude.behavesAs'
+      );
+    });
+
+    it('projects Claude model-name settings from the agent, not the provider', () => {
+      const config = configuration();
+      config.agents!.assistant.claude = {
+        modelOverrides: { 'claude-opus-5': 'kimi-k3', 'claude-sonnet-4-5': 'kimi-k3-flash' },
+        env: { ANTHROPIC_DEFAULT_OPUS_MODEL: 'endpoint-large', ANTHROPIC_DEFAULT_SONNET_MODEL: 'endpoint-main', ANTHROPIC_DEFAULT_HAIKU_MODEL: 'endpoint-fast' },
+      };
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        return;
+      }
+      expect(result.presets.assistant).toMatchObject({
+        modelOverrides: { 'claude-opus-5': 'kimi-k3', 'claude-sonnet-4-5': 'kimi-k3-flash' },
+        env: {
+          ANTHROPIC_DEFAULT_OPUS_MODEL: 'endpoint-large',
+          ANTHROPIC_DEFAULT_SONNET_MODEL: 'endpoint-main',
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: 'endpoint-fast',
+        },
+      });
+      expect(result.presets.other.modelOverrides).toBeUndefined();
+    });
+
+    it('rejects the old Claude alias environment placement with migration guidance', () => {
+      const config = configuration();
+      config.llms!.proxy.env = { ANTHROPIC_DEFAULT_SONNET_MODEL: 'endpoint-main' };
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        return;
+      }
+      expect(result.errors.join('\n')).toContain(
+        'llms.proxy.env.ANTHROPIC_DEFAULT_SONNET_MODEL has moved to agents.<name>.claude.models or agents.<name>.claude.env.ANTHROPIC_DEFAULT_SONNET_MODEL'
+      );
+    });
+
+    it('rejects a bare Claude alias shared across the harness boundary', () => {
+      const config = configuration();
+      config.llms!.proxy.defaultModel = 'sonnet';
+      config.agents!.research = { backend: 'dsh', llm: 'proxy' };
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        return;
+      }
+      expect(result.errors.join('\n')).toContain(
+        'llms.proxy.defaultModel "sonnet" is a bare Claude alias'
+      );
+      expect(result.errors.join('\n')).toContain('dsh');
+    });
+
+    it('keeps a bare alias model on a DSH-only binding', () => {
+      const config = configuration();
+      config.agents!.research = { backend: 'dsh', llm: 'aliasonly' };
+      config.llms!.aliasonly = {
+        defaultModel: 'sonnet',
+        api: { protocol: 'anthropic', baseUrl: 'https://gateway.example', apiKey: '$GW_KEY' },
+      };
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(true);
+    });
+
+    it('passes explicit canonical model IDs through unchanged without mappings', () => {
+      const config = configuration();
+      config.llms!.proxy.defaultModel = 'claude-sonnet-4-5';
+      config.agents!.research = { backend: 'dsh', llm: 'proxy' };
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        return;
+      }
+      expect(result.presets.assistant.model).toBe('claude-sonnet-4-5');
+      expect(result.presets.assistant.modelOverrides).toBeUndefined();
+      expect(result.presets.research.model).toBe('claude-sonnet-4-5');
+      expect(result.presets.research.modelOverrides).toBeUndefined();
+    });
+
+    it('rejects Claude model settings on a non-Claude agent', () => {
+      const config = configuration();
+      config.agents!.other.claude = { behavesAs: 'claude-opus-5' };
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        return;
+      }
+      expect(result.errors.join('\n')).toContain('agents.other.claude requires backend: claude');
+    });
+
+    it('rejects a malformed or unknown Claude settings block', () => {
+      const config = configuration();
+      config.agents!.assistant.claude = 'claude-opus-5' as never;
+      const malformed = resolveConfiguredAgents(config);
+      expect(malformed.ok).toBe(false);
+      if (malformed.ok) {
+        return;
+      }
+      expect(malformed.errors.join('\n')).toContain('agents.assistant.claude must be a mapping');
+
+      const unknown = configuration();
+      unknown.agents!.assistant.claude = { tiers: { opus: 'kimi-k3' } } as never;
+      const rejected = resolveConfiguredAgents(unknown);
+      expect(rejected.ok).toBe(false);
+      if (rejected.ok) {
+        return;
+      }
+      expect(rejected.errors.join('\n')).toContain('agents.assistant.claude.tiers is unsupported');
+    });
+
+    it('rejects combining behavesAs with modelOverrides and malformed mappings', () => {
+      const config = configuration();
+      config.agents!.assistant.claude = {
+        behavesAs: 'claude-opus-5',
+        modelOverrides: { 'claude-opus-5': 'kimi-k3' },
+      };
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        return;
+      }
+      expect(result.errors.join('\n')).toContain(
+        'agents.assistant.claude.behavesAs and modelOverrides are mutually exclusive'
+      );
+
+      const aliased = configuration();
+      aliased.agents!.assistant.claude = { modelOverrides: { sonnet: 'kimi-k3' } };
+      const aliasResult = resolveConfiguredAgents(aliased);
+      expect(aliasResult.ok).toBe(false);
+      if (aliasResult.ok) {
+        return;
+      }
+      expect(aliasResult.errors.join('\n')).toContain(
+        'agents.assistant.claude.modelOverrides must map full Claude model IDs to non-empty provider model IDs'
+      );
+    });
+
+    it('requires a provider default model when behavesAs carries the capability slot', () => {
+      const config = configuration();
+      delete config.llms!.proxy.defaultModel;
+      config.agents!.assistant.claude = { behavesAs: 'claude-opus-5' };
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        return;
+      }
+      expect(result.errors.join('\n')).toContain(
+        'agents.assistant.claude.behavesAs requires a provider default model at llms.proxy.defaultModel'
+      );
+    });
+  });
+
+  describe('Claude three-tier model mapping (review 2026-11-06)', () => {
+    it('compiles explicit tiers into the native tier environment', () => {
+      const config = configuration();
+      config.agents!.assistant.claude = {
+        models: { opus: 'kimi-k3', sonnet: 'kimi-k3-flash', haiku: 'kimi-k3-air' },
+      };
+      config.agents!.research = { backend: 'dsh', llm: 'proxy' };
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        return;
+      }
+      expect(result.presets.assistant.env).toEqual({
+        ANTHROPIC_DEFAULT_OPUS_MODEL: 'kimi-k3',
+        ANTHROPIC_DEFAULT_SONNET_MODEL: 'kimi-k3-flash',
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: 'kimi-k3-air',
+      });
+      // Tier metadata rides the Claude preset only; the DSH agent sharing the
+      // binding keeps the wire model without Claude environment.
+      expect(result.presets.research.env?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
+    });
+
+    it('falls back to the provider default for omitted tiers', () => {
+      const config = configuration();
+      config.agents!.assistant.claude = { models: { haiku: 'kimi-k3-air' } };
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        return;
+      }
+      expect(result.presets.assistant.env).toEqual({
+        ANTHROPIC_DEFAULT_OPUS_MODEL: 'glm-5.3',
+        ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-5.3',
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: 'kimi-k3-air',
+      });
+    });
+
+    it('points all three tiers at the only configured model by default', () => {
+      const config = configuration();
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        return;
+      }
+      expect(result.presets.assistant.env).toEqual({
+        ANTHROPIC_DEFAULT_OPUS_MODEL: 'glm-5.3',
+        ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-5.3',
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: 'glm-5.3',
+      });
+      // Non-Claude runtimes never receive the tier environment.
+      expect(result.presets.other.env).toEqual({});
+    });
+
+    it('keeps native tiers when neither models nor a default model is configured', () => {
+      const config = configuration();
+      delete config.llms!.proxy.defaultModel;
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        return;
+      }
+      expect(result.presets.assistant.env).toEqual({});
+    });
+
+    it('lets an explicit claude.env tier override the computed default', () => {
+      const config = configuration();
+      config.agents!.assistant.claude = {
+        env: { ANTHROPIC_DEFAULT_OPUS_MODEL: 'endpoint-large' },
+      };
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        return;
+      }
+      expect(result.presets.assistant.env).toEqual({
+        ANTHROPIC_DEFAULT_OPUS_MODEL: 'endpoint-large',
+        ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-5.3',
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: 'glm-5.3',
+      });
+    });
+
+    it('rejects double-configuring one tier in models and env', () => {
+      const config = configuration();
+      config.agents!.assistant.claude = {
+        models: { haiku: 'kimi-k3-air' },
+        env: { ANTHROPIC_DEFAULT_HAIKU_MODEL: 'small-model' },
+      };
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        return;
+      }
+      expect(result.errors.join('\n')).toContain(
+        'agents.assistant.claude.models.haiku conflicts with agents.assistant.claude.env.ANTHROPIC_DEFAULT_HAIKU_MODEL; configure the tier in one place'
+      );
+    });
+
+    it.each([
+      {},
+      { opus: '' },
+      { sonnet: '   ' },
+      { turbo: 'kimi-k3' },
+      'kimi-k3',
+    ])('rejects malformed tier declarations (%j)', (models) => {
+      const config = configuration();
+      config.agents!.assistant.claude = { models: models as never };
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        return;
+      }
+      expect(result.errors.length).toBe(1);
+      expect(result.errors.join('\n')).toMatch(/agents\.assistant\.claude\.models/);
+    });
+
+    it('applies a provider reasoning effort to any runtime without a harness gate', () => {
+      const config = configuration();
+      config.llms!.proxy.reasoningEffort = 'high';
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        return;
+      }
+      expect(result.presets.assistant.reasoningEffort).toBe('high');
     });
   });
 });

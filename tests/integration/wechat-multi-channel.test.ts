@@ -9,7 +9,7 @@ import nock from 'nock';
 import { BaseChannel, type IncomingMessage, type OutgoingMessage } from '@disclaude/core';
 import { WeChatChannel } from '../../packages/service/src/channels/wechat/wechat-channel.js';
 import { WeChatStateStore } from '../../packages/service/src/channels/wechat/state-store.js';
-import { WECHAT_WELCOME_TEXT } from '../../packages/service/src/channels/wechat/welcome.js';
+import { buildWelcomeMessage } from '@disclaude/core';
 import { REST_WIRED_DESCRIPTOR, WECHAT_WIRED_DESCRIPTOR } from '../../packages/service/src/channels/wired-descriptors.js';
 import { DisclaudeService } from '../../packages/service/src/service.js';
 import { ChannelLifecycleManager } from '../../packages/service/src/channel-lifecycle-manager.js';
@@ -79,7 +79,7 @@ describe('one-process Feishu, REST and single-WeChat routing', () => {
       nock(baseUrl).persist().post('/ilink/bot/getconfig').reply(200, { ret: 0, typing_ticket: 'ticket' });
       nock(baseUrl).persist().post('/ilink/bot/sendtyping').reply(200, { ret: 0 });
       const welcome = nock(baseUrl).post('/ilink/bot/sendmessage', body => body.msg.to_user_id === peer
-        && body.msg.context_token === 'private-context' && body.msg.item_list[0].text_item.text === WECHAT_WELCOME_TEXT)
+        && body.msg.context_token === 'private-context' && body.msg.item_list[0].text_item.text === buildWelcomeMessage('wechat'))
         .reply(200, { ret: 0, message_id: 'welcome-ack' });
       nock(baseUrl).persist().post('/ilink/bot/getupdates').reply((_uri, _body, callback) => {
         polls++;

@@ -19,7 +19,10 @@ export type AgentPresetResolution<T = AgentPreset> =
  * A named preset may instead set `default: true`, but the two forms may not
  * be combined. With no marker, declaration order provides a stable fallback.
  */
-export function validateAgentPresets(agents: unknown): AgentPresetValidation {
+export function validateAgentPresets(
+  agents: unknown,
+  options: { allowUnconfiguredModel?: boolean } = {}
+): AgentPresetValidation {
   if (!agents || typeof agents !== 'object' || Array.isArray(agents)) {
     return { ok: false, errors: ['agents must be a non-empty map of named presets'] };
   }
@@ -48,7 +51,10 @@ export function validateAgentPresets(agents: unknown): AgentPresetValidation {
     if (!VALID_BACKENDS.has(preset.agentBackend as AgentPreset['agentBackend'])) {
       errors.push(`agents.${name}.agentBackend must be one of: claude, pi, codex, dsh, miniswe`);
     }
-    if (typeof preset.model !== 'string' || !preset.model.trim()) {
+    if (
+      typeof preset.model !== 'string' ||
+      (!options.allowUnconfiguredModel && !preset.model.trim())
+    ) {
       errors.push(`agents.${name}.model must be a non-empty string`);
     } else if (
       preset.agentBackend === 'codex' && preset.model.trim() &&

@@ -216,7 +216,7 @@ export interface ChatAgentConfig extends BaseAgentConfig, ChatAgentHooks {
   turnRecovery?: ServiceTurnRecoveryStore;
   /**
    * Sink for user-visible failure contexts (Issue #5400). Every failure that
-   * produces a diagnostic notice is also recorded here so `/issue` can offer
+   * produces a diagnostic notice is also recorded here so `/feedback` can offer
    * the chat's most recent failure for one-click reporting.
    */
   failureRecorder?: (failure: ChatFailureRecord) => void;
