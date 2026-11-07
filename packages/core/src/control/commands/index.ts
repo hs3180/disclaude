@@ -9,7 +9,7 @@ import { handleTrigger } from './passive.js';
 import { handleProject } from './project.js';
 import { handleAgent } from './agent.js';
 import { handleSteer } from './steer.js';
-import { handleIssue } from './issue.js';
+import { handleFeedback } from './issue.js';
 import { handleGoal } from './goal.js';
 import { handleDiscuss } from './discuss.js';
 
@@ -33,7 +33,7 @@ export const commandRegistry: CommandDefinition[] = [
   { type: 'steer', handler: handleSteer as CommandDefinition['handler'], description: '运行中纠偏（需原生 turn/steer 支持）', usage: '/steer <instruction>',
     isAvailable: c => !!c.agentPool?.steer,
     showInHelp: (c, command) => c.agentPool.canSteer?.(command.chatId, command.threadRootId) === true },
-  { type: 'issue', handler: handleIssue as CommandDefinition['handler'], description: '一键上报本会话最近一次失败为 GitHub issue', usage: '/issue',
+  { type: 'feedback', handler: handleFeedback as CommandDefinition['handler'], description: '一键上报本会话最近一次失败为 GitHub issue', usage: '/feedback',
     isAvailable: c => !!c.failureRegistry },
   { type: 'discuss', handler: handleDiscuss as CommandDefinition['handler'], description: '发起/回流支线讨论（原生话题优先，主线不停）', usage: '/discuss <问题> | /discuss done [side-N] <结论>',
     isAvailable: c => !!c.sideDiscussions },

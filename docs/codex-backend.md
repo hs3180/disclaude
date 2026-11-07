@@ -43,12 +43,13 @@ agents:
       maxConcurrentRuns: 2
 llms:
   daily:
-    model: your-codex-model
+    defaultModel: your-codex-model
     reasoningEffort: your-supported-effort
     maxConcurrentSessions: 3
 ```
 
-`llms.daily.model` is required and must be non-empty. After it passes validation,
+`llms.daily.defaultModel` is optional — omit it and Codex keeps its own model
+selection. When set, it must pass validation before
 `CODEX_MODEL` may explicitly override the default Codex binding; named non-default
 bindings retain their own models. The override cannot fill a missing declaration.
 Model reasoning and session concurrency
@@ -87,8 +88,14 @@ overrides the YAML value. Precedence is a per-turn `reasoningEffort` option,
 per-query `CODEX_REASONING_EFFORT`, process `CODEX_REASONING_EFFORT`, the YAML
 setting, then the selected model's Codex CLI default.
 
-The default `exec` transport runs non-interactive turns. Set
-`agents.<name>.codex.transport: app-server` when using Codex's structured
+The default `exec` transport runs non-interactive turns. It cannot load
+Disclaude skill directories: native skill roots register only on the app-server
+protocol (`skills/extraRoots/set`, verified with Codex CLI 0.140.0-0.164.0),
+and `codex exec` offers no equivalent flag, environment variable or config
+override. Because the shipped builtins always provide skill roots, `exec` and
+`exec resume` fail fast with that diagnostic and never inject a skills
+manifest into the prompt; set `agents.<name>.codex.transport: app-server` for
+native skill loading. Set the same option when using Codex's structured
 `requestUserInput` interaction; see [Feishu channel cards](feishu-channel.md#codex-input-cards).
 Concurrency limits are per service process; extra work waits rather than
 starting unlimited Codex sessions or child processes.

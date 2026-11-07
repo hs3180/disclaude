@@ -31,7 +31,7 @@ it('imports the pure registry subpath without initializing Config before the pre
   const dir = mkdtempSync(join(tmpdir(), 'disclaude-secret-preload-'));
   try {
     const file = join(dir, 'config.json');
-    writeFileSync(file, '{"agents":{"default":{"backend":"codex","llm":"native"}},"llms":{"native":{"model":"gpt-6-luna"}}}');
+    writeFileSync(file, '{"agents":{"default":{"backend":"codex","llm":"native"}},"llms":{"native":{"defaultModel":"gpt-6-luna"}}}');
     const output = execFileSync(process.execPath, ['--input-type=module', '-e',
       'await import("@disclaude/core/secret-environment"); process.stdout.write("PURE_REGISTRY_IMPORTED");'], {
       cwd: resolve('.'), encoding: 'utf8', env: { PATH: process.env.PATH, HOME: dir, NODE_ENV: 'production',

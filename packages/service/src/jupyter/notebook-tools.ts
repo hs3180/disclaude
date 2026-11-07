@@ -27,7 +27,68 @@ function requireCodeCell(cellType: unknown): void {
       message: 'Notebook execute requires a code cell', hint: 'Select the stable ID of a code cell and read its latest sourceHash.', outcome: 'not-submitted' });
   }
 }
+// Small files keep the single-request import path; larger ones upload in
+// server-reassembled chunks (jupyter-server LargeFileManager `chunk` model
+// field: 1=truncate-write, 2..N=append, -1=finalize).
 const inputLimit = 2_000_000;
+const importFileMaxBytes = 512 * 1024 * 1024;
+const importChunkBytes = 8 * 1024 * 1024;
+
+/** Hash a raw streaming body with bounded memory; used for readback verification. */
+async function streamedSha256(body: ReadableStream<Uint8Array> | null): Promise<string> {
+  const reader = body?.getReader();
+  if (!reader) {
+    throw new Error('Remote verification response body is missing');
+  }
+  const hasher = createHash('sha256');
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      hasher.update(value);
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+  return hasher.digest('hex');
+}
+export interface ImportFileLimits {
+  /** Bytes at or below this take the historical single-request path. */
+  smallFileBytes?: number;
+  /** Hard local cap; larger input is refused before any remote write. */
+  maxBytes?: number;
+  /** Raw bytes per chunk request (base64 expands this by 4/3). */
+  chunkBytes?: number;
+}
+const stdoutTailLimit = 4000;
+const stdoutDeltaLimit = 100_000;
+const encodeStdoutCursor = (runId: string, offset: number): string =>
+  Buffer.from(JSON.stringify({ v: 1, runId, offset }), 'utf8').toString('base64url');
+const decodeStdoutCursor = (cursor: string): { runId: string; offset: number } => {
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as {
+      v?: unknown;
+      runId?: unknown;
+      offset?: unknown;
+    };
+    if (
+      parsed.v !== 1 ||
+      typeof parsed.runId !== 'string' ||
+      typeof parsed.offset !== 'number' ||
+      !Number.isSafeInteger(parsed.offset) ||
+      parsed.offset < 0
+    ) {
+      throw new Error('malformed cursor');
+    }
+    const { runId, offset } = parsed as { runId: string; offset: number };
+    return { runId, offset };
+  } catch {
+    throw new JupyterDiagnosticError({ layer: 'schema', code: 'invalid_stdout_cursor', phase: 'input',
+      message: 'Invalid stdout cursor', hint: 'Pass the untouched stdout.nextStdoutCursor from the same run, or omit it for new-session tail semantics.', outcome: 'not-submitted' });
+  }
+};
 const errorOutputDescription = 'Error previews expose output_type="error", ename:string, evalue:string and traceback:string[]. Tracebacks retain the last 20 frames, at most 1000 characters per frame and 8000 total. errorName/errorValue are deprecated aliases retained for this release.';
 
 function boundedErrorOutput(output: Record<string, unknown>): Record<string, unknown> {
@@ -59,6 +120,8 @@ export interface NotebookToolOptions {
     namespace: string,
     operation: (client: DatalayerJupyterClient) => Promise<T>
   ): Promise<T>;
+  /** Test seam for the import-file size boundaries; production uses the defaults. */
+  importFileLimits?: ImportFileLimits;
 }
 type StopObservation = { runId: string; state: 'cancelled' | 'already_terminal' | 'unknown' };
 
@@ -99,7 +162,7 @@ export class NotebookTools {
       ),
       this.tool(
         'notebook_describe',
-        'Read live RTC cells, including unsaved human edits. Use cellId for later operations.',
+        'Read live RTC cells, including unsaved human edits. Use cellId for later operations. A freshly created zero-cell Notebook lists one RTC-seeded phantom empty code cell first: a server UUID cellId whose sourceHash is the SHA-256 of the empty string. It is server seeding, not content; the first appended insert-cell removes it (removedSeedCellId).',
         notebookId,
         async (input) => this.describe(await this.bound(String(input.notebookId)), 64)
       ),
@@ -266,7 +329,7 @@ export class NotebookTools {
       ),
       this.tool(
         'notebook_execute',
-        'Submit the exact live code cell once to the remote nbmodel queue. Persist and reuse runId; unknown submissions must not be replayed. Poll notebook_status for completion.',
+        'Submit the exact live code cell once to the remote nbmodel queue. Persist and reuse runId; unknown submissions must not be replayed. Poll notebook_status for completion. Ordering: accepted submissions to one kernel run in server-side submission order (per-kernel FIFO queue); an older still-queued request for the same cellId is superseded by a newer one. The CLI refuses a new submission while the kernel reports busy.',
         {
           ...cellId,
           expectedSourceHash: sourceHash,
@@ -276,9 +339,21 @@ export class NotebookTools {
       ),
       this.tool(
         'notebook_status',
-        'Query the original runId without replay. source distinguishes live lookup from local journal facts; client-error/server-unknown preserve the last confirmed state.',
-        { ...notebookId, runId: text },
-        (input) => this.observe(this.record(String(input.notebookId), String(input.runId)))
+        'Query the original runId without replay. source distinguishes live lookup from local journal facts; client-error/server-unknown preserve the last confirmed state. stdout is incremental: a first query without stdoutCursor returns only the recent tail (new-session semantics); passing back stdout.nextCursor returns exactly the bytes after that cursor for the same run, with no duplicates and no gaps; if the server-side stream shrank below the cursor the scope becomes reset and the tail is returned again.',
+        {
+          ...notebookId,
+          runId: text,
+          stdoutCursor: {
+            type: 'string',
+            optional: true,
+            description: 'Opaque nextStdoutCursor from a previous stdout block of this same run; omit it for new-session tail semantics.',
+          },
+        },
+        (input) =>
+          this.observe(
+            this.record(String(input.notebookId), String(input.runId)),
+            input.stdoutCursor
+          )
       ),
       this.tool(
         'notebook_reconcile',
@@ -361,8 +436,15 @@ export class NotebookTools {
       ),
       this.tool(
         'notebook_import_file',
-        'Copy an explicitly selected Project-local file to the remote Notebook input directory. Return its kernel-relative path, SHA-256 and size; limit 2 MB.',
-        { ...notebookId, filePath: text },
+        'Copy an explicitly selected Project-local file to the remote Notebook input directory in one command. Files above 2 MB upload in server-reassembled chunks and are hash-verified; nothing incomplete is left behind. Return its kernel-relative path, SHA-256 and size; limit 512 MB.',
+        {
+          ...notebookId,
+          filePath: {
+            type: 'string',
+            description:
+              'Project-relative path of one existing regular file (resolved against --project-dir; absolute, escaping or symlinked paths are rejected; at most 512 MB).',
+          },
+        },
         (input, invocation) => this.importFile(input, invocation)
       ),
       this.tool(
@@ -386,13 +468,26 @@ export class NotebookTools {
     properties: Record<string, unknown>,
     execute: (input: Record<string, unknown>, context: ToolContext) => Promise<unknown>
   ): ToolDefinition {
+    // `optional: true` marks host-validated optional fields; it is host-only and
+    // never published in the JSON schema handed to callers.
+    const optional = new Set(
+      Object.entries(properties)
+        .filter(([, schema]) => (schema as { optional?: boolean }).optional === true)
+        .map(([field]) => field)
+    );
+    const published = Object.fromEntries(
+      Object.entries(properties).map(([field, schema]) => {
+        const { optional: _hostOnly, ...rest } = schema as Record<string, unknown>;
+        return [field, rest];
+      })
+    );
     return {
       name,
       description,
       inputSchema: {
         type: 'object',
-        properties,
-        required: Object.keys(properties),
+        properties: published,
+        required: Object.keys(published).filter((field) => !optional.has(field)),
         additionalProperties: false,
       },
       outputSchema: { type: 'object', ...(['notebook_read_cell', 'notebook_describe', 'notebook_status'].includes(name)
@@ -408,11 +503,12 @@ export class NotebookTools {
           Object.entries(properties).some(([field, raw]) => {
             const schema = raw as { type: string; enum?: string[] };
             return (
-              !Object.hasOwn(input, field) ||
-              (schema.type === 'integer'
-                ? !Number.isSafeInteger(input[field])
-                : typeof input[field] !== schema.type) ||
-              (schema.enum !== undefined && !schema.enum.includes(input[field] as string))
+              (!Object.hasOwn(input, field) && !optional.has(field)) ||
+              (Object.hasOwn(input, field) &&
+                ((schema.type === 'integer'
+                  ? !Number.isSafeInteger(input[field])
+                  : typeof input[field] !== schema.type) ||
+                  (schema.enum !== undefined && !schema.enum.includes(input[field] as string))))
             );
           })
         ) {
@@ -474,14 +570,16 @@ export class NotebookTools {
     const localPath = path.resolve(this.root, String(input.filePath));
     const relative = path.relative(this.root, fs.realpathSync(localPath));
     const identity = fs.lstatSync(localPath);
-    if (
-      relative.startsWith('..') ||
-      path.isAbsolute(relative) ||
-      !identity.isFile() ||
-      identity.isSymbolicLink() ||
-      identity.size > inputLimit
-    ) {
-      throw new Error('Input must be a regular file inside this Project, at most 2 MB');
+    const limits = {
+      smallFileBytes: this.options.importFileLimits?.smallFileBytes ?? inputLimit,
+      maxBytes: this.options.importFileLimits?.maxBytes ?? importFileMaxBytes,
+      chunkBytes: this.options.importFileLimits?.chunkBytes ?? importChunkBytes,
+    };
+    if (relative.startsWith('..') || path.isAbsolute(relative) || !identity.isFile() || identity.isSymbolicLink()) {
+      throw new Error('Input must be a regular file inside this Project');
+    }
+    if (identity.size > limits.maxBytes) {
+      throw new Error(`Input exceeds the import-file limit of ${limits.maxBytes} bytes`);
     }
     const attachment = {
       localPath,
@@ -504,7 +602,7 @@ export class NotebookTools {
       const original = attachment.identity;
       if (
         !current.isFile() ||
-        current.size > inputLimit ||
+        current.size > limits.maxBytes ||
         current.dev !== original.dev ||
         current.ino !== original.ino ||
         current.size !== original.size ||
@@ -551,35 +649,142 @@ export class NotebookTools {
       await existingDirectory.body?.cancel();
       throw new Error('Remote Notebook input directory could not be verified');
     }
-    const existing = await bound.client.response(`${route(remotePath)}?format=base64`);
     let state = 'existing';
-    if (existing.status === 404) {
-      await existing.body?.cancel();
-      invocation.signal.throwIfAborted();
-      this.assertBound(bound);
-      await bound.client.json(route(remotePath), 'PUT', {
-        type: 'file',
-        format: 'base64',
-        content: data.toString('base64'),
-      });
-      state = 'imported';
-    } else if (existing.ok) {
-      const stored = JSON.parse(await bound.client.responseText(existing)) as {
-        type?: string;
-        format?: string;
-        content?: unknown;
-      };
-      if (
-        stored.type !== 'file' ||
-        stored.format !== 'base64' ||
-        typeof stored.content !== 'string' ||
-        createHash('sha256').update(Buffer.from(stored.content, 'base64')).digest('hex') !== sha256
-      ) {
-        throw new Error('Remote input content changed; refusing to overwrite it');
+    let imported: { transport: 'chunked'; chunks: number } | undefined;
+    if (data.length <= limits.smallFileBytes) {
+      // Historical single-request path for small files: verify a repeated
+      // import byte-for-byte and never overwrite remotely changed content.
+      const existing = await bound.client.response(`${route(remotePath)}?format=base64`);
+      if (existing.status === 404) {
+        await existing.body?.cancel();
+        invocation.signal.throwIfAborted();
+        this.assertBound(bound);
+        await bound.client.json(route(remotePath), 'PUT', {
+          type: 'file',
+          format: 'base64',
+          content: data.toString('base64'),
+        });
+        state = 'imported';
+      } else if (existing.ok) {
+        const stored = JSON.parse(await bound.client.responseText(existing)) as {
+          type?: string;
+          format?: string;
+          content?: unknown;
+        };
+        if (
+          stored.type !== 'file' ||
+          stored.format !== 'base64' ||
+          typeof stored.content !== 'string' ||
+          createHash('sha256').update(Buffer.from(stored.content, 'base64')).digest('hex') !== sha256
+        ) {
+          throw new Error('Remote input content changed; refusing to overwrite it');
+        }
+      } else {
+        await existing.body?.cancel();
+        throw new Error('Remote input content could not be verified');
       }
     } else {
-      await existing.body?.cancel();
-      throw new Error('Remote input content could not be verified');
+      // Large-file path: one command, server-reassembled chunks, explicit
+      // verification, and no partial result left looking complete.
+      const metadata = await bound.client.response(`${route(remotePath)}?content=0`);
+      if (metadata.status === 404) {
+        await metadata.body?.cancel();
+      } else if (metadata.ok) {
+        const stored = JSON.parse(await bound.client.responseText(metadata)) as {
+          type?: string;
+          size?: unknown;
+        };
+        if (stored.type !== 'file' || typeof stored.size !== 'number') {
+          throw new Error('Remote input content could not be verified');
+        }
+        if (stored.size === data.length) {
+          // Content-addressed name plus a matching size: a previous verified
+          // import is present. Its bytes are not re-downloaded on this path.
+          return {
+            state: 'existing',
+            filePath: path.relative(this.root, localPath),
+            remotePath,
+            kernelRelativePath: path.posix.relative(
+              path.posix.dirname(bound.ref.contentPath),
+              remotePath
+            ),
+            sha256,
+            size: data.length,
+          };
+        }
+        // The remote file lives in the disclaude-owned input directory under a
+        // content-addressed name: a size mismatch can only be a stale partial
+        // from an interrupted upload. Remove it so the import can be retried.
+        await this.removeRemoteInput(bound, route(remotePath));
+      } else {
+        await metadata.body?.cancel();
+        throw await bound.client.responseError(metadata, 'import-preflight');
+      }
+      invocation.signal.throwIfAborted();
+      this.assertBound(bound);
+      const chunkCount = Math.max(2, Math.ceil(data.length / limits.chunkBytes));
+      try {
+        for (let index = 0; index < chunkCount; index++) {
+          invocation.signal.throwIfAborted();
+          this.assertBound(bound);
+          const slice = data.subarray(
+            index * limits.chunkBytes,
+            Math.min((index + 1) * limits.chunkBytes, data.length)
+          );
+          await bound.client.json(route(remotePath), 'PUT', {
+            type: 'file',
+            format: 'base64',
+            content: slice.toString('base64'),
+            chunk: index === chunkCount - 1 ? -1 : index + 1,
+          });
+        }
+      } catch (error) {
+        throw await this.importFailed(bound, route(remotePath), error, 'import-upload');
+      }
+      invocation.signal.throwIfAborted();
+      this.assertBound(bound);
+      const filesRoute = `files/${remotePath.split('/').map(encodeURIComponent).join('/')}`;
+      const verification = await bound.client.response(filesRoute);
+      if (!verification.ok) {
+        await verification.body?.cancel();
+        throw await this.importFailed(
+          bound,
+          route(remotePath),
+          new JupyterDiagnosticError({
+            layer: 'http',
+            code: 'verification_unavailable',
+            phase: 'import-verify',
+            status: verification.status,
+            message: 'Remote content verification endpoint rejected the request',
+            hint: 'This Jupyter server did not serve the file over its files route; an unverifiable upload is never left in place.',
+            outcome: 'unknown',
+          }),
+          'import-verify'
+        );
+      }
+      let remoteSha256: string;
+      try {
+        remoteSha256 = await streamedSha256(verification.body);
+      } catch (error) {
+        throw await this.importFailed(bound, route(remotePath), error, 'import-verify');
+      }
+      if (remoteSha256 !== sha256) {
+        throw await this.importFailed(
+          bound,
+          route(remotePath),
+          new JupyterDiagnosticError({
+            layer: 'cas',
+            code: 'verification_failed',
+            phase: 'import-verify',
+            message: 'Remote content hash mismatch after the chunked upload',
+            hint: 'The server stored different bytes than the local file; chunked contents uploads may be unsupported there. The remote file was removed.',
+            outcome: 'unknown',
+          }),
+          'import-verify'
+        );
+      }
+      state = 'imported';
+      imported = { transport: 'chunked', chunks: chunkCount };
     }
     return {
       state,
@@ -591,7 +796,52 @@ export class NotebookTools {
       ),
       sha256,
       size: data.length,
+      ...(imported ? { verifiedBy: 'sha256-readback' } : {}),
+      ...imported,
     };
+  }
+
+  /** Best-effort removal of a disclaude-owned remote input; never throws. */
+  private async removeRemoteInput(
+    bound: Bound,
+    fileRoute: string
+  ): Promise<'removed' | 'not_present' | 'cleanup_failed'> {
+    try {
+      await bound.client.json(fileRoute, 'DELETE');
+      return 'removed';
+    } catch (error) {
+      if (
+        error instanceof JupyterDiagnosticError &&
+        error.diagnostic.status === 404
+      ) {
+        return 'not_present';
+      }
+      return 'cleanup_failed';
+    }
+  }
+
+  /** Delete the incomplete remote input, then surface the original failure. */
+  private async importFailed(
+    bound: Bound,
+    fileRoute: string,
+    error: unknown,
+    phase: string
+  ): Promise<Error> {
+    const cleanup = await this.removeRemoteInput(bound, fileRoute);
+    const original = error instanceof JupyterDiagnosticError ? error.diagnostic : undefined;
+    return new JupyterDiagnosticError({
+      layer: original?.layer ?? 'unknown',
+      code: original?.code ?? 'import_failed',
+      phase,
+      ...(original?.status !== undefined ? { status: original.status } : {}),
+      ...(original?.serverBody !== undefined ? { serverBody: original.serverBody } : {}),
+      message: error instanceof Error ? error.message : 'Chunked import failed',
+      hint:
+        cleanup === 'cleanup_failed'
+          ? `An incomplete file may remain at the remote input path and must be removed before retrying; deletion failed during ${phase}. Re-run import-file after removing it.`
+          : 'The incomplete upload was removed from the remote input path; nothing partial is left. Re-run the same import-file command to retry.',
+      outcome: 'unknown',
+    });
   }
 
   private refs(): JupyterNotebookReference[] {
@@ -980,7 +1230,10 @@ export class NotebookTools {
     }
     return this.options.useClient(ref.connectionId, ref.serverNamespace, operation);
   }
-  private async observe(record: DatalayerRunRecord): Promise<unknown> {
+  private async observe(
+    record: DatalayerRunRecord,
+    stdoutCursor?: unknown
+  ): Promise<unknown> {
     let current = record;
     let source: 'live' | 'local-journal' = 'local-journal';
     if (!terminal.has(record.state) && record.handle) {
@@ -1029,6 +1282,7 @@ export class NotebookTools {
       ...(current.loss ? { lastKnownState: current.state, failure: current.loss } : {}),
       sourceHash: current.target.sourceHash,
       cellId: current.target.cellId,
+      stdout: this.stdoutView(current, stdoutCursor),
       ...(current.handle ? { requestId: current.handle.requestId } : {}),
       ...(typeof current.observation?.result?.original_result_entry === 'string'
         ? { originalResultEntry: current.observation.result.original_result_entry }
@@ -1053,6 +1307,65 @@ export class NotebookTools {
         : {}),
     };
   }
+  /**
+   * Incremental stdout view over the run's accumulated stream outputs.
+   * The cursor is a client-held opaque offset; no server or journal state is
+   * required, so repeated queries with the same cursor are idempotent deltas.
+   */
+  private stdoutView(record: DatalayerRunRecord, cursor: unknown): Record<string, unknown> {
+    const outputs = (record.observation?.result as { outputs?: unknown } | undefined)?.outputs;
+    const full = Array.isArray(outputs)
+      ? outputs.reduce((accumulated: string, output) => {
+          const item = output as Record<string, unknown>;
+          if (
+            item.output_type !== 'stream' ||
+            (item.name !== undefined && item.name !== 'stdout')
+          ) {
+            return accumulated;
+          }
+          const chunk = Array.isArray(item.text)
+            ? item.text.join('')
+            : typeof item.text === 'string'
+              ? item.text
+              : '';
+          return accumulated + chunk;
+        }, '')
+      : '';
+    const total = full.length;
+    let scope: 'tail' | 'delta' | 'reset' = 'tail';
+    let offset = Math.max(0, total - stdoutTailLimit);
+    if (cursor !== undefined) {
+      const parsed = decodeStdoutCursor(String(cursor));
+      if (parsed.runId !== record.runId) {
+        throw new JupyterDiagnosticError({ layer: 'schema', code: 'invalid_stdout_cursor', phase: 'input',
+          message: 'stdout cursor belongs to another run', hint: 'Pass the nextStdoutCursor of this same runId, or omit it for new-session tail semantics.', outcome: 'not-submitted' });
+      }
+      if (parsed.offset <= total) {
+        scope = 'delta';
+        ({ offset } = parsed);
+      } else {
+        // The retained server stream no longer covers the cursor (rollover or
+        // retention shrink). Report it instead of silently duplicating bytes.
+        scope = 'reset';
+        offset = Math.max(0, total - stdoutTailLimit);
+      }
+    }
+    let text = full.slice(offset);
+    const skippedBytes = Math.max(0, text.length - stdoutDeltaLimit);
+    if (skippedBytes > 0) {
+      text = text.slice(skippedBytes);
+    }
+    return {
+      scope,
+      offset,
+      totalBytes: total,
+      nextCursor: encodeStdoutCursor(record.runId, total),
+      text,
+      ...(scope === 'reset' ? { resetReason: 'retained-stdout-no-longer-covers-cursor' } : {}),
+      ...(skippedBytes > 0 ? { skippedBytes } : {}),
+    };
+  }
+
   private summary(result: Record<string, unknown>): Record<string, unknown> {
     return {
       ...('execution_count' in result ? { executionCount: result.execution_count } : {}),

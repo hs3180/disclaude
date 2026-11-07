@@ -23,7 +23,7 @@ const { mockGetConfigFromFile, mockGetPreloadedConfig, mockLoadConfigFile } = vi
     agents: { default: { backend: 'claude', llm: 'default' } },
     llms: {
       default: {
-        model: 'glm-4',
+        defaultModel: 'glm-4',
         api: { protocol: 'anthropic', apiKey: '$TEST_LLM_DEFAULT_KEY' },
       },
     },

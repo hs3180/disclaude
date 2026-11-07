@@ -67,6 +67,11 @@ import {
   buildCitationStreamingCard,
   extractCitations,
 } from '../platforms/feishu/card-builders/citation-card.js';
+// #5487: automatic Card 2.0 for final Markdown answers containing GFM tables.
+import {
+  buildFinalMarkdownCard,
+  buildFinalMarkdownStreamingCard,
+} from '../platforms/feishu/card-builders/final-markdown-card.js';
 // Issue #4400 (#4208 P2-c): Card Kit streaming wiring.
 import {
   FeishuCardKitClient,
@@ -235,7 +240,7 @@ export interface FeishuChannelConfig {
   resolveActionText?: (messageId: string, chatId: string, actionValue: string) => string | undefined;
   resolveActionThreadRoot?: (messageId: string, chatId: string) => string | undefined;
   /**
-   * Issue #5400: GitHub App client used by /issue confirmation cards.
+   * Issue #5400: GitHub App client used by /feedback confirmation cards.
    * Injected by the wired-descriptor setup from the `github` config section;
    * undefined disables submission (cards still render the summary).
    */
@@ -318,7 +323,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     return this.feishuMessageHandler.reconcileTaskQuestionWake(id);
   }
 
-  /** Issue #5400: send the /issue confirmation card for the chat's last failure. */
+  /** Issue #5400: send the /feedback confirmation card for the chat's last failure. */
   requestIssueReport(record: import('@disclaude/core').ChatFailureRecord, target: { chatId: string; threadRootId?: string; actorId?: string }):
     Promise<{ ok: true } | { ok: false; error: string }> {
     return this.feishuMessageHandler.requestIssueReport(record, target);
@@ -817,6 +822,46 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
             logger.warn(
               { err, chatId: message.chatId },
               'Feishu rejected the citation card — falling back to plain text delivery'
+            );
+          }
+        }
+
+        // #5487: a final Markdown answer with a GFM table but no `## Sources`
+        // section is the automatic Claude/Codex default-result case. Render it
+        // as ONE Card 2.0 (markdown + column_set) instead of raw pipe text.
+        // Eligibility excludes raw JSON and defers anything Sources-shaped to
+        // the strict citation contract above; budget/rejection semantics match
+        // that contract exactly.
+        const finalCard = citations ? null : buildFinalMarkdownCard(text);
+        if (finalCard) {
+          try {
+            const cardContent = JSON.stringify(finalCard);
+            if (Buffer.byteLength(cardContent, 'utf8') <= FEISHU_RETRY_MESSAGE_BYTES) {
+              const cardMessageId = await sendFeishuMessage('interactive', cardContent, {
+                avoidRetryAfterAmbiguousThreadReply: true,
+              });
+              logger.info(
+                {
+                  chatId: message.chatId,
+                  messageId: cardMessageId,
+                  threadReply: useThreadReply,
+                },
+                'Final Markdown card sent (GFM table, no Sources section)'
+              );
+              logOutgoing(cardMessageId, text, 'interactive');
+              return cardMessageId;
+            }
+            logger.info(
+              { chatId: message.chatId, cardBytes: Buffer.byteLength(cardContent, 'utf8') },
+              'Final Markdown card exceeds the conservative payload budget; using plain text'
+            );
+          } catch (err) {
+            if (!isDefiniteFeishuApiRejection(err)) {
+              throw err;
+            }
+            logger.warn(
+              { err, chatId: message.chatId },
+              'Feishu rejected the final Markdown card — falling back to plain text delivery'
             );
           }
         }
@@ -1355,22 +1400,32 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       const citationCard = citations
         ? buildCitationStreamingCard(citations.body, citations.sources)
         : null;
-      const citationCardBytes = citationCard
-        ? Buffer.byteLength(JSON.stringify(citationCard), 'utf8')
+      // #5487: with no `## Sources` section, a GFM-table answer still needs its
+      // final in-place Card Kit update. Replacing the same streaming card (not
+      // sending a second message) preserves the one-message streaming contract.
+      const finalCard = citationCard ?? buildFinalMarkdownStreamingCard(finalText);
+      const finalCardBytes = finalCard
+        ? Buffer.byteLength(JSON.stringify(finalCard), 'utf8')
         : 0;
-      if (citationCard && citationCardBytes <= FEISHU_RETRY_MESSAGE_BYTES) {
-        // Replace the streamed Markdown with the final answer + source block
-        // in the same Card Kit message, then freeze it below.
-        await client.updateCard(id, citationCard, sequence);
+      if (finalCard && finalCardBytes <= FEISHU_RETRY_MESSAGE_BYTES) {
+        // Replace the streamed Markdown with the final structured answer, then
+        // freeze it below. Citations keep their dedicated source block shape.
+        await client.updateCard(id, finalCard, sequence);
         logger.info(
-          { cardId: id, sourceCount: citations?.sources.length },
-          'Citation sources rendered into the final streaming card'
+          {
+            cardId: id,
+            sourceCount: citations?.sources.length,
+            citationCard: Boolean(citationCard),
+          },
+          citations
+            ? 'Citation sources rendered into the final streaming card'
+            : 'Final Markdown card rendered into the streaming card (GFM table, no Sources section)'
         );
       } else {
-        if (citationCard) {
+        if (finalCard) {
           logger.info(
-            { cardId: id, cardBytes: citationCardBytes },
-            'Streaming citation card exceeds the conservative payload budget; keeping streamed Markdown'
+            { cardId: id, cardBytes: finalCardBytes, citationCard: Boolean(citationCard) },
+            'Final streaming card exceeds the conservative payload budget; keeping streamed Markdown'
           );
         }
         await client.updateElementContent(id, STREAMING_THINKING_ELEMENT_ID, '本次回复已结束', sequence);

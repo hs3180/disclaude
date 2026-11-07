@@ -240,7 +240,7 @@ describe('FeishuChannel.streamText / finalizeStreaming — Issue #4400', () => {
     const channel = createTestChannel({ streamingCard: true, client });
     const id = await channel.startStreaming('oc_chat1');
     expect(id).toBe('card_123');
-    return { channel, id: id as string };
+    return { channel, id: id as string, client };
   }
 
   it('streamText PATCHes the reply element with a strictly-increasing sequence', async () => {
@@ -314,6 +314,56 @@ describe('FeishuChannel.streamText / finalizeStreaming — Issue #4400', () => {
     await channel.finalizeStreaming(id);
 
     expect(mockCardKit.updateCard).toHaveBeenCalledTimes(1);
+    expect(mockCardKit.updateElementContent).toHaveBeenCalledWith(id, STREAMING_THINKING_ELEMENT_ID, '本次回复已结束', 2);
+    expect(mockCardKit.finalizeStreaming).toHaveBeenCalledWith(id, 3);
+  });
+
+  it('replaces the same streaming card with Card 2.0 column_set for a table-bearing answer without Sources (#5487)', async () => {
+    const { channel, id, client } = await startedChannel();
+    const createCalls = client.im.message.create.mock.calls.length;
+    await channel.streamText(
+      id,
+      'Comparison:\n\n| Layer | State |\n| --- | --- |\n| CLI | shipped |\n| Feishu | automatic |'
+    );
+
+    await expect(channel.finalizeStreaming(id)).resolves.toBe('msg_001');
+
+    // Placeholder creation + one final whole-card update; no second IM message.
+    expect(mockCardKit.updateCard).toHaveBeenCalledTimes(2);
+    const [, finalCardCall] = mockCardKit.updateCard.mock.calls;
+    const [cardId, finalCard, sequence] = finalCardCall;
+    expect(cardId).toBe(id);
+    expect(sequence).toBe(2);
+    expect(finalCard.schema).toBe('2.0');
+    expect(finalCard.config.streaming_mode).toBe(true);
+    expect(finalCard.body.elements.some((element: { tag?: string }) => element.tag === 'column_set')).toBe(true);
+    expect(mockCardKit.updateElementContent).not.toHaveBeenCalled();
+    expect(client.im.message.create.mock.calls.length).toBe(createCalls);
+    expect(mockCardKit.finalizeStreaming).toHaveBeenCalledWith(id, 3);
+  });
+
+  it('keeps standalone JSON and code-only streamed answers on the plain Markdown freeze path (#5487)', async () => {
+    const { channel, id } = await startedChannel();
+    await channel.streamText(id, '{"table":"| a |\\n| --- |\\n| b |"}');
+
+    await channel.finalizeStreaming(id);
+
+    expect(mockCardKit.updateCard).toHaveBeenCalledTimes(1); // placeholder only
+    expect(mockCardKit.updateElementContent).toHaveBeenCalledWith(id, STREAMING_THINKING_ELEMENT_ID, '本次回复已结束', 2);
+    expect(mockCardKit.finalizeStreaming).toHaveBeenCalledWith(id, 3);
+  });
+
+  it('keeps streamed Markdown when the final table card exceeds the payload budget (#5487)', async () => {
+    const { channel, id } = await startedChannel();
+    const hugeCell = 'x'.repeat(40_000);
+    await channel.streamText(
+      id,
+      `| Layer | State |\n| --- | --- |\n| CLI | ${hugeCell} |`
+    );
+
+    await channel.finalizeStreaming(id);
+
+    expect(mockCardKit.updateCard).toHaveBeenCalledTimes(1); // placeholder only
     expect(mockCardKit.updateElementContent).toHaveBeenCalledWith(id, STREAMING_THINKING_ELEMENT_ID, '本次回复已结束', 2);
     expect(mockCardKit.finalizeStreaming).toHaveBeenCalledWith(id, 3);
   });
