@@ -596,6 +596,114 @@ describe('named runtime and LLM configuration', () => {
     expect(result.errors.join('\n')).toContain('aliases are not auto-resolved');
   });
 
+  // --------------------------------------------------------------------------
+  // mini-swe-agent optional backend (Issue #5006)
+  // --------------------------------------------------------------------------
+
+  it('resolves a mini-swe agent from its bound LLM connection', () => {
+    vi.stubEnv('MINISWE_KEY', 'mini-test-key');
+    const config = configuration();
+    config.agents!.mini = {
+      backend: 'miniswe',
+      llm: 'mini-openai',
+      miniswe: { binary: 'mini', executionEnvironment: 'local', timeoutMs: 90_000 },
+    };
+    config.llms!['mini-openai'] = {
+      defaultModel: 'openai/gpt-5.4',
+      api: { protocol: 'openai', baseUrl: 'https://litellm.example/v1', apiKey: '$MINISWE_KEY' },
+    };
+    const result = resolveConfiguredAgents(config);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.presets.mini).toMatchObject({
+      agentBackend: 'miniswe',
+      model: 'openai/gpt-5.4',
+      apiProtocol: 'openai',
+      apiBaseUrl: 'https://litellm.example/v1',
+      apiKey: 'mini-test-key',
+      miniswe: { binary: 'mini', executionEnvironment: 'local', timeoutMs: 90_000 },
+    });
+    expect(validateResolvedAgent(result.presets.mini)).toBeUndefined();
+  });
+
+  it('requires the bound LLM api connection for mini-swe (no interactive fallback)', () => {
+    const config = configuration();
+    config.llms!.bare = { defaultModel: 'openai/gpt-5.4' };
+    config.agents!.mini = { backend: 'miniswe', llm: 'bare' };
+    expect(resolveConfiguredAgents(config)).toEqual({
+      ok: false,
+      errors: [
+        'llms.bare.api with protocol, credential reference and (for custom endpoints) baseUrl is required for mini-swe',
+      ],
+    });
+  });
+
+  it('flags a missing mini-swe credential at selection time without blocking resolve', () => {
+    vi.stubEnv('MINISWE_KEY', '');
+    const config = configuration();
+    config.agents!.mini = { backend: 'miniswe', llm: 'mini-openai' };
+    config.llms!['mini-openai'] = {
+      defaultModel: 'openai/gpt-5.4',
+      api: { protocol: 'openai', baseUrl: 'https://litellm.example/v1', apiKey: '$MINISWE_KEY' },
+    };
+    const result = resolveConfiguredAgents(config);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(validateResolvedAgent(result.presets.mini)).toMatch(/credential referenced by llms\.mini-openai\.api\.apiKey is missing/);
+    }
+  });
+
+  it('rejects non-local execution environments with the out-of-scope message', () => {
+    const config = configuration();
+    config.agents!.mini = {
+      backend: 'miniswe',
+      llm: 'proxy',
+      miniswe: { executionEnvironment: 'docker' as never },
+    };
+    expect(resolveConfiguredAgents(config)).toEqual({
+      ok: false,
+      errors: [
+        'agents.mini.miniswe.executionEnvironment must be local; docker and SWE-ReX execution environments are out of scope for this adapter (run those as native mini-swe-agent workflows, #5006)',
+      ],
+    });
+  });
+
+  it.each([
+    (c: DisclaudeConfig) => {
+      c.agents!.mini = { backend: 'miniswe', llm: 'proxy', miniswe: { image: 'swe' } as never };
+    },
+    (c: DisclaudeConfig) => {
+      c.agents!.mini = { backend: 'miniswe', llm: 'proxy', miniswe: { binary: '  ' } };
+    },
+    (c: DisclaudeConfig) => {
+      c.agents!.mini = { backend: 'miniswe', llm: 'proxy', miniswe: { timeoutMs: -1 } };
+    },
+    (c: DisclaudeConfig) => {
+      c.agents!.mini = { backend: 'miniswe', llm: 'proxy', miniswe: { timeoutMs: 1.5 } };
+    },
+  ])('rejects malformed miniswe execution settings', (mutate) => {
+    const config = configuration();
+    mutate(config);
+    const result = resolveConfiguredAgents(config);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.errors.length).toBe(1);
+    expect(result.errors.join('\n')).toMatch(/agents\.mini\.miniswe\./);
+  });
+
+  it('rejects a miniswe block on a non-miniswe backend', () => {
+    const config = configuration();
+    config.agents!.assistant.miniswe = { timeoutMs: 5_000 };
+    expect(resolveConfiguredAgents(config)).toEqual({
+      ok: false,
+      errors: ['agents.assistant.miniswe requires backend: miniswe'],
+    });
+  });
+
   describe('shared bindings across harnesses (Issue #5679)', () => {
     it('serves one wire model to Claude and DSH from a single binding', () => {
       const config = configuration();

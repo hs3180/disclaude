@@ -56,6 +56,17 @@ agents:
       # rejected (an explicit env entry still overrides a computed default).
       # env:
       #   ANTHROPIC_SMALL_FAST_MODEL: your-small-model
+  # Optional mini-swe-agent runtime (Issue #5006): headless `mini` subprocess
+  # with LiteLLM/OpenAI-compatible model backends. Requires the mini-swe-agent
+  # CLI on PATH (`pipx install mini-swe-agent`); without it the backend
+  # reports a clear unavailable error. Execution is local-subprocess only.
+  # miniswe:
+  #   backend: miniswe
+  #   llm: miniswe-openai
+  #   miniswe:
+  #     binary: mini # default; the packaged mini-swe-agent alias is probed too
+  #     executionEnvironment: local # the only supported policy; docker/SWE-ReX are out of scope
+  #     timeoutMs: 0 # per-run wall-clock timeout; 0 disables (default)
 
   # Second runtime on the SAME provider: DSH sends llms.shared-gateway.defaultModel
   # verbatim, so changing the deployment default model means editing that one
@@ -104,6 +115,14 @@ llms:
   #     protocol: openai
   #     baseUrl: https://your-openai-compatible-api.example/v1
   #     apiKey: $GLM_API_KEY
+  # mini-swe-agent provider (Issue #5006): LiteLLM-style provider-prefixed
+  # model as the provider default; any model the endpoint serves also works.
+  # miniswe-openai:
+  #   defaultModel: openai/gpt-5.4
+  #   api:
+  #     protocol: openai
+  #     baseUrl: https://your-litellm-or-openai-compatible-api.example/v1
+  #     apiKey: $MINISWE_API_KEY
   #
   # Cross-boundary guard: a provider shared by Claude AND another backend must
   # NOT use a bare Claude alias as its defaultModel. Claude resolves "sonnet"
