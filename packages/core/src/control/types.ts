@@ -33,6 +33,20 @@ export interface DebugGroup {
 }
 
 /**
+ * Result of an agent selection change (/agent use, or the orthogonal
+ * backend/model dimension switches of Issue #5255). Failures may carry the
+ * selectable `options` of the rejected dimension so the caller can list what
+ * is available instead of hard-failing.
+ */
+export type AgentDimensionSwitchResult =
+  | {
+      ok: true;
+      active: { name: string; agentBackend: string; model: string; backendOverride?: string; modelOverride?: string };
+      sessionBoundary: 'new-session';
+    }
+  | { ok: false; error: string; options?: string[] };
+
+/**
  * 控制命令处理器上下文
  */
 export interface ControlHandlerContext {
@@ -78,10 +92,20 @@ export interface ControlHandlerContext {
     stopThread?(chatId: string, threadRootId: string): boolean;
     listAgentPresets?(): Array<{ name: string; agentBackend: string; model: string }>;
     getActiveAgentPreset?(chatId: string, threadRootId?: string):
-      { name: string; agentBackend: string; model: string } | undefined;
+      { name: string; agentBackend: string; model: string; backendOverride?: string; modelOverride?: string } | undefined;
     switchAgentPreset?(chatId: string, presetName: string, threadRootId?: string):
-      | { ok: true; active: { name: string; agentBackend: string; model: string }; sessionBoundary: 'new-session' }
-      | { ok: false; error: string };
+      AgentDimensionSwitchResult;
+    /**
+     * Issue #5255: switch only the backend dimension of this session's agent,
+     * keeping the current model. Same new-native-session semantics as
+     * switchAgentPreset. On an incompatible target the failure carries the
+     * dimension's selectable `options` instead of hard-failing silently.
+     */
+    switchAgentBackend?(chatId: string, backend: string, threadRootId?: string):
+      AgentDimensionSwitchResult;
+    /** Issue #5255: switch only the model dimension, keeping the backend. */
+    switchAgentModel?(chatId: string, model: string, threadRootId?: string):
+      AgentDimensionSwitchResult;
     steer?(chatId: string, prompt: string, threadRootId?: string):
       Promise<{ ok: true; message: string } | { ok: false; error: string }>;
     canSteer?(chatId: string, threadRootId?: string): boolean;

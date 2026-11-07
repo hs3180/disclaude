@@ -118,3 +118,39 @@ describe('createControlCommand', () => {
     expect(cmd.threadRootId).toBe('thread-2');
   });
 });
+
+describe('agent command normalization (Issue #5255)', () => {
+  it('normalizes a backend switch with its free-form value', () => {
+    expect(normalizeCommandData('agent', { args: ['backend', 'pi'] })).toEqual({
+      subcommand: 'backend', preset: 'pi', value: 'pi',
+    });
+  });
+
+  it('keeps dotted model identifiers intact on the model dimension', () => {
+    expect(normalizeCommandData('agent', { args: ['model', 'glm-5.3-air'] })).toEqual({
+      subcommand: 'model', preset: 'glm-5.3-air', value: 'glm-5.3-air',
+    });
+    // extra tokens stay part of the value rather than being dropped
+    expect(normalizeCommandData('agent', { args: ['model', 'gpt-5.6', 'x'] })).toEqual({
+      subcommand: 'model', preset: 'gpt-5.6', value: 'gpt-5.6 x',
+    });
+  });
+
+  it('lowercases the subcommand only', () => {
+    expect(normalizeCommandData('agent', { args: ['BACKEND', 'Dsh'] })).toEqual({
+      subcommand: 'backend', preset: 'Dsh', value: 'Dsh',
+    });
+  });
+
+  it('keeps the use subcommand on its single-token preset surface (T-068 coexistence)', () => {
+    expect(normalizeCommandData('agent', { args: ['use', 'fast'] })).toEqual({
+      subcommand: 'use', preset: 'fast',
+    });
+    expect(normalizeCommandData('agent', { args: ['use', 'fast'] })).not.toHaveProperty('value');
+  });
+
+  it('defaults to current without arguments', () => {
+    expect(normalizeCommandData('agent', { args: [] })).toEqual({ subcommand: 'current' });
+    expect(normalizeCommandData('agent', {})).toEqual({ subcommand: 'current' });
+  });
+});
