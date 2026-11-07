@@ -344,6 +344,19 @@ export interface AgentQueryOptions {
     fullAccess?: boolean;
     networkAccess?: boolean;
     transport?: 'exec' | 'app-server';
+    /** Access method of the bound LLM (Issue #5338); default chatgpt. */
+    llmVia?: import('../config/types.js').LlmAccessVia;
+    /**
+     * Compatible API connection when llmVia is 'api' (Issue #5338): the
+     * provider injects it as an upstream Codex `model_providers` entry
+     * (Responses wire API) instead of the ChatGPT login.
+     */
+    api?: {
+      protocol: import('../config/types.js').ApiProtocol;
+      baseUrl?: string;
+      /** Resolved credential value, injected into the child environment. */
+      apiKey: string;
+    };
   };
   /** Native adapter-owned reasoning selection; each provider validates its supported levels. */
   reasoningEffort?: string;

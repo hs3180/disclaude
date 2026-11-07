@@ -284,6 +284,13 @@ export abstract class BaseAgent implements Disposable {
       options.codexRuntime = {
         sandbox: settings.codexSandbox, fullAccess: settings.fullAccess,
         networkAccess: settings.codexNetworkAccess, transport: settings.codex?.transport,
+        // Issue #5338: the access method and (for API access) the connection
+        // ride the runtime binding; the Codex provider turns them into either
+        // the ChatGPT login checks or an upstream model_providers entry.
+        llmVia: this.selectedConfig.llmVia,
+        ...(this.selectedConfig.llmVia === 'api' && this.apiProtocol
+          ? { api: { protocol: this.apiProtocol, baseUrl: this.apiBaseUrl, apiKey: this.apiKey } }
+          : {}),
       };
     }
     options.apiProtocol = this.apiProtocol;
