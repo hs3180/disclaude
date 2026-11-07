@@ -141,7 +141,9 @@ export type ControlCommandType =
   | 'goal'
   // One-click GitHub issue reporting of the chat's last failure (Issue #5400;
   // #5428: /feedback is the canonical and only entry — /issue was removed)
-  | 'feedback';
+  | 'feedback'
+  // Side-discussion quick entry: open/conclude a native side venue (Issue #5412)
+  | 'discuss';
 
 /**
  * Typed data schema for each command type (Issue #3529).
@@ -163,6 +165,8 @@ export interface CommandDataMap {
   steer: { prompt?: string };
   /** Explicit Goal record commands; execution is a separate capability. */
   goal: { args?: string[] };
+  /** /discuss — side-discussion quick entry (Issue #5412). `parentId` is the replied-to (trigger) message. */
+  discuss: { args?: string[]; parentId?: string };
 }
 
 /**

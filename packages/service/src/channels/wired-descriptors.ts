@@ -238,6 +238,14 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       sendConfirmation: (record, target) => feishuChannel.requestIssueReport(record, target),
     };
 
+    // Issue #5412: /discuss delivery arm — native side threads/topics with a
+    // persisted source link and conclusion flow-back (see feishu/side-discussions.ts).
+    helpContext.sideDiscussions = {
+      open: (request) => feishuChannel.openSideDiscussion(request),
+      conclude: (request) => feishuChannel.concludeSideDiscussion(request),
+      list: (chatId) => feishuChannel.listSideDiscussions(chatId),
+    };
+
     feishuChannel.onControl(createControlHandler(helpContext));
 
     // 3. Register REST API handlers for channel CLI requests

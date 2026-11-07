@@ -329,6 +329,19 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     return this.feishuMessageHandler.requestIssueReport(record, target);
   }
 
+  /** Issue #5412: /discuss delivery arm — open/conclude/list side discussions. */
+  openSideDiscussion(request: import('@disclaude/core').SideDiscussionOpenRequest):
+    Promise<{ ok: true; message: string } | { ok: false; error: string }> {
+    return this.feishuMessageHandler.openSideDiscussion(request);
+  }
+  concludeSideDiscussion(request: import('@disclaude/core').SideDiscussionConcludeRequest):
+    Promise<{ ok: true; message: string } | { ok: false; error: string }> {
+    return this.feishuMessageHandler.concludeSideDiscussion(request);
+  }
+  listSideDiscussions(chatId: string): Promise<import('@disclaude/core').SideDiscussionSummary[]> {
+    return this.feishuMessageHandler.listSideDiscussions(chatId);
+  }
+
   constructor(config: FeishuChannelConfig = {}) {
     super(config, 'feishu', 'Feishu');
     // Preserve explicitly supplied empty strings so callers/tests can model

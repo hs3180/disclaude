@@ -60,6 +60,14 @@ export function normalizeCommandData<T extends ControlCommandType>(
       const args = Array.isArray(rawData.args) ? rawData.args as string[] : [];
       return { prompt: args.join(' ').trim() || undefined };
     }
+    case 'discuss': {
+      // Issue #5412: parentId is the replied-to (trigger) message supplied by
+      // the Feishu router; other commands ignore it.
+      const args = Array.isArray(rawData.args) ? rawData.args as string[] : [];
+      const parentId = typeof rawData.parentId === 'string' && rawData.parentId.trim()
+        ? rawData.parentId : undefined;
+      return { args, ...(parentId ? { parentId } : {}) };
+    }
     default:
       return undefined;
   }

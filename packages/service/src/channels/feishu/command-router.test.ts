@@ -274,4 +274,35 @@ describe('tryHandleSlashCommand', () => {
       undefined,
     );
   });
+
+  it('passes the replied-to message as parentId for /discuss (Issue #5412)', async () => {
+    vi.mocked(createControlCommand).mockClear();
+    const { deps } = makeDeps({ hasControlHandler: true, controlResponse: { success: true } });
+    await tryHandleSlashCommand(
+      { textWithoutMentions: '/discuss 追查这条消息的问题', chatId: 'oc_x', parentId: 'om_trigger' },
+      deps,
+    );
+    expect(createControlCommand).toHaveBeenCalledWith(
+      'discuss',
+      'oc_x',
+      { args: ['追查这条消息的问题'], parentId: 'om_trigger' },
+      undefined,
+    );
+  });
+
+  it('omits parentId for non-reply commands and other command types (Issue #5412)', async () => {
+    vi.mocked(createControlCommand).mockClear();
+    const { deps } = makeDeps({ hasControlHandler: true, controlResponse: { success: true } });
+    await tryHandleSlashCommand(
+      { textWithoutMentions: '/discuss 无锚点问题', chatId: 'oc_x', parentId: undefined },
+      deps,
+    );
+    expect(createControlCommand).toHaveBeenCalledWith('discuss', 'oc_x', { args: ['无锚点问题'] }, undefined);
+    // A reply that carries a parent must not leak parentId into other commands' data.
+    await tryHandleSlashCommand(
+      { textWithoutMentions: '/reset', chatId: 'oc_x', parentId: 'om_trigger' },
+      deps,
+    );
+    expect(createControlCommand).toHaveBeenCalledWith('reset', 'oc_x', { args: [] }, undefined);
+  });
 });
