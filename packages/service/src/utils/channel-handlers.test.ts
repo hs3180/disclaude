@@ -263,6 +263,27 @@ describe('createDefaultMessageHandler', () => {
     expect(typeof handler).toBe('function');
   });
 
+  it('routes shared slash commands (WeChat) through the control handler with actor identity', async () => {
+    const controlHandler = vi.fn().mockResolvedValue({ success: true, message: 'switched' });
+    const routedContext = createMockWiredContext({ channel, controlHandler });
+    const handler = createDefaultMessageHandler(channel, routedContext, { channelName: 'WeChat channel' });
+    await handler(createMockMessage({
+      chatId: 'peer@im.wechat',
+      userId: 'user@im.wechat',
+      messageId: 'wx-1',
+      content: '/agent use assistant',
+      metadata: { threadRootId: 'wx-topic' },
+    }));
+    expect(controlHandler).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'agent', chatId: 'peer@im.wechat', actorId: 'user@im.wechat', sourceMessageId: 'wx-1',
+      threadRootId: 'wx-topic', data: { subcommand: 'use', preset: 'assistant' },
+    }));
+    expect(channel.sendMessage).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      chatId: 'peer@im.wechat', threadId: 'wx-topic', text: 'switched',
+    }));
+    expect(routedContext.agentPool.getOrCreateChatAgent).not.toHaveBeenCalled();
+  });
+
   it('should get or create agent from pool with callbacks', async () => {
     const handler = createDefaultMessageHandler(channel, context, {
       channelName: 'Test channel',
