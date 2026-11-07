@@ -28,7 +28,7 @@ const CONFIG_KEYS = new Set([
 ]);
 const BACKENDS = new Set(['claude', 'pi', 'codex', 'dsh']);
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
-/** Full Claude model IDs as modelOverrides keys (Issue #5410); bare aliases are rejected below. */
+/** Full Claude model IDs as modelOverrides keys (Issue #5410); bare aliases resolve at runtime (Issue #5422). */
 const CLAUDE_MODEL_ID = /^claude-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 /**
  * Bare Claude Code model aliases (Issue #5679). Claude resolves these to its
@@ -341,8 +341,12 @@ export function resolveConfiguredAgents(
           }
         }
         if (agent.claude.behavesAs !== undefined) {
-          if (typeof agent.claude.behavesAs !== 'string' || !CLAUDE_MODEL_ID.test(agent.claude.behavesAs)) {
-            errors.push(`${field}.claude.behavesAs must be a full Claude model ID such as claude-opus-5; aliases are not auto-resolved`);
+          // Issue #5422: a bare alias is resolved against the running Claude
+          // catalog at first use instead of being pinned here; anything that
+          // is neither a full ID nor a known alias stays a config error.
+          const behavesAs = typeof agent.claude.behavesAs === 'string' ? agent.claude.behavesAs.trim() : '';
+          if (!behavesAs || !(CLAUDE_MODEL_ID.test(behavesAs) || BARE_CLAUDE_ALIAS.test(behavesAs))) {
+            errors.push(`${field}.claude.behavesAs must be a full Claude model ID such as claude-opus-5 or a bare alias such as opus`);
           }
           if (agent.claude.modelOverrides !== undefined) {
             errors.push(`${field}.claude.behavesAs and modelOverrides are mutually exclusive`);
@@ -416,16 +420,24 @@ export function resolveConfiguredAgents(
       ...(backend === 'claude' ? agent.claude?.env : {}),
     });
     const tierEnv = backend === 'claude' ? claudeTierEnvironment(agent.claude, defaultModel) : undefined;
+    // Same trimmed form the validation branch above accepted (Issue #5422).
+    const behavesAs = typeof agent.claude?.behavesAs === 'string' ? agent.claude.behavesAs.trim() : undefined;
     presets[name] = {
       ...settings,
       agentBackend: backend,
       reasoningEffort: llm.reasoningEffort,
       maxConcurrentSessions: llm.maxConcurrentSessions,
       // Claude owns its model names; other runtimes never receive this metadata.
+      // Issue #5422: a bare alias cannot be compiled here — its catalog ID is
+      // only knowable from the booted Claude session — so it travels as
+      // behavesAsAlias and the Claude runtime resolves and merges it per LLM.
       modelOverrides: backend === 'claude'
-        ? agent.claude?.behavesAs !== undefined && defaultModel
-          ? { [agent.claude.behavesAs]: defaultModel }
+        ? behavesAs && defaultModel && CLAUDE_MODEL_ID.test(behavesAs)
+          ? { [behavesAs]: defaultModel }
           : agent.claude?.modelOverrides
+        : undefined,
+      behavesAsAlias: backend === 'claude' && behavesAs && BARE_CLAUDE_ALIAS.test(behavesAs)
+        ? behavesAs.toLowerCase()
         : undefined,
       model: defaultModel,
       apiKey: keyEnv ? (process.env[keyEnv] ?? '') : '',

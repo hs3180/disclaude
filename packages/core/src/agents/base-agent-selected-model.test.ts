@@ -156,6 +156,53 @@ describe('Claude modelOverrides identity (Issue #5410)', () => {
   });
 });
 
+describe('Claude behavesAs bare alias (Issue #5422)', () => {
+  async function aliasOptions(behavesAsAlias?: string, agentBackend: 'claude' | 'dsh' = 'claude') {
+    const { BaseAgent } = await import('./base-agent.js');
+    class AliasAgent extends BaseAgent {
+      protected getAgentName() { return 'AliasAgent'; }
+      options() { return this.createSdkOptions(); }
+    }
+    return new AliasAgent({
+      apiKey: 'selected-key',
+      apiProtocol: 'anthropic',
+      model: 'kimi-k3',
+      llm: 'gateway',
+      behavesAsAlias,
+      agentBackend,
+    }).options();
+  }
+  it('threads the alias and its LLM identity to native queries without compiling modelOverrides', async () => {
+    const options = await aliasOptions('opus');
+    expect(options.behavesAsAlias).toBe('opus');
+    expect(options.llm).toBe('gateway');
+    expect(options.modelOverrides).toBeUndefined();
+  });
+  it('drops the alias for non-Claude runtimes', async () => {
+    const options = await aliasOptions('opus', 'dsh');
+    expect(options.behavesAsAlias).toBeUndefined();
+    expect(options.llm).toBeUndefined();
+  });
+  it('fails agent startup when the bundled Claude Code predates the resolution APIs', async () => {
+    vi.doMock('../sdk/providers/claude/version.js', async (importOriginal) => ({
+      ...(await importOriginal<Record<string, unknown>>()),
+      bundledClaudeCodeVersion: () => '2.1.199',
+    }));
+    const { BaseAgent } = await import('./base-agent.js');
+    class GateAliasAgent extends BaseAgent {
+      protected getAgentName() { return 'GateAliasAgent'; }
+    }
+    expect(() => new GateAliasAgent({
+      apiKey: 'selected-key',
+      apiProtocol: 'anthropic',
+      model: 'kimi-k3',
+      llm: 'gateway',
+      behavesAsAlias: 'opus',
+      agentBackend: 'claude',
+    })).toThrow(/behavesAs alias resolution requires Claude Code >= 2\.1\.200/);
+  });
+});
+
 describe('shared bindings across harnesses (Issue #5679)', () => {
   beforeEach(() => {
     vi.stubEnv('SHARED_GATEWAY_KEY', 'shared-test-key');

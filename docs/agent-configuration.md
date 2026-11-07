@@ -116,7 +116,8 @@ See [Claude model configuration](https://code.claude.com/docs/en/model-config).
 
 For a gateway or provider-specific model ID Claude Code does not know
 (`kimi-k3`, a Bedrock inference profile, …), bind its client-side identity with
-`agents.<name>.claude.behavesAs` (Issue #5410): a full Claude model ID whose catalog
+`agents.<name>.claude.behavesAs` (Issue #5410): a full Claude model ID (or a
+bare alias, see below) whose catalog
 entry — context window, capability and effort defaults — Claude Code applies to
 `model` while still sending `model` on the wire.
 `behavesAs: claude-opus-5` with the provider default `defaultModel: kimi-k3`
@@ -125,14 +126,24 @@ settings file; no user `~/.claude/settings.json` is written. Overrides also
 apply on the `ANTHROPIC_DEFAULT_*_MODEL` env-pin path. Window rules: Opus-line
 IDs (`claude-opus-5`, `claude-opus-4-8`, `claude-opus-4-7`) are the only 1M
 context keys — `claude-sonnet-4-5` / `claude-haiku-4-5` assume 200k, whatever
-slot the model serves. Pin the ID deliberately per deployment: aliases like
-`opus` are not auto-resolved, and once an override applies,
-`CLAUDE_CODE_MAX_CONTEXT_TOKENS` stops applying while the slot inherits the
-target's effort defaults (override with `CLAUDE_EFFORT`). Requires Claude
+slot the model serves. Pin the ID deliberately per deployment; once an
+override applies, `CLAUDE_CODE_MAX_CONTEXT_TOKENS` stops applying while the
+slot inherits the target's effort defaults (override with `CLAUDE_EFFORT`).
+Requires Claude
 Code ≥ v2.1.200; agent startup fails with a clear error when the bundled CLI
 is older. For multi-slot mappings set `agents.<name>.claude.modelOverrides` directly —
 a raw Claude Code `modelOverrides` map (full Claude model ID → provider ID),
 mutually exclusive with `behavesAs`.
+
+`behavesAs` also accepts a bare alias such as `opus` or `sonnet` (Issue #5422):
+a pinned full ID silently stops matching when a Claude Code upgrade renames
+catalog IDs, dropping the model back to the unknown-model 200k assumption. A
+bare alias is resolved against the booted session's `supportedModels()` catalog
+at first use (alias → resolved full ID) and the resulting modelOverrides merge
+into the session before the first input is forwarded. Resolutions are cached
+per `llms` entry for the process lifetime (the bundled catalog only changes on
+restart). An alias missing from the catalog is an explicit error listing the
+available aliases — never a silent fallback — and it does not crash the session.
 
 One binding can serve several harnesses (Issue #5679): bind both
 `backend: claude` and `backend: dsh` (or `pi`) agents to the same `llms` entry

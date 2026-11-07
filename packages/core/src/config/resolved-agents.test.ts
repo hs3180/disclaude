@@ -548,9 +548,6 @@ describe('named runtime and LLM configuration', () => {
   });
   it.each([
     (c: DisclaudeConfig) => {
-      c.agents!.assistant.claude = { behavesAs: 'opus' };
-    },
-    (c: DisclaudeConfig) => {
       c.agents!.assistant.claude = { behavesAs: 'claude_OPUS' };
     },
     (c: DisclaudeConfig) => {
@@ -585,15 +582,26 @@ describe('named runtime and LLM configuration', () => {
     expect(result.errors.length).toBe(1);
     expect(result.errors.join('\n')).toMatch(/behavesAs|modelOverrides/);
   });
-  it('rejects the bare alias with explicit pinning guidance', () => {
+  it('defers a bare alias to runtime catalog resolution instead of compiling it (Issue #5422)', () => {
     const config = configuration();
     config.agents!.assistant.claude = { ...config.agents!.assistant.claude, behavesAs: 'opus' };
     const result = resolveConfiguredAgents(config);
-    expect(result.ok).toBe(false);
-    if (result.ok) {
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
       return;
     }
-    expect(result.errors.join('\n')).toContain('aliases are not auto-resolved');
+    expect(result.presets.assistant.behavesAsAlias).toBe('opus');
+    expect(result.presets.assistant.modelOverrides).toBeUndefined();
+  });
+  it('normalizes a mixed-case bare alias to the catalog lookup form', () => {
+    const config = configuration();
+    config.agents!.assistant.claude = { ...config.agents!.assistant.claude, behavesAs: ' Opus ' };
+    const result = resolveConfiguredAgents(config);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.presets.assistant.behavesAsAlias).toBe('opus');
   });
 
   describe('shared bindings across harnesses (Issue #5679)', () => {

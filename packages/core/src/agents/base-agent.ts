@@ -36,16 +36,7 @@ import path from 'node:path';
 import { assertToolOptions } from '../sdk/tools.js';
 import { withLlmSessionLimit } from '../sdk/llm-session-limit.js';
 import { bundledClaudeCodeVersion, lacksModelOverrides } from '../sdk/providers/claude/version.js';
-
-/** Opus 4.7 and later (including Opus 5) are the 1M-context keys in Claude Code's catalog (Issue #5410). */
-function assumedContextWindow(claudeModelId: string): 1_000_000 | 200_000 {
-  const match = /^claude-opus-(\d+)(?:-(\d+))?/.exec(claudeModelId);
-  if (!match) {
-    return 200_000;
-  }
-  const major = Number(match[1]);
-  return major > 4 || (major === 4 && Number(match[2] ?? 0) >= 7) ? 1_000_000 : 200_000;
-}
+import { assumedContextWindow } from '../sdk/providers/claude/model-alias.js';
 
 // Re-export BaseAgentConfig for backward compatibility
 export type { BaseAgentConfig } from './types.js';
@@ -153,6 +144,7 @@ export abstract class BaseAgent implements Disposable {
   private readonly selectedConfig: BaseAgentConfig;
   readonly agentBackend?: BaseAgentConfig['agentBackend'];
   readonly modelOverrides?: Record<string, string>;
+  readonly behavesAsAlias?: string;
 
   protected readonly logger: Logger;
   protected initialized = false;
@@ -207,6 +199,25 @@ export abstract class BaseAgent implements Disposable {
           `Claude Code treats ${providerModel} as ${claudeModel} (${windowTokens === 1_000_000 ? '1M' : '200k'} context window)`
         );
       }
+    }
+
+    // Issue #5422: a bare behavesAs alias rides the same modelOverrides
+    // mechanism, but its full catalog ID is only knowable from the booted
+    // session, so the Claude provider resolves it at first use. Gate on the
+    // same floor; the context window is logged per session after resolution.
+    if (config.behavesAsAlias && (this.agentBackend ?? 'claude') === 'claude') {
+      this.behavesAsAlias = config.behavesAsAlias;
+      const bundled = bundledClaudeCodeVersion();
+      if (bundled && lacksModelOverrides(bundled)) {
+        throw new AppError(
+          `behavesAs alias resolution requires Claude Code >= 2.1.200, but the bundled Claude Code is v${bundled}; upgrade @anthropic-ai/claude-agent-sdk or pin a full model ID in the agent's claude.behavesAs`,
+          ErrorCategory.CONFIGURATION
+        );
+      }
+      this.logger.info(
+        { event: 'claude_behaves_as_alias', alias: this.behavesAsAlias, providerModel: this.model },
+        `behavesAs alias "${this.behavesAsAlias}" resolves against the running Claude catalog when the first session boots`
+      );
     }
   }
 
@@ -299,6 +310,12 @@ export abstract class BaseAgent implements Disposable {
     }
     if (this.modelOverrides && (this.agentBackend ?? 'claude') === 'claude') {
       options.modelOverrides = this.modelOverrides;
+    }
+    if (this.behavesAsAlias && (this.agentBackend ?? 'claude') === 'claude') {
+      options.behavesAsAlias = this.behavesAsAlias;
+      if (this.selectedConfig.llm) {
+        options.llm = this.selectedConfig.llm;
+      }
     }
 
     // SDK 0.3.177+: Agent Teams is enabled via teammateMode Settings field,

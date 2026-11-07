@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { StderrCapture, getErrorStderr, isStartupFailure, attachStderrToError, ClaudeSDKProvider, stderrIndicatesUpstreamApiError } from './provider.js';
+import { clearResolvedClaudeAliasCache } from './model-alias.js';
 import { ErrorCategory } from '../../../utils/error-handler.js';
 import { automaticReplayBlock } from '../../../utils/replay-safety.js';
 import type { AgentMessage, UserInput } from '../../types.js';
@@ -1670,5 +1671,201 @@ setInterval(() => {}, 1000);
       await rm(root, { recursive: true, force: true });
       provider.dispose();
     }
+  });
+});
+
+// ============================================================================
+// behavesAs bare alias resolution (Issue #5422)
+// ============================================================================
+
+describe('behavesAs bare alias resolution (Issue #5422)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clearResolvedClaudeAliasCache();
+  });
+
+  async function drain(stream: ReturnType<ClaudeSDKProvider['queryStream']>): Promise<AgentMessage[]> {
+    const messages: AgentMessage[] = [];
+    try {
+      for await (const message of stream.iterator) { messages.push(message); }
+    } finally {
+      stream.handle.close();
+    }
+    return messages;
+  }
+
+  it('resolves the alias through the booted session and merges modelOverrides before the first input', async () => {
+    const events: string[] = [];
+    const applied: Array<Record<string, unknown>> = [];
+    mockQuery.mockImplementation(({ prompt }: { prompt: AsyncGenerator<unknown> }) => Object.assign((async function* () {
+      const first = await prompt.next();
+      events.push(first.done ? 'input-closed' : 'input-forwarded');
+      yield { type: 'assistant', message: { content: [{ type: 'text', text: 'done' }] } };
+      yield { type: 'result', subtype: 'success', is_error: false, usage: {} };
+    })(), {
+      close: vi.fn(),
+      supportedModels: () => {
+        events.push('catalog');
+        return Promise.resolve([
+          { value: 'default', resolvedModel: 'claude-sonnet-5', displayName: 'default', description: '' },
+          { value: 'opus', resolvedModel: 'claude-opus-5', displayName: 'opus', description: '' },
+        ]);
+      },
+      applyFlagSettings: (settings: Record<string, unknown>) => {
+        events.push('apply');
+        applied.push(settings);
+        return Promise.resolve();
+      },
+    }));
+    const provider = new ClaudeSDKProvider();
+    const stream = provider.queryStream((async function* () {
+      events.push('host-input-pulled');
+      yield { role: 'user', content: 'hi' } as UserInput;
+    })(), {
+      settingSources: [], behavesAsAlias: 'opus', llm: 'gateway', model: 'kimi-k3',
+    });
+    const messages = await drain(stream);
+    expect(messages.map((message) => message.type)).toContain('text');
+    expect(events).toEqual(['catalog', 'apply', 'host-input-pulled', 'input-forwarded']);
+    expect(applied).toEqual([{ modelOverrides: { 'claude-opus-5': 'kimi-k3' } }]);
+    provider.dispose();
+  });
+
+  it('reports an explicit error with the available aliases and forwards no input on a catalog miss', async () => {
+    const events: string[] = [];
+    const applied: Array<Record<string, unknown>> = [];
+    mockQuery.mockImplementation(({ prompt }: { prompt: AsyncGenerator<unknown> }) => Object.assign((async function* () {
+      const first = await prompt.next();
+      events.push(first.done ? 'input-closed' : 'input-forwarded');
+      yield { type: 'result', subtype: 'success', is_error: false, usage: {} };
+    })(), {
+      close: vi.fn(),
+      supportedModels: () => {
+        events.push('catalog');
+        return Promise.resolve([
+          { value: 'sonnet', resolvedModel: 'claude-sonnet-5', displayName: 'sonnet', description: '' },
+          { value: 'default', resolvedModel: 'claude-sonnet-5', displayName: 'default', description: '' },
+        ]);
+      },
+      applyFlagSettings: (settings: Record<string, unknown>) => {
+        events.push('apply');
+        applied.push(settings);
+        return Promise.resolve();
+      },
+    }));
+    const provider = new ClaudeSDKProvider();
+    const stream = provider.queryStream((async function* () {
+      events.push('host-input-pulled');
+      yield { role: 'user', content: 'hi' } as UserInput;
+    })(), {
+      settingSources: [], behavesAsAlias: 'fable', llm: 'gateway', model: 'kimi-k3',
+    });
+    const messages = await drain(stream);
+    expect(events).toEqual(['catalog']);
+    expect(applied).toEqual([]);
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toContain('behavesAs alias "fable" is not in the running Claude model catalog');
+    expect(messages[0].content).toContain('available: sonnet, default');
+    expect(messages[0].content).toContain('No input was sent');
+    expect(messages[0].metadata).toMatchObject({
+      terminatedReason: 'turn_failed', automaticReplayBlocked: 'behaves-as-alias-unresolved',
+    });
+    provider.dispose();
+  });
+
+  it('degrades a failing catalog transport to the same explicit error without crashing', async () => {
+    const events: string[] = [];
+    mockQuery.mockImplementation(({ prompt }: { prompt: AsyncGenerator<unknown> }) => Object.assign((async function* () {
+      await prompt.next();
+      yield { type: 'result', subtype: 'success', is_error: false, usage: {} };
+    })(), {
+      close: vi.fn(),
+      supportedModels: () => {
+        events.push('catalog');
+        return Promise.reject(new Error('control transport disconnected'));
+      },
+      applyFlagSettings: () => {
+        events.push('apply');
+        return Promise.resolve();
+      },
+    }));
+    const provider = new ClaudeSDKProvider();
+    const stream = provider.queryStream((async function* () {
+      events.push('host-input-pulled');
+      yield { role: 'user', content: 'hi' } as UserInput;
+    })(), {
+      settingSources: [], behavesAsAlias: 'opus', llm: 'gateway', model: 'kimi-k3',
+    });
+    const messages = await drain(stream);
+    expect(events).toEqual(['catalog']);
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toContain('control transport disconnected');
+    expect(messages[0].metadata).toMatchObject({ terminatedReason: 'turn_failed' });
+    provider.dispose();
+  });
+
+  it('caches the resolution per LLM but re-merges the map into every fresh session', async () => {
+    const catalogCalls: number[] = [];
+    const applied: Array<Record<string, unknown>> = [];
+    const provider = new ClaudeSDKProvider();
+    const mockCatalogSession = () =>
+      mockQuery.mockImplementation(({ prompt }: { prompt: AsyncGenerator<unknown> }) => Object.assign((async function* () {
+        await prompt.next();
+        yield { type: 'result', subtype: 'success', is_error: false, usage: {} };
+      })(), {
+        close: vi.fn(),
+        supportedModels: () => {
+          catalogCalls.push(1);
+          return Promise.resolve([{ value: 'opus', resolvedModel: 'claude-opus-5', displayName: 'opus', description: '' }]);
+        },
+        applyFlagSettings: (settings: Record<string, unknown>) => { applied.push(settings); return Promise.resolve(); },
+      }));
+    for (const llm of ['gateway', 'gateway', 'other-gateway']) {
+      mockCatalogSession();
+      const stream = provider.queryStream((async function* () {
+        yield { role: 'user', content: 'hi' } as UserInput;
+      })(), { settingSources: [], behavesAsAlias: 'opus', llm, model: 'kimi-k3' });
+      await drain(stream);
+    }
+    // Two sessions on one LLM share the cached resolution; a new LLM re-asks.
+    expect(catalogCalls).toHaveLength(2);
+    // Every fresh session still gets its own flag-settings merge.
+    expect(applied).toEqual([
+      { modelOverrides: { 'claude-opus-5': 'kimi-k3' } },
+      { modelOverrides: { 'claude-opus-5': 'kimi-k3' } },
+      { modelOverrides: { 'claude-opus-5': 'kimi-k3' } },
+    ]);
+    provider.dispose();
+  });
+
+  it('re-resolves after a simulated Claude Code upgrade and maps the renamed catalog ID', async () => {
+    const applied: Array<Record<string, unknown>> = [];
+    const provider = new ClaudeSDKProvider();
+    const session = (resolvedModel: string) =>
+      mockQuery.mockImplementation(({ prompt }: { prompt: AsyncGenerator<unknown> }) => Object.assign((async function* () {
+        await prompt.next();
+        yield { type: 'result', subtype: 'success', is_error: false, usage: {} };
+      })(), {
+        close: vi.fn(),
+        supportedModels: () => Promise.resolve([
+          { value: 'opus', resolvedModel, displayName: 'opus', description: '' },
+        ]),
+        applyFlagSettings: (settings: Record<string, unknown>) => { applied.push(settings); return Promise.resolve(); },
+      }));
+    session('claude-opus-5');
+    await drain(provider.queryStream((async function* () {
+      yield { role: 'user', content: 'hi' } as UserInput;
+    })(), { settingSources: [], behavesAsAlias: 'opus', llm: 'gateway', model: 'kimi-k3' }));
+    // Process restart on an upgraded bundle: fresh cache, renamed catalog ID.
+    clearResolvedClaudeAliasCache();
+    session('claude-opus-5-2');
+    await drain(provider.queryStream((async function* () {
+      yield { role: 'user', content: 'hi again' } as UserInput;
+    })(), { settingSources: [], behavesAsAlias: 'opus', llm: 'gateway', model: 'kimi-k3' }));
+    expect(applied).toEqual([
+      { modelOverrides: { 'claude-opus-5': 'kimi-k3' } },
+      { modelOverrides: { 'claude-opus-5-2': 'kimi-k3' } },
+    ]);
+    provider.dispose();
   });
 });
