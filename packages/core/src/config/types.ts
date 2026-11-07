@@ -63,7 +63,13 @@ export interface ClaudeModelTiers {
 }
 
 export interface ClaudeAgentConfig {
-  /** Full Claude catalog identity used for the provider default model. */
+  /**
+   * Claude catalog identity used for the provider default model: a full Claude
+   * model ID (compiled into modelOverrides at config time) or a bare alias
+   * (`opus`, `sonnet`, `haiku`, …) that the Claude provider resolves against
+   * the running session's model catalog at first use (Issue #5422), so the
+   * mapping survives Claude Code upgrades that rename catalog IDs.
+   */
   behavesAs?: string;
   /** Claude model names (including Opus/Sonnet/Haiku slots) mapped to provider IDs. */
   modelOverrides?: Record<string, string>;
@@ -179,6 +185,15 @@ export interface AgentPreset extends AgentConfig {
   maxConcurrentSessions?: number;
   /** Resolved Claude Code modelOverrides map (Issues #5410, #5679); compiled for every preset sharing the binding, applied by Claude runtimes only. */
   modelOverrides?: Record<string, string>;
+  /**
+   * Bare `behavesAs` alias (Issue #5422), lowercased. Set instead of a compiled
+   * `modelOverrides` entry when `agents.<name>.claude.behavesAs` is an alias:
+   * the Claude runtime resolves it through the booted session's
+   * `supportedModels()` catalog (alias value → `resolvedModel` full ID) and
+   * merges the resulting modelOverrides before the first input. Cached per
+   * LLM for the process lifetime (the bundled catalog changes only on restart).
+   */
+  behavesAsAlias?: string;
 }
 export type AgentPresets = Record<string, AgentPreset>;
 

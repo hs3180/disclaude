@@ -41,8 +41,11 @@ agents:
         sonnet: kimi-k3-flash # default tier
         haiku: kimi-k3-air # fast/background tier
       # Capability slot for the provider defaultModel when it is a gateway ID
-      # Claude Code does not know: a full Claude model ID (aliases are not
-      # auto-resolved here) whose catalog entry Claude Code applies to it.
+      # Claude Code does not know: a full Claude model ID, or a bare alias
+      # (opus/sonnet/haiku/...) resolved against the running Claude catalog at
+      # first use — the mapping survives Claude Code upgrades that rename
+      # catalog IDs (Issue #5422).
+      # behavesAs: opus
       # behavesAs: claude-opus-5
       # Alternative to behavesAs (mutually exclusive): map several full Claude
       # model IDs to provider IDs, e.g. a multi-model gateway:

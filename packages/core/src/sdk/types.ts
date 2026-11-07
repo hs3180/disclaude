@@ -397,6 +397,21 @@ export interface AgentQueryOptions {
    */
   modelOverrides?: Record<string, string>;
   /**
+   * Bare `behavesAs` alias (Issue #5422): the Claude provider resolves it
+   * against the booted session's `supportedModels()` catalog (alias value →
+   * `resolvedModel` full ID) and merges `modelOverrides: { resolved: model }`
+   * through `applyFlagSettings` before the first input is forwarded. An
+   * unknown alias surfaces as an explicit error naming the catalog's
+   * available aliases instead of a silent fallback. Resolutions are cached
+   * per `llm` for the process lifetime.
+   */
+  behavesAsAlias?: string;
+  /**
+   * Named LLM binding identity from the resolved agent preset; scopes
+   * per-LLM caches such as the behavesAs alias resolution (Issue #5422).
+   */
+  llm?: string;
+  /**
    * Enable partial (stream_event) messages (Issue #3706 GLM stall).
    * When true, the SDK yields stream_event messages (content_block_delta,
    * message_start, message_stop) observed by the host activity clock.
