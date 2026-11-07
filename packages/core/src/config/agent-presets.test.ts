@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { resolveAgentPreset, validateAgentPresets } from './agent-presets.js';
+import {
+  backendLlmCompatibility,
+  composeSessionPreset,
+  isValidModelForBackend,
+  resolveAgentPreset,
+  switchableBackendsFor,
+  validateAgentPresets,
+} from './agent-presets.js';
+import type { AgentPreset } from './types.js';
 
 describe('validateAgentPresets', () => {
   it.each(['codex', 'dsh'])('requires a model for named %s presets', (agentBackend) => {
@@ -151,6 +159,117 @@ describe('resolveAgentPreset', () => {
       ok: true,
       name: 'fast',
       preset: unmarked.fast,
+    });
+  });
+});
+
+describe('orthogonal dimension switching helpers (Issue #5255)', () => {
+  const anthropicBinding = { apiProtocol: 'anthropic' as const };
+  const openaiBinding = { apiProtocol: 'openai' as const, apiBaseUrl: 'https://glm.example/v1' };
+
+  describe('backendLlmCompatibility', () => {
+    it('accepts claude only with an anthropic-protocol llm', () => {
+      expect(backendLlmCompatibility('claude', anthropicBinding)).toEqual({ ok: true });
+      expect(backendLlmCompatibility('claude', openaiBinding)).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('anthropic-protocol'),
+      });
+    });
+
+    it('lets pi serve any api protocol but requires a binding', () => {
+      expect(backendLlmCompatibility('pi', anthropicBinding)).toEqual({ ok: true });
+      expect(backendLlmCompatibility('pi', openaiBinding)).toEqual({ ok: true });
+      expect(backendLlmCompatibility('pi', {})).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('api connection'),
+      });
+    });
+
+    it('additionally requires an explicit baseUrl for dsh', () => {
+      expect(backendLlmCompatibility('dsh', openaiBinding)).toEqual({ ok: true });
+      expect(backendLlmCompatibility('dsh', { apiProtocol: 'openai' as const })).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('baseUrl'),
+      });
+    });
+
+    it('keeps codex on its own ChatGPT connection', () => {
+      expect(backendLlmCompatibility('codex', {})).toEqual({ ok: true });
+      expect(backendLlmCompatibility('codex', anthropicBinding)).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('cannot use an llm api binding'),
+      });
+    });
+  });
+
+  it('switchableBackendsFor lists every backend the binding can serve', () => {
+    expect(switchableBackendsFor({ ...anthropicBinding, apiBaseUrl: 'http://127.0.0.1:9' })).toEqual(['claude', 'pi', 'dsh']);
+    expect(switchableBackendsFor(openaiBinding)).toEqual(['pi', 'dsh']);
+    // without a baseUrl only the protocol-bound backends remain
+    expect(switchableBackendsFor(anthropicBinding)).toEqual(['claude', 'pi']);
+    // A codex-style singleton has no api binding to carry along.
+    expect(switchableBackendsFor({})).toEqual(['codex']);
+  });
+
+  describe('isValidModelForBackend', () => {
+    it('keeps the Codex/ChatGPT identifier shape for codex', () => {
+      expect(isValidModelForBackend('codex', 'gpt-5.6')).toBe(true);
+      expect(isValidModelForBackend('codex', ' gpt-6-luna ')).toBe(true);
+      expect(isValidModelForBackend('codex', 'gpt-5')).toBe(false);
+      expect(isValidModelForBackend('codex', 'claude-sonnet-4')).toBe(false);
+    });
+
+    it('passes provider-side identifiers through for the api-driven backends', () => {
+      expect(isValidModelForBackend('claude', 'claude-sonnet-4')).toBe(true);
+      expect(isValidModelForBackend('pi', 'glm-5.3')).toBe(true);
+      expect(isValidModelForBackend('dsh', 'dsh-model')).toBe(true);
+      expect(isValidModelForBackend('pi', '  ')).toBe(false);
+    });
+  });
+
+  describe('composeSessionPreset', () => {
+    const base: AgentPreset = {
+      agentBackend: 'claude',
+      llm: 'direct',
+      model: 'claude-sonnet',
+      apiKey: 'key',
+      apiProtocol: 'anthropic',
+      apiBaseUrl: 'http://127.0.0.1:2',
+      reasoningEffort: 'high',
+      modelOverrides: { high: 'claude-opus-4' },
+    };
+
+    it('returns the base unchanged without overrides', () => {
+      expect(composeSessionPreset(base)).toBe(base);
+      expect(composeSessionPreset(base, {})).toBe(base);
+    });
+
+    it('switches only the backend dimension and keeps the llm binding', () => {
+      const composed = composeSessionPreset(base, { backendOverride: 'pi' });
+      expect(composed).toEqual({
+        ...base,
+        agentBackend: 'pi',
+        // claude-only model metadata must not leak onto another runtime
+        modelOverrides: undefined,
+      } as AgentPreset);
+      expect(composed.model).toBe('claude-sonnet');
+    });
+
+    it('keeps claude model metadata when the override stays on claude', () => {
+      expect(composeSessionPreset(base, { backendOverride: 'claude' }).modelOverrides).toBe(base.modelOverrides);
+    });
+
+    it('switches only the model dimension', () => {
+      const composed = composeSessionPreset(base, { modelOverride: 'claude-haiku-4' });
+      expect(composed.agentBackend).toBe('claude');
+      expect(composed.model).toBe('claude-haiku-4');
+      expect(composed.modelOverrides).toBe(base.modelOverrides);
+      expect(composed.apiKey).toBe('key');
+    });
+
+    it('composes both dimensions independently', () => {
+      const composed = composeSessionPreset(base, { backendOverride: 'codex', modelOverride: 'gpt-5.6' });
+      expect(composed).toMatchObject({ agentBackend: 'codex', model: 'gpt-5.6', llm: 'direct' });
     });
   });
 });

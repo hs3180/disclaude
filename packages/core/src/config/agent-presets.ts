@@ -4,6 +4,110 @@ import type { AgentPreset, AgentPresets } from './types.js';
 
 const VALID_BACKENDS = new Set<AgentPreset['agentBackend']>(['claude', 'pi', 'codex', 'dsh']);
 
+/**
+ * Issue #5255: backends selectable through the orthogonal `/agent backend`
+ * dimension. Same set as validation; exported so the switch path and its
+ * "available options" replies cannot drift from the configured domain.
+ */
+export const SWITCHABLE_BACKENDS: readonly AgentPreset['agentBackend'][] = [...VALID_BACKENDS];
+
+/**
+ * Issue #5255: per-session orthogonal selection overrides, stored by the
+ * session pool alongside the selected preset name. Each dimension overrides
+ * exactly one axis of the resolved preset; `/agent use <preset>` resets both.
+ */
+export interface SessionAgentOverride {
+  backendOverride?: AgentPreset['agentBackend'];
+  modelOverride?: string;
+}
+
+/** Codex/ChatGPT model identifier shape (mirrors validateAgentPresets). */
+const CODEX_MODEL_ID = /^gpt-\d+(?:[.-].+)/i;
+
+/**
+ * Issue #5255: judge whether a resolved LLM binding (protocol + endpoint) can
+ * serve a different backend when only the backend dimension changes.
+ *
+ * The criteria mirror resolveConfiguredAgents: claude requires an
+ * anthropic-protocol provider; pi speaks both protocols; dsh additionally
+ * needs an explicit baseUrl; codex owns its ChatGPT connection and cannot
+ * carry an llm api binding at all.
+ */
+export function backendLlmCompatibility(
+  backend: AgentPreset['agentBackend'],
+  binding: Pick<AgentPreset, 'apiProtocol' | 'apiBaseUrl'>
+): { ok: true } | { ok: false; reason: string } {
+  switch (backend) {
+    case 'claude':
+      return binding.apiProtocol === 'anthropic'
+        ? { ok: true }
+        : { ok: false, reason: 'the claude backend requires an anthropic-protocol llm provider, but the bound llm does not use one' };
+    case 'pi':
+      return binding.apiProtocol
+        ? { ok: true }
+        : { ok: false, reason: 'the pi backend requires an llm with an api connection' };
+    case 'dsh':
+      return binding.apiProtocol && binding.apiBaseUrl
+        ? { ok: true }
+        : { ok: false, reason: 'the dsh backend requires an llm api with both protocol and baseUrl' };
+    case 'codex':
+      return binding.apiProtocol
+        ? { ok: false, reason: 'the codex backend owns its ChatGPT connection and cannot use an llm api binding' }
+        : { ok: true };
+  }
+}
+
+/**
+ * Issue #5255: backends the given llm binding can serve — the "available
+ * options" reply for a rejected orthogonal backend switch.
+ */
+export function switchableBackendsFor(
+  binding: Pick<AgentPreset, 'apiProtocol' | 'apiBaseUrl'>
+): AgentPreset['agentBackend'][] {
+  return SWITCHABLE_BACKENDS.filter((backend) => backendLlmCompatibility(backend, binding).ok);
+}
+
+/**
+ * Issue #5255: model identifiers each backend accepts on the orthogonal
+ * `/agent model` path. Codex must receive a Codex/ChatGPT model id; the
+ * API-driven backends pass the identifier through to the provider verbatim,
+ * so any non-empty string is accepted (the provider validates availability).
+ */
+export function isValidModelForBackend(
+  backend: AgentPreset['agentBackend'],
+  model: string
+): boolean {
+  if (backend === 'codex') {
+    return CODEX_MODEL_ID.test(model.trim());
+  }
+  return model.trim().length > 0;
+}
+
+/**
+ * Issue #5255: overlay one session's orthogonal overrides on a resolved
+ * preset. Backend-agnostic settings (permissions, codex governance, llm
+ * binding) carry over unchanged; claude-only model metadata is dropped when
+ * the effective backend is not claude, mirroring how resolveConfiguredAgents
+ * compiles it for claude runtimes only.
+ */
+export function composeSessionPreset(
+  base: AgentPreset,
+  override?: SessionAgentOverride
+): AgentPreset {
+  if (!override?.backendOverride && !override?.modelOverride) {
+    return base;
+  }
+  const { backendOverride, modelOverride } = override;
+  const agentBackend = backendOverride ?? base.agentBackend;
+  const { modelOverrides, ...portable } = base;
+  return {
+    ...portable,
+    agentBackend,
+    ...(modelOverride ? { model: modelOverride } : {}),
+    ...(agentBackend === 'claude' ? { modelOverrides } : {}),
+  };
+}
+
 export type AgentPresetValidation =
   | { ok: true; name: string; preset: AgentPreset }
   | { ok: false; errors: string[] };

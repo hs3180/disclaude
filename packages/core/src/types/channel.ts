@@ -158,8 +158,11 @@ export interface CommandDataMap {
   project: { subcommand: string; workingDir?: string };
   /** /reset — reset agent, optionally skip history loading (Issue #3696) */
   reset: { skipContext?: boolean };
-  /** /agent — inspect or select a named runtime preset */
-  agent: { subcommand: string; preset?: string };
+  /**
+   * /agent — inspect or select a named runtime preset, or switch one
+   * dimension orthogonally (Issue #5255: backend/model).
+   */
+  agent: { subcommand: string; preset?: string; value?: string };
   steer: { prompt?: string };
   /** Explicit Goal record commands; execution is a separate capability. */
   goal: { args?: string[] };

@@ -59,3 +59,27 @@ describe('runtime help and recovery guidance', () => {
     expect(createControlCommand('help', 'chat', { args: [] }).data).toBeUndefined();
   });
 });
+
+describe('/agent availability without configured presets (Issue #5255)', () => {
+  const presetlessPool = (switchers: boolean) => ({
+    reset: vi.fn(), stop: vi.fn(),
+    listAgentPresets: () => [],
+    getActiveAgentPreset: () => undefined,
+    switchAgentPreset: () => ({ ok: false as const, error: 'no presets' }),
+    ...(switchers ? { switchAgentBackend: vi.fn(), switchAgentModel: vi.fn() } : {}),
+  });
+
+  it('offers /agent with only the dimension switches wired', async () => {
+    const ctx = context();
+    Object.assign(ctx.agentPool, presetlessPool(true));
+    const help = await createControlHandler(ctx)({ type: 'help', chatId: 'chat' });
+    expect(help.message).toContain('`/agent');
+  });
+
+  it('keeps /agent hidden when neither presets nor switches exist', async () => {
+    const ctx = context();
+    Object.assign(ctx.agentPool, presetlessPool(false));
+    const help = await createControlHandler(ctx)({ type: 'help', chatId: 'chat' });
+    expect(help.message).not.toContain('`/agent');
+  });
+});
