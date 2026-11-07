@@ -128,6 +128,26 @@ describe('send_card', () => {
     });
   });
 
+  describe('delivery position echo (#5722)', () => {
+    it('with --parent: success message marks the thread reply', async () => {
+      mockChannelApiClient.sendCard.mockResolvedValue({ success: true, messageId: 'om_card_reply' });
+      const result = await send_card({ card: validCard, chatId: 'oc_topic_group', parentMessageId: 'om_topic_root' });
+      expect(result.success).toBe(true);
+      expect(result.message).toBe('✅ Card message sent — thread reply to om_topic_root (messageId om_card_reply)');
+      expect(result.deliveryPosition).toBe('thread-reply');
+      expect(result.message).not.toContain('⚠️');
+    });
+
+    it('without --parent: success message marks chat root and warns about the NEW topic', async () => {
+      mockChannelApiClient.sendCard.mockResolvedValue({ success: true });
+      const result = await send_card({ card: validCard, chatId: 'oc_topic_group' });
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('— chat root');
+      expect(result.message).toContain('⚠️ Sent without --parent');
+      expect(result.deliveryPosition).toBe('chat-root');
+    });
+  });
+
   describe('REST API failure', () => {
     it('should return error when REST API send fails', async () => {
       mockChannelApiClient.sendCard.mockResolvedValue({ success: false, error: 'Send failed', errorType: 'channel_api_request_failed' });
