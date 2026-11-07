@@ -1,12 +1,12 @@
 # Named agents and external secrets
 
 The public configuration has one runtime entry point: `agents.<name>` binds a
-backend to `llms.<name>`, which owns its model, API protocol, endpoint and
-credential reference. Multiple runtimes can bind different connections for the
+backend to `llms.<name>`, which owns its default model, API protocol, endpoint
+and credential reference. Multiple runtimes can bind different connections for the
 same backend. API protocols describe wire formats, not model vendors. Exactly one
 `default: true` marker is accepted; the reserved `default` name or first entry is
-the documented fallback. Every bound LLM requires an explicit non-empty `model`,
-including native Codex. No top-level `agent`, `glm`, `anthropic` or `deepseek`
+the documented fallback. A provider default model (`defaultModel`) is optional,
+including for native Codex; agents can use any model of the provider. No top-level `agent`, `glm`, `anthropic` or `deepseek`
 fallback is consulted. See [agent configuration](agent-configuration.md).
 API model environment variables do not fill a missing declaration. The documented
 `CODEX_MODEL` startup override applies only after a valid model is declared for
@@ -57,9 +57,14 @@ agents:
     backend: claude
     llm: analysis
     default: true
+    claude:
+      # Claude-only environment. The three tier variables can also come from
+      # the structured claude.models mapping; see docs/agent-configuration.md:
+      env:
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: your-small-model
 llms:
   analysis:
-    model: your-model-id
+    defaultModel: your-model-id
     api:
       protocol: anthropic
       baseUrl: https://your-api.example
@@ -67,7 +72,6 @@ llms:
     env:
       JUPYTERLAB_HOST: https://your-jupyter.example
       JUPYTERLAB_PASS: $NOTEBOOK_PASSWORD
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: your-small-model
 ```
 
 Only that selected LLM receives `JUPYTERLAB_PASS`; `NOTEBOOK_PASSWORD` is not

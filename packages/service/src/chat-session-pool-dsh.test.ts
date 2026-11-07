@@ -60,4 +60,44 @@ describe('named DSH pool routing', () => {
     expect(native.forgetSession).toHaveBeenCalledWith('test-chat');
     expect(native.getProvider).toHaveBeenLastCalledWith('dsh', selected);
   });
+
+  it('switches a chat onto a DSH preset that shares its binding with Claude (Issue #5679)', () => {
+    const shared = 'group/hq-degrade';
+    const worker: AgentPreset = {
+      agentBackend: 'dsh',
+      llm: 'shared',
+      model: shared,
+      apiKey: 'shared-key',
+      mode: 'minimal',
+      apiProtocol: 'anthropic',
+      apiBaseUrl: 'https://gateway.example',
+    };
+    const seen: Array<{ backend?: string; model?: string }> = [];
+    native.getProvider.mockImplementation((backend, settings) => {
+      seen.push({ backend, model: settings?.model });
+      return { getInfo: native.getInfo, forgetSession: native.forgetSession };
+    });
+    const pool = new ChatSessionPool({
+      agentPresets: {
+        assistant: {
+          agentBackend: 'claude',
+          llm: 'shared',
+          model: shared,
+          apiKey: 'shared-key',
+          default: true,
+          apiProtocol: 'anthropic',
+          apiBaseUrl: 'https://gateway.example',
+        },
+        worker,
+      },
+    });
+    // The switch preflight validates the shared binding's DSH shape before
+    // any session is replaced; both presets carry the same wire model.
+    expect(pool.switchAgentPreset('test-chat', 'worker')).toMatchObject({
+      ok: true,
+      active: { model: shared, agentBackend: 'dsh' },
+    });
+    expect(seen.at(-1)).toEqual({ backend: 'dsh', model: shared });
+    expect(pool.getActiveAgentPreset('test-chat')).toMatchObject({ model: shared });
+  });
 });

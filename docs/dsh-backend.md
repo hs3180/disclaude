@@ -23,7 +23,7 @@ agents:
     dshHome: /absolute/path/to/isolated-dsh-home
 llms:
   glm-openai:
-    model: your-model-id
+    defaultModel: your-model-id
     api:
       protocol: openai
       baseUrl: https://your-openai-compatible-api.example/v1

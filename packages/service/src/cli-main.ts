@@ -41,6 +41,7 @@ import {
   type ChatType,
 } from '@disclaude/core';
 import crypto from 'node:crypto';
+import { SERVICE_VERSION } from './version.js';
 import { DisclaudeService } from './service.js';
 import { HttpApiServer } from './http-api-server.js';
 import { ChatSessionPool } from './chat-session-pool.js';
@@ -525,7 +526,7 @@ export async function main(): Promise<void> {
   logger.info({ workspaceDir }, 'ProjectManager initialized');
 
   // Issue #5400 (PR A): registry of each chat's most recent failure context,
-  // recorded by ChatAgent for the /issue feedback entry.
+  // recorded by ChatAgent for the /feedback entry (#5428).
   const failureRegistry = new ChatFailureRegistry();
 
   let agentBindings: AgentBindingStore;
@@ -553,7 +554,7 @@ export async function main(): Promise<void> {
     agentBindings,
     defaultAgentPresetForChat: perAppAgent,
     turnRecovery,
-    // Issue #5400: per-chat last-failure registry backing the /issue entry.
+    // Issue #5400: per-chat last-failure registry backing the /feedback entry.
     failureRecorder: (failure) => failureRegistry.record(failure),
     messageBuilderOptions: createFeishuMessageBuilderOptions(),
     cwdProvider: projectManager.createCwdProvider(),
@@ -616,10 +617,11 @@ export async function main(): Promise<void> {
         service.getDebugGroupService().setDebugGroup(chatId, name),
       clearDebugGroup: () => service.getDebugGroupService().clearDebugGroup(),
     },
-    // Issue #5400: /issue reads the chat's last failure from this registry
+    // Issue #5400: /feedback reads the chat's last failure from this registry
     // (recorded by ChatAgent); the Feishu descriptor setup adds the
     // confirmation-card hook on top of it.
     failureRegistry,
+    serviceVersion: SERVICE_VERSION,
     projectManager,
     // Issue #3807: /restart command calls this to trigger graceful shutdown
     get shutdown() {

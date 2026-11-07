@@ -10,7 +10,7 @@ export const CODEX_REASONING_EFFORTS = [
   'ultra',
 ] as const satisfies readonly CodexReasoningEffort[];
 
-export type CodexModelSource = 'environment' | 'llms.model' | 'codex-cli-default';
+export type CodexModelSource = 'environment' | 'llms.defaultModel' | 'codex-cli-default';
 export type CodexEffortSource =
   | 'environment'
   | 'llms.reasoningEffort'
@@ -39,7 +39,7 @@ export function resolveCodexModelSetting(sources: {
 }): ResolvedCodexSetting<string, CodexModelSource> {
   const candidates: Array<[string | undefined, CodexModelSource]> = [
     [sources.environment, 'environment'],
-    [sources.configured, 'llms.model'],
+    [sources.configured, 'llms.defaultModel'],
   ];
   for (const [value, source] of candidates) {
     const normalized = nonEmpty(value);
