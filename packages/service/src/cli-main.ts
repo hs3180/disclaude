@@ -1150,15 +1150,9 @@ export async function main(): Promise<void> {
         // #5411: a consumed private input resumes the waiting task by itself,
         // through the same signal routing as /api/push. The payload carries
         // only ids/outcome — never the private value.
-        (
-          feishuChannel as
-            | {
-                setPrivateWorkflowNotifier?: (
-                  notify: (chatId: string, message: string) => Promise<void>
-                ) => void;
-              }
-            | undefined
-        )?.setPrivateWorkflowNotifier?.((chatId, message) =>
+        // T-083 R5 (#5254): install on EVERY channel exposing the hook — see
+        // installPrivateWorkflowNotifiers below.
+        installPrivateWorkflowNotifiers(channelManager.getAll(), (chatId, message) =>
           routeSignal('private-input', chatId, message)
         );
       }
@@ -1206,7 +1200,9 @@ export async function main(): Promise<void> {
 
       // Issue #4279: wire REST /api/upload-image to the channel's uploadImage
       // capability (REST parity with the REST API method).
-      httpApiServer.setUploadImageHandler((filePath) => service.uploadImage(filePath));
+      // T-083 R3 (#5254): forward the optional chat attribution so the upload
+      // dispatches to the OWNING channel's credentials.
+      httpApiServer.setUploadImageHandler((filePath, chatId) => service.uploadImage(filePath, chatId));
 
       // Issue #4281: wire REST /api/mark-chat-responded to the channel's
       // markChatResponded capability (temp-chat lifecycle; REST parity with
@@ -1529,4 +1525,31 @@ export function resolveChannelConfigs(
   }
 
   return entries;
+}
+
+/**
+ * T-083 R5 (#5254): install the #5411 private-input wake notifier on every
+ * channel exposing the hook.
+ *
+ * `channelManager.get('feishu')` yields only the legacy single-app instance,
+ * so with named multi-app Feishu declarations the waiting sessions of every
+ * named channel would never be resumed. Each FeishuChannel re-prefixes the
+ * bare chat id handed to the notifier with its own route (see
+ * FeishuChannel.setPrivateWorkflowNotifier), so the signal lands in the right
+ * named conversation; channels without the hook (REST, WeChat) are skipped.
+ * Exported for direct testing.
+ */
+export function installPrivateWorkflowNotifiers(
+  channels: ReadonlyArray<object>,
+  route: (chatId: string, message: string) => Promise<void>
+): void {
+  for (const channel of channels) {
+    // Call through the object so the method keeps its receiver.
+    const hook = channel as {
+      setPrivateWorkflowNotifier?: (
+        notify: (chatId: string, message: string) => Promise<void>
+      ) => void;
+    };
+    hook.setPrivateWorkflowNotifier?.((chatId, message) => route(chatId, message));
+  }
 }

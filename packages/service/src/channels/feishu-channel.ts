@@ -336,21 +336,67 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   requestPrivateWorkflow(request: PrivateWorkflowRequest): Promise<{ actionId: string }> {
-    return this.feishuMessageHandler.requestPrivateWorkflow(request);
+    // T-083 R1 (#5254 rework): the workflow layer binds and compares PLATFORM
+    // chat ids — the form callback round-trips the bare `open_chat_id`. Strip
+    // this channel's route prefix at the adapter boundary and reject ids that
+    // are not bare Feishu chats, instead of loosening the actor/card/nonce
+    // binding comparisons. The caller's request object stays untouched.
+    const chatId = this.toApiChatId(request.chatId);
+    if (!/^o[cu]_/.test(chatId)) {
+      return Promise.reject(
+        new Error(
+          `Private workflow target ${request.chatId} is not a Feishu chat of channel ${this.id}; use this channel's chat ID`
+        )
+      );
+    }
+    return this.feishuMessageHandler.requestPrivateWorkflow({ ...request, chatId });
   }
 
   /** #5411: route consumed private-input outcomes back to the waiting session. */
   setPrivateWorkflowNotifier(
     notify: import('./feishu/private-workflows.js').PrivateOutcomeNotifier
   ): void {
-    this.feishuMessageHandler.setPrivateWorkflowNotifier(notify);
+    // T-083 R5: the workflows layer reports the bare platform chat id it
+    // bound; the waiting session lives under this channel's routed id, so
+    // re-prefix at the adapter boundary. Notifiers installed per instance
+    // therefore route back to their own named conversations.
+    this.feishuMessageHandler.setPrivateWorkflowNotifier((chatId, message) =>
+      notify(this.toRoutedChatId(chatId), message)
+    );
   }
 
   requestAgentInput(
     request: import('@disclaude/core').AgentInputRequest,
     context: import('@disclaude/core').AgentInputContext
   ): Promise<void> {
-    return this.feishuMessageHandler.requestAgentInput(request, context);
+    // T-083 R2: convert host-routed targets to bare platform ids at the
+    // platform adapter boundary — FeishuAgentInput echoes API-returned bare
+    // ids in its target checks and passes `receive_id` straight to the Feishu
+    // API (direct-create must never see a prefixed id). The caller's context
+    // object is not mutated, so answer continuation keeps the host
+    // conversation identity.
+    const chatId = this.toApiChatId(context.chatId);
+    if (!/^o[cu]_/.test(chatId)) {
+      return Promise.reject(
+        new Error(
+          `Agent input target ${context.chatId} is not a Feishu chat of channel ${this.id}; use this channel's chat ID`
+        )
+      );
+    }
+    const platformContext: import('@disclaude/core').AgentInputContext = {
+      ...context,
+      chatId,
+      // Message ids share the same route prefix; toApiChatId is a plain
+      // prefix strip, so it applies to them equally.
+      sourceMessageId: this.toApiChatId(context.sourceMessageId),
+      ...(context.threadRootId !== undefined
+        ? { threadRootId: this.toApiChatId(context.threadRootId) }
+        : {}),
+      ...(context.replyRootId !== undefined
+        ? { replyRootId: context.replyRootId === null ? null : this.toApiChatId(context.replyRootId) }
+        : {}),
+    };
+    return this.feishuMessageHandler.requestAgentInput(request, platformContext);
   }
 
   configureTaskQuestions(ports: Omit<TaskQuestionFlowPorts, 'send' | 'reconcileCard'>): void {

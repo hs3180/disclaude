@@ -47,6 +47,37 @@ import {
   buildActionPrompts,
   validateInteractiveParams,
 } from '../platforms/feishu/card-builders/index.js';
+import type { TriggerModeManager } from './feishu/passive-mode.js';
+
+// ============================================================================
+// Feishu trigger mode adapter (T-083 R4)
+// ============================================================================
+
+/**
+ * Normalize the control-path chat id onto the manager's key space.
+ *
+ * T-083 R4 (#5254 rework): inbound filtering reads the mode map with the BARE
+ * `chat_id` from Feishu events, while the `/trigger` control path arrives with
+ * this channel's routed id (`feishu:<name>:oc_…`, prefixed by the emitControl
+ * callback). Unifying on bare platform keys at this adapter keeps the receipt
+ * and the actual filter state consistent for always/mention/auto; restart
+ * recovery (`initFromRecords`) uses the same bare keys. For the legacy
+ * single-app channel `toApiChatId` is the identity, so nothing changes there.
+ */
+export function createTriggerModeAdapter(
+  channel: Pick<FeishuChannel, 'toApiChatId'>,
+  triggerModeManager: Pick<TriggerModeManager, 'getMode' | 'setMode'>
+): {
+  getMode(chatId: string): 'mention' | 'always' | 'auto';
+  setMode(chatId: string, mode: 'mention' | 'always' | 'auto'): void;
+} {
+  return {
+    getMode: (chatId: string): 'mention' | 'always' | 'auto' =>
+      triggerModeManager.getMode(channel.toApiChatId(chatId)),
+    setMode: (chatId: string, mode: 'mention' | 'always' | 'auto') =>
+      triggerModeManager.setMode(channel.toApiChatId(chatId), mode),
+  };
+}
 
 // ============================================================================
 // REST Wired Descriptor
@@ -203,12 +234,7 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
     // Adapter delegates to TriggerModeManager's native enum-based getMode/setMode.
     // The manager handles 'auto' mode resolution internally.
     const triggerModeManager = feishuChannel.getTriggerModeManager();
-    const triggerModeAdapter = {
-      getMode: (chatId: string): 'mention' | 'always' | 'auto' =>
-        triggerModeManager.getMode(chatId),
-      setMode: (chatId: string, mode: 'mention' | 'always' | 'auto') =>
-        triggerModeManager.setMode(chatId, mode),
-    };
+    const triggerModeAdapter = createTriggerModeAdapter(feishuChannel, triggerModeManager);
     const helpContext: ControlHandlerContext = {
       ...(context.controlHandlerContext as unknown as ControlHandlerContext),
       goalStore: context.goalStore,
