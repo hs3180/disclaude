@@ -44,7 +44,14 @@ export interface CodexAgentGovernanceConfig {
 }
 
 /** Codex CLI reasoning levels currently exposed by the model catalog. */
-export type CodexReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
+export type CodexReasoningEffort =
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+  | 'max'
+  | 'ultra';
 
 /**
  * Claude's multi-agent model tiers (review 2026-11-06): the models that
@@ -181,6 +188,17 @@ export interface AgentPreset extends AgentConfig {
   modelOverrides?: Record<string, string>;
 }
 export type AgentPresets = Record<string, AgentPreset>;
+
+/**
+ * A user-declared channel: a `channels.<name>` entry carrying an explicit
+ * `type` marker (e.g. `type: feishu`). The map key is the channel's stable
+ * name and identity; type-specific fields (credentials, `agent`, …) sit next
+ * to `type` and are validated per channel type.
+ *
+ * Legacy type sections (`channels.feishu`, `channels.rest`, …) carry no
+ * `type` field and keep their original meaning (#5254 review rework).
+ */
+export type ChannelDeclarationConfig = ConfigChannelConfig & { type: string };
 
 /**
  * Feishu/Lark platform configuration section.
@@ -521,14 +539,22 @@ export interface ConfigChannelConfig {
 }
 
 /**
- * Channels configuration section (abstract).
- * Main project extends this with specific channel types.
+ * Channels configuration section.
+ *
+ * Two entry kinds share this map:
+ * - **Named channel declarations** — `channels.<name>: { type: feishu, … }`.
+ *   The key is the channel's stable name; several declarations may share one
+ *   type. Reserved for future expansion beyond static YAML (see
+ *   `config/channel-declarations.ts` for the declaration seam).
+ * - **Legacy type sections** — `channels.feishu`, `channels.rest`,
+ *   `channels.ruliu`, `channels.wechat` without a `type` field configure one
+ *   instance per type and keep their original shape.
  */
 export interface ChannelsConfig {
   rest?: ConfigChannelConfig & { authToken?: string };
   feishu?: ConfigChannelConfig & FeishuConfig;
   ruliu?: ConfigChannelConfig & RuliuConfig;
-  [channelName: string]: ConfigChannelConfig | undefined;
+  [channelName: string]: ConfigChannelConfig | ChannelDeclarationConfig | undefined;
 }
 
 /**

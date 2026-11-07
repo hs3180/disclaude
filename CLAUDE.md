@@ -115,7 +115,7 @@ Config is file-based (`disclaude.config.yaml`), **gitignored** (holds secrets). 
 - **Provider resolution**: `agent.provider` (`anthropic` | `glm`) if set; otherwise GLM wins when `glm.apiKey` is present, else Anthropic. GLM is usually routed through an Anthropic-compatible base URL (`glm.apiBaseUrl`).
 - **Env fallback** is minimal: `ANTHROPIC_API_KEY` (when provider is anthropic), `WORKSPACE_DIR` / `DISCLAUDE_WORKSPACE_DIR` (override `workspace.dir`), `DISCLAUDE_CONFIG_PATH`, `DISCLAUDE_API_BASE_URL`, logging knobs. See `docs/environment-variables.md`.
 - **`agent` essentials**: `provider`, `agentBackend`, `model`, `permissionMode` (`default`|`bypassPermissions`; bots default bypass), tier models (`high/low/multimodalModel`), `maxConcurrentTasks`, `enableAgentTeams`, and the codex block below.
-- **`feishu`**: `appId`/`appSecret` auto-enable the Feishu channel; `deduplication.{maxIds,maxAgeMs}`, `cliChatId`, `streamingCard`, `topicNotify`.
+- **`feishu`**: `appId`/`appSecret` auto-enable the Feishu channel; `deduplication.{maxIds,maxAgeMs}`, `cliChatId`, `streamingCard`, `topicNotify`. Multiple Feishu apps = sibling named declarations `channels.<name>: { type: feishu, appId, appSecret, agent? }` (each gets `feishu:<name>:` chat identities, its own credentials and optional default `agents` preset; see `packages/core/src/config/channel-declarations.ts`).
 - Advanced keys (`channels.rest`, `transport` (local/http distributed), `messaging`, `sessionRestore`, `ruliu`, `glm` tiers) — see the example file.
 - **`tools.disabled`** — array of tool names; `tools.mcpServers` ignored.
 

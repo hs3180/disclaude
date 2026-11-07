@@ -21,7 +21,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { StreamingReplyDriver } from '@disclaude/core';
 import { FeishuChannel } from './feishu-channel.js';
-import { STREAMING_REPLY_ELEMENT_ID, STREAMING_THINKING_ELEMENT_ID } from '../platforms/feishu/card-builders/streaming-card-builder.js';
+import {
+  STREAMING_REPLY_ELEMENT_ID,
+  STREAMING_THINKING_ELEMENT_ID,
+} from '../platforms/feishu/card-builders/streaming-card-builder.js';
 
 // ─── Mocks ──────────────────────────────────────────────────────────────────
 
@@ -51,46 +54,60 @@ vi.mock('@disclaude/core', async (importOriginal) => {
 });
 
 vi.mock('../platforms/feishu/index.js', () => ({
-  InteractionManager: vi.fn(class { dispose = vi.fn(); }),
+  InteractionManager: vi.fn(
+    class {
+      dispose = vi.fn();
+    }
+  ),
   WelcomeService: vi.fn(),
   createFeishuClient: vi.fn(),
 }));
 
 vi.mock('./feishu/index.js', () => ({
-  TriggerModeManager: vi.fn(class {
-    isTriggerEnabled = vi.fn().mockReturnValue(false);
-    setTriggerEnabled = vi.fn();
-    getTriggerEnabledChats = vi.fn().mockReturnValue([]);
-  }),
-  MentionDetector: vi.fn(class {
-    setClient = vi.fn();
-    fetchBotInfo = vi.fn().mockResolvedValue(undefined);
-    getBotInfo = vi.fn().mockReturnValue(undefined);
-  }),
-  WelcomeHandler: vi.fn(class {
-    handleP2PChatEntered = vi.fn();
-    handleChatMemberAdded = vi.fn();
-    setWelcomeService = vi.fn();
-  }),
-  MessageHandler: vi.fn(class {
-    handleMessageReceive = vi.fn();
-    handleCardAction = vi.fn();
-    initialize = vi.fn();
-    clearClient = vi.fn();
-    drainTaskQuestions = vi.fn().mockResolvedValue(undefined);
-  }),
+  TriggerModeManager: vi.fn(
+    class {
+      isTriggerEnabled = vi.fn().mockReturnValue(false);
+      setTriggerEnabled = vi.fn();
+      getTriggerEnabledChats = vi.fn().mockReturnValue([]);
+    }
+  ),
+  MentionDetector: vi.fn(
+    class {
+      setClient = vi.fn();
+      fetchBotInfo = vi.fn().mockResolvedValue(undefined);
+      getBotInfo = vi.fn().mockReturnValue(undefined);
+    }
+  ),
+  WelcomeHandler: vi.fn(
+    class {
+      handleP2PChatEntered = vi.fn();
+      handleChatMemberAdded = vi.fn();
+      setWelcomeService = vi.fn();
+    }
+  ),
+  MessageHandler: vi.fn(
+    class {
+      handleMessageReceive = vi.fn();
+      handleCardAction = vi.fn();
+      initialize = vi.fn();
+      clearClient = vi.fn();
+      drainTaskQuestions = vi.fn().mockResolvedValue(undefined);
+    }
+  ),
   messageLogger: {
     init: vi.fn().mockResolvedValue(undefined),
     logOutgoingMessage: mockLogOutgoingMessage,
   },
-  WsConnectionManager: vi.fn(class {
-    state = 'connected';
-    start = vi.fn().mockResolvedValue(undefined);
-    stop = vi.fn().mockResolvedValue(undefined);
-    isHealthy = vi.fn().mockReturnValue(true);
-    on = vi.fn();
-    getMetrics = vi.fn().mockReturnValue(undefined);
-  }),
+  WsConnectionManager: vi.fn(
+    class {
+      state = 'connected';
+      start = vi.fn().mockResolvedValue(undefined);
+      stop = vi.fn().mockResolvedValue(undefined);
+      isHealthy = vi.fn().mockReturnValue(true);
+      on = vi.fn();
+      getMetrics = vi.fn().mockReturnValue(undefined);
+    }
+  ),
   type: {},
 }));
 
@@ -110,10 +127,14 @@ function createMockLarkClient() {
   };
 }
 
-function createTestChannel(opts: { streamingCard?: boolean; client?: any } = {}) {
+function createTestChannel(
+  opts: { streamingCard?: boolean; client?: any; id?: string; channelName?: string } = {}
+) {
   const channel = new FeishuChannel({
     appId: 'test-app',
     appSecret: 'test-secret',
+    ...(opts.id !== undefined ? { id: opts.id } : {}),
+    ...(opts.channelName !== undefined ? { channelName: opts.channelName } : {}),
     ...(opts.streamingCard !== undefined ? { streamingCard: opts.streamingCard } : {}),
   });
   if (opts.client !== undefined) {
@@ -135,7 +156,10 @@ beforeEach(() => {
 
 describe('FeishuChannel.startStreaming — Issue #4400', () => {
   it('declines (null) when streamingCard is off', async () => {
-    const channel = createTestChannel({ streamingCard: false, client: createMockLarkClient().client });
+    const channel = createTestChannel({
+      streamingCard: false,
+      client: createMockLarkClient().client,
+    });
     await expect(channel.startStreaming('oc_chat1')).resolves.toBe(null);
     expect(mockCardKit.createCard).not.toHaveBeenCalled();
   });
@@ -151,22 +175,53 @@ describe('FeishuChannel.startStreaming — Issue #4400', () => {
     expect(createMock).toHaveBeenCalledTimes(1);
   });
 
+  it('sends a named channel streaming card to the bare Feishu chat ID', async () => {
+    const { FeishuCardKitClient } = await import('../platforms/feishu/feishu-cardkit-client.js');
+    vi.mocked(FeishuCardKitClient).mockImplementationOnce(
+      // eslint-disable-next-line prefer-arrow-callback
+      function () {
+        return mockCardKit as unknown as InstanceType<typeof FeishuCardKitClient>;
+      }
+    );
+    const { client, createMock } = createMockLarkClient();
+    client.tokenManager = { getTenantAccessToken: vi.fn().mockResolvedValue('personal-token') };
+    const channel = createTestChannel({
+      streamingCard: true,
+      client,
+      id: 'feishu:personal',
+      channelName: 'personal',
+    });
+    await expect(channel.startStreaming('feishu:personal:oc_same')).resolves.toBe('card_123');
+    expect(createMock).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ receive_id: 'oc_same' }),
+      })
+    );
+  });
+
   it('declines when the Card Kit client cannot be built (missing tenant token)', async () => {
-    const { createCardKitClientFromEnv } = await import('../platforms/feishu/feishu-cardkit-client.js');
+    const { createCardKitClientFromEnv } =
+      await import('../platforms/feishu/feishu-cardkit-client.js');
     (createCardKitClientFromEnv as any).mockImplementationOnce(() => {
       throw new Error('LARKSUITE_CLI_TENANT_ACCESS_TOKEN is not set');
     });
-    const channel = createTestChannel({ streamingCard: true, client: createMockLarkClient().client });
+    const channel = createTestChannel({
+      streamingCard: true,
+      client: createMockLarkClient().client,
+    });
     await expect(channel.startStreaming('oc_chat1')).resolves.toBe(null);
     expect(mockCardKit.createCard).not.toHaveBeenCalled();
   });
 
   it('reuses SDK authentication instead of the fixed-token environment factory', async () => {
-    const { FeishuCardKitClient, createCardKitClientFromEnv } = await import('../platforms/feishu/feishu-cardkit-client.js');
+    const { FeishuCardKitClient, createCardKitClientFromEnv } =
+      await import('../platforms/feishu/feishu-cardkit-client.js');
     const getTenantAccessToken = vi.fn().mockResolvedValue('host-sdk-token');
     // The mocked class constructor must be constructible with `new`.
     // eslint-disable-next-line prefer-arrow-callback
-    vi.mocked(FeishuCardKitClient).mockImplementationOnce(function () { return mockCardKit as unknown as InstanceType<typeof FeishuCardKitClient>; });
+    vi.mocked(FeishuCardKitClient).mockImplementationOnce(function () {
+      return mockCardKit as unknown as InstanceType<typeof FeishuCardKitClient>;
+    });
     const { client } = createMockLarkClient();
     client.tokenManager = { getTenantAccessToken };
     const channel = createTestChannel({ streamingCard: true, client });
@@ -250,12 +305,21 @@ describe('FeishuChannel.streamText / finalizeStreaming — Issue #4400', () => {
     await channel.streamText(id, 'Hello world');
     await channel.streamText(id, 'Hello world!');
 
-    expect(mockCardKit.updateCard).toHaveBeenCalledWith(id, expect.objectContaining({
-      body: { elements: [
-        expect.objectContaining({ element_id: STREAMING_THINKING_ELEMENT_ID, content: '✍️ 回复中…' }),
-        expect.objectContaining({ element_id: STREAMING_REPLY_ELEMENT_ID, content: 'Hello' }),
-      ] },
-    }), 1);
+    expect(mockCardKit.updateCard).toHaveBeenCalledWith(
+      id,
+      expect.objectContaining({
+        body: {
+          elements: [
+            expect.objectContaining({
+              element_id: STREAMING_THINKING_ELEMENT_ID,
+              content: '✍️ 回复中…',
+            }),
+            expect.objectContaining({ element_id: STREAMING_REPLY_ELEMENT_ID, content: 'Hello' }),
+          ],
+        },
+      }),
+      1
+    );
     expect(mockCardKit.updateElementContent).toHaveBeenCalledTimes(2);
     const { calls } = mockCardKit.updateElementContent.mock;
     expect(calls[0]).toEqual([id, STREAMING_REPLY_ELEMENT_ID, 'Hello world', 2]);
@@ -263,7 +327,10 @@ describe('FeishuChannel.streamText / finalizeStreaming — Issue #4400', () => {
   });
 
   it('streamText is a no-op for an unknown / already-finalized card', async () => {
-    const channel = createTestChannel({ streamingCard: true, client: createMockLarkClient().client });
+    const channel = createTestChannel({
+      streamingCard: true,
+      client: createMockLarkClient().client,
+    });
     await channel.streamText('card_unknown', 'text');
     expect(mockCardKit.updateElementContent).not.toHaveBeenCalled();
   });
@@ -275,13 +342,21 @@ describe('FeishuChannel.streamText / finalizeStreaming — Issue #4400', () => {
 
     expect(mockCardKit.finalizeStreaming).toHaveBeenCalledTimes(1);
     // Reply seq 1 → terminal label seq 2 → freeze seq 3.
-    expect(mockCardKit.updateElementContent).toHaveBeenCalledWith(id, STREAMING_THINKING_ELEMENT_ID, '本次回复已结束', 2);
+    expect(mockCardKit.updateElementContent).toHaveBeenCalledWith(
+      id,
+      STREAMING_THINKING_ELEMENT_ID,
+      '本次回复已结束',
+      2
+    );
     expect(mockCardKit.finalizeStreaming.mock.calls[0]).toEqual([id, 3]);
   });
 
   it('renders a valid trailing Sources section into the same streaming card', async () => {
     const { channel, id } = await startedChannel();
-    await channel.streamText(id, 'Answer [1].\n\n## Sources\n1. [Source title](https://example.com/source)\n   > Supporting excerpt.');
+    await channel.streamText(
+      id,
+      'Answer [1].\n\n## Sources\n1. [Source title](https://example.com/source)\n   > Supporting excerpt.'
+    );
 
     await expect(channel.finalizeStreaming(id)).resolves.toBe('msg_001');
 
@@ -314,7 +389,12 @@ describe('FeishuChannel.streamText / finalizeStreaming — Issue #4400', () => {
     await channel.finalizeStreaming(id);
 
     expect(mockCardKit.updateCard).toHaveBeenCalledTimes(1);
-    expect(mockCardKit.updateElementContent).toHaveBeenCalledWith(id, STREAMING_THINKING_ELEMENT_ID, '本次回复已结束', 2);
+    expect(mockCardKit.updateElementContent).toHaveBeenCalledWith(
+      id,
+      STREAMING_THINKING_ELEMENT_ID,
+      '本次回复已结束',
+      2
+    );
     expect(mockCardKit.finalizeStreaming).toHaveBeenCalledWith(id, 3);
   });
 
@@ -413,13 +493,15 @@ describe('FeishuChannel.streamText / finalizeStreaming — Issue #4400', () => {
   });
 });
 
-
 describe('completion reaction transport', () => {
   it('targets the IM message and returns the API success status', async () => {
     const create = vi.fn().mockResolvedValueOnce({ code: 0 }).mockResolvedValueOnce({ code: 999 });
     const channel = createTestChannel({ client: { im: { messageReaction: { create } } } });
     await expect(channel.addReaction('om-final', 'DONE')).resolves.toBe(true);
-    expect(create).toHaveBeenCalledWith({ path: { message_id: 'om-final' }, data: { reaction_type: { emoji_type: 'DONE' } } });
+    expect(create).toHaveBeenCalledWith({
+      path: { message_id: 'om-final' },
+      data: { reaction_type: { emoji_type: 'DONE' } },
+    });
     await expect(channel.addReaction('om-final', 'DONE')).resolves.toBe(false);
   });
   it('does not report success without a client', async () => {

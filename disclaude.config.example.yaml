@@ -123,6 +123,24 @@ channels:
     appId: $FEISHU_APP_ID
     appSecret: $FEISHU_APP_SECRET
     streamingCard: false
+  # Multiple Feishu channels in one instance (#5254): declare each channel
+  # under its own name with `type: feishu` instead of the single feishu section
+  # above. Each channel keeps its own tenant token and lark-cli credentials and
+  # routes chats under a stable `feishu:<name>:` identity. `agent` is an
+  # optional named `agents` preset used as that channel's default (an explicit
+  # /agent use still wins). Shared settings in the feishu section above
+  # (streamingCard, deduplication) still apply to declarations; a declaration
+  # may override streamingCard.
+  # personal:
+  #   type: feishu
+  #   appId: $FEISHU_PERSONAL_APP_ID
+  #   appSecret: $FEISHU_PERSONAL_APP_SECRET
+  #   agent: assistant
+  # work:
+  #   type: feishu
+  #   appId: $FEISHU_WORK_APP_ID
+  #   appSecret: $FEISHU_WORK_APP_SECRET
+  #   agent: daily
   rest:
     enabled: false
     host: 127.0.0.1
