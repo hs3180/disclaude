@@ -37,13 +37,36 @@ are removed from child environments before only the selected key is projected.
 Do not put literal API keys in YAML; supply them through the service's environment
 or a restricted environment file in launchd, systemd or Docker.
 
+`llms.<name>.via` declares the access method (Issue #5338) and is never
+inferred from a missing credential. `via: chatgpt` uses the Codex CLI's
+managed ChatGPT login (one-time `codex login`) and its subscription quota —
+no `api` block, and only `backend: codex` may bind it; a missing login or a
+subscription limit surfaces as that method's own explicit error ("run
+`codex login`", 5-hour/weekly window notices). `via: api` uses the `api`
+block's protocol, endpoint and credential; any runtime speaking the protocol
+can bind it, `codex` included — the codex runtime requires `protocol: openai`
+plus a `baseUrl` (it drives the endpoint with OpenAI Responses wire calls)
+and leaves model availability to the actual provider, so third-party model
+ids are accepted there. Rejected combinations say so explicitly:
+`via: chatgpt` with an `api` block, `via: api` without one, and `via: chatgpt`
+on a non-codex backend. Omitting `via` keeps the pre-#5338 shape: an `api`
+block means API access, none means the ChatGPT login on a codex runtime.
+This is a disclaude configuration key; it shares no name with the upstream
+Codex CLI `model_provider` / `model_providers.<id>` config surface the
+runtime injects internally for API access. The same service may mix both:
+a `via: chatgpt` codex agent and one or more `via: api` agents (codex or
+other runtimes) resolve side by side.
+
 Every named agent binds an LLM. Agents bound to a provider can use ANY model
 it serves; `llms.<name>.defaultModel` only sets that provider's default — the
 model a runtime falls back to when nothing more specific selects one. Set it
 to pin one deployment default for every runtime bound to the provider, omit it
 to keep each runtime's native selection (a set-but-blank value is rejected).
-This includes native Codex: bind `backend: codex` to a named LLM with no `api`
-block. `ANTHROPIC_MODEL` and `OPENAI_MODEL` do not fill missing models.
+This includes native Codex: bind `backend: codex` to a named LLM and pick an
+access method with `llms.<name>.via` — `via: chatgpt` (or no `api` block)
+rides the Codex CLI's own ChatGPT login and subscription quota, `via: api`
+binds a compatible API connection (below). `ANTHROPIC_MODEL` and
+`OPENAI_MODEL` do not fill missing models.
 `CODEX_MODEL` explicitly overrides the default Codex binding only after the
 configured model passes validation; it does not supply a missing model. Named
 non-default bindings remain independent. Put `reasoningEffort` alongside

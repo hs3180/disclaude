@@ -16,7 +16,7 @@
  * @module agents/types
  */
 
-import type { ApiProtocol, AgentConfig as AgentSettings } from '../config/types.js';
+import type { ApiProtocol, AgentConfig as AgentSettings, LlmAccessVia } from '../config/types.js';
 import type { AgentMessage } from '../types/index.js';
 import type { UserMessageParams } from '../messaging/message-router.js';
 
@@ -286,6 +286,8 @@ export interface BaseAgentConfig {
   modelOverrides?: Record<string, string>;
   /** API wire format of the selected LLM. */
   apiProtocol?: ApiProtocol;
+  /** Access method of the selected LLM: Codex ChatGPT login vs API (Issue #5338). */
+  llmVia?: LlmAccessVia;
   env?: Record<string, string>;
   credentialEnvKeys?: string[];
   settings?: AgentSettings;
