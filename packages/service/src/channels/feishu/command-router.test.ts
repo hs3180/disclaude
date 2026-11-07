@@ -186,14 +186,14 @@ describe('tryHandleSlashCommand', () => {
     }));
   });
 
-  it('normalizes /agent use binding qualifiers while preserving the Feishu actor', async () => {
-    const { deps } = makeDeps({ hasControlHandler: true, controlResponse: { success: true, message: 'bound' } });
+  it('normalizes /agent use while preserving the Feishu actor and thread', async () => {
+    const { deps } = makeDeps({ hasControlHandler: true, controlResponse: { success: true, message: 'switched' } });
     await tryHandleSlashCommand({
-      ...input('/agent use fast --bind oc_target'), actorId: 'ou_admin', sourceMessageId: 'om_source', threadRootId: 'om_topic',
+      ...input('/agent use fast'), actorId: 'ou_user', sourceMessageId: 'om_source', threadRootId: 'om_topic',
     }, deps);
     expect(deps.emitControl).toHaveBeenCalledWith(expect.objectContaining({
-      type: 'agent', chatId: 'oc_x', actorId: 'ou_admin', sourceMessageId: 'om_source', threadRootId: 'om_topic',
-      data: { subcommand: 'use', preset: 'fast', bindChatId: 'oc_target' },
+      type: 'agent', chatId: 'oc_x', actorId: 'ou_user', sourceMessageId: 'om_source', threadRootId: 'om_topic',
+      data: { subcommand: 'use', preset: 'fast' },
     }));
   });
 

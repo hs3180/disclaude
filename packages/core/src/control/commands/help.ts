@@ -31,10 +31,7 @@ export function buildHelpMessage(command: ControlCommand, context: ControlHandle
   const tips = [scope];
   if (capabilities?.supportsFile) { tips.push('可发送附件并附上任务说明；读取和处理取决于当前模型及飞书权限。'); }
   if (capabilities?.supportsThread && command.chatType === 'group') { tips.push('话题群请在目标话题中提问；在话题内使用 `/help`，帮助会留在该话题。'); }
-  if (available.has('agent')) { tips.push('用 `/agent list` 查看 backend/model 预设，`/agent use <name>` 切换并开始新会话。'); }
-  if (available.has('agent') && context.agentBindingAdmin?.isAdminActor(command.actorId) === true) {
-    tips.push('管理员可用 `/agent use <preset> --bind <chatId>` 为聊天设置持久绑定；`/agent use --bind <chatId>` 查询，`/agent use --unbind <chatId>` 清除。');
-  }
+  if (available.has('agent')) { tips.push('用 `/agent list` 查看 backend/model 预设，`/agent use <name>` 切换并开始新会话；切换按聊天保存，服务重启后仍生效。'); }
   if (context.guidance && available.has('help')) { tips.push('自动指引每个聊天至多 5 分钟一次；`/help off` 关闭，`/help on` 恢复（重启后恢复默认）。'); }
 
   if (brief) {

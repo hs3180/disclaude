@@ -45,7 +45,7 @@ import { SERVICE_VERSION } from './version.js';
 import { DisclaudeService } from './service.js';
 import { HttpApiServer } from './http-api-server.js';
 import { ChatSessionPool } from './chat-session-pool.js';
-import { AgentBindingStore } from './agent-binding-store.js';
+import { AgentSelectionStore } from './agent-selection-store.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
 import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
@@ -529,12 +529,12 @@ export async function main(): Promise<void> {
   // recorded by ChatAgent for the /feedback entry (#5428).
   const failureRegistry = new ChatFailureRegistry();
 
-  let agentBindings: AgentBindingStore;
+  let agentSelections: AgentSelectionStore;
   try {
-    agentBindings = new AgentBindingStore(path.join(workspaceDir, '.disclaude', 'agent-bindings.json'));
+    agentSelections = new AgentSelectionStore(path.join(workspaceDir, '.disclaude', 'agent-selections.json'));
   } catch (error) {
-    logger.fatal({ err: error, bindingPath: path.join(workspaceDir, '.disclaude', 'agent-bindings.json') },
-      'Cannot safely start with an invalid agent binding store (#5476)');
+    logger.fatal({ err: error, selectionPath: path.join(workspaceDir, '.disclaude', 'agent-selections.json') },
+      'Cannot safely start with an invalid agent selection store (#5476)');
     processLock?.release();
     process.exit(1);
   }
@@ -551,7 +551,7 @@ export async function main(): Promise<void> {
   };
   const agentPool = new ChatSessionPool({
     agentPresets: Config.getAgentPresets(),
-    agentBindings,
+    agentSelections,
     defaultAgentPresetForChat: perAppAgent,
     turnRecovery,
     // Issue #5400: per-chat last-failure registry backing the /feedback entry.
@@ -595,21 +595,10 @@ export async function main(): Promise<void> {
       listAgentPresets: () => agentPool.listAgentPresets(),
       getActiveAgentPreset: (chatId, threadRootId) =>
         agentPool.getActiveAgentPreset(chatId, threadRootId),
-      switchAgentPreset: (chatId, presetName, threadRootId) =>
-        agentPool.switchAgentPreset(chatId, presetName, threadRootId),
-      getAgentBinding: chatId => agentPool.getAgentBinding(chatId),
-      setAgentBinding: (chatId, presetName, actorId) => agentPool.setAgentBinding(chatId, presetName, actorId),
-      clearAgentBinding: chatId => agentPool.clearAgentBinding(chatId),
+      switchAgentPreset: (chatId, presetName, threadRootId, actorId) =>
+        agentPool.switchAgentPreset(chatId, presetName, threadRootId, actorId),
       steer: (chatId, prompt, threadRootId) => agentPool.steer(chatId, prompt, threadRootId),
       canSteer: (chatId, threadRootId) => agentPool.canSteer(chatId, threadRootId),
-    },
-    // Issue #5476: explicit actor allowlist; absent/false denies all binding
-    // operations. messaging.admin.chatId remains delivery-only.
-    agentBindingAdmin: {
-      isAdminActor: actorId => {
-        const actorIds = Config.getRawConfig().messaging?.admin?.actorIds ?? [];
-        return typeof actorId === 'string' && !!actorId.trim() && actorIds.includes(actorId);
-      },
     },
     debugGroups: {
       getDebugGroup: () => service.getDebugGroupService().getDebugGroup(),

@@ -26,12 +26,13 @@ describe('/agent', () => {
     expect(result.message).toContain('**fast** — pi / glm-fast');
   });
 
-  it('reports the fresh-session and process-lifetime boundaries after switching', async () => {
+  it('reports the fresh-session boundary and the per-chat persistence after switching', async () => {
     const result = await handleAgent({ type: 'agent', chatId: 'a', data: { subcommand: 'use', preset: 'fast' } }, context());
     expect(result).toMatchObject({ success: true });
     expect(result.message).toContain('pi / glm-fast');
     expect(result.message).toContain('context is not migrated');
-    expect(result.message).toContain('service restarts');
+    expect(result.message).toContain('saved for this chat');
+    expect(result.message).toContain('survives service restarts');
   });
 
   it('gives an executable next step after a failed switch without claiming the selection changed', async () => {
@@ -62,87 +63,24 @@ describe('/agent', () => {
     expect(result.message).toContain('service maintainer');
     expect(result.message).not.toMatch(/\/agent|claude-sonnet|glm-fast/);
   });
-  it('keeps the plain /agent use switch independent of durable binding APIs', async () => {
-    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-    const setBinding = vi.fn();
-    const getBinding = vi.fn();
-    const clearBinding = vi.fn();
-    const ctx = context({ setAgentBinding: setBinding, getAgentBinding: getBinding, clearAgentBinding: clearBinding });
-    ctx.logger = logger as never;
-    const result = await handleAgent({ type: 'agent', chatId: 'a', data: { subcommand: 'use', preset: 'fast' } }, ctx);
-    expect(result).toMatchObject({ success: true });
-    expect(setBinding).not.toHaveBeenCalled();
-    expect(getBinding).not.toHaveBeenCalled();
-    expect(clearBinding).not.toHaveBeenCalled();
-    expect(logger.info).not.toHaveBeenCalled();
-  });
-
-  it('requires an explicitly configured admin actor for /agent use --bind queries and records denials', async () => {
-    const ctx = context({
-      getAgentBinding: vi.fn(() => ({ chatId: 'target', presetName: 'fast', updatedBy: 'ou_admin', updatedAt: '2026-11-05T00:00:00Z' })),
-      setAgentBinding: vi.fn(),
-    });
-    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-    ctx.logger = logger as never;
-    const result = await handleAgent({
-      type: 'agent', chatId: 'admin-chat', actorId: 'ou_other', data: { subcommand: 'use', bindChatId: 'target' },
-    }, ctx);
-    expect(result.success).toBe(false);
-    expect(result.message).toContain('messaging.admin.actorIds');
-    expect(ctx.agentPool.getAgentBinding).not.toHaveBeenCalled();
-    expect(ctx.agentPool.setAgentBinding).not.toHaveBeenCalled();
-    expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({
-      audit: 'agent-binding', action: 'binding', allowed: false, outcome: 'denied', actorId: 'ou_other', targetChatId: 'target',
-    }), expect.any(String));
-  });
-
-  it('binds, queries and clears durable chat bindings through /agent use flags with an actor audit', async () => {
-    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-    const setBinding = vi.fn((): { ok: true; binding: { chatId: string; presetName: string; updatedBy: string; updatedAt: string } } => ({ ok: true, binding: { chatId: 'target', presetName: 'fast', updatedBy: 'ou_admin', updatedAt: '2026-11-05T00:00:00Z' } }));
-    const clearBinding = vi.fn((): { ok: true; binding: { chatId: string; presetName: string; updatedBy: string; updatedAt: string } } => ({ ok: true, binding: { chatId: 'target', presetName: 'fast', updatedBy: 'ou_admin', updatedAt: '2026-11-05T00:00:00Z' } }));
+  it('forwards the actor with the switch so the choice is saved for the chat (#5476)', async () => {
     const switchPreset = vi.fn((): { ok: true; active: { name: string; agentBackend: string; model: string }; sessionBoundary: 'new-session' } =>
       ({ ok: true, active: { name: 'fast', agentBackend: 'pi', model: 'glm-fast' }, sessionBoundary: 'new-session' }));
-    const ctx = context({
-      setAgentBinding: setBinding,
-      clearAgentBinding: clearBinding,
-      getAgentBinding: vi.fn(() => ({ chatId: 'target', presetName: 'fast', updatedBy: 'ou_admin', updatedAt: '2026-11-05T00:00:00Z' })),
-      switchAgentPreset: switchPreset,
-    });
-    ctx.agentBindingAdmin = { isAdminActor: actorId => actorId === 'ou_admin' };
-    ctx.logger = logger as never;
-    const bind = await handleAgent({
-      type: 'agent', chatId: 'admin-chat', actorId: 'ou_admin', data: { subcommand: 'use', preset: 'fast', bindChatId: 'target' },
+    const ctx = context({ switchAgentPreset: switchPreset });
+    const result = await handleAgent({
+      type: 'agent', chatId: 'a', actorId: 'ou_user', threadRootId: 'om_topic',
+      data: { subcommand: 'use', preset: 'fast' },
     }, ctx);
-    expect(bind.success).toBe(true);
-    expect(bind.message).toContain('next message');
-    expect(setBinding).toHaveBeenCalledWith('target', 'fast', 'ou_admin');
-    expect(switchPreset).not.toHaveBeenCalled();
-    const query = await handleAgent({ type: 'agent', chatId: 'admin-chat', actorId: 'ou_admin', data: { subcommand: 'use', bindChatId: 'target' } }, ctx);
-    expect(query.success).toBe(true);
-    expect(query.message).toContain('**fast**');
-    const clear = await handleAgent({ type: 'agent', chatId: 'admin-chat', actorId: 'ou_admin', data: { subcommand: 'use', unbindChatId: 'target' } }, ctx);
-    expect(clear.success).toBe(true);
-    expect(clearBinding).toHaveBeenCalledWith('target');
-    expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({
-      audit: 'agent-binding', action: 'bind', allowed: true, outcome: 'applied', targetChatId: 'target', presetName: 'fast',
-    }), expect.any(String));
+    expect(result.success).toBe(true);
+    expect(switchPreset).toHaveBeenCalledWith('a', 'fast', 'om_topic', 'ou_user');
   });
 
-  it('rejects malformed binding qualifiers with usage instead of switching', async () => {
-    const ctx = context({
-      setAgentBinding: vi.fn(), getAgentBinding: vi.fn(), clearAgentBinding: vi.fn(),
-    });
-    ctx.agentBindingAdmin = { isAdminActor: () => true };
-    const both = await handleAgent({
-      type: 'agent', chatId: 'a', actorId: 'ou_admin', data: { subcommand: 'use', preset: 'fast', bindChatId: 't1', unbindChatId: 't2' },
-    }, ctx);
-    expect(both.success).toBe(false);
-    expect(both.message).toContain('at most one binding qualifier');
-    const missingValue = await handleAgent({
-      type: 'agent', chatId: 'a', actorId: 'ou_admin', data: { subcommand: 'use', preset: 'fast', bindChatId: '' },
-    }, ctx);
-    expect(missingValue.success).toBe(false);
-    expect(missingValue.message).toContain('/agent use <preset> --bind <chatId>');
-    expect(ctx.agentPool.setAgentBinding).not.toHaveBeenCalled();
+  it('documents the selection precedence chain on /agent current (#5476)', async () => {
+    const result = await handleAgent({ type: 'agent', chatId: 'a', data: { subcommand: 'current' } }, context());
+    expect(result.success).toBe(true);
+    expect(result.message).toContain('/agent use (this session)');
+    expect(result.message).toContain("the chat's saved /agent use choice");
+    expect(result.message).toContain('per-app default');
+    expect(result.message).toContain('global default');
   });
 });

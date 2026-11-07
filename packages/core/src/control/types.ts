@@ -79,16 +79,12 @@ export interface ControlHandlerContext {
     listAgentPresets?(): Array<{ name: string; agentBackend: string; model: string }>;
     getActiveAgentPreset?(chatId: string, threadRootId?: string):
       { name: string; agentBackend: string; model: string } | undefined;
-    switchAgentPreset?(chatId: string, presetName: string, threadRootId?: string):
+    /**
+     * Switch the session's preset and durably save the choice for the chat
+     * (#5476). `actorId` records who switched in the persisted selection.
+     */
+    switchAgentPreset?(chatId: string, presetName: string, threadRootId?: string, actorId?: string):
       | { ok: true; active: { name: string; agentBackend: string; model: string }; sessionBoundary: 'new-session' }
-      | { ok: false; error: string };
-    /** Durable chat bindings (#5476): read without exposing credentials. */
-    getAgentBinding?(chatId: string): { chatId: string; presetName: string; updatedBy: string; updatedAt: string } | undefined;
-    setAgentBinding?(chatId: string, presetName: string, actorId: string):
-      | { ok: true; binding: { chatId: string; presetName: string; updatedBy: string; updatedAt: string } }
-      | { ok: false; error: string };
-    clearAgentBinding?(chatId: string):
-      | { ok: true; binding?: { chatId: string; presetName: string; updatedBy: string; updatedAt: string } }
       | { ok: false; error: string };
     steer?(chatId: string, prompt: string, threadRootId?: string):
       Promise<{ ok: true; message: string } | { ok: false; error: string }>;
@@ -142,12 +138,6 @@ export interface ControlHandlerContext {
       target: { chatId: string; threadRootId?: string; actorId?: string }
     ): Promise<{ ok: true } | { ok: false; error: string }>;
   };
-
-  /**
-   * Explicit actor-id authorization for durable agent bindings (#5476).
-   * Absent or false denies every binding query/mutation.
-   */
-  agentBindingAdmin?: { isAdminActor(actorId?: string): boolean };
 
   /** 日志记录器 */
   logger?: Logger;

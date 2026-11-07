@@ -69,31 +69,19 @@ describe('normalizeCommandData', () => {
       expect(result).toEqual({ subcommand: 'use', preset: 'fast' });
     });
 
-    it('should parse the durable-binding qualifier after the preset (#5476)', () => {
+    it('should ignore extra tokens — the plain switch carries the persistence itself (#5476)', () => {
       const result = normalizeCommandData('agent', { args: ['use', 'fast', '--bind', 'oc_target'] });
-      expect(result).toEqual({ subcommand: 'use', preset: 'fast', bindChatId: 'oc_target' });
+      expect(result).toEqual({ subcommand: 'use', preset: 'fast' });
     });
 
-    it('should accept the durable-binding qualifier before the preset (#5476)', () => {
-      const result = normalizeCommandData('agent', { args: ['use', '--bind', 'oc_target', 'fast'] });
-      expect(result).toEqual({ subcommand: 'use', preset: 'fast', bindChatId: 'oc_target' });
+    it('should default to the current subcommand without arguments', () => {
+      const result = normalizeCommandData('agent', { args: [] });
+      expect(result).toEqual({ subcommand: 'current' });
     });
 
-    it('should parse the query and clear forms without a preset (#5476)', () => {
-      expect(normalizeCommandData('agent', { args: ['use', '--bind', 'oc_target'] }))
-        .toEqual({ subcommand: 'use', bindChatId: 'oc_target' });
-      expect(normalizeCommandData('agent', { args: ['use', '--unbind', 'oc_target'] }))
-        .toEqual({ subcommand: 'use', unbindChatId: 'oc_target' });
-    });
-
-    it('should keep a flag without its value so the handler can show usage', () => {
-      const result = normalizeCommandData('agent', { args: ['use', 'fast', '--bind'] });
-      expect(result).toEqual({ subcommand: 'use', preset: 'fast', bindChatId: '' });
-    });
-
-    it('should keep chat ids case-sensitive', () => {
-      const result = normalizeCommandData('agent', { args: ['USE', '--bind', 'peer@im.wechat'] });
-      expect(result).toEqual({ subcommand: 'use', bindChatId: 'peer@im.wechat' });
+    it('should lowercase the subcommand while keeping the preset verbatim', () => {
+      const result = normalizeCommandData('agent', { args: ['USE', 'Fast'] });
+      expect(result).toEqual({ subcommand: 'use', preset: 'Fast' });
     });
   });
 

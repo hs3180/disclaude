@@ -118,7 +118,7 @@ channels:
     enabled: false
     # Optional absolute path, same as login --state-dir; default ~/.disclaude/wechat
     # stateDir: /absolute/path/to/private/wechat-account
-    # Per-app default agent, below a durable /agent use --bind binding and
+    # Per-app default agent, below the chat's saved /agent use choice and
     # above the global default (#5476). Dynamic accounts may instead set it on
     # their channels.wechat:<registration-id> block.
     # agent: assistant
@@ -138,13 +138,6 @@ channels:
 
 workspace:
   dir: ./workspace
-
-# Explicit actor ids allowed to query/mutate durable agent bindings through
-# /agent use --bind/--unbind (#5476). Actor ids are channel-provided user ids,
-# not the admin output chat below.
-messaging:
-  admin:
-    actorIds: []
 
 # macOS launchd deployment settings (Issue #5619). Optional; consumed by
 # `disclaude service generate/install` (scripts/launchd.mjs) so the generated
