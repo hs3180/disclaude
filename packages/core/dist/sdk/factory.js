@@ -7,7 +7,12 @@
 import { createHash } from 'node:crypto';
 import { ClaudeSDKProvider, PiAgentProvider, CodexAgentProvider, DeepSeekHarnessProvider, } from './providers/index.js';
 import { Config } from '../config/index.js';
-function dshOptions(settings) {
+/**
+ * Map a resolved agent preset (or global agent config) onto the DSH
+ * provider's construction options (Issue #5679: the bound LLM's `model` is
+ * the DSH wire model — it is passed through verbatim, never alias-resolved).
+ */
+export function dshOptions(settings) {
     const defaults = settings === undefined ? Config.getAgentConfig() : undefined;
     const selected = settings ?? { ...defaults?.settings, ...defaults };
     return {

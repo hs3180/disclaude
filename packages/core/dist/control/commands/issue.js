@@ -1,11 +1,12 @@
+import { createPrefilledIssueUrl, DEFAULT_ISSUE_REPOSITORY } from '../../feedback/index.js';
 /**
- * /issue (Issue #5400): offer one-click GitHub reporting of this chat's most
- * recent failure. The heavy lifting (sanitized summary card, GitHub App
- * client, dedup) lives behind the channel hook; the command itself stays
- * available even when the agent runtime is down — it only reads the failure
- * registry and delegates.
+ * /feedback (Issue #5400; #5428 renames the unified entry to /feedback):
+ * offer one-click GitHub reporting of this chat's most recent failure. The
+ * heavy lifting (sanitized summary card, GitHub App client, dedup) lives
+ * behind the channel hook; the command itself stays available even when the
+ * agent runtime is down — it only reads the failure registry and delegates.
  */
-export const handleIssue = async (command, context) => {
+export const handleFeedback = async (command, context) => {
     if (!context.failureRegistry) {
         return { success: false, message: 'GitHub 一键上报未启用：失败记录组件不可用。' };
     }
@@ -13,14 +14,24 @@ export const handleIssue = async (command, context) => {
     if (!record) {
         return {
             success: true,
-            message: 'ℹ️ 本会话暂无可上报的失败记录。出现报错提示（含诊断 ID）后再使用 /issue。',
+            message: 'ℹ️ 本会话暂无可上报的失败记录。出现报错提示（含诊断 ID）后再使用 /feedback。',
         };
     }
     if (!context.issueReporting) {
-        return {
-            success: false,
-            message: '当前渠道不支持上报确认卡，或 github 配置段未配置。请联系服务维护者。',
-        };
+        try {
+            const url = createPrefilledIssueUrl(record, context.serviceVersion ?? 'unavailable');
+            return {
+                success: true,
+                message: `当前渠道使用文本上报。复制链接打开预填 GitHub issue（提交前请核对脱敏摘要）：\n${url}`,
+            };
+        }
+        catch (error) {
+            return {
+                success: false,
+                message: `预填链接生成失败，请前往 https://github.com/${DEFAULT_ISSUE_REPOSITORY}/issues/new 手动新建 issue，并仅粘贴脱敏诊断 ID ${record.diagnosticId}。`,
+                error: error instanceof Error ? error.message : String(error),
+            };
+        }
     }
     try {
         const sent = await context.issueReporting.sendConfirmation(record, {
@@ -35,13 +46,13 @@ export const handleIssue = async (command, context) => {
             }
             : {
                 success: false,
-                message: `上报确认卡发送失败：${sent.error}。失败记录已保留，可稍后重试 /issue。`,
+                message: `上报确认卡发送失败：${sent.error}。失败记录已保留，可稍后重试 /feedback。`,
             };
     }
     catch (error) {
         return {
             success: false,
-            message: '上报确认卡发送失败，失败记录已保留，可稍后重试 /issue。',
+            message: '上报确认卡发送失败，失败记录已保留，可稍后重试 /feedback。',
             error: error instanceof Error ? error.message : String(error),
         };
     }

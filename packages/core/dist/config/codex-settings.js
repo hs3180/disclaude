@@ -18,7 +18,7 @@ export function isCodexReasoningEffort(value) {
 export function resolveCodexModelSetting(sources) {
     const candidates = [
         [sources.environment, 'environment'],
-        [sources.configured, 'llms.model'],
+        [sources.configured, 'llms.defaultModel'],
     ];
     for (const [value, source] of candidates) {
         const normalized = nonEmpty(value);

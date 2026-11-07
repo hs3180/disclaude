@@ -7,7 +7,7 @@ const VALID_BACKENDS = new Set(['claude', 'pi', 'codex', 'dsh']);
  * A named preset may instead set `default: true`, but the two forms may not
  * be combined. With no marker, declaration order provides a stable fallback.
  */
-export function validateAgentPresets(agents) {
+export function validateAgentPresets(agents, options = {}) {
     if (!agents || typeof agents !== 'object' || Array.isArray(agents)) {
         return { ok: false, errors: ['agents must be a non-empty map of named presets'] };
     }
@@ -32,7 +32,8 @@ export function validateAgentPresets(agents) {
         if (!VALID_BACKENDS.has(preset.agentBackend)) {
             errors.push(`agents.${name}.agentBackend must be one of: claude, pi, codex, dsh`);
         }
-        if (typeof preset.model !== 'string' || !preset.model.trim()) {
+        if (typeof preset.model !== 'string' ||
+            (!options.allowUnconfiguredModel && !preset.model.trim())) {
             errors.push(`agents.${name}.model must be a non-empty string`);
         }
         else if (preset.agentBackend === 'codex' && preset.model.trim() &&

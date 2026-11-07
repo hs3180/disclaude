@@ -1,8 +1,8 @@
 /**
  * Per-chat last-failure registry (Issue #5400, PR A).
  *
- * ChatAgent records every user-visible failure context here so the `/issue`
- * feedback entry can offer "report the most recent failure of this chat"
+ * ChatAgent records every user-visible failure context here so the `/feedback`
+ * entry can offer "report the most recent failure of this chat"
  * without reading logs or replaying the conversation. The registry keeps only
  * the LAST record per chat — a new failure supersedes the old one — and is
  * bounded so a long-running service cannot grow it without limit.

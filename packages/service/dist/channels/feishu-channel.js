@@ -199,7 +199,7 @@ export class FeishuChannel extends BaseChannel {
     reconcileTaskQuestionWake(id) {
         return this.feishuMessageHandler.reconcileTaskQuestionWake(id);
     }
-    /** Issue #5400: send the /issue confirmation card for the chat's last failure. */
+    /** Issue #5400: send the /feedback confirmation card for the chat's last failure. */
     requestIssueReport(record, target) {
         return this.feishuMessageHandler.requestIssueReport(record, target);
     }

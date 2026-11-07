@@ -98,7 +98,7 @@ export class BaseAgent {
             this.modelOverrides = config.modelOverrides;
             const bundled = bundledClaudeCodeVersion();
             if (bundled && lacksModelOverrides(bundled)) {
-                throw new AppError(`modelOverrides requires Claude Code >= 2.1.200, but the bundled Claude Code is v${bundled}; upgrade @anthropic-ai/claude-agent-sdk or remove behavesAs/modelOverrides from llms.${config.llm ?? 'default'}`, ErrorCategory.CONFIGURATION);
+                throw new AppError(`modelOverrides requires Claude Code >= 2.1.200, but the bundled Claude Code is v${bundled}; upgrade @anthropic-ai/claude-agent-sdk or remove the agent's claude.modelOverrides`, ErrorCategory.CONFIGURATION);
             }
             for (const [claudeModel, providerModel] of Object.entries(config.modelOverrides)) {
                 const windowTokens = assumedContextWindow(claudeModel);

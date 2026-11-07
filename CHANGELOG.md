@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.19] - 2026-11-07
+
+### Added
+
+- Attach a prefilled, sanitized GitHub report link directly to error
+  diagnostics (#5428; #5697). The link is generated locally (no GitHub call,
+  no credentials, no network side effects) from the failure record:
+  diagnostic ID, class, UTC time, version, backend/provider and a bounded
+  sanitized detail summary. Markdown-capable channels get a clickable link,
+  plain-text channels get a copyable URL, and link-generation failures
+  degrade explicitly without ever blocking the original error. The draft
+  deliberately excludes chat/session/message/user identifiers, tokens,
+  message bodies and full configuration; URLs above the copyable length
+  limit raise instead of being silently truncated, and parentheses are
+  percent-encoded so Markdown links do not break.
+
+### Changed
+
+- Restructure shared model binding so one definition works across harnesses
+  (#5679; #5681). `llms.<name>` now holds provider settings with an optional
+  `defaultModel` that is the wire model for every backend sharing the
+  binding; agents reference the provider and may use any model it serves.
+  Claude-only model identity moves to `agents.<name>.claude`:
+  `behavesAs`/`modelOverrides` (previously on `llms.<name>`), a new
+  three-tier `models` mapping for the opus/sonnet/haiku slots (each tier
+  falls back to the provider `defaultModel`, so configuring one model points
+  all tiers at it), and Claude-native env such as
+  `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL`. `reasoningEffort` becomes a
+  provider-level default that non-applying runtimes ignore instead of a
+  harness gate. A binding shared by Claude and another backend that pins a
+  bare Claude alias (`opus|sonnet|haiku|fable|default`) as `defaultModel`
+  now fails at config load with a fix hint — Claude resolves such aliases
+  internally while DSH/Pi would send the literal string to the provider —
+  and legacy placements (`llms.<name>.model`, `llms.<name>.behavesAs`,
+  `llms.<name>.modelOverrides`, tier env under `llms.<name>.env`) are
+  rejected with migration messages. Tests assert the model ID actually
+  passed to Claude and DSH providers, not just YAML parsing.
+
+### Removed
+
+- Remove the `/issue` command entirely; `/feedback` is the only reporting
+  entry and `/issue` input now follows the standard unknown-command path
+  (#5428).
+
 ## [0.6.18] - 2026-11-06
 
 ### Added

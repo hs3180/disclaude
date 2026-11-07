@@ -164,7 +164,7 @@ export class MessageHandler {
             }
         }
     }
-    /** Issue #5400: send the /issue confirmation card for the chat's last failure. */
+    /** Issue #5400: send the /feedback confirmation card for the chat's last failure. */
     requestIssueReport(record, target) {
         if (!this.issueReport) {
             return Promise.resolve({ ok: false, error: 'Feishu issue reporting is unavailable' });
@@ -1417,7 +1417,7 @@ export class MessageHandler {
             void this.agentInput?.submit(rawData).catch(() => logger.warn('Agent input callback could not be handled'));
             return;
         }
-        // Issue #5400: /issue confirmation cards resolve without an agent turn,
+        // Issue #5400: /feedback confirmation cards resolve without an agent turn,
         // so reporting still works when the agent runtime itself has failed.
         if (FeishuIssueReport.isCallback(rawData)) {
             void this.issueReport?.submit(rawData).catch(() => logger.warn('Issue report callback could not be handled'));
