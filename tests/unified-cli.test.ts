@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, mkdirSync, copyFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -128,6 +128,44 @@ describe('installed unified CLI argument forwarding', () => {
         });
         expect(JSON.parse(out).args).toEqual(forwarded);
       }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+  it('routes harness subcommands to bin/harness.js with the router arg stripped; the retired backend spelling errors with guidance (#5169)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'disclaude-cli-harness-routing-'));
+    try {
+      mkdirSync(join(root, 'bin'));
+      writeFileSync(join(root, 'package.json'), '{"type":"module"}');
+      copyFileSync(fileURLToPath(new URL('../bin/disclaude.js', import.meta.url)), join(root, 'bin/disclaude.js'));
+      copyFileSync(fileURLToPath(new URL('../bin/harness.js', import.meta.url)), join(root, 'bin/harness.js'));
+      const target = join(root, 'packages/core/dist/harness');
+      mkdirSync(target, { recursive: true });
+      writeFileSync(join(target, '../../package.json'), '{"type":"module"}');
+      writeFileSync(join(target, 'cli.js'), 'export async function runHarnessCli(args) { console.log(JSON.stringify({ok:true,args})); return 0; }');
+      for (const [input, forwarded] of [
+        [['harness', 'list'], ['list']],
+        [['harness', 'install', 'codex', '--dry-run'], ['install', 'codex', '--dry-run']],
+        [['harness', 'doctor', 'pi'], ['doctor', 'pi']],
+      ]) {
+        const out = execFileSync(process.execPath, [join(root, 'bin/disclaude.js'), ...input], {
+          encoding: 'utf8', timeout: 10_000,
+        });
+        expect(JSON.parse(out).args).toEqual(forwarded);
+      }
+      // `disclaude backend ...` is not an alias any more (maintenance review
+      // on #5709): it must not route. It exits non-zero with an explicit
+      // error on stderr pointing at the equivalent harness command, and
+      // stdout stays empty (no JSON forwarded from anywhere).
+      const retired = spawnSync(process.execPath, [join(root, 'bin/disclaude.js'), 'backend', 'list'], {
+        encoding: 'utf8', timeout: 10_000,
+      });
+      expect(retired.status).toBe(1);
+      expect(retired.stdout).toBe('');
+      expect(retired.stderr).toContain("'disclaude backend' no longer exists");
+      expect(retired.stderr).toContain("'disclaude harness'");
+      expect(retired.stderr).toContain("'disclaude harness list'");
+      expect(retired.stderr).toContain("'disclaude harness --help'");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
