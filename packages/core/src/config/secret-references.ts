@@ -38,6 +38,13 @@ export function modelSecretReferences(config: DisclaudeConfig): Set<string> {
       if (isSecretVariable(key)) {names.add(key);}
     }
   }
+  for (const agent of Object.values(config.agents ?? {})) {
+    for (const [key, value] of Object.entries(agent?.claude?.env ?? {})) {
+      const name = credentialEnvName(value);
+      if (name) {names.add(name);}
+      if (isSecretVariable(key)) {names.add(key);}
+    }
+  }
   registerModelSecretNames(names);
   return names;
 }
@@ -55,6 +62,13 @@ export function secretConfigurationErrors(config: DisclaudeConfig): string[] {
     for (const [key, value] of Object.entries(llm.env ?? {})) {
       if ((isSecretVariable(key) || names.has(key) || hasUrlCredential(value)) && !credentialEnvName(value)) {
         errors.push(`llms.${llmName}.env.${key} must be a whole $VARIABLE or \u0024{VARIABLE} reference to an external secret`);
+      }
+    }
+  }
+  for (const [agentName, agent] of Object.entries(config.agents ?? {})) {
+    for (const [key, value] of Object.entries(agent?.claude?.env ?? {})) {
+      if ((isSecretVariable(key) || names.has(key) || hasUrlCredential(value)) && !credentialEnvName(value)) {
+        errors.push(`agents.${agentName}.claude.env.${key} must be a whole external $VARIABLE or braced reference to an external secret`);
       }
     }
   }

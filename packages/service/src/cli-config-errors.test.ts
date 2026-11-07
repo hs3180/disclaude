@@ -15,7 +15,7 @@ describe('CLI configuration error reporting', () => {
       agents: { test: { backend: 'claude', llm: 'test' } },
       llms: {
         test: {
-          model: 'test-model',
+          defaultModel: 'test-model',
           api: { protocol: 'anthropic', apiKey: '$MISSING_TEST_KEY' },
         },
       },
@@ -24,7 +24,7 @@ describe('CLI configuration error reporting', () => {
       agents: { test: { backend: 'claude', llm: 'test' } },
       llms: {
         test: {
-          model: 'test-model',
+          defaultModel: 'test-model',
           api: { protocol: 'anthropic', baseUrl: `https://user:${canary}@example.com` },
         },
       },

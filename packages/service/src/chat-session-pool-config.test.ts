@@ -30,7 +30,7 @@ describe('preset switching with real configuration and providers', () => {
           },
           llms: {
             native: {
-              model: backend === 'codex' ? 'gpt-6-luna' : 'native-model',
+              defaultModel: backend === 'codex' ? 'gpt-6-luna' : 'native-model',
               reasoningEffort: 'max',
               maxConcurrentSessions: 3,
               ...(backend === 'dsh'
@@ -44,15 +44,15 @@ describe('preset switching with real configuration and providers', () => {
                 : {}),
             },
             proxy: {
-              model: 'glm-5.3',
+              defaultModel: 'glm-5.3',
               api: { protocol: 'anthropic', baseUrl: 'http://127.0.0.1:1', apiKey: '$PROXY_KEY' },
             },
             direct: {
-              model: 'sonnet',
+              defaultModel: 'sonnet',
               api: { protocol: 'anthropic', baseUrl: 'http://127.0.0.1:2', apiKey: '$DIRECT_KEY' },
             },
             missing: {
-              model: 'missing-model',
+              defaultModel: 'missing-model',
               api: { protocol: 'anthropic', apiKey: '$MISSING_KEY' },
             },
           },
