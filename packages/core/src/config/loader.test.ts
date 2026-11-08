@@ -28,6 +28,20 @@ vi.mock('fs', () => ({
   existsSync: vi.fn(),
 }));
 
+/**
+ * Shared preset fixture (agents.default bound to llms.default, the #5679 config
+ * shape) embedded verbatim by multiple loader cases; single source of truth.
+ */
+const sharedPresetYaml = `agents:
+  default:
+    backend: claude
+    llm: default
+llms:
+  default:
+    defaultModel: claude-3-5-sonnet-20241022
+    api:
+      protocol: anthropic`;
+
 // All suites own their discovery environment, including load/integration tests.
 beforeEach(() => {
   vi.stubEnv(EXPLICIT_CONFIG_PATH_ENV, '');
@@ -157,15 +171,7 @@ describe('loadConfigFile', () => {
 workspace:
   dir: /custom/workspace
 
-agents:
-  default:
-    backend: claude
-    llm: default
-llms:
-  default:
-    defaultModel: claude-3-5-sonnet-20241022
-    api:
-      protocol: anthropic
+${sharedPresetYaml}
 
 logging:
   level: debug
@@ -441,15 +447,7 @@ describe('config loader integration', () => {
 workspace:
   dir: /test/workspace
 
-agents:
-  default:
-    backend: claude
-    llm: default
-llms:
-  default:
-    defaultModel: claude-3-5-sonnet-20241022
-    api:
-      protocol: anthropic
+${sharedPresetYaml}
 
 logging:
   level: info
