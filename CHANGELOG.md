@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.20] - 2026-11-08
+
+### Changed
+
+- Deduplicate the recurring test preset configuration in the config suites
+  (#5679; #5721). The named-LLM bindings repeated across the
+  `resolved-agents` suites (native/selected DSH bindings, non-DSH binding
+  selection, Kimi tier overrides, tier env stubs) and the loader's embedded
+  preset YAML are now shared builders/fixtures with a single source of
+  truth, so repeated fixtures stay in sync. Behaviour assertions are
+  unchanged and production code is not touched: this is a tests-only
+  change with no runtime difference from 0.6.19.
+
 ## [0.6.19] - 2026-11-07
 
 ### Added
