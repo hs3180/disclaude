@@ -160,7 +160,10 @@ Use one `default: true` marker (or the reserved name `default`); without a marke
 the first declaration is the default. `/agent use <name>` validates the selected
 connection before replacing the current chat's session. Failed preflight preserves
 the existing session. No credentials are required for dormant API bindings when
-the default runtime is native.
+the default runtime is native. A prompt schedule may also set `harness: <name>`
+(Issue #5731): that name is resolved, model-validated and preflighted for one
+isolated execution only, and never changes `/agent use`'s chat binding or the
+configured default. See the `schedule` skill for the schedule-file contract.
 
 ## Migration
 

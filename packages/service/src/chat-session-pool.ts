@@ -11,7 +11,7 @@
  * @see Issue #1040 - Separate disclaude service code to @disclaude/service
  */
 
-import { type AgentQueryOptions, type MessageBuilderOptions, type CwdProvider, type CwdResolution, type AgentPreset, type AgentSessionOptions, type AgentPresets, type BaseAgentConfig, type ChatFailureRecord, buildSessionKey, chatIdOfSessionKey, createLogger, getProvider, Config, resolveAgentPreset } from '@disclaude/core';
+import { type AgentQueryOptions, type MessageBuilderOptions, type CwdProvider, type CwdResolution, type AgentPreset, type AgentSessionOptions, type AgentPresets, type BaseAgentConfig, type ChatFailureRecord, buildSessionKey, chatIdOfSessionKey, createLogger, getProvider, Config, resolveAgentPreset, validateAgentPresets, validateResolvedAgent } from '@disclaude/core';
 import { statSync } from 'node:fs';
 import { AgentFactory } from './agents/factory.js';
 import type { ChatAgentCallbacks } from './agents/types.js';
@@ -303,6 +303,75 @@ export class ChatSessionPool {
     };
   }
 
+  /**
+   * Issue #5731: resolve the runtime for a scoped execution. An explicit
+   * `harness` names an `agents:` preset and is validated/preflighted with the
+   * effective model before any pool state changes. It never reads or writes
+   * the chat's persistent preset selection; without it, the existing
+   * chat/default resolution (and its compatibility fallback) is unchanged.
+   */
+  private resolveSessionPreset(session: AgentSessionOptions | undefined, sessionKey: string): AgentPreset | undefined {
+    const harness = session?.harness?.trim();
+    if (!harness) {
+      if (session?.harness !== undefined) {
+        throw new Error('Scheduled harness must be a non-empty named agent runtime');
+      }
+      const selected = this.presets
+        ? resolveAgentPreset(this.presets, this.selectedPresetBySession.get(sessionKey))
+        : undefined;
+      // Preset-less and failed default resolution retain the legacy Config
+      // fallback. That is deliberate for unspecified harnesses only.
+      return selected?.ok ? selected.preset : undefined;
+    }
+
+    if (!this.presets) {
+      throw new Error(`Unknown scheduled harness "${harness}": no named agent presets are configured (add an agents: map)`);
+    }
+    const resolved = resolveAgentPreset(this.presets, harness);
+    if (!resolved.ok) {
+      throw new Error(`Unknown scheduled harness "${harness}": ${resolved.error}`);
+    }
+
+    const modelOverride = session?.model?.trim();
+    if (session?.model !== undefined && !modelOverride) {
+      throw new Error(`Scheduled harness "${resolved.name}" requires a non-empty model override`);
+    }
+    const preset: AgentPreset = modelOverride === undefined
+      ? resolved.preset
+      : { ...resolved.preset, model: modelOverride };
+
+    // Validate the effective harness+model pair under the selected backend's
+    // rules (not the chat binding's): notably Codex requires a GPT identifier.
+    const validation = validateAgentPresets({ [resolved.name]: preset }, { allowUnconfiguredModel: true });
+    if (!validation.ok) {
+      throw new Error(`Invalid scheduled harness "${resolved.name}": ${validation.errors.join('; ')}`);
+    }
+    const credentialError = validateResolvedAgent(preset);
+    if (credentialError) {
+      throw new Error(`Invalid scheduled harness "${resolved.name}": ${credentialError}`);
+    }
+
+    let info: { available: boolean; unavailableReason?: string };
+    try {
+      const config = AgentFactory.resolveConfig({ ...preset, settings: preset });
+      info = this.options.validatePresetBackend
+        ? this.options.validatePresetBackend(preset.agentBackend, config)
+        : getProvider(preset.agentBackend, preset).getInfo(config);
+    } catch (error) {
+      logger.error(
+        { err: error, harness: resolved.name, agentBackend: preset.agentBackend },
+        'Scheduled harness preflight failed',
+      );
+      throw new Error(
+        `Could not validate scheduled harness "${resolved.name}". Check backend configuration and availability; no execution state was changed.`,
+      );
+    }
+    if (!info.available) {
+      throw new Error(`Scheduled harness "${resolved.name}" is unavailable: ${info.unavailableReason ?? 'backend unavailable'}`);
+    }
+    return preset;
+  }
+
   private createAgent(
     chatId: string,
     callbacks: ChatAgentCallbacks,
@@ -428,13 +497,11 @@ export class ChatSessionPool {
     }
     if (!agent) {
       const skipHistory = session?.skipHistory ?? this.skipHistoryChatIds.has(sessionKey);
-      const selected = this.presets
-        ? resolveAgentPreset(this.presets, this.selectedPresetBySession.get(sessionKey))
-        : undefined;
+      const selected = this.resolveSessionPreset(session, sessionKey);
       agent = this.createAgent(
         chatId,
         callbacks,
-        selected?.ok ? selected.preset : undefined,
+        selected,
         skipHistory,
         sessionKey,
         session?.model,
