@@ -38,6 +38,10 @@ const selectedDshLlm = (protocol: 'openai' | 'anthropic', apiKeyRef = '$DSH_KEY'
   defaultModel: 'glm-5.3',
   api: { protocol, baseUrl: 'https://selected.example/v1', apiKey: apiKeyRef },
 });
+const miniSweLlm = (): LlmConfig => ({
+  defaultModel: 'openai/gpt-5.4',
+  api: { protocol: 'openai', baseUrl: 'https://litellm.example/v1', apiKey: '$MINISWE_KEY' },
+});
 const nonDshLlmBinding = (backend: string) => (backend === 'codex' ? 'daily' : 'proxy');
 const kimiTierOverrides = { 'claude-opus-5': 'kimi-k3', 'claude-sonnet-4-5': 'kimi-k3-flash' };
 const tierEnv = (opus: string, sonnet = opus, haiku = opus) => ({
@@ -591,10 +595,7 @@ describe('named runtime and LLM configuration', () => {
       llm: 'mini-openai',
       miniswe: { binary: 'mini', executionEnvironment: 'local', timeoutMs: 90_000 },
     };
-    config.llms!['mini-openai'] = {
-      defaultModel: 'openai/gpt-5.4',
-      api: { protocol: 'openai', baseUrl: 'https://litellm.example/v1', apiKey: '$MINISWE_KEY' },
-    };
+    config.llms!['mini-openai'] = miniSweLlm();
     const result = resolveConfiguredAgents(config);
     expect(result.ok).toBe(true);
     if (!result.ok) {
@@ -627,10 +628,7 @@ describe('named runtime and LLM configuration', () => {
     vi.stubEnv('MINISWE_KEY', '');
     const config = configuration();
     config.agents!.mini = { backend: 'miniswe', llm: 'mini-openai' };
-    config.llms!['mini-openai'] = {
-      defaultModel: 'openai/gpt-5.4',
-      api: { protocol: 'openai', baseUrl: 'https://litellm.example/v1', apiKey: '$MINISWE_KEY' },
-    };
+    config.llms!['mini-openai'] = miniSweLlm();
     const result = resolveConfiguredAgents(config);
     expect(result.ok).toBe(true);
     if (result.ok) {
