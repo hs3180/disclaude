@@ -191,7 +191,6 @@ describe('install', () => {
     const parsed = JSON.parse(lines[0]);
     expect(parsed.ok).toBe(false);
     expect(parsed.error.message).toContain('claude, pi, codex, dsh');
-    expect(parsed.error.message).toContain('deepseek');
   });
 
   it('requires a harness name and validates flag values', async () => {
@@ -278,20 +277,20 @@ describe('install', () => {
     expect(runner.installCalls()).toBe(0);
   });
 
-  it('accepts the deepseek alias for dsh and a --version pin', async () => {
+  it('rejects the removed deepseek alias for dsh', async () => {
+    // Maintenance review on #5709: no aliases are kept anywhere.
     const { root, core } = coreFixture();
     const runner = npmGlobals({});
-    runner.queue('', '');
     lines = [];
     const code = await runHarnessCli(
       ['install', 'deepseek', '--version', '0.2.0', '--yes'],
       base(runner, core, root)
     );
-    expect(code).toBe(0);
+    expect(code).toBe(1);
     const parsed = JSON.parse(lines[0]);
-    expect(parsed.data.plan.harness).toBe('dsh');
-    expect(parsed.data.plan.args).toEqual(['install', '-g', '@deepseek-ai/dsh@0.2.0']);
-    expect(parsed.data.plan.version.overridden).toBe('flag');
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error.message).toContain('Unknown harness: deepseek');
+    expect(runner.installCalls()).toBe(0);
   });
 });
 

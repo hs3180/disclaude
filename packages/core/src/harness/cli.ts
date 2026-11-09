@@ -64,8 +64,7 @@ Options:
   --help, -h        Show this help.
 
 Version defaults and overrides: --version, or environment
-DISCLAUDE_HARNESS_<CLAUDE|PI|CODEX|DSH>_VERSION (the legacy
-DISCLAUDE_BACKEND_<ID>_VERSION spelling is still honored). Defaults: claude
+DISCLAUDE_HARNESS_<CLAUDE|PI|CODEX|DSH>_VERSION. Defaults: claude
 follows the Claude Code version bundled in this disclaude's pinned agent SDK;
 pi follows docs/pi-backend.md; codex/dsh follow the Dockerfile.service build
 pins.
@@ -172,7 +171,6 @@ export interface HarnessCliOptions {
 export interface HarnessListEntry {
   id: HarnessId;
   label: string;
-  aliases: string[];
   installTarget: string;
   packages: Array<{
     name: string;
@@ -240,7 +238,6 @@ async function listHarnesses(
     return {
       id,
       label: entry.label,
-      aliases: entry.aliases,
       installTarget: entry.installTarget,
       packages: entry.packages.map((name) => ({
         name,
@@ -314,7 +311,7 @@ export async function runHarnessCli(args: string[], options: HarnessCliOptions):
         const id = resolveHarnessId(parsed.harness);
         if (!id) {
           throw new UsageError(
-            `Unknown harness: ${parsed.harness}. Supported: ${HARNESS_IDS.join(', ')} (alias: deepseek → dsh).`
+            `Unknown harness: ${parsed.harness}. Supported: ${HARNESS_IDS.join(', ')}.`
           );
         }
         const plan = await planHarnessInstall(id, {
@@ -364,7 +361,7 @@ export async function runHarnessCli(args: string[], options: HarnessCliOptions):
           const id = resolveHarnessId(parsed.harness);
           if (!id) {
             throw new UsageError(
-              `Unknown harness: ${parsed.harness}. Supported: ${HARNESS_IDS.join(', ')} (alias: deepseek → dsh).`
+              `Unknown harness: ${parsed.harness}. Supported: ${HARNESS_IDS.join(', ')}.`
             );
           }
           ids.push(id);

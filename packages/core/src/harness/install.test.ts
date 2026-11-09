@@ -161,28 +161,16 @@ describe('path-cli install plans (claude / codex / dsh)', () => {
     expect(fromEnv.version.overridden).toBe('env');
   });
 
-  it('still honors the legacy DISCLAUDE_BACKEND_<ID>_VERSION spelling with a migration label', async () => {
+  it('ignores the removed DISCLAUDE_BACKEND_<ID>_VERSION legacy spelling', async () => {
+    // Maintenance review on #5709: no legacy key aliasing is kept; the repo pin
+    // wins when only the removed spelling is set.
     const runner = npmGlobals({});
-    const fromLegacyEnv = await planHarnessInstall('codex', {
+    const plan = await planHarnessInstall('codex', {
       runner,
       env: { PATH: '/nonexistent', DISCLAUDE_BACKEND_CODEX_VERSION: '0.160.0' },
       ...PLAN_OPTIONS,
     });
-    expect(fromLegacyEnv.args).toEqual(['install', '-g', '@openai/codex@0.160.0']);
-    expect(fromLegacyEnv.version.source).toBe(
-      'environment DISCLAUDE_BACKEND_CODEX_VERSION (legacy alias of DISCLAUDE_HARNESS_CODEX_VERSION)'
-    );
-
-    const legacyLoses = await planHarnessInstall('codex', {
-      runner,
-      env: {
-        PATH: '/nonexistent',
-        DISCLAUDE_BACKEND_CODEX_VERSION: '0.160.0',
-        DISCLAUDE_HARNESS_CODEX_VERSION: '0.161.0',
-      },
-      ...PLAN_OPTIONS,
-    });
-    expect(legacyLoses.args).toEqual(['install', '-g', '@openai/codex@0.161.0']);
+    expect(plan.args).toEqual(['install', '-g', '@openai/codex@0.154.0']);
   });
 
   it('passes a registry mirror through to npm', async () => {

@@ -1,5 +1,5 @@
 /**
- * Tests for the harness catalog: id/alias resolution and version precedence.
+ * Tests for the harness catalog: id resolution and version precedence.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -21,9 +21,10 @@ describe('resolveHarnessId', () => {
     expect(resolveHarnessId('DSH')).toBe('dsh');
   });
 
-  it('maps the deepseek alias to dsh', () => {
-    expect(resolveHarnessId('deepseek')).toBe('dsh');
-    expect(resolveHarnessId('DeepSeek')).toBe('dsh');
+  it('no longer maps the deepseek alias to dsh', () => {
+    // Maintenance review on #5709: no aliases are kept, not even id aliases.
+    expect(resolveHarnessId('deepseek')).toBeUndefined();
+    expect(resolveHarnessId('DeepSeek')).toBeUndefined();
   });
 
   it('rejects unknown harnesses', () => {
@@ -81,23 +82,13 @@ describe('resolveHarnessVersion precedence', () => {
     expect(harnessVersionEnvKey('dsh')).toBe('DISCLAUDE_HARNESS_DSH_VERSION');
   });
 
-  it('still honors the legacy DISCLAUDE_BACKEND_<ID>_VERSION key, labeled and outranked', () => {
-    expect(
-      resolveHarnessVersion('pi', { env: { DISCLAUDE_BACKEND_PI_VERSION: '0.84.0' } })
-    ).toEqual({
-      value: '0.84.0',
-      source:
-        'environment DISCLAUDE_BACKEND_PI_VERSION (legacy alias of DISCLAUDE_HARNESS_PI_VERSION)',
-      overridden: 'env',
+  it('ignores the removed DISCLAUDE_BACKEND_<ID>_VERSION legacy key', () => {
+    // Maintenance review on #5709: no legacy key aliasing is kept.
+    const fromLegacy = resolveHarnessVersion('pi', {
+      env: { DISCLAUDE_BACKEND_PI_VERSION: '0.84.0' },
     });
-    expect(
-      resolveHarnessVersion('pi', {
-        env: {
-          DISCLAUDE_BACKEND_PI_VERSION: '0.84.0',
-          DISCLAUDE_HARNESS_PI_VERSION: '0.85.0',
-        },
-      }).value
-    ).toBe('0.85.0');
+    expect(fromLegacy.value).toBe('0.83.0');
+    expect(fromLegacy.overridden).toBe(false);
   });
 
   it('falls back to the repo pin with its source', () => {

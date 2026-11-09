@@ -25,7 +25,6 @@ export const CLAUDE_AGENT_SDK_PACKAGE = '@anthropic-ai/claude-agent-sdk';
 
 export interface HarnessCatalogEntry {
   id: HarnessId;
-  aliases: string[];
   label: string;
   /** PATH CLI binaries vs Node modules under production resolution. */
   installTarget: InstallTarget;
@@ -46,7 +45,6 @@ export interface HarnessCatalogEntry {
 const CATALOG: Record<HarnessId, HarnessCatalogEntry> = {
   claude: {
     id: 'claude',
-    aliases: [],
     label: 'Claude (Claude Code CLI)',
     installTarget: 'path-cli',
     packages: ['@anthropic-ai/claude-code'],
@@ -62,7 +60,6 @@ const CATALOG: Record<HarnessId, HarnessCatalogEntry> = {
   },
   pi: {
     id: 'pi',
-    aliases: [],
     label: 'Pi (earendil-works agent runtime)',
     installTarget: 'node-modules',
     packages: [...PI_RUNTIME_PACKAGES],
@@ -78,7 +75,6 @@ const CATALOG: Record<HarnessId, HarnessCatalogEntry> = {
   },
   codex: {
     id: 'codex',
-    aliases: [],
     label: 'Codex (OpenAI Codex CLI)',
     installTarget: 'path-cli',
     packages: ['@openai/codex'],
@@ -95,7 +91,6 @@ const CATALOG: Record<HarnessId, HarnessCatalogEntry> = {
   },
   dsh: {
     id: 'dsh',
-    aliases: ['deepseek'],
     label: 'DeepSeek Harness (dsh)',
     installTarget: 'path-cli',
     packages: ['@deepseek-ai/dsh'],
@@ -117,24 +112,15 @@ export function harnessCatalog(id: HarnessId): HarnessCatalogEntry {
   return CATALOG[id];
 }
 
-/** Resolve user input (id or alias, case-insensitive) to a harness id. */
+/** Resolve user input (id, case-insensitive) to a harness id. */
 export function resolveHarnessId(input: string): HarnessId | undefined {
   const normalized = input.trim().toLowerCase();
-  return HARNESS_IDS.find((id) => id === normalized || CATALOG[id].aliases.includes(normalized));
+  return HARNESS_IDS.find((id) => id === normalized);
 }
 
 /** Environment key that overrides a harness's default version. */
 export function harnessVersionEnvKey(id: HarnessId): string {
   return `DISCLAUDE_HARNESS_${id.toUpperCase()}_VERSION`;
-}
-
-/**
- * Legacy spelling of {@link harnessVersionEnvKey} from when the command family
- * was named `disclaude backend`; still honored so existing environments keep
- * working, with the legacy key named in the version source for migration.
- */
-export function legacyHarnessVersionEnvKey(id: HarnessId): string {
-  return `DISCLAUDE_BACKEND_${id.toUpperCase()}_VERSION`;
 }
 
 export interface ResolvedVersion {
@@ -144,8 +130,8 @@ export interface ResolvedVersion {
 }
 
 /**
- * Version precedence: --version flag, then DISCLAUDE_HARNESS_<ID>_VERSION
- * (legacy DISCLAUDE_BACKEND_<ID>_VERSION still honored), then the repo pin.
+ * Version precedence: --version flag, then DISCLAUDE_HARNESS_<ID>_VERSION, then
+ * the repo pin.
  * Claude's pin is the Claude Code version bundled inside the pinned agent SDK
  * (read from the installed manifest); when that manifest is unreadable the npm
  * `latest` dist-tag is used with an explicit source label.
@@ -167,15 +153,6 @@ export function resolveHarnessVersion(
   const envValue = options.env?.[envKey]?.trim();
   if (envValue) {
     return { value: envValue, source: `environment ${envKey}`, overridden: 'env' };
-  }
-  const legacyEnvKey = legacyHarnessVersionEnvKey(id);
-  const legacyEnvValue = options.env?.[legacyEnvKey]?.trim();
-  if (legacyEnvValue) {
-    return {
-      value: legacyEnvValue,
-      source: `environment ${legacyEnvKey} (legacy alias of ${envKey})`,
-      overridden: 'env',
-    };
   }
   if (id === 'claude') {
     return options.claudeBundledVersion
