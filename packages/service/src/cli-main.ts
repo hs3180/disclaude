@@ -1505,7 +1505,14 @@ export function resolveChannelConfigs(
   const feishuDeclarations = declarations.filter(
     (declaration) => declaration.type === 'feishu' && declaration.config.enabled !== false
   );
-  if (feishuEnabled && feishuDeclarations.length) {
+  // Named declarations register independently of the legacy `channels.feishu.enabled`
+  // switch: turning OFF the legacy single app (e.g. migrating to named multi-app
+  // declarations) must not silently drop the named declarations. Previously the gate
+  // was `feishuEnabled && feishuDeclarations.length`, so `enabled:false` + named
+  // declarations fell into the legacy else-branch and produced ZERO channels with no
+  // error. Now declarations win whenever present; the legacy single-app path only runs
+  // when there are no named declarations.
+  if (feishuDeclarations.length) {
     const seenAppIds = new Map<string, string>();
     for (const { name, config: declaration } of feishuDeclarations) {
       const appId = resolveFeishuChannelCredential(rawConfig, name, 'appId');
