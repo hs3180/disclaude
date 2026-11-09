@@ -928,6 +928,16 @@ describe('createChannelApiHandlers', () => {
     });
   });
 
+  it('sendCard should return the messageId the channel reports (#5722)', async () => {
+    const handlers = createChannelApiHandlers(channel, {
+      logger: mockLogger,
+      channelName: 'Test',
+    });
+    vi.mocked(channel.sendMessage).mockResolvedValueOnce('om_card_1');
+    const card = { config: {}, header: { title: { tag: 'plain_text', content: 'Test' } }, elements: [] };
+    await expect(handlers.sendCard('chat-001', card, 'thread-1')).resolves.toBe('om_card_1');
+  });
+
   it('uploadFile should delegate to channel.sendMessage and return file metadata', async () => {
     const handlers = createChannelApiHandlers(channel, {
       logger: mockLogger,
@@ -945,7 +955,37 @@ describe('createChannelApiHandlers', () => {
       fileType: 'file',
       fileName: 'report.pdf',
       fileSize: 0,
+      // Issue #5722: parent-less send reports the chat-root delivery position
+      // (no rootId — the mock channel reports no messageId).
+      deliveryPosition: 'chat-root',
     });
+  });
+
+  it('uploadFile should report thread-reply position with threadId echo when --parent was passed (#5722)', async () => {
+    const handlers = createChannelApiHandlers(channel, {
+      logger: mockLogger,
+      channelName: 'Test',
+    });
+    vi.mocked(channel.sendMessage).mockResolvedValueOnce('om_file_9');
+    const result = await handlers.uploadFile('chat-001', '/path/to/file.pdf', 'thread-456');
+    expect(result.messageId).toBe('om_file_9');
+    expect(result.deliveryPosition).toBe('thread-reply');
+    expect(result.threadId).toBe('thread-456');
+    // The reply's own root is not separately reported — rootId stays absent.
+    expect(result.rootId).toBeUndefined();
+  });
+
+  it('uploadFile should report chat-root position with rootId === messageId for a parent-less send (#5722)', async () => {
+    const handlers = createChannelApiHandlers(channel, {
+      logger: mockLogger,
+      channelName: 'Test',
+    });
+    vi.mocked(channel.sendMessage).mockResolvedValueOnce('om_new_topic_root');
+    const result = await handlers.uploadFile('chat-001', '/path/to/file.pdf');
+    expect(result.deliveryPosition).toBe('chat-root');
+    // In Feishu topic groups a parent-less send becomes its own NEW topic root.
+    expect(result.rootId).toBe('om_new_topic_root');
+    expect(result.threadId).toBeUndefined();
   });
 
   it('uploadFile should pass threadId', async () => {

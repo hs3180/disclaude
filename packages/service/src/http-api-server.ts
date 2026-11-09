@@ -118,6 +118,12 @@ export type UploadFileResponse = {
   fileSize?: number;
   /** Platform message_id of the delivered file message, when confirmed (Issue #5630). */
   messageId?: string;
+  /** Actual delivery position: 'thread-reply' (under the requested parent) or 'chat-root' (Issue #5722). */
+  deliveryPosition?: 'thread-reply' | 'chat-root';
+  /** Parent message id the file was replied under; present iff deliveryPosition === 'thread-reply' (Issue #5722). */
+  threadId?: string;
+  /** Thread root when known: for a chat-root send the delivered message itself is the root (Issue #5722). */
+  rootId?: string;
 };
 
 /**
