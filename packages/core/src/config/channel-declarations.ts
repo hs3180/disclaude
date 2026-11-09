@@ -132,20 +132,3 @@ export function channelDeclarationErrors(config: DisclaudeConfig): string[] {
   }
   return errors;
 }
-
-/**
- * Channel name → default `agents` preset for chats owned by that channel.
- * An explicit `/agent use` selection still outranks this default.
- */
-export function channelDeclarationAgentDefaults(config: DisclaudeConfig): Record<string, string> {
-  return Object.fromEntries(
-    resolveChannelDeclarations(config)
-      .map(
-        (declaration) => [declaration.name, declaration.config.agent] as readonly [string, unknown]
-      )
-      .filter(
-        (entry): entry is readonly [string, string] =>
-          typeof entry[1] === 'string' && entry[1].trim() !== ''
-      )
-  );
-}

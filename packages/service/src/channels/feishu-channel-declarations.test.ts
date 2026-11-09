@@ -11,7 +11,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   channelCredentialErrors,
-  channelDeclarationAgentDefaults,
   channelDeclarationErrors,
   resolveChannelDeclarations,
   type DisclaudeConfigWithChannels,
@@ -139,10 +138,6 @@ describe('named channel declarations (#5254)', () => {
         config: { appId: 'cli_b', appSecret: '${FEISHU_APP_SECRET_WORK}', agent: 'work' },
       },
     ]);
-    expect(channelDeclarationAgentDefaults(declaredRawConfig())).toEqual({
-      personal: 'personal',
-      work: 'work',
-    });
   });
 
   it('keeps the legacy single-app entry bit-identical when no declaration exists', () => {

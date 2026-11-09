@@ -87,8 +87,8 @@ export interface ChannelApiRequestPayloads {
  */
 export interface ChannelApiResponsePayloads {
   ping: { pong: boolean };
-  sendMessage: { success: boolean };
-  sendCard: { success: boolean };
+  sendMessage: { success: boolean; messageId?: string };
+  sendCard: { success: boolean; messageId?: string };
   uploadFile: {
     success: boolean;
     fileKey: string;
@@ -97,6 +97,12 @@ export interface ChannelApiResponsePayloads {
     fileSize: number;
     /** Platform message_id of the delivered file message, when confirmed (Issue #5630). */
     messageId?: string;
+    /** Actual delivery position of the file message (Issue #5722) — see ChannelApiHandlers.uploadFile. */
+    deliveryPosition?: 'thread-reply' | 'chat-root';
+    /** Parent message id the file was replied under; present iff deliveryPosition === 'thread-reply' (Issue #5722). */
+    threadId?: string;
+    /** Thread root when known: for a chat-root send the delivered message itself is the root (Issue #5722). */
+    rootId?: string;
   };
   uploadImage: { success: boolean; imageKey: string };
   sendInteractive: { success: boolean; messageId?: string };

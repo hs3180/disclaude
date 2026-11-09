@@ -507,6 +507,8 @@ export class WeChatApiClient {
     fileName: string;
     to: string;
     kind: 'image' | 'file' | 'video';
+    /** #5720: cancellation passthrough for the CDN POST; aborts map to reason=cancelled. */
+    signal?: AbortSignal;
   }): Promise<WeChatUploadedMedia> {
     return await uploadEncryptedMedia({
       ...params,

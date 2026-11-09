@@ -118,11 +118,16 @@ channels:
     enabled: false
     # Optional absolute path, same as login --state-dir; default ~/.disclaude/wechat
     # stateDir: /absolute/path/to/private/wechat-account
+    # Per-app default agent, below the chat's saved /agent use choice and
+    # above the global default (#5476). Dynamic accounts may instead set it on
+    # their channels.wechat:<registration-id> block.
+    # agent: assistant
   feishu:
     enabled: true
     appId: $FEISHU_APP_ID
     appSecret: $FEISHU_APP_SECRET
     streamingCard: false
+    # agent: assistant
   # Multiple Feishu channels in one instance (#5254): declare each channel
   # under its own name with `type: feishu` instead of the single feishu section
   # above. Each channel keeps its own tenant token and lark-cli credentials and

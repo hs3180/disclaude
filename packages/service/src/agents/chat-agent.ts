@@ -175,6 +175,20 @@ function formatElapsedForNotice(ms: number): string {
  */
 export const HEARTBEAT_SILENCE_MS = 5 * 60_000;
 
+/**
+ * Issue #5719 (T-102): the #5654 heartbeat is only evaluated when an SDK
+ * event arrives (each `tool_use`). A long task that spends its whole runtime
+ * inside ONE tool call — e.g. ~10-minute video generation — produces zero
+ * events while the tool runs, so no evaluation ever happens and the user sees
+ * no progress at all. The timer backstop below re-evaluates on a tick; it
+ * deliberately requires 1.5× the event-path silence window so it can never
+ * beat the next tool_use/result event to a heartbeat the event path would
+ * have produced anyway (#5654 behavior unchanged for event-driven turns).
+ */
+export const HEARTBEAT_TIMER_SILENCE_MS = Math.round(HEARTBEAT_SILENCE_MS * 1.5);
+/** Issue #5719 (T-102): evaluation cadence of the timer backstop. */
+export const PROGRESS_HEARTBEAT_TICK_MS = 30_000;
+
 // 2026-09-08: mid-stream 中断自动续跑(诊断见 ./docs 之外 —— ES 双侧证据:agent「同一
 // tool use 后中断」= 续写调用在 200 已锁后静默,proxy 只能补「看似成功」的收尾)。
 // MIDSTREAM_MARKER —— proxy(litellm custom_callbacks._MIDSTREAM_INTERRUPT_MARKER)在
@@ -2660,6 +2674,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     let turnLastProgressAtMs = Date.now();
     let turnToolsSinceHeartbeat = 0;
     let turnHeartbeatsSent = 0;
+    // Issue #5719 (T-102): tool calls whose tool_result has not arrived yet.
+    // While this is > 0 the turn is blocked inside a tool wait — the timer
+    // backstop's only proof that silence means "working", not "parked".
+    let turnPendingToolResults = 0;
+    let heartbeatSendInFlight = false;
     const turnToolUsage = new Map<string, number>();
     // Issue #4194: count substantive user-visible output sent this turn
     // (excludes the ✅ Complete result marker) so empty turns are detectable.
@@ -2721,14 +2740,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           ? this.turnCompletions.get(currentTurnMessageId) : undefined;
         if (consumedEntry?.queuedBehindTurn && !consumedEntry.consumptionNotified) {
           consumedEntry.consumptionNotified = true;
-          void this.callbacks.sendMessage(
-            chatId,
-            '▶️ 已取用你排队的这条输入，开始处理。',
-            currentTurnAnchor === null ? undefined : currentTurnAnchor ?? undefined
-          ).catch((error) => {
-            this.logger.warn({ err: error, chatId, messageId: currentTurnMessageId },
-              'Failed to send queued-input consumption notice');
-          });
+          // Issue #5719 (T-102): through the accounting wrapper so a lost
+          // consumption notice is a recorded failed delivery, not silence.
+          void deliverProgress('queued-input', '▶️ 已取用你排队的这条输入，开始处理。',
+            currentTurnAnchor === null ? undefined : currentTurnAnchor ?? undefined);
         }
         if (!this.isProcessingMessage) { this.turnStartedAtMsPrivate = Date.now(); }
         this.isProcessingMessage = true;
@@ -2739,6 +2754,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         // turn; the silence window counts from its first event.
         turnLastProgressAtMs = Date.now();
         turnToolsSinceHeartbeat = 0;
+        turnPendingToolResults = 0;
         turnToolUsage.clear();
         turnFailedWithConnectivityIssue = false;
       }
@@ -2756,6 +2772,65 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // clock — commentary, decision narration, a flushed buffered reply, or a
     // heartbeat itself. Only genuine silence can trigger the platform heartbeat.
     const noteUserVisibleProgress = (): void => { turnLastProgressAtMs = Date.now(); };
+    /**
+     * Issue #5719 (T-102): best-effort progress delivery with correlatable,
+     * sanitized accounting. Progress messages (commentary, decision
+     * narration, queued-input notices, liveness heartbeats) previously called
+     * callbacks.sendMessage directly: a send failure was swallowed at debug
+     * level with no receipt, so a channel that rejected every progress send
+     * looked identical to a healthy one — the user got zero progress for a
+     * 10-minute task while the agent context showed narration at every stage
+     * and nothing proved which link broke.
+     *
+     * Layers recorded per delivery (correlated via the active lifecycle
+     * context; payload itself never logged — kind + length only, #4774):
+     * - model_output: the SDK event that produced the text (existing
+     *   'Tool call received' / 'SDK message received' logs);
+     * - send_attempt: recorded here before the channel call;
+     * - platform_result: the channel outcome — `sent` + messageId, or
+     *   `failed` + httpStatus/errorCode. A failure is recorded as failed,
+     *   never silently treated as delivered (and never fails the turn, #5288);
+     * - phone_receipt: NEVER claimed from server logs. A platform ACK proves
+     *   the platform accepted the send, not that the phone displayed it;
+     *   `phoneReceipt: 'unverifiable_server_side'` marks that boundary — only
+     *   the user's reply can confirm receipt.
+     */
+    const deliverProgress = async (
+      kind: 'commentary' | 'narration' | 'heartbeat' | 'queued-input',
+      text: string,
+      threadRoot?: string,
+      send: (chatId: string, text: string, threadRoot?: string) => Promise<unknown> =
+        (cid, content, root) => this.callbacks.sendMessage(cid, content, root),
+    ): Promise<boolean> => {
+      // chatId is set only AFTER the spread: the lifecycle context carries
+      // its own correlation chatId, and the progress target must stay this
+      // chat even if that field ever diverged (duplicate-key TS2783 otherwise).
+      const base = {
+        event: 'progress_delivery', kind,
+        turnMessageId: this.activeTurnMessageId, contentLength: text.length,
+        phoneReceipt: 'unverifiable_server_side',
+        ...(this.activeLifecycleContext ?? { traceId: `${chatId}:unknown` }),
+        chatId,
+      };
+      this.logger.info({ ...base, state: 'send_attempt' }, 'Progress send attempt');
+      try {
+        const sentMessageId = await send(chatId, text, threadRoot);
+        this.logger.info(
+          { ...base, state: 'platform_result', outcome: 'sent', messageId: typeof sentMessageId === 'string' ? sentMessageId : undefined },
+          'Progress platform result: sent'
+        );
+        return true;
+      } catch (error) {
+        // Best-effort contract (#5288) unchanged: the turn keeps running. The
+        // failure is now accounted at info level instead of vanishing at debug.
+        this.logger.info(
+          { ...base, state: 'platform_result', outcome: 'failed', httpStatus: extractSendHttpStatus(error),
+            errorCode: sanitizeDiagnosticText(error instanceof Error ? error.message : String(error)).slice(0, 200) },
+          'Progress platform result: failed — recorded, not treated as delivered; turn continues'
+        );
+        return false;
+      }
+    };
     /**
      * Issue #5654: compact digest of this turn's tool activity for failure
      * receipts. When a turn dies (context overflow, provider failure, stall),
@@ -2784,31 +2859,72 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
      * (#5288): isolated, best-effort, never fails the turn; excluded from
      * turnResultText and finalReplyOnly workflows; never stored into
      * activeTurnNarration (#5394 keeps resolving model wording only).
+     *
+     * Issue #5719 (T-102): `trigger === 'timer'` is the backstop evaluation.
+     * The event path only runs when an SDK event arrives, so a turn blocked
+     * inside ONE long tool call (video generation, ~10 min, zero events) was
+     * never evaluated at all — exactly the zero-progress report. The timer
+     * path requires HEARTBEAT_TIMER_SILENCE_MS (1.5×) and accepts an
+     * outstanding tool wait (turnPendingToolResults > 0) as liveness proof,
+     * because during a tool wait no new tool_use event can ever arrive.
      */
-    const maybeSendProgressHeartbeat = async (): Promise<void> => {
+    const maybeSendProgressHeartbeat = async (trigger: 'event' | 'timer' = 'event'): Promise<void> => {
       if (this.callbacks.finalReplyOnly === true) { return; }
+      // Timer backstop runs outside the event loop: only a live turn may emit
+      // liveness. Between queued turns (iterator parked awaiting the next
+      // input) the silence clock is stale, not a signal.
+      if (trigger === 'timer' && !this.isProcessingMessage) { return; }
+      if (heartbeatSendInFlight) { return; }
       const now = Date.now();
       const silenceMs = now - turnLastProgressAtMs;
-      if (silenceMs < HEARTBEAT_SILENCE_MS || turnToolsSinceHeartbeat === 0) { return; }
-      const toolsSinceLast = turnToolsSinceHeartbeat;
-      const summary = this.activeTurnNarration || this.activeTurnTriggerLine;
-      const elapsedMs = this.turnStartedAtMs > 0 ? now - this.turnStartedAtMs : now - startTime;
-      const text =
-        `⏳ 本轮仍在执行：${summary ? `「${summary}」` : '当前任务'}已运行 ${formatElapsedForNotice(elapsedMs)}，` +
-        `最近 ${formatElapsedForNotice(silenceMs)} 无模型播报，期间完成 ${toolsSinceLast} 次工具调用（累计 ${toolCallCount} 次）。无需干预，结果产出后会自动回复。`;
+      const silenceWindowMs = trigger === 'timer' ? HEARTBEAT_TIMER_SILENCE_MS : HEARTBEAT_SILENCE_MS;
+      const livenessProven = trigger === 'event'
+        ? turnToolsSinceHeartbeat > 0
+        : turnToolsSinceHeartbeat > 0 || turnPendingToolResults > 0;
+      if (silenceMs < silenceWindowMs || !livenessProven) { return; }
+      heartbeatSendInFlight = true;
+      let toolsSinceLast = 0;
+      let elapsedMs = 0;
       try {
-        await this.callbacks.sendMessage(chatId, text, resolveReplyThreadRoot());
-      } catch (error) {
-        this.logger.debug({ error, chatId }, 'Progress heartbeat delivery failed');
+        toolsSinceLast = turnToolsSinceHeartbeat;
+        const summary = this.activeTurnNarration || this.activeTurnTriggerLine;
+        elapsedMs = this.turnStartedAtMs > 0 ? now - this.turnStartedAtMs : now - startTime;
+        const activityText = toolsSinceLast > 0
+          ? `期间完成 ${toolsSinceLast} 次工具调用（累计 ${toolCallCount} 次）。`
+          : `仍在等待当前工具返回（本轮累计 ${toolCallCount} 次工具调用）。`;
+        const text =
+          `⏳ 本轮仍在执行：${summary ? `「${summary}」` : '当前任务'}已运行 ${formatElapsedForNotice(elapsedMs)}，` +
+          `最近 ${formatElapsedForNotice(silenceMs)} 无模型播报，${activityText}无需干预，结果产出后会自动回复。`;
+        // Issue #5719 (T-102): through the accounting wrapper — an undelivered
+        // heartbeat is a recorded failed attempt, never a silent "delivered".
+        await deliverProgress('heartbeat', text, resolveReplyThreadRoot());
+      } finally {
+        // Reset both clocks (delivered or not) so a broken channel cannot
+        // produce a retry burst (#5654 semantics preserved).
+        turnLastProgressAtMs = Date.now();
+        turnToolsSinceHeartbeat = 0;
+        turnHeartbeatsSent++;
+        heartbeatSendInFlight = false;
       }
-      turnLastProgressAtMs = now;
-      turnToolsSinceHeartbeat = 0;
-      turnHeartbeatsSent++;
       this.logger.info(
-        { chatId, heartbeatIndex: turnHeartbeatsSent, silenceMs, toolsSinceLast, toolCallCount, elapsedMs },
-        'Narration-silent progress heartbeat sent (#5654)'
+        { chatId, trigger, heartbeatIndex: turnHeartbeatsSent, silenceMs, toolsSinceLast,
+          toolCallCount, elapsedMs, pendingToolResults: turnPendingToolResults },
+        'Narration-silent progress heartbeat sent (#5654/#5719)'
       );
     };
+    /**
+     * Issue #5719 (T-102): the timer backstop. A 30s tick re-evaluates the
+     * heartbeat while processIterator is parked in `await iterator.next()`
+     * inside a long tool wait — the only liveness signal that does not depend
+     * on SDK events arriving. Stale generations/disposed agents no-op; the
+     * overlap guard inside maybeSendProgressHeartbeat keeps sends serialized.
+     */
+    const progressHeartbeatTimer: NodeJS.Timeout = setInterval(() => {
+      if (this.disposed || this.sessionGeneration !== myGeneration ||
+          this.stoppedQueryGenerations.has(myGeneration)) { return; }
+      void maybeSendProgressHeartbeat('timer');
+    }, PROGRESS_HEARTBEAT_TICK_MS);
+    progressHeartbeatTimer.unref?.();
     const finishUnexpectedTurns = async (error: Error, startupCategory?: string): Promise<void> => {
       if (this.sessionGeneration !== myGeneration || this.stoppedQueryGenerations.has(myGeneration)) { return; }
       const sessionId = this.queryHandle?.sessionId;
@@ -2998,9 +3114,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                   'Compacted commentary payload'
                 );
               }
-              await this.callbacks.sendMessage(chatId, commentary.text, resolveReplyThreadRoot());
-              // Issue #5654: commentary is user-visible progress.
-              noteUserVisibleProgress();
+              // Issue #5719 (T-102): through the accounting wrapper — a failed
+              // commentary send is recorded, never treated as delivered, and
+              // still cannot fail the turn (#5288).
+              if (await deliverProgress('commentary', commentary.text, resolveReplyThreadRoot())) {
+                // Issue #5654: commentary is user-visible progress.
+                noteUserVisibleProgress();
+              }
             } catch (error) {
               // Progress cannot fail or complete the turn.
               this.logger.debug({ error, chatId }, 'Public commentary delivery failed');
@@ -3041,17 +3161,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
               );
             }
             const narrationRoot = resolveReplyThreadRoot();
-            try {
-              if (streamDriver) {
-                // p2p keeps narrating into the same streaming card the reply
-                // is building; the driver owns its own send fallbacks.
-                await streamDriver.pushText(narration.text, narrationRoot);
-              } else {
-                await this.callbacks.sendMessage(chatId, narration.text, narrationRoot);
-              }
-            } catch (error) {
-              this.logger.debug({ error, chatId }, 'Decision narration delivery failed');
-            }
+            // Issue #5719 (T-102): accounting wrapper (see deliverProgress);
+            // the streaming-driver variant keeps its own send fallbacks.
+            await deliverProgress('narration', narration.text, narrationRoot, streamDriver
+              ? (_cid, content, root) => streamDriver.pushText(content, root)
+              : undefined);
             // Issue #5394: keep the freshest narration as the running turn's
             // busy-notice summary. Set AFTER delivery — resolving the reply
             // root consumes the turn anchor, which clears the per-turn
@@ -3074,6 +3188,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             ? parsed.metadata.toolName : 'tool';
           turnToolUsage.set(heartbeatToolName, (turnToolUsage.get(heartbeatToolName) ?? 0) + 1);
           turnToolsSinceHeartbeat++;
+          // Issue #5719 (T-102): this tool call is now outstanding — the
+          // timer backstop's liveness proof while its result is pending.
+          turnPendingToolResults++;
           await maybeSendProgressHeartbeat();
           const now = Date.now();
           const sinceLastTool = lastToolCallMs ? now - lastToolCallMs : undefined;
@@ -3085,6 +3202,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         }
 
         this.logger.debug({ chatId, messageCount, type: parsed.type }, 'SDK message received');
+
+        // Issue #5719 (T-102): the wait this tool call started has ended —
+        // settle the outstanding count that authorizes timer heartbeats.
+        if (parsed.type === 'tool_result') {
+          turnPendingToolResults = Math.max(0, turnPendingToolResults - 1);
+        }
 
         // A backend-confirmed interruption is a control outcome. Reuse the
         // explicit-stop settlement path, before result text or success/retry
@@ -4018,6 +4141,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
       }
     } finally {
+      // Issue #5719 (T-102): the timer backstop dies with this iterator.
+      clearInterval(progressHeartbeatTimer);
       // Preserve unconfirmed output as partial only for this live generation.
       // Stop/reset/dispose must not publish a stale buffered reply.
       if (this.sessionGeneration === myGeneration && !this.disposed &&

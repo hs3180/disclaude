@@ -393,11 +393,18 @@ describe('ChatSessionPool', () => {
     });
 
     it('resolves per-channel defaults with /agent use taking precedence, across restart', () => {
-      const channelDefaults = { personal: 'fast', work: 'default' };
+      // Mirrors the wired per-app resolver: named declarations register as
+      // `feishu:<name>` channel ids whose `agent` default lives under the
+      // bare declaration key in `channels` (#5254) — one resolution path.
+      const channelDefaults: Record<string, string> = { personal: 'fast', work: 'default' };
+      const defaultFor = (chatId: string): string | undefined => {
+        const channel = /^feishu:([^:]+):/.exec(chatId)?.[1];
+        return channel ? channelDefaults[channel] : undefined;
+      };
       const callbacks = createMockCallbacks();
       const first = new ChatSessionPool({
         agentPresets: presets,
-        channelAgentDefaults: channelDefaults,
+        defaultAgentPresetForChat: defaultFor,
         validatePresetBackend: () => ({ available: true }),
       });
       try {
@@ -427,7 +434,7 @@ describe('ChatSessionPool', () => {
       // /agent use selection is intentionally not persisted.
       const second = new ChatSessionPool({
         agentPresets: presets,
-        channelAgentDefaults: channelDefaults,
+        defaultAgentPresetForChat: defaultFor,
         validatePresetBackend: () => ({ available: true }),
       });
       try {
