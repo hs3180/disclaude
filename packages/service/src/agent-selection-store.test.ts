@@ -118,6 +118,19 @@ describe('durable per-chat agent selections from /agent use (#5476)', () => {
     pool.disposeAll();
   });
 
+  it('persists and reloads creation-time overrides and origin (#4913)', () => {
+    const store = new AgentSelectionStore(join(dir, 'agent-selections.json'));
+    store.set('chat', 'codex', 'creator', { overrides: { model: 'gpt-5.3-codex', reasoningEffort: 'high' }, origin: 'creation' });
+    const reloaded = new AgentSelectionStore(join(dir, 'agent-selections.json')).get('chat');
+    expect(reloaded).toMatchObject({ presetName: 'codex', origin: 'creation', overrides: { model: 'gpt-5.3-codex', reasoningEffort: 'high' } });
+  });
+
+  it('rejects an invalid persisted override document (#4913)', () => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'agent-selections.json'), JSON.stringify({ version: 1, selections: { chat: { chatId: 'chat', presetName: 'codex', updatedBy: 'a', updatedAt: new Date().toISOString(), overrides: { reasoningEffort: 'extreme' } } } }), { mode: 0o600 });
+    expect(() => new AgentSelectionStore(join(dir, 'agent-selections.json'))).toThrow(/Invalid agent selections/);
+  });
+
   it('rejects a corrupt persisted document instead of silently dropping selections', () => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'agent-selections.json'), '{"version":1,"selections":{"chat":{"presetName":""}}}', { mode: 0o600 });

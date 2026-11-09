@@ -17,6 +17,48 @@ function dataOf(response) {
   return response?.data && typeof response.data === 'object' ? response.data : response;
 }
 
+const RUNTIME_KEYS = new Set(['preset', 'harness', 'model', 'thinking']);
+
+/**
+ * Issue #4913: validate a declared runtime profile against the service's
+ * configured enabled catalog BEFORE the group is created, so an incompatible
+ * or unsupported declaration aborts with an actionable error and never
+ * produces a half-configured active group. The declaration never carries
+ * credentials or endpoints — a named preset or an explicit
+ * harness/model/thinking triple only.
+ */
+async function preflightRuntime(runtime, fetchImpl = fetch) {
+  if (runtime === undefined || runtime === null) { return undefined; }
+  if (typeof runtime !== 'object' || Array.isArray(runtime)) {
+    throw new Error('runtime_must_be_object');
+  }
+  const unknown = Object.keys(runtime).filter((key) => !RUNTIME_KEYS.has(key));
+  if (unknown.length > 0) {
+    throw new Error(`runtime_rejects_fields:${unknown.join(',')}`);
+  }
+  for (const [key, value] of Object.entries(runtime)) {
+    if (typeof value !== 'string' || !value.trim()) { throw new Error(`runtime_${key}_must_be_nonempty_string`); }
+  }
+  const baseUrl = process.env.DISCLAUDE_API_BASE_URL?.replace(/\/+$/, '');
+  if (!baseUrl) {
+    throw new Error('runtime_preflight_requires_DISCLAUDE_API_BASE_URL');
+  }
+  const headers = { 'Content-Type': 'application/json' };
+  const token = process.env.DISCLAUDE_API_TOKEN?.trim();
+  if (token) { headers.Authorization = `Bearer ${token}`; }
+  const response = await fetchImpl(`${baseUrl}/api/agent-runtime`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ runtime }),
+    signal: AbortSignal.timeout(15000),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || body.ok !== true) {
+    throw new Error(`runtime_rejected:${body.message ?? response.status}`);
+  }
+  return body.profile;
+}
+
 export function positioningPost({
   topic,
   ledgerRule = '本群台账只记录本群决策与交付，原群历史不重复搬运。',
@@ -48,6 +90,8 @@ export async function createDiscussion(input, run = execute) {
   ) {
     throw new Error('invalid_idempotency_key');
   }
+  // Issue #4913: validate the runtime declaration before any Feishu API call.
+  const profile = await preflightRuntime(input.runtime, input.fetchImpl);
 
   const invoke = async (args, stage) => {
     try {
@@ -117,7 +161,14 @@ export async function createDiscussion(input, run = execute) {
     'om_',
     'migration_message_id'
   );
-  return { chatId, ownerOpenId, firstPostMessageId, pinned: true, migrationMessageId };
+  return {
+    chatId,
+    ownerOpenId,
+    firstPostMessageId,
+    pinned: true,
+    migrationMessageId,
+    ...(profile ? { runtime: profile } : {}),
+  };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -35,7 +35,7 @@ const COMMAND_FLAGS: Record<string, string[]> = {
   send_text: ['text', 'text-file', 'mentions'],
   send_file: ['file'],
   send_card: ['card', 'card-file'],
-  push_to_agent: ['message', 'message-file'],
+  push_to_agent: ['message', 'message-file', 'runtime'],
   send_interactive: ['question', 'question-file', 'options', 'options-file', 'action-prompts', 'action-prompts-file', 'title', 'context', 'thread-root', 'idempotency-key'],
 };
 
@@ -229,6 +229,8 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
   // noise on fast-failure paths.
   let text: string | undefined;
   let message: string | undefined;
+  /** Issue #4913: optional creation-time runtime profile for push_to_agent. */
+  let runtime: Record<string, string> | undefined;
   let question: string | undefined;
   let filePath: string | undefined;
   let card: Record<string, unknown> | undefined;
@@ -264,6 +266,10 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
     } else if (command === 'push_to_agent') {
       message = readInput(args, 'message', 'message-file');
       if (!message) { emitFail(command, 'Missing message content', 'pass --message <string>, --message-file <path>, or pipe content on stdin'); return 1; }
+      runtime = parseJson<Record<string, string>>(arg(args, 'runtime'), 'runtime');
+      if (runtime && (Array.isArray(runtime) || Object.keys(runtime).some(key => !['preset', 'harness', 'model', 'thinking'].includes(key)))) {
+        emitFail(command, 'runtime must be an object declaring preset or harness/model/thinking only'); return 1;
+      }
     } else {
       question = readInput(args, 'question', 'question-file');
       if (!question || !question.trim()) { emitFail(command, 'Missing question content', 'pass --question <string>, --question-file <path>, or pipe content on stdin'); return 1; }
@@ -318,7 +324,7 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
     const payload = command === 'send_text' ? { ...common, text, mentions: parsedMentions }
       : command === 'send_file' ? { ...common, filePath }
       : command === 'send_card' ? { ...common, card }
-      : command === 'push_to_agent' ? { chatId, message }
+      : command === 'push_to_agent' ? { chatId, message, ...(runtime ? { runtime } : {}) }
       : command === 'request_private_input' ? { chatId, actorId: arg(args, 'actor'), sourceMessageId: arg(args, 'source'), workflow }
       : { ...common, question, options: parsedOptions, actionPrompts: parsedActionPrompts, title: arg(args, 'title'),
         context: arg(args, 'context'), threadRootId, idempotencyKey };
@@ -342,7 +348,7 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
       result = await withLogsRedirected(() => mod.request_private_input({ chatId, actorId: arg(args, 'actor') as string,
         sourceMessageId: arg(args, 'source') as string, workflow: workflow as Record<string, unknown> }));
     } else if (command === 'push_to_agent') {
-      result = await withLogsRedirected(() => mod.push_to_agent({ chatId, message: message as string }));
+      result = await withLogsRedirected(() => mod.push_to_agent({ chatId, message: message as string, ...(runtime ? { runtime } : {}) }));
     } else {
       result = await withLogsRedirected(() => mod.send_interactive({ question: question as string, options: parsedOptions as InteractiveOption[], title: arg(args, 'title'), context: arg(args, 'context'), actionPrompts: parsedActionPrompts, chatId, parentMessageId, threadRootId, idempotencyKey }));
     }

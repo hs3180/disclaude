@@ -36,6 +36,7 @@ import {
   ChatFailureRegistry,
   GoalStore,
   resolveAgentPreset,
+  parseRuntimeProfileDeclaration,
   getProvider,
   TaskResultOutbox,
   type ChatType,
@@ -984,6 +985,20 @@ export async function main(): Promise<void> {
         };
         httpApiServer.setPushHandler(async (chatId: string, message: string) => {
           await routeSignal('http-push', chatId, message);
+        });
+        // Issue #4913: creation-time runtime declarations on the programmatic
+        // entry go through the same pool path as /agent use — the admin slash
+        // command and the REST/CLI entry share one authorization surface (the
+        // loopback API token) and one persistence store.
+        httpApiServer.setRuntimeProfileDeclarer((chatId, runtime, actorId, options) => {
+          const declaration = parseRuntimeProfileDeclaration(runtime);
+          if (!declaration) {
+            return { ok: false, error: 'runtime must declare a preset or an explicit harness/model/thinking' };
+          }
+          const result = agentPool.declareChatRuntimeProfile(chatId, declaration, actorId, options);
+          return result.ok
+            ? { ok: true, active: result.active }
+            : { ok: false, error: result.error };
         });
         // #5411: a consumed private input resumes the waiting task by itself,
         // through the same signal routing as /api/push. The payload carries

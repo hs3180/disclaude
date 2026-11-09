@@ -251,10 +251,15 @@ export async function pushToAgent(
   client: ChannelApiClientLike,
   chatId: string,
   message: string,
-  options?: { waitForCompletion?: boolean; timeoutMs?: number }
+  options?: { waitForCompletion?: boolean; timeoutMs?: number; runtime?: { preset?: string; harness?: string; model?: string; thinking?: string } }
 ): Promise<ChannelApiMethodResult> {
   try {
-    return await client.request('pushToAgent', { chatId, message, waitForCompletion: options?.waitForCompletion }, { timeoutMs: options?.timeoutMs });
+    return await client.request('pushToAgent', {
+      chatId,
+      message,
+      waitForCompletion: options?.waitForCompletion,
+      ...(options?.runtime ? { runtime: options.runtime } : {}),
+    }, { timeoutMs: options?.timeoutMs });
   } catch (error) {
     const { err, errorType } = classifyError(error);
     logger.error({ err: error, chatId }, 'pushToAgent failed');
