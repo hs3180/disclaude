@@ -14,7 +14,6 @@ import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { StderrCapture, getErrorStderr, isStartupFailure, attachStderrToError, ClaudeSDKProvider, stderrIndicatesUpstreamApiError } from './provider.js';
-import { clearResolvedClaudeAliasCache } from './model-alias.js';
 import { ErrorCategory } from '../../../utils/error-handler.js';
 import { automaticReplayBlock } from '../../../utils/replay-safety.js';
 import type { AgentMessage, UserInput } from '../../types.js';
@@ -1675,13 +1674,12 @@ setInterval(() => {}, 1000);
 });
 
 // ============================================================================
-// behavesAs bare alias resolution (Issue #5422)
+// behavesAs parameter mapping (Issue #5422, r2)
 // ============================================================================
 
-describe('behavesAs bare alias resolution (Issue #5422)', () => {
+describe('behavesAs parameter mapping (Issue #5422)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    clearResolvedClaudeAliasCache();
   });
 
   async function drain(stream: ReturnType<ClaudeSDKProvider['queryStream']>): Promise<AgentMessage[]> {
@@ -1694,186 +1692,124 @@ describe('behavesAs bare alias resolution (Issue #5422)', () => {
     return messages;
   }
 
-  it('resolves the alias through the booted session and merges modelOverrides before the first input', async () => {
-    const events: string[] = [];
-    const applied: Array<Record<string, unknown>> = [];
-    const sdkSettings: Array<Record<string, unknown> | undefined> = [];
-    mockQuery.mockImplementation(({ prompt, options: sdkOptions }: { prompt: AsyncGenerator<unknown>; options: Record<string, unknown> }) => {
-      sdkSettings.push(sdkOptions.settings as Record<string, unknown> | undefined);
+  /**
+   * A mock session carrying the r1 catalog channels, so tests can prove r2
+   * never calls them. Captures the modelOverrides the SDK received at
+   * invocation time — #5410 routes them into a private settings file that is
+   * removed once the stream settles.
+   */
+  function staticSession(captured: Array<Record<string, string> | undefined>, events?: string[]) {
+    mockQuery.mockImplementation(({ prompt, options }: { prompt: AsyncGenerator<unknown>; options: { settings?: unknown } }) => {
+      const { settings } = options;
+      captured.push(
+        typeof settings !== 'string'
+          ? (settings as { modelOverrides?: Record<string, string> } | undefined)?.modelOverrides
+          : (JSON.parse(readFileSync(settings, 'utf8')) as { modelOverrides?: Record<string, string> }).modelOverrides
+      );
       return Object.assign((async function* () {
         const first = await prompt.next();
-        events.push(first.done ? 'input-closed' : 'input-forwarded');
+        events?.push(first.done ? 'input-closed' : 'input-forwarded');
         yield { type: 'assistant', message: { content: [{ type: 'text', text: 'done' }] } };
         yield { type: 'result', subtype: 'success', is_error: false, usage: {} };
       })(), {
         close: vi.fn(),
         supportedModels: () => {
-          events.push('catalog');
+          events?.push('catalog');
           return Promise.resolve([
-            { value: 'default', resolvedModel: 'claude-sonnet-5', displayName: 'default', description: '' },
             { value: 'opus', resolvedModel: 'claude-opus-5', displayName: 'opus', description: '' },
           ]);
         },
-        applyFlagSettings: (settings: Record<string, unknown>) => {
-          events.push('apply');
-          applied.push(settings);
+        applyFlagSettings: () => {
+          events?.push('apply');
           return Promise.resolve();
         },
       });
     });
+  }
+
+  it('passes the config-compiled three-tier mapping to SDK settings verbatim without consulting the session', async () => {
+    const events: string[] = [];
+    const captured: Array<Record<string, string> | undefined> = [];
+    staticSession(captured, events);
     const provider = new ClaudeSDKProvider();
     const stream = provider.queryStream((async function* () {
       events.push('host-input-pulled');
       yield { role: 'user', content: 'hi' } as UserInput;
     })(), {
-      settingSources: [], modelOverrides: { opus: 'kimi-k3' }, model: 'kimi-k3',
+      // Exactly what resolved-agents compiles for behavesAs: "opus" under
+      // claude.models: { opus: kimi-k3, sonnet: kimi-k3-flash, haiku: kimi-k3-air }.
+      settingSources: [],
+      modelOverrides: { opus: 'kimi-k3', sonnet: 'kimi-k3-flash', haiku: 'kimi-k3-air' },
+      model: 'kimi-k3',
     });
     const messages = await drain(stream);
     expect(messages.map((message) => message.type)).toContain('text');
-    expect(events).toEqual(['catalog', 'apply', 'host-input-pulled', 'input-forwarded']);
-    expect(applied).toEqual([{ modelOverrides: { 'claude-opus-5': 'kimi-k3' } }]);
-    // The bare alias key never reaches the CLI settings; only the resolved
-    // full ID rides the flag-settings merge.
-    expect(sdkSettings[0]?.modelOverrides).toBeUndefined();
+    // No resolution step gates the input: the host input flows straight
+    // through, and the catalog / flag-settings channels stay untouched.
+    expect(events).toEqual(['host-input-pulled', 'input-forwarded']);
+    expect(captured[0]).toEqual({ opus: 'kimi-k3', sonnet: 'kimi-k3-flash', haiku: 'kimi-k3-air' });
     provider.dispose();
   });
 
-  it('reports an explicit error with the available aliases and forwards no input on a catalog miss', async () => {
-    const events: string[] = [];
-    const applied: Array<Record<string, unknown>> = [];
-    mockQuery.mockImplementation(({ prompt }: { prompt: AsyncGenerator<unknown> }) => Object.assign((async function* () {
-      const first = await prompt.next();
-      events.push(first.done ? 'input-closed' : 'input-forwarded');
-      yield { type: 'result', subtype: 'success', is_error: false, usage: {} };
-    })(), {
-      close: vi.fn(),
-      supportedModels: () => {
-        events.push('catalog');
-        return Promise.resolve([
-          { value: 'sonnet', resolvedModel: 'claude-sonnet-5', displayName: 'sonnet', description: '' },
-          { value: 'default', resolvedModel: 'claude-sonnet-5', displayName: 'default', description: '' },
-        ]);
-      },
-      applyFlagSettings: (settings: Record<string, unknown>) => {
-        events.push('apply');
-        applied.push(settings);
-        return Promise.resolve();
-      },
-    }));
+  it('passes an explicit full-ID mapping through unchanged', async () => {
+    const captured: Array<Record<string, string> | undefined> = [];
+    staticSession(captured);
     const provider = new ClaudeSDKProvider();
     const stream = provider.queryStream((async function* () {
-      events.push('host-input-pulled');
       yield { role: 'user', content: 'hi' } as UserInput;
     })(), {
-      settingSources: [], modelOverrides: { fable: 'kimi-k3' }, model: 'kimi-k3',
+      settingSources: [], modelOverrides: { 'claude-opus-5': 'kimi-k3' }, model: 'kimi-k3',
     });
-    const messages = await drain(stream);
-    expect(events).toEqual(['catalog']);
-    expect(applied).toEqual([]);
-    expect(messages).toHaveLength(1);
-    expect(messages[0].content).toContain('behavesAs alias "fable" is not in the running Claude model catalog');
-    expect(messages[0].content).toContain('available: sonnet, default');
-    expect(messages[0].content).toContain('No input was sent');
-    expect(messages[0].metadata).toMatchObject({
-      terminatedReason: 'turn_failed', automaticReplayBlocked: 'behaves-as-alias-unresolved',
-    });
+    await drain(stream);
+    expect(captured[0]).toEqual({ 'claude-opus-5': 'kimi-k3' });
     provider.dispose();
   });
 
-  it('degrades a failing catalog transport to the same explicit error without crashing', async () => {
-    const events: string[] = [];
-    mockQuery.mockImplementation(({ prompt }: { prompt: AsyncGenerator<unknown> }) => Object.assign((async function* () {
-      await prompt.next();
-      yield { type: 'result', subtype: 'success', is_error: false, usage: {} };
-    })(), {
-      close: vi.fn(),
-      supportedModels: () => {
-        events.push('catalog');
-        return Promise.reject(new Error('control transport disconnected'));
-      },
-      applyFlagSettings: () => {
-        events.push('apply');
-        return Promise.resolve();
-      },
-    }));
+  it('leaves settings.modelOverrides unset when no mapping is configured', async () => {
+    const captured: Array<Record<string, string> | undefined> = [];
+    staticSession(captured);
     const provider = new ClaudeSDKProvider();
     const stream = provider.queryStream((async function* () {
-      events.push('host-input-pulled');
       yield { role: 'user', content: 'hi' } as UserInput;
-    })(), {
-      settingSources: [], modelOverrides: { opus: 'kimi-k3' }, model: 'kimi-k3',
-    });
-    const messages = await drain(stream);
-    expect(events).toEqual(['catalog']);
-    expect(messages).toHaveLength(1);
-    expect(messages[0].content).toContain('control transport disconnected');
-    expect(messages[0].metadata).toMatchObject({ terminatedReason: 'turn_failed' });
+    })(), { settingSources: [], model: 'kimi-k3' });
+    await drain(stream);
+    expect(captured[0]).toBeUndefined();
     provider.dispose();
   });
 
-  it('caches the resolution per session-env scope but re-merges the map into every fresh session', async () => {
-    const catalogCalls: number[] = [];
-    const applied: Array<Record<string, unknown>> = [];
+  it('serves whatever mapping config compiled to every fresh session — only a mapping change alters it', async () => {
+    // The r2 "simulated upgrade" replacement: the runtime no longer
+    // re-resolves a bare alias against a running catalog. Behavior changes
+    // exactly when agents.<name>.claude.models changes (config recompile),
+    // so the provider serves map A to session 1 and the re-mapped B to
+    // session 2 verbatim, with zero catalog consultation in between.
+    const events: string[] = [];
+    const captured: Array<Record<string, string> | undefined> = [];
+    staticSession(captured, events);
     const provider = new ClaudeSDKProvider();
-    const mockCatalogSession = () =>
-      mockQuery.mockImplementation(({ prompt }: { prompt: AsyncGenerator<unknown> }) => Object.assign((async function* () {
-        await prompt.next();
-        yield { type: 'result', subtype: 'success', is_error: false, usage: {} };
-      })(), {
-        close: vi.fn(),
-        supportedModels: () => {
-          catalogCalls.push(1);
-          return Promise.resolve([{ value: 'opus', resolvedModel: 'claude-opus-5', displayName: 'opus', description: '' }]);
-        },
-        applyFlagSettings: (settings: Record<string, unknown>) => { applied.push(settings); return Promise.resolve(); },
-      }));
-    for (const env of [undefined, undefined, { GATEWAY_PROFILE: 'b' }] as Array<Record<string, string> | undefined>) {
-      mockCatalogSession();
-      const stream = provider.queryStream((async function* () {
-        yield { role: 'user', content: 'hi' } as UserInput;
-      })(), { settingSources: [], modelOverrides: { opus: 'kimi-k3' }, model: 'kimi-k3', env });
-      await drain(stream);
-    }
-    // Two sessions sharing one LLM binding's environment share the cached
-    // resolution; a different environment re-asks (its catalog can differ).
-    expect(catalogCalls).toHaveLength(2);
-    // Every fresh session still gets its own flag-settings merge.
-    expect(applied).toEqual([
-      { modelOverrides: { 'claude-opus-5': 'kimi-k3' } },
-      { modelOverrides: { 'claude-opus-5': 'kimi-k3' } },
-      { modelOverrides: { 'claude-opus-5': 'kimi-k3' } },
-    ]);
-    provider.dispose();
-  });
-
-  it('re-resolves after a simulated Claude Code upgrade and maps the renamed catalog ID', async () => {
-    const applied: Array<Record<string, unknown>> = [];
-    const provider = new ClaudeSDKProvider();
-    const session = (resolvedModel: string) =>
-      mockQuery.mockImplementation(({ prompt }: { prompt: AsyncGenerator<unknown> }) => Object.assign((async function* () {
-        await prompt.next();
-        yield { type: 'result', subtype: 'success', is_error: false, usage: {} };
-      })(), {
-        close: vi.fn(),
-        supportedModels: () => Promise.resolve([
-          { value: 'opus', resolvedModel, displayName: 'opus', description: '' },
-        ]),
-        applyFlagSettings: (settings: Record<string, unknown>) => { applied.push(settings); return Promise.resolve(); },
-      }));
-    session('claude-opus-5');
+    // behavesAs: opus, no claude.models declared — all tiers derive from
+    // the provider defaultModel.
     await drain(provider.queryStream((async function* () {
       yield { role: 'user', content: 'hi' } as UserInput;
-    })(), { settingSources: [], modelOverrides: { opus: 'kimi-k3' }, model: 'kimi-k3' }));
-    // Process restart on an upgraded bundle: fresh cache, renamed catalog ID.
-    clearResolvedClaudeAliasCache();
-    session('claude-opus-5-2');
+    })(), {
+      settingSources: [],
+      modelOverrides: { opus: 'glm-5.3', sonnet: 'glm-5.3', haiku: 'glm-5.3' },
+      model: 'glm-5.3',
+    }));
+    // The operator redeclares claude.models: the same behavesAs now maps the
+    // tiers onto different provider models.
     await drain(provider.queryStream((async function* () {
       yield { role: 'user', content: 'hi again' } as UserInput;
-    })(), { settingSources: [], modelOverrides: { opus: 'kimi-k3' }, model: 'kimi-k3' }));
-    expect(applied).toEqual([
-      { modelOverrides: { 'claude-opus-5': 'kimi-k3' } },
-      { modelOverrides: { 'claude-opus-5-2': 'kimi-k3' } },
+    })(), {
+      settingSources: [],
+      modelOverrides: { opus: 'kimi-k3', sonnet: 'kimi-k3-flash', haiku: 'kimi-k3-air' },
+      model: 'kimi-k3',
+    }));
+    expect(captured).toEqual([
+      { opus: 'glm-5.3', sonnet: 'glm-5.3', haiku: 'glm-5.3' },
+      { opus: 'kimi-k3', sonnet: 'kimi-k3-flash', haiku: 'kimi-k3-air' },
     ]);
+    expect(events).toEqual(['input-forwarded', 'input-forwarded']);
     provider.dispose();
   });
 });

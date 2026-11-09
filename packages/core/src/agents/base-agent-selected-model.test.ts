@@ -157,10 +157,10 @@ describe('Claude modelOverrides identity (Issue #5410)', () => {
 });
 
 describe('Claude behavesAs bare alias (Issue #5422)', () => {
-  // The generic agent layer is alias-agnostic: a bare `behavesAs` alias
-  // compiled by config rides modelOverrides as the key itself, so the
-  // standard passthrough and startup floor cover it — resolution against the
-  // running catalog is Claude-provider-owned.
+  // The generic agent layer is alias-agnostic: a bare `behavesAs` alias is
+  // compiled by config into the tier-keyed modelOverrides mapping itself
+  // (r2: no running-catalog resolution exists anywhere), so the standard
+  // passthrough and startup floor cover it.
   it('passes an alias-keyed map to native queries unchanged, without alias-specific options', async () => {
     const options = await selectedOptions('kimi-k3', undefined, undefined, { opus: 'kimi-k3' });
     expect(options.modelOverrides).toEqual({ opus: 'kimi-k3' });
