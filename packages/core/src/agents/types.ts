@@ -296,7 +296,7 @@ export interface BaseAgentConfig {
   /** Permission mode for tool execution */
   permissionMode?: 'default' | 'bypassPermissions';
   /** Agent SDK runtime. Omitted to preserve the process default. */
-  agentBackend?: 'claude' | 'pi' | 'codex' | 'dsh';
+  agentBackend?: 'claude' | 'pi' | 'codex' | 'dsh' | 'miniswe';
 }
 
 /**

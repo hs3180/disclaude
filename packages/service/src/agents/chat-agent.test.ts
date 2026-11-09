@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -154,7 +154,7 @@ vi.mock('../services/debug-group-service.js', () => ({
   })),
 }));
 
-import { ChatAgent } from './chat-agent.js';
+import { ChatAgent, HEARTBEAT_TIMER_SILENCE_MS, PROGRESS_HEARTBEAT_TICK_MS } from './chat-agent.js';
 import { createChannelCallbacksFactory, createDefaultMessageHandler } from '../utils/channel-handlers.js';
 import { registerFeishuInputSource, readVerifiedInputSource } from './input-provenance.js';
 import type { WiredContext } from '../channel-lifecycle-manager.js';
@@ -968,7 +968,7 @@ describe('ChatAgent (service)', () => {
         expect(push).not.toHaveBeenCalled();
         expect((agent as any).pendingTurnMessageIds).toEqual([]);
         expect((agent as any).lastTurnMessage.messageId).toBe('owner-A');
-        expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('后端已确认接收');
+        expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('已交给当前运行的回合');
         let finished = false;
         const completion = agent.turnCompleteFor('follow-B')!.then(() => { finished = true; });
         await Promise.resolve();
@@ -977,6 +977,156 @@ describe('ChatAgent (service)', () => {
         await completion;
         expect(finished).toBe(true);
       } finally { dispose(agent); }
+    });
+
+    it('Issue #5713: interjection confirmation carries the shared busy context and real queue depth', async () => {
+      const { agent, callbacks, push } = owned();
+      try {
+        (agent as any).activeTurnTriggerLine = '原始回合任务摘要';
+        (agent as any).turnStartedAtMsPrivate = Date.now() - 2 * 60_000;
+        (agent as any).pendingTurnMessageIds = ['queued-1'];
+        await agent.processMessage(input());
+        const receipt = callbacks.sendMessage.mock.calls[0]?.[1] as string;
+        expect(receipt).toContain('已交给当前运行的回合');
+        expect(receipt).toContain('\n（当前回合「原始回合任务摘要」已运行 2 分钟，前方还有 1 条排队）');
+        // The steered supplement merged into the running turn is not a queue row.
+        expect((agent as any).pendingTurnMessageIds).toEqual(['queued-1']);
+        expect(push).not.toHaveBeenCalled();
+      } finally { dispose(agent); }
+    });
+
+    it('Issue #5713: steered attachments are named in the confirmation receipt', async () => {
+      const { agent, callbacks } = owned();
+      const shot = { id: 'att-5713', fileName: 'shot.png', source: 'user' as const,
+        localPath: '/tmp/shot_5713.png', createdAt: 1 };
+      try {
+        await agent.processMessage({ chatId: 'owned-steer', payload: 'follow-att', messageId: 'follow-att',
+          threadRootId: 'root-B', attachments: [shot] });
+        const receipt = callbacks.sendMessage.mock.calls[0]?.[1] as string;
+        expect(receipt).toContain('已交给当前运行的回合');
+        expect(receipt).toContain('（含 1 个附件，将随这条输入一起处理）');
+      } finally { dispose(agent); }
+    });
+
+    it('Issue #5713 (review 6723047312): streaming and interjection render one unified supplement hint from a single source', async () => {
+      const interjection = owned();        // codex native steer
+      const streaming = owned('claude');   // claude streaming input
+      try {
+        for (const { agent } of [interjection, streaming]) {
+          (agent as any).activeTurnTriggerLine = '同一个运行任务';
+          (agent as any).turnStartedAtMsPrivate = Date.now() - 90_000;
+        }
+        await interjection.agent.processMessage(input());
+        await streaming.agent.processMessage(input());
+        const steerReceipt = interjection.callbacks.sendMessage.mock.calls[0]?.[1] as string;
+        const streamReceipt = streaming.callbacks.sendMessage.mock.calls[0]?.[1] as string;
+        // The unified supplement line is the ONLY receipt source: both paths
+        // produce the identical receipt — no per-harness status wording.
+        expect(steerReceipt).toBe(streamReceipt);
+        expect(steerReceipt).toContain('已交给当前运行的回合');
+        expect(steerReceipt).not.toContain('已送入当前会话的输入流');
+        expect(steerReceipt).not.toContain('后端已确认接收');
+        // One display contract: both carry the same #5394 context block.
+        expect(steerReceipt).toContain('\n（当前回合「同一个运行任务」已运行 1 分钟）');
+      } finally { dispose(interjection.agent); dispose(streaming.agent); }
+    });
+
+    it('Issue #5713 review ⑥: no per-harness busy/interrupt hint strings remain in the host', () => {
+      const source = readFileSync(new URL('./chat-agent.ts', import.meta.url), 'utf8');
+      // Retired per-harness hint lines must not come back anywhere.
+      expect(source).not.toContain('已送入当前会话的输入流');
+      expect(source).not.toContain('后端已确认接收');
+      // The unified supplement hint lives in exactly one construction point.
+      expect(source.match(/已交给当前运行的回合/g)).toHaveLength(1);
+    });
+
+    it('Issue #5713 review ⑥ (round 2): a backend run-capacity wait marker renders through the unified busy-input receipt', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_user_chat',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        apiProtocol: 'anthropic',
+      });
+      // The provider reports the governor wait as structured, content-free
+      // facts (#5713 round 2) — no wording is composed harness-side.
+      async function* queueWaitIterator() {
+        yield {
+          parsed: {
+            type: 'status',
+            content: '',
+            metadata: { queueWait: { running: 2, capacity: 2, queued: 3 } },
+          },
+        };
+        yield { parsed: { type: 'text', content: '清单整理完成。' } };
+        yield { parsed: { type: 'result', content: 'Done' } };
+      }
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: queueWaitIterator(),
+      });
+      try {
+        void agent.processMessage({
+          chatId: 'oc_user_chat',
+          payload: '整理仓库里的依赖清单',
+          messageId: 'msg_queue_wait_1',
+        });
+        await vi.waitFor(
+          () => {
+            expect(
+              (agent as any).logger.info.mock.calls.some(
+                (c: any[]) => c[1] === 'Result received, turn complete'
+              )
+            ).toBe(true);
+          },
+          { timeout: 1000, interval: 20 }
+        );
+        const receipts = localCallbacks.sendMessage.mock.calls
+          .filter((call: any[]) => call[0] === 'oc_user_chat')
+          .map((call: any[]) => call[1] as string)
+          .filter(text => text.includes('已接收并排队'));
+        // Exactly one receipt, built by the same unified builder as every other
+        // busy-input notice: admission line + the marker's real queue depth.
+        expect(receipts).toHaveLength(1);
+        expect(receipts[0]).toContain('⏳ 这条消息已接收并排队；模型会话容量释放后会自动处理，无需重新发送。');
+        expect(receipts[0]).toContain('前方还有 3 条排队');
+        // The retired harness-side governor wording must not resurface.
+        expect(receipts[0]).not.toContain('并发已满');
+        expect(receipts[0]).not.toContain('排队等候');
+      } finally { dispose(agent); }
+    });
+
+    it('Issue #5713 review ⑥ (round 2): harness modules keep no local busy/interrupt receipt construction', () => {
+      // The unified service layer (buildBusyInputReceipt in chat-agent.ts)
+      // is the only implementation path for busy-input/interjection notice
+      // text. Provider/harness sources may report structured facts
+      // (metadata.queueWait) but must not construct receipt wording — scan
+      // every non-test source under the provider modules for residue.
+      const providersRoot = new URL('../../../../packages/core/src/sdk/providers/', import.meta.url);
+      const fragments = [
+        '已接收并排队',       // unified queued-capacity line
+        '已交给当前运行的回合', // unified supplement line
+        '将在当前回合结束后处理', // unified queued-turn line
+        '前方还有',           // unified queue-depth context
+        '并发已满',           // retired codex governor notice
+        '排队等候',           // retired codex governor notice
+        '前面还有',           // retired codex governor queue-depth wording
+        '已送入当前会话的输入流', // retired per-harness streaming hint
+        '后端已确认接收',      // retired per-harness steer hint
+      ];
+      const scanned: string[] = [];
+      for (const entry of readdirSync(providersRoot, { recursive: true, encoding: 'utf8' })) {
+        if (!entry.endsWith('.ts') || entry.includes('.test.')) { continue; }
+        const source = readFileSync(new URL(entry, providersRoot), 'utf8');
+        scanned.push(entry);
+        for (const fragment of fragments) {
+          expect(source, `${entry} must not construct busy-receipt wording (${fragment})`).not.toContain(fragment);
+        }
+      }
+      // The scan must actually cover the harness modules — it fails loudly
+      // if the provider tree moves, instead of passing on an empty set.
+      expect(scanned.length).toBeGreaterThan(30);
     });
 
     it('Issue #5434: suppresses a replayed attachment-only input the running turn already consumed', async () => {
@@ -1246,7 +1396,7 @@ describe('ChatAgent (service)', () => {
         await admission;
         expect(push).not.toHaveBeenCalled();
         await expect(agent.turnCompleteFor('follow-B')).rejects.toThrow(/reset|supersed/i);
-        expect(callbacks.sendMessage.mock.calls.some(call => String(call[1]).includes('后端已确认接收'))).toBe(false);
+        expect(callbacks.sendMessage.mock.calls.some(call => String(call[1]).includes('已交给当前运行的回合'))).toBe(false);
       } finally { dispose(agent); }
     });
 
@@ -1288,7 +1438,7 @@ describe('ChatAgent (service)', () => {
       try {
         await agent.processMessage(input());
         expect(push).toHaveBeenCalledTimes(1);
-        expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('输入流');
+        expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('已交给当前运行的回合');
         expect(callbacks.sendMessage.mock.calls[0]?.[1]).not.toContain('已排队');
         await expect(agent.steer('instruction')).resolves.toMatchObject({ ok: false, error: expect.stringContaining('normal message') });
       } finally { dispose(agent); }
@@ -1319,7 +1469,7 @@ describe('ChatAgent (service)', () => {
         const guidance = await agent.steer('instruction');
         expect(guidance.ok).toBe(false);
         if (inputDelivery === 'streaming') {
-          expect(notice).toContain('输入流');
+          expect(notice).toContain('已交给当前运行的回合');
           expect(notice).not.toContain('已排队');
           expect(guidance).toMatchObject({ error: expect.stringContaining('normal message') });
         } else {
@@ -1560,7 +1710,7 @@ describe('ChatAgent (service)', () => {
         await agent.processMessage({ chatId: 'receipt-chat', payload: 'supplement', messageId: 'follow-B' });
         expect(steer).toHaveBeenCalledExactlyOnceWith('supplement');
         expect(callbacks.sendMessage.mock.calls[0]?.[2]).toBe('topic-A');
-        expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('后端已确认接收');
+        expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('已交给当前运行的回合');
       } finally { dispose(agent); }
     });
 
@@ -7621,7 +7771,7 @@ describe('Issue #5394: busy queue notice context', () => {
   const input = (messageId: string, payload = `payload-${messageId}`) =>
     ({ chatId: 'ctx-chat', payload, messageId, threadRootId: 'thread-root' });
   const queueNotices = (callbacks: ReturnType<typeof createMockCallbacks>) =>
-    callbacks.sendMessage.mock.calls.map(([, text]) => text as string).filter(t => t?.includes('输入流') || t?.includes('排队'));
+    callbacks.sendMessage.mock.calls.map(([, text]) => text as string).filter(t => t?.includes('已交给当前运行的回合') || t?.includes('排队'));
 
   it('describes the running turn, its elapsed time and the queue depth ahead', async () => {
     const { agent, callbacks } = queueAgent();
@@ -7958,6 +8108,262 @@ describe('Issue #5654: narration-silent heartbeat and side-effect receipts', () 
       expect(String(receipt[0])).toContain('系统不会自动重放');
     } finally {
       cleanup(agent);
+    }
+  });
+});
+
+describe('Issue #5719 (T-102): timer-backstop heartbeat and accounted progress delivery', () => {
+  const makeAgent = () => {
+    const cb = createMockCallbacks();
+    const agent = new ChatAgent({
+      chatId: 'hb-chat',
+      callbacks: cb,
+      apiKey: 'test-key',
+      model: 'test-model',
+      apiProtocol: 'anthropic',
+      apiBaseUrl: 'https://api.example.com',
+    });
+    // Same instance override the queue-receipt tests use: no agent teams.
+    (agent as any).isAgentTeamsEnabled = () => false;
+    return { agent, cb };
+  };
+  const cleanup = (agent: ChatAgent) => {
+    agent.reset();
+    ChatAgent.prototype.dispose.call(agent);
+  };
+  const sentTexts = (cb: ReturnType<typeof createMockCallbacks>) =>
+    cb.sendMessage.mock.calls.map((call: unknown[]) => call[1]).filter((text): text is string => typeof text === 'string');
+  const progressRows = (agent: ChatAgent, state?: string) =>
+    (agent as any).logger.info.mock.calls
+      .map(([record]: any[]) => record)
+      .filter((record: any) => record?.event === 'progress_delivery' && (state === undefined || record.state === state));
+
+  it('delivers a heartbeat while the turn waits inside ONE long tool call (timer backstop, zero SDK events)', async () => {
+    vi.useFakeTimers();
+    const { agent, cb } = makeAgent();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    (agent as any).createQueryStream.mockReturnValue({
+      handle: { close: vi.fn(), cancel: vi.fn() },
+      // The #5719 shape: one tool_use, then the whole ~10-minute wait inside
+      // that tool — NO further SDK event can arrive to drive the event path.
+      iterator: (async function* () {
+        yield { parsed: { type: 'tool_use', content: 'SECRET-TOOL-INPUT render video', metadata: { toolName: 'Browser' } } };
+        await gate;
+        yield { parsed: { type: 'tool_result', content: 'done' } };
+        yield { parsed: { type: 'text', content: 'final answer' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete', subtype: 'success' }, raw: {} };
+      })(),
+    });
+    try {
+      await agent.processMessage({ chatId: 'hb-chat', payload: '长任务', messageId: 't102-1' });
+      // Past TWO timer-backstop windows: the first heartbeat reports the
+      // completed tool call; the second — same tool STILL outstanding — is
+      // the pure pending-wait variant (toolsSinceLast === 0, liveness proof
+      // is only the outstanding tool result).
+      await vi.advanceTimersByTimeAsync(2 * HEARTBEAT_TIMER_SILENCE_MS + PROGRESS_HEARTBEAT_TICK_MS);
+      const heartbeats = sentTexts(cb).filter(text => text.includes('⏳'));
+      expect(heartbeats).toHaveLength(2);
+      expect(heartbeats[0]).toContain('期间完成 1 次工具调用');
+      // The pending-tool variant: the outstanding tool wait is the liveness proof.
+      expect(heartbeats[1]).toContain('仍在等待当前工具返回');
+      // 验收⑤脱敏: the heartbeat is a public-readable summary only — no raw
+      // tool content from the in-flight call.
+      expect(heartbeats.every(text => !text.includes('SECRET-TOOL-INPUT'))).toBe(true);
+      // 验收③ layering: attempt and platform result correlate on the same
+      // turn, and neither claims phone receipt.
+      const attempts = progressRows(agent, 'send_attempt');
+      const results = progressRows(agent, 'platform_result');
+      expect(attempts.length).toBeGreaterThanOrEqual(1);
+      expect(attempts.every((row: any) => row.turnMessageId === 't102-1' && row.phoneReceipt === 'unverifiable_server_side')).toBe(true);
+      expect(results.some((row: any) => row.outcome === 'sent' && row.turnMessageId === 't102-1')).toBe(true);
+      // No payload ever logged — length only.
+      expect(progressRows(agent).every((row: any) => typeof row.contentLength === 'number' && row.text === undefined && row.content === undefined)).toBe(true);
+      // The turn is NOT ended or failed by the heartbeat: it completes and
+      // delivers the final reply exactly once.
+      release();
+      await agent.turnCompleteFor('t102-1');
+      expect(sentTexts(cb).filter(text => text.includes('final answer'))).toHaveLength(1);
+      expect(sentTexts(cb).some(text => text.includes('❌ 本次请求中断'))).toBe(false);
+    } finally {
+      cleanup(agent);
+      await vi.runOnlyPendingTimersAsync();
+      vi.useRealTimers();
+    }
+  });
+
+  it('rate-controls the timer backstop: one heartbeat per silence window, never one per tick', async () => {
+    vi.useFakeTimers();
+    const { agent, cb } = makeAgent();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    (agent as any).createQueryStream.mockReturnValue({
+      handle: { close: vi.fn(), cancel: vi.fn() },
+      iterator: (async function* () {
+        yield { parsed: { type: 'tool_use', content: 'step', metadata: { toolName: 'gh' } } };
+        await gate;
+        yield { parsed: { type: 'text', content: 'done answer' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete', subtype: 'success' }, raw: {} };
+      })(),
+    });
+    try {
+      await agent.processMessage({ chatId: 'hb-chat', payload: '长任务', messageId: 't102-2' });
+      // Window + 10 ticks: the first due tick sends, the silence clock reset
+      // must hold the rest back (a broken reset would emit ~10 heartbeats).
+      await vi.advanceTimersByTimeAsync(HEARTBEAT_TIMER_SILENCE_MS + 10 * PROGRESS_HEARTBEAT_TICK_MS);
+      expect(sentTexts(cb).filter(text => text.includes('⏳'))).toHaveLength(1);
+      release();
+      await agent.turnCompleteFor('t102-2');
+    } finally {
+      cleanup(agent);
+      await vi.runOnlyPendingTimersAsync();
+      vi.useRealTimers();
+    }
+  });
+
+  it('timer backstop does not fire without liveness proof (no tool activity at all)', async () => {
+    vi.useFakeTimers();
+    const { agent, cb } = makeAgent();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    (agent as any).createQueryStream.mockReturnValue({
+      handle: { close: vi.fn(), cancel: vi.fn() },
+      // A parked stream that never ran a tool: silence is NOT evidence of work.
+      iterator: (async function* () {
+        await gate;
+        yield { parsed: { type: 'text', content: 'quiet answer' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete', subtype: 'success' }, raw: {} };
+      })(),
+    });
+    try {
+      await agent.processMessage({ chatId: 'hb-chat', payload: '任务', messageId: 't102-3' });
+      await vi.advanceTimersByTimeAsync(3 * HEARTBEAT_TIMER_SILENCE_MS);
+      expect(sentTexts(cb).some(text => text.includes('⏳'))).toBe(false);
+      release();
+      await agent.turnCompleteFor('t102-3');
+    } finally {
+      cleanup(agent);
+      await vi.runOnlyPendingTimersAsync();
+      vi.useRealTimers();
+    }
+  });
+
+  it('timer backstop stays parked between turns even with stale tool counters', async () => {
+    vi.useFakeTimers();
+    const { agent, cb } = makeAgent();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    (agent as any).createQueryStream.mockReturnValue({
+      handle: { close: vi.fn(), cancel: vi.fn() },
+      iterator: (async function* () {
+        // Turn 1 ends with un-heartbeated tool activity (stale counters).
+        yield { parsed: { type: 'tool_use', content: 'step', metadata: { toolName: 'gh' } } };
+        yield { parsed: { type: 'text', content: 'first answer' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete', subtype: 'success' }, raw: {} };
+        // Between turns the iterator parks — no live input.
+        await gate;
+        yield { parsed: { type: 'text', content: 'second answer' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete', subtype: 'success' }, raw: {} };
+      })(),
+    });
+    try {
+      await agent.processMessage({ chatId: 'hb-chat', payload: 'first', messageId: 't102-4a' });
+      await agent.turnCompleteFor('t102-4a');
+      // Silence far beyond the window while NO turn is running: the stale
+      // turnToolsSinceHeartbeat=1 must not authorize a heartbeat.
+      await vi.advanceTimersByTimeAsync(3 * HEARTBEAT_TIMER_SILENCE_MS);
+      expect(sentTexts(cb).some(text => text.includes('⏳'))).toBe(false);
+      const second = agent.processMessage({ chatId: 'hb-chat', payload: 'second', messageId: 't102-4b' });
+      release();
+      await second;
+      await agent.turnCompleteFor('t102-4b');
+      expect(sentTexts(cb).filter(text => text.includes('second answer'))).toHaveLength(1);
+      expect(sentTexts(cb).some(text => text.includes('⏳'))).toBe(false);
+    } finally {
+      cleanup(agent);
+      await vi.runOnlyPendingTimersAsync();
+      vi.useRealTimers();
+    }
+  });
+
+  it('records a failed heartbeat send as failed (never silent success), keeps the turn alive and rate-bounded', async () => {
+    vi.useFakeTimers();
+    const { agent, cb } = makeAgent();
+    cb.sendMessage.mockImplementation((_chatId: string, text: string) =>
+      typeof text === 'string' && text.includes('⏳')
+        ? Promise.reject(new Error('wechat channel rejected: 500'))
+        : Promise.resolve(undefined));
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    (agent as any).createQueryStream.mockReturnValue({
+      handle: { close: vi.fn(), cancel: vi.fn() },
+      iterator: (async function* () {
+        yield { parsed: { type: 'tool_use', content: 'step', metadata: { toolName: 'gh' } } };
+        await gate;
+        yield { parsed: { type: 'text', content: 'final answer' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete', subtype: 'success' }, raw: {} };
+      })(),
+    });
+    try {
+      await agent.processMessage({ chatId: 'hb-chat', payload: '长任务', messageId: 't102-5' });
+      await vi.advanceTimersByTimeAsync(HEARTBEAT_TIMER_SILENCE_MS + PROGRESS_HEARTBEAT_TICK_MS);
+      // The failure is accounted at platform_result layer — not swallowed.
+      const failedRows = progressRows(agent, 'platform_result').filter((row: any) => row.outcome === 'failed');
+      expect(failedRows).toHaveLength(1);
+      expect(failedRows[0].kind).toBe('heartbeat');
+      // Best-effort contract (#5288/#5719 验收②): the turn was not killed.
+      expect(sentTexts(cb).some(text => text.includes('❌ 本次请求中断'))).toBe(false);
+      // No retry burst: clocks reset even on failure. The single ⏳ attempt
+      // stays in mock.calls (it was attempted and rejected) — exactly one.
+      await vi.advanceTimersByTimeAsync(6 * PROGRESS_HEARTBEAT_TICK_MS);
+      expect(sentTexts(cb).filter(text => text.includes('⏳'))).toHaveLength(1);
+      expect(progressRows(agent, 'send_attempt').filter((row: any) => row.kind === 'heartbeat')).toHaveLength(1);
+      release();
+      await agent.turnCompleteFor('t102-5');
+      expect(sentTexts(cb).filter(text => text.includes('final answer'))).toHaveLength(1);
+    } finally {
+      cleanup(agent);
+      await vi.runOnlyPendingTimersAsync();
+      vi.useRealTimers();
+    }
+  });
+
+  it('a failed commentary send is recorded, not counted as delivered progress, and cannot fail the turn', async () => {
+    vi.useFakeTimers();
+    const { agent, cb } = makeAgent();
+    cb.sendMessage.mockImplementation((_chatId: string, text: string) =>
+      text === '公开进度：正在分析' ? Promise.reject(new Error('send failed: 429')) : Promise.resolve(undefined));
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    (agent as any).createQueryStream.mockReturnValue({
+      handle: { close: vi.fn(), cancel: vi.fn() },
+      iterator: (async function* () {
+        yield { parsed: { type: 'text', content: '公开进度：正在分析', metadata: { phase: 'commentary' } }, raw: {} };
+        yield { parsed: { type: 'tool_use', content: 'SECRET-TOOL-INPUT', metadata: { toolName: 'Bash' } } };
+        await gate;
+        yield { parsed: { type: 'text', content: 'final answer' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete', subtype: 'success' }, raw: {} };
+      })(),
+    });
+    try {
+      await agent.processMessage({ chatId: 'hb-chat', payload: '任务', messageId: 't102-6' });
+      // The commentary failure is accounted (attempt + failed result).
+      const failedRows = progressRows(agent, 'platform_result').filter((row: any) => row.outcome === 'failed' && row.kind === 'commentary');
+      expect(failedRows).toHaveLength(1);
+      // Not treated as delivered: the silence clock was NOT reset, so the
+      // timer backstop still reaches its window (a false "delivered" would
+      // have pushed the clock forward and suppressed this heartbeat).
+      await vi.advanceTimersByTimeAsync(HEARTBEAT_TIMER_SILENCE_MS + PROGRESS_HEARTBEAT_TICK_MS);
+      const heartbeats = sentTexts(cb).filter(text => text.includes('⏳'));
+      expect(heartbeats).toHaveLength(1);
+      expect(heartbeats[0]).not.toContain('SECRET-TOOL-INPUT');
+      release();
+      await agent.turnCompleteFor('t102-6');
+      expect(sentTexts(cb).filter(text => text.includes('final answer'))).toHaveLength(1);
+    } finally {
+      cleanup(agent);
+      await vi.runOnlyPendingTimersAsync();
+      vi.useRealTimers();
     }
   });
 });

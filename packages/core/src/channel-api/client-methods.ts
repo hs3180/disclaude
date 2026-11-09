@@ -128,6 +128,12 @@ export async function uploadFile(
   fileSize?: number;
   /** Platform message_id of the delivered file message (Issue #5630). */
   messageId?: string;
+  /** Actual delivery position: 'thread-reply' (under the requested parent) or 'chat-root' (Issue #5722). */
+  deliveryPosition?: 'thread-reply' | 'chat-root';
+  /** Parent message id the file was replied under; present iff deliveryPosition === 'thread-reply' (Issue #5722). */
+  threadId?: string;
+  /** Thread root when known: for a chat-root send the delivered message itself is the root (Issue #5722). */
+  rootId?: string;
   /** Present (true) when the attempt timed out with an unknown delivery outcome. */
   outcomeUnknown?: boolean;
   /** Echoed back on an ambiguous timeout so the caller can retry safely. */
@@ -162,16 +168,20 @@ export async function uploadFile(
 /**
  * Upload an image for card embedding via REST API.
  * Issue #2951: Returns Feishu image_key for use in card img elements.
+ * T-083 R3 (#5254): optional `chatId` carries the conversation/channel
+ * attribution so multi-channel deployments upload with the OWNING channel's
+ * credentials instead of whichever single app happens to be registered.
  */
 export async function uploadImage(
   client: ChannelApiClientLike,
-  filePath: string
+  filePath: string,
+  chatId?: string
 ): Promise<ChannelApiMethodResult & { imageKey?: string }> {
   try {
-    return await client.request('uploadImage', { filePath });
+    return await client.request('uploadImage', { filePath, chatId });
   } catch (error) {
     const { err, errorType } = classifyError(error);
-    logger.error({ err: error, filePath }, 'uploadImage failed');
+    logger.error({ err: err.message, filePath, chatId }, 'uploadImage failed');
     return { success: false, error: err.message, errorType };
   }
 }

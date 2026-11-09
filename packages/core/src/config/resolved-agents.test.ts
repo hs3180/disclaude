@@ -3,7 +3,7 @@ import { resolveConfiguredAgents, validateResolvedAgent } from './resolved-agent
 import { resolveAgentPreset } from './agent-presets.js';
 import { validateConfig, validateRequiredConfig } from './loader.js';
 import { buildSdkEnv } from '../utils/sdk.js';
-import type { DisclaudeConfig } from './types.js';
+import type { DisclaudeConfig, LlmConfig } from './types.js';
 
 afterEach(() => vi.unstubAllEnvs());
 const configuration = (): DisclaudeConfig => ({
@@ -27,6 +27,29 @@ const configuration = (): DisclaudeConfig => ({
   channels: { feishu: { appId: 'test-app', appSecret: '$FEISHU_APP_SECRET' } },
 });
 
+// Shared preset builders (review: deduplicate test preset configuration).
+// The same named-LLM bindings recur across the suites below; construct them
+// once so repeated fixtures stay in sync. Behaviour assertions are unchanged.
+const nativeDshLlm = (): LlmConfig => ({
+  defaultModel: 'glm-5.3',
+  api: { protocol: 'openai', baseUrl: 'https://dsh.example/v1', apiKey: '$DSH_TEST_KEY' },
+});
+const selectedDshLlm = (protocol: 'openai' | 'anthropic', apiKeyRef = '$DSH_KEY'): LlmConfig => ({
+  defaultModel: 'glm-5.3',
+  api: { protocol, baseUrl: 'https://selected.example/v1', apiKey: apiKeyRef },
+});
+const miniSweLlm = (): LlmConfig => ({
+  defaultModel: 'openai/gpt-5.4',
+  api: { protocol: 'openai', baseUrl: 'https://litellm.example/v1', apiKey: '$MINISWE_KEY' },
+});
+const nonDshLlmBinding = (backend: string) => (backend === 'codex' ? 'daily' : 'proxy');
+const kimiTierOverrides = { 'claude-opus-5': 'kimi-k3', 'claude-sonnet-4-5': 'kimi-k3-flash' };
+const tierEnv = (opus: string, sonnet = opus, haiku = opus) => ({
+  ANTHROPIC_DEFAULT_OPUS_MODEL: opus,
+  ANTHROPIC_DEFAULT_SONNET_MODEL: sonnet,
+  ANTHROPIC_DEFAULT_HAIKU_MODEL: haiku,
+});
+
 describe('named runtime and LLM configuration', () => {
   it('accepts explicit auto metadata discovery as an opt-in', () => {
     const config = configuration();
@@ -41,10 +64,7 @@ describe('named runtime and LLM configuration', () => {
       vi.stubEnv('DSH_KEY', 'selected-test-key');
       const config = configuration();
       config.agents!.dsh = { backend: 'dsh', llm: 'selected', mode: 'minimal' };
-      config.llms!.selected = {
-        defaultModel: 'glm-5.3',
-        api: { protocol, baseUrl: 'https://selected.example/v1', apiKey: '${DSH_KEY}' },
-      };
+      config.llms!.selected = selectedDshLlm(protocol, '${DSH_KEY}');
       const result = resolveConfiguredAgents(config);
       expect(result.ok).toBe(true);
       if (!result.ok) {
@@ -78,10 +98,7 @@ describe('named runtime and LLM configuration', () => {
     vi.stubEnv('DSH_KEY', '');
     const config = configuration();
     config.agents!.dsh = { backend: 'dsh', llm: 'selected' };
-    config.llms!.selected = {
-      defaultModel: 'glm-5.3',
-      api: { protocol: 'openai', baseUrl: 'https://selected.example/v1', apiKey: '$DSH_KEY' },
-    };
+    config.llms!.selected = selectedDshLlm('openai');
     expect(validateRequiredConfig(config).valid).toBe(true);
     const result = resolveConfiguredAgents(config);
     expect(result.ok).toBe(true);
@@ -92,10 +109,7 @@ describe('named runtime and LLM configuration', () => {
 
   it('keeps minimal DSH settings on a named DSH agent with a Codex default', () => {
     const config = configuration();
-    config.llms!.native = {
-      defaultModel: 'glm-5.3',
-      api: { protocol: 'openai', baseUrl: 'https://dsh.example/v1', apiKey: '$DSH_TEST_KEY' },
-    };
+    config.llms!.native = nativeDshLlm();
     config.agents!.dsh = {
       backend: 'dsh',
       llm: 'native',
@@ -118,10 +132,7 @@ describe('named runtime and LLM configuration', () => {
 
   it('rejects the legacy backend with migration guidance', () => {
     const config = configuration();
-    config.llms!.native = {
-      defaultModel: 'glm-5.3',
-      api: { protocol: 'openai', baseUrl: 'https://dsh.example/v1', apiKey: '$DSH_TEST_KEY' },
-    };
+    config.llms!.native = nativeDshLlm();
     config.agents!.dsh = { backend: 'deepseek' as never, llm: 'native' };
     expect(resolveConfiguredAgents(config)).toEqual({
       ok: false,
@@ -133,10 +144,7 @@ describe('named runtime and LLM configuration', () => {
     'rejects a deepseek block under %s with migration guidance',
     (backend) => {
       const config = configuration();
-      config.llms!.native = {
-        defaultModel: 'glm-5.3',
-        api: { protocol: 'openai', baseUrl: 'https://dsh.example/v1', apiKey: '$DSH_TEST_KEY' },
-      };
+      config.llms!.native = nativeDshLlm();
       const binding = backend === 'codex' ? 'daily' : backend === 'dsh' ? 'native' : 'proxy';
       config.agents!.legacy = { backend, llm: binding, deepseek: { mode: 'minimal' } } as never;
       expect(resolveConfiguredAgents(config)).toEqual({
@@ -152,13 +160,13 @@ describe('named runtime and LLM configuration', () => {
     const config = configuration();
     config.agents!.misplaced = {
       backend,
-      llm: backend === 'codex' ? 'daily' : 'proxy',
+      llm: nonDshLlmBinding(backend),
       dsh: { provider: 'native-route' },
     } as never;
     expect(resolveConfiguredAgents(config)).toMatchObject({
       ok: false,
       errors: [
-        `agents.misplaced.dsh is unsupported; keep mode and dshHome on the agent and move protocol, baseUrl and credential reference to llms.${backend === 'codex' ? 'daily' : 'proxy'}.api`,
+        `agents.misplaced.dsh is unsupported; keep mode and dshHome on the agent and move protocol, baseUrl and credential reference to llms.${nonDshLlmBinding(backend)}.api`,
       ],
     });
   });
@@ -167,10 +175,7 @@ describe('named runtime and LLM configuration', () => {
     'accepts %s mode and home without a dsh connection block',
     (mode) => {
       const config = configuration();
-      config.llms!.native = {
-        defaultModel: 'glm-5.3',
-        api: { protocol: 'openai', baseUrl: 'https://dsh.example/v1', apiKey: '$DSH_TEST_KEY' },
-      };
+      config.llms!.native = nativeDshLlm();
       config.agents!.dsh = { backend: 'dsh', llm: 'native', mode, dshHome: '/selected-home' };
       expect(resolveConfiguredAgents(config)).toMatchObject({
         ok: true,
@@ -185,7 +190,7 @@ describe('named runtime and LLM configuration', () => {
     const config = configuration();
     config.agents!.misplaced = {
       backend,
-      llm: backend === 'codex' ? 'daily' : 'proxy',
+      llm: nonDshLlmBinding(backend),
       mode: 'minimal',
     };
     expect(resolveConfiguredAgents(config)).toEqual({
@@ -196,10 +201,7 @@ describe('named runtime and LLM configuration', () => {
 
   it.each([null, false, 42, '', 'typo', {}])('rejects malformed mode (%j)', (mode) => {
     const config = configuration();
-    config.llms!.native = {
-      defaultModel: 'glm-5.3',
-      api: { protocol: 'openai', baseUrl: 'https://dsh.example/v1', apiKey: '$DSH_TEST_KEY' },
-    };
+    config.llms!.native = nativeDshLlm();
     config.agents!.dsh = { backend: 'dsh', llm: 'native', mode: mode as never };
     expect(resolveConfiguredAgents(config)).toEqual({
       ok: false,
@@ -211,10 +213,7 @@ describe('named runtime and LLM configuration', () => {
     'rejects nested mode with migration guidance (flat mode: %s)',
     (mode) => {
       const config = configuration();
-      config.llms!.native = {
-        defaultModel: 'glm-5.3',
-        api: { protocol: 'openai', baseUrl: 'https://dsh.example/v1', apiKey: '$DSH_TEST_KEY' },
-      };
+      config.llms!.native = nativeDshLlm();
       config.agents!.dsh = {
         backend: 'dsh',
         llm: 'native',
@@ -234,7 +233,7 @@ describe('named runtime and LLM configuration', () => {
     const config = configuration();
     config.agents!.misplaced = {
       backend,
-      llm: backend === 'codex' ? 'daily' : 'proxy',
+      llm: nonDshLlmBinding(backend),
       dshHome: '/selected-home',
     };
     expect(resolveConfiguredAgents(config)).toEqual({
@@ -245,10 +244,7 @@ describe('named runtime and LLM configuration', () => {
 
   it.each([null, false, 42, '', '   ', {}])('rejects malformed dshHome (%j)', (dshHome) => {
     const config = configuration();
-    config.llms!.native = {
-      defaultModel: 'glm-5.3',
-      api: { protocol: 'openai', baseUrl: 'https://dsh.example/v1', apiKey: '$DSH_TEST_KEY' },
-    };
+    config.llms!.native = nativeDshLlm();
     config.agents!.dsh = { backend: 'dsh', llm: 'native', dshHome: dshHome as never };
     expect(resolveConfiguredAgents(config)).toEqual({
       ok: false,
@@ -260,10 +256,7 @@ describe('named runtime and LLM configuration', () => {
     'rejects nested home with migration guidance (flat home: %s)',
     (dshHome) => {
       const config = configuration();
-      config.llms!.native = {
-        defaultModel: 'glm-5.3',
-        api: { protocol: 'openai', baseUrl: 'https://dsh.example/v1', apiKey: '$DSH_TEST_KEY' },
-      };
+      config.llms!.native = nativeDshLlm();
       config.agents!.dsh = {
         backend: 'dsh',
         llm: 'native',
@@ -289,10 +282,7 @@ describe('named runtime and LLM configuration', () => {
     { ignoredSetting: true },
   ])('rejects malformed or ignored DSH settings (%j)', (dsh) => {
     const config = configuration();
-    config.llms!.native = {
-      defaultModel: 'glm-5.3',
-      api: { protocol: 'openai', baseUrl: 'https://dsh.example/v1', apiKey: '$DSH_TEST_KEY' },
-    };
+    config.llms!.native = nativeDshLlm();
     config.agents!.dsh = { backend: 'dsh', llm: 'native', dsh } as never;
     expect(resolveConfiguredAgents(config).ok).toBe(false);
   });
@@ -535,16 +525,13 @@ describe('named runtime and LLM configuration', () => {
   });
   it('projects a raw multi-slot modelOverrides map verbatim', () => {
     const config = configuration();
-    config.agents!.assistant.claude = { ...config.agents!.assistant.claude, modelOverrides: { 'claude-opus-5': 'kimi-k3', 'claude-sonnet-4-5': 'kimi-k3-flash' } };
+    config.agents!.assistant.claude = { ...config.agents!.assistant.claude, modelOverrides: { ...kimiTierOverrides } };
     const result = resolveConfiguredAgents(config);
     expect(result.ok).toBe(true);
     if (!result.ok) {
       return;
     }
-    expect(result.presets.assistant.modelOverrides).toEqual({
-      'claude-opus-5': 'kimi-k3',
-      'claude-sonnet-4-5': 'kimi-k3-flash',
-    });
+    expect(result.presets.assistant.modelOverrides).toEqual(kimiTierOverrides);
   });
   it.each([
     (c: DisclaudeConfig) => {
@@ -594,6 +581,108 @@ describe('named runtime and LLM configuration', () => {
       return;
     }
     expect(result.errors.join('\n')).toContain('aliases are not auto-resolved');
+  });
+
+  // --------------------------------------------------------------------------
+  // mini-swe-agent optional backend (Issue #5006)
+  // --------------------------------------------------------------------------
+
+  it('resolves a mini-swe agent from its bound LLM connection', () => {
+    vi.stubEnv('MINISWE_KEY', 'mini-test-key');
+    const config = configuration();
+    config.agents!.mini = {
+      backend: 'miniswe',
+      llm: 'mini-openai',
+      miniswe: { binary: 'mini', executionEnvironment: 'local', timeoutMs: 90_000 },
+    };
+    config.llms!['mini-openai'] = miniSweLlm();
+    const result = resolveConfiguredAgents(config);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.presets.mini).toMatchObject({
+      agentBackend: 'miniswe',
+      model: 'openai/gpt-5.4',
+      apiProtocol: 'openai',
+      apiBaseUrl: 'https://litellm.example/v1',
+      apiKey: 'mini-test-key',
+      miniswe: { binary: 'mini', executionEnvironment: 'local', timeoutMs: 90_000 },
+    });
+    expect(validateResolvedAgent(result.presets.mini)).toBeUndefined();
+  });
+
+  it('requires the bound LLM api connection for mini-swe (no interactive fallback)', () => {
+    const config = configuration();
+    config.llms!.bare = { defaultModel: 'openai/gpt-5.4' };
+    config.agents!.mini = { backend: 'miniswe', llm: 'bare' };
+    expect(resolveConfiguredAgents(config)).toEqual({
+      ok: false,
+      errors: [
+        'llms.bare.api with protocol, credential reference and (for custom endpoints) baseUrl is required for mini-swe',
+      ],
+    });
+  });
+
+  it('flags a missing mini-swe credential at selection time without blocking resolve', () => {
+    vi.stubEnv('MINISWE_KEY', '');
+    const config = configuration();
+    config.agents!.mini = { backend: 'miniswe', llm: 'mini-openai' };
+    config.llms!['mini-openai'] = miniSweLlm();
+    const result = resolveConfiguredAgents(config);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(validateResolvedAgent(result.presets.mini)).toMatch(/credential referenced by llms\.mini-openai\.api\.apiKey is missing/);
+    }
+  });
+
+  it('rejects non-local execution environments with the out-of-scope message', () => {
+    const config = configuration();
+    config.agents!.mini = {
+      backend: 'miniswe',
+      llm: 'proxy',
+      miniswe: { executionEnvironment: 'docker' as never },
+    };
+    expect(resolveConfiguredAgents(config)).toEqual({
+      ok: false,
+      errors: [
+        'agents.mini.miniswe.executionEnvironment must be local; docker and SWE-ReX execution environments are out of scope for this adapter (run those as native mini-swe-agent workflows, #5006)',
+      ],
+    });
+  });
+
+  it.each([
+    (c: DisclaudeConfig) => {
+      c.agents!.mini = { backend: 'miniswe', llm: 'proxy', miniswe: { image: 'swe' } as never };
+    },
+    (c: DisclaudeConfig) => {
+      c.agents!.mini = { backend: 'miniswe', llm: 'proxy', miniswe: { binary: '  ' } };
+    },
+    (c: DisclaudeConfig) => {
+      c.agents!.mini = { backend: 'miniswe', llm: 'proxy', miniswe: { timeoutMs: -1 } };
+    },
+    (c: DisclaudeConfig) => {
+      c.agents!.mini = { backend: 'miniswe', llm: 'proxy', miniswe: { timeoutMs: 1.5 } };
+    },
+  ])('rejects malformed miniswe execution settings', (mutate) => {
+    const config = configuration();
+    mutate(config);
+    const result = resolveConfiguredAgents(config);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.errors.length).toBe(1);
+    expect(result.errors.join('\n')).toMatch(/agents\.mini\.miniswe\./);
+  });
+
+  it('rejects a miniswe block on a non-miniswe backend', () => {
+    const config = configuration();
+    config.agents!.assistant.miniswe = { timeoutMs: 5_000 };
+    expect(resolveConfiguredAgents(config)).toEqual({
+      ok: false,
+      errors: ['agents.assistant.miniswe requires backend: miniswe'],
+    });
   });
 
   describe('shared bindings across harnesses (Issue #5679)', () => {
@@ -651,8 +740,8 @@ describe('named runtime and LLM configuration', () => {
     it('projects Claude model-name settings from the agent, not the provider', () => {
       const config = configuration();
       config.agents!.assistant.claude = {
-        modelOverrides: { 'claude-opus-5': 'kimi-k3', 'claude-sonnet-4-5': 'kimi-k3-flash' },
-        env: { ANTHROPIC_DEFAULT_OPUS_MODEL: 'endpoint-large', ANTHROPIC_DEFAULT_SONNET_MODEL: 'endpoint-main', ANTHROPIC_DEFAULT_HAIKU_MODEL: 'endpoint-fast' },
+        modelOverrides: { ...kimiTierOverrides },
+        env: tierEnv('endpoint-large', 'endpoint-main', 'endpoint-fast'),
       };
       const result = resolveConfiguredAgents(config);
       expect(result.ok).toBe(true);
@@ -660,12 +749,8 @@ describe('named runtime and LLM configuration', () => {
         return;
       }
       expect(result.presets.assistant).toMatchObject({
-        modelOverrides: { 'claude-opus-5': 'kimi-k3', 'claude-sonnet-4-5': 'kimi-k3-flash' },
-        env: {
-          ANTHROPIC_DEFAULT_OPUS_MODEL: 'endpoint-large',
-          ANTHROPIC_DEFAULT_SONNET_MODEL: 'endpoint-main',
-          ANTHROPIC_DEFAULT_HAIKU_MODEL: 'endpoint-fast',
-        },
+        modelOverrides: { ...kimiTierOverrides },
+        env: tierEnv('endpoint-large', 'endpoint-main', 'endpoint-fast'),
       });
       expect(result.presets.other.modelOverrides).toBeUndefined();
     });
@@ -809,11 +894,7 @@ describe('named runtime and LLM configuration', () => {
       if (!result.ok) {
         return;
       }
-      expect(result.presets.assistant.env).toEqual({
-        ANTHROPIC_DEFAULT_OPUS_MODEL: 'kimi-k3',
-        ANTHROPIC_DEFAULT_SONNET_MODEL: 'kimi-k3-flash',
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: 'kimi-k3-air',
-      });
+      expect(result.presets.assistant.env).toEqual(tierEnv('kimi-k3', 'kimi-k3-flash', 'kimi-k3-air'));
       // Tier metadata rides the Claude preset only; the DSH agent sharing the
       // binding keeps the wire model without Claude environment.
       expect(result.presets.research.env?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
@@ -827,11 +908,7 @@ describe('named runtime and LLM configuration', () => {
       if (!result.ok) {
         return;
       }
-      expect(result.presets.assistant.env).toEqual({
-        ANTHROPIC_DEFAULT_OPUS_MODEL: 'glm-5.3',
-        ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-5.3',
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: 'kimi-k3-air',
-      });
+      expect(result.presets.assistant.env).toEqual(tierEnv('glm-5.3', 'glm-5.3', 'kimi-k3-air'));
     });
 
     it('points all three tiers at the only configured model by default', () => {
@@ -841,11 +918,7 @@ describe('named runtime and LLM configuration', () => {
       if (!result.ok) {
         return;
       }
-      expect(result.presets.assistant.env).toEqual({
-        ANTHROPIC_DEFAULT_OPUS_MODEL: 'glm-5.3',
-        ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-5.3',
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: 'glm-5.3',
-      });
+      expect(result.presets.assistant.env).toEqual(tierEnv('glm-5.3'));
       // Non-Claude runtimes never receive the tier environment.
       expect(result.presets.other.env).toEqual({});
     });
@@ -871,11 +944,7 @@ describe('named runtime and LLM configuration', () => {
       if (!result.ok) {
         return;
       }
-      expect(result.presets.assistant.env).toEqual({
-        ANTHROPIC_DEFAULT_OPUS_MODEL: 'endpoint-large',
-        ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-5.3',
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: 'glm-5.3',
-      });
+      expect(result.presets.assistant.env).toEqual(tierEnv('endpoint-large', 'glm-5.3', 'glm-5.3'));
     });
 
     it('rejects double-configuring one tier in models and env', () => {

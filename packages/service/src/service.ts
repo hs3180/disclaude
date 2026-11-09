@@ -323,6 +323,11 @@ export class DisclaudeService extends EventEmitter {
       await this.startSchedulerSafely();
     }
 
+    // T-089 rework (#5197, review 6677596913): research doc comment watching is
+    // NOT auto-started. It exists only as an on-demand watch session started via
+    // `disclaude research watch start` (REST /api/research/watch/* wired in
+    // cli-main.ts); when nobody is watching there is no monitor and no timer.
+
     this.running = true;
     this.emit('started');
     logger.info({ instanceId: this.instanceId }, 'DisclaudeService started');
@@ -521,13 +526,14 @@ export class DisclaudeService extends EventEmitter {
    * the REST face is localhost-bound and the caller is co-located.
    *
    * @returns upload metadata (fileKey/fileType/fileName/fileSize) plus the
-   *   delivered message_id when the channel confirms one (Issue #5630)
+   *   delivered message_id when the channel confirms one (Issue #5630) and the
+   *   actual delivery position — thread-reply vs chat-root (Issue #5722)
    */
   async uploadFile(
     chatId: string,
     filePath: string,
     threadId?: string,
-  ): Promise<{ success: boolean; fileKey?: string; fileType?: string; fileName?: string; fileSize?: number; messageId?: string }> {
+  ): Promise<{ success: boolean; fileKey?: string; fileType?: string; fileName?: string; fileSize?: number; messageId?: string; deliveryPosition?: 'thread-reply' | 'chat-root'; threadId?: string; rootId?: string }> {
     const h = this.resolveApiHandlers(chatId);
     if (!h) {
       throw new Error('No channel handlers available');
@@ -538,15 +544,26 @@ export class DisclaudeService extends EventEmitter {
 
   /**
    * Upload a local image and return a Feishu image_key (for card embedding) —
-   * delegates to the channel's uploadImage capability. Channel-agnostic (no
-   * chatId). REST parity with the REST API uploadImage method (Issue #4279).
+   * delegates to the channel's uploadImage capability. REST parity with the
+   * REST API uploadImage method (Issue #4279).
+   *
+   * T-083 R3 (#5254): optional `chatId` carries the conversation/channel
+   * attribution. When present, the OWNING channel's handlers (and therefore
+   * its app credentials) serve the upload — with named multi-app Feishu
+   * channels this is required, because no single "first" app is the right
+   * one. When omitted, the legacy single-app Feishu container keeps serving
+   * exactly as before.
    *
    * @returns { success: boolean; imageKey?: string }
    */
-  async uploadImage(filePath: string): Promise<{ success: boolean; imageKey?: string }> {
-    const h = this.resolveApiHandlers();
+  async uploadImage(filePath: string, chatId?: string): Promise<{ success: boolean; imageKey?: string }> {
+    const h = this.resolveApiHandlers(chatId);
     if (!h?.uploadImage) {
-      throw new Error('uploadImage not supported by this channel');
+      throw new Error(
+        chatId
+          ? `uploadImage is not supported by the channel owning ${chatId}; pass the channel-scoped chat ID (e.g. feishu:<name>:oc_…)`
+          : 'uploadImage not supported by this channel'
+      );
     }
     const result = await h.uploadImage(filePath);
     return { success: true, ...result };
@@ -588,10 +605,11 @@ export class DisclaudeService extends EventEmitter {
     if (!h) {
       throw new Error('No channel handlers available');
     }
-    // The channel handler returns Promise<void> (the REST API layer synthesizes
-    // success/messageId); REST confirms acceptance with { success: true }.
-    await h.sendCard(chatId, card, threadId, description);
-    return { success: true };
+    // Issue #5722: the channel handler now returns the platform message_id when
+    // the channel reports one (sendCard previously discarded it), so the REST
+    // layer can echo the delivery position like sendMessage/uploadFile.
+    const messageId = await h.sendCard(chatId, card, threadId, description);
+    return { success: true, ...(typeof messageId === 'string' && messageId ? { messageId } : {}) };
   }
 
   /**

@@ -35,6 +35,12 @@ import { SERVICE_VERSION } from './version.js';
 import type { DeliveryHealth } from './health-types.js';
 import type { WeChatRegistrationHealth } from './channels/wechat/runtime.js';
 import { channelError } from './channel-error.js';
+// T-089 rework (#5197): on-demand research doc comment watch session. Type-only:
+// the server stays dependency-free of the research runtime.
+import type {
+  ResearchCommentWatchStatus,
+  ResearchWatchRegisterResult,
+} from './research/watch-service.js';
 
 const logger = createLogger('HttpApiServer');
 
@@ -112,6 +118,12 @@ export type UploadFileResponse = {
   fileSize?: number;
   /** Platform message_id of the delivered file message, when confirmed (Issue #5630). */
   messageId?: string;
+  /** Actual delivery position: 'thread-reply' (under the requested parent) or 'chat-root' (Issue #5722). */
+  deliveryPosition?: 'thread-reply' | 'chat-root';
+  /** Parent message id the file was replied under; present iff deliveryPosition === 'thread-reply' (Issue #5722). */
+  threadId?: string;
+  /** Thread root when known: for a chat-root send the delivered message itself is the root (Issue #5722). */
+  rootId?: string;
 };
 
 /**
@@ -229,10 +241,16 @@ export type UploadImageResponse = { success: boolean; imageKey?: string };
 
 /**
  * Handler for uploadImage requests. Delegates to the channel's uploadImage
- * capability — REST parity with the REST API method (Issue #4279). Channel-agnostic
- * (no chatId). Uses a local filePath (see UploadFileHandler rationale).
+ * capability — REST parity with the REST API method (Issue #4279). Uses a
+ * local filePath (see UploadFileHandler rationale).
+ * T-083 R3 (#5254): optional `chatId` carries the conversation/channel
+ * attribution so the service dispatches to the OWNING channel's credentials;
+ * when omitted the legacy single-app Feishu channel keeps serving the request.
  */
-export type UploadImageHandler = (filePath: string) => Promise<UploadImageResponse>;
+export type UploadImageHandler = (
+  filePath: string,
+  chatId?: string
+) => Promise<UploadImageResponse>;
 
 /**
  * Params for markChatResponded (mirrors the REST API markChatResponded payload).
@@ -263,6 +281,29 @@ export type MarkChatRespondedHandler = (
  * event is not fed back to the agent as a new user turn.
  */
 export type SelfSentRegistrar = (messageId: string) => void;
+
+/**
+ * T-089 rework (#5197, review 6677596913): controller for the on-demand
+ * research doc comment watch session (`disclaude research watch ...`).
+ *
+ * Implemented by `ResearchCommentWatchService`; nothing polls until `start()`
+ * is invoked through this surface, so the resident cost of an unwatched
+ * service is these five routes and one dormant object.
+ */
+export interface ResearchWatchController {
+  start(options?: { pollIntervalMs?: number }): Promise<{ started: boolean; status: ResearchCommentWatchStatus }>;
+  stop(): Promise<ResearchCommentWatchStatus>;
+  status(): Promise<ResearchCommentWatchStatus>;
+  register(input: {
+    docToken: string;
+    docType?: string;
+    chatId: string;
+    projectName?: string;
+    registeredBy?: string;
+    identity?: string;
+  }): Promise<ResearchWatchRegisterResult>;
+  unregister(docToken: string): Promise<{ removed: boolean }>;
+}
 
 /**
  * Route handler type.
@@ -331,6 +372,8 @@ export class HttpApiServer {
 
   /** Issue #5603: structured read-only chat history provider. */
   private historyQueryHandler?: (options: { chatId: string; days?: number; limit?: number }) => Promise<unknown>;
+  /** T-089 rework (#5197): research doc comment watch session controller. */
+  private researchWatchController?: ResearchWatchController;
   private uploadImageHandler?: UploadImageHandler;
   private markChatRespondedHandler?: MarkChatRespondedHandler;
   private selfSentRegistrar?: SelfSentRegistrar;
@@ -662,11 +705,25 @@ export class HttpApiServer {
     // Issue #5603: read-only structured chat history for agents (CLI parity).
     // GET but authRequired: the payload is conversation content, not a health check.
     this.addRoute('GET', '/api/history/query', this.handleHistoryQuery.bind(this), true);
+    // T-089 rework (#5197): on-demand research doc comment watch session
+    // (`disclaude research watch start|stop|status|add|remove`). The mutating
+    // routes are POSTs (token-gated); status is GET but authRequired because it
+    // exposes registrations and checkpoint payloads, like history query.
+    this.addRoute('POST', '/api/research/watch/start', this.handleResearchWatchStart.bind(this));
+    this.addRoute('POST', '/api/research/watch/stop', this.handleResearchWatchStop.bind(this));
+    this.addRoute('GET', '/api/research/watch/status', this.handleResearchWatchStatus.bind(this), true);
+    this.addRoute('POST', '/api/research/watch/register', this.handleResearchWatchRegister.bind(this));
+    this.addRoute('POST', '/api/research/watch/unregister', this.handleResearchWatchUnregister.bind(this));
   }
 
   /** Issue #5603: structured read-only chat history provider. */
   setHistoryQueryHandler(handler: (options: { chatId: string; days?: number; limit?: number }) => Promise<unknown>): void {
     this.historyQueryHandler = handler;
+  }
+
+  /** T-089 rework (#5197): set the research doc comment watch session controller. */
+  setResearchWatchController(controller: ResearchWatchController): void {
+    this.researchWatchController = controller;
   }
 
   private async handleHistoryQuery(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -692,6 +749,163 @@ export class HttpApiServer {
     } catch (err) {
       logger.error({ err }, 'history query handler error');
       this.sendJson(res, 500, { ok: false, message: err instanceof Error ? err.message : 'history query failed' });
+    }
+  }
+
+  /**
+   * T-089 rework (#5197): POST /api/research/watch/start — start (or confirm)
+   * the on-demand watch session. Optional body `{ intervalSec?: number }`
+   * (seconds; the monitor clamps the ms interval). Never auto-invoked: this
+   * route (via the `disclaude research watch start` CLI) is the only trigger.
+   */
+  private async handleResearchWatchStart(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.researchWatchController) {
+      this.sendJson(res, 503, { ok: false, message: 'research watch controller not configured' });
+      return;
+    }
+    const body = await this.readOptionalJsonObject(req, res);
+    if (!body) { return; }
+    let pollIntervalMs: number | undefined;
+    const { intervalSec } = body;
+    if (intervalSec !== undefined) {
+      if (typeof intervalSec !== 'number' || !Number.isFinite(intervalSec) || intervalSec <= 0) {
+        this.sendJson(res, 400, { ok: false, message: 'intervalSec must be a positive number of seconds' });
+        return;
+      }
+      pollIntervalMs = intervalSec * 1000;
+    }
+    try {
+      const result = await this.researchWatchController.start({ ...(pollIntervalMs !== undefined ? { pollIntervalMs } : {}) });
+      this.sendJson(res, 200, { ok: true, started: result.started, watch: result.status });
+    } catch (err) {
+      logger.error({ err }, 'research watch start failed');
+      this.sendJson(res, 500, { ok: false, message: err instanceof Error ? err.message : 'research watch start failed' });
+    }
+  }
+
+  /** T-089 rework (#5197): POST /api/research/watch/stop — stop the session. */
+  private async handleResearchWatchStop(_req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.researchWatchController) {
+      this.sendJson(res, 503, { ok: false, message: 'research watch controller not configured' });
+      return;
+    }
+    try {
+      const status = await this.researchWatchController.stop();
+      this.sendJson(res, 200, { ok: true, watch: status });
+    } catch (err) {
+      logger.error({ err }, 'research watch stop failed');
+      this.sendJson(res, 500, { ok: false, message: err instanceof Error ? err.message : 'research watch stop failed' });
+    }
+  }
+
+  /** T-089 rework (#5197): GET /api/research/watch/status — session + checkpoint report. */
+  private async handleResearchWatchStatus(_req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.researchWatchController) {
+      this.sendJson(res, 503, { ok: false, message: 'research watch controller not configured' });
+      return;
+    }
+    try {
+      const status = await this.researchWatchController.status();
+      this.sendJson(res, 200, { ok: true, watch: status });
+    } catch (err) {
+      logger.error({ err }, 'research watch status failed');
+      this.sendJson(res, 500, { ok: false, message: err instanceof Error ? err.message : 'research watch status failed' });
+    }
+  }
+
+  /**
+   * T-089 rework (#5197): POST /api/research/watch/register — upsert the
+   * document → Project association. Explicit opt-in only: unregistered
+   * documents are never polled.
+   */
+  private async handleResearchWatchRegister(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.researchWatchController) {
+      this.sendJson(res, 503, { ok: false, message: 'research watch controller not configured' });
+      return;
+    }
+    const body = await this.readOptionalJsonObject(req, res);
+    if (!body) { return; }
+    const record = body as Record<string, unknown>;
+    if (typeof record.docToken !== 'string' || !record.docToken.trim()) {
+      this.sendJson(res, 400, { ok: false, message: 'Required fields: docToken (string), chatId (string)' });
+      return;
+    }
+    if (typeof record.chatId !== 'string' || !record.chatId.trim()) {
+      this.sendJson(res, 400, { ok: false, message: 'Required fields: docToken (string), chatId (string)' });
+      return;
+    }
+    for (const key of ['docType', 'projectName', 'registeredBy', 'identity'] as const) {
+      if (record[key] !== undefined && typeof record[key] !== 'string') {
+        this.sendJson(res, 400, { ok: false, message: `${key} must be a string when present` });
+        return;
+      }
+    }
+    try {
+      const result = await this.researchWatchController.register({
+        docToken: record.docToken,
+        chatId: record.chatId,
+        ...(record.docType !== undefined ? { docType: record.docType as string } : {}),
+        ...(record.projectName !== undefined ? { projectName: record.projectName as string } : {}),
+        ...(record.registeredBy !== undefined ? { registeredBy: record.registeredBy as string } : {}),
+        ...(record.identity !== undefined ? { identity: record.identity as string } : {}),
+      });
+      if (!result.ok) {
+        this.sendJson(res, 400, { ok: false, message: result.error });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true, registration: result.data });
+    } catch (err) {
+      logger.error({ err }, 'research watch register failed');
+      this.sendJson(res, 500, { ok: false, message: err instanceof Error ? err.message : 'research watch register failed' });
+    }
+  }
+
+  /** T-089 rework (#5197): POST /api/research/watch/unregister — drop an association. */
+  private async handleResearchWatchUnregister(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.researchWatchController) {
+      this.sendJson(res, 503, { ok: false, message: 'research watch controller not configured' });
+      return;
+    }
+    const body = await this.readOptionalJsonObject(req, res);
+    if (!body) { return; }
+    const { docToken } = body;
+    if (typeof docToken !== 'string' || !docToken.trim()) {
+      this.sendJson(res, 400, { ok: false, message: 'Required field: docToken (string)' });
+      return;
+    }
+    try {
+      const result = await this.researchWatchController.unregister(docToken);
+      this.sendJson(res, 200, { ok: true, removed: result.removed });
+    } catch (err) {
+      logger.error({ err }, 'research watch unregister failed');
+      this.sendJson(res, 500, { ok: false, message: err instanceof Error ? err.message : 'research watch unregister failed' });
+    }
+  }
+
+  /**
+   * Read a request body that may legitimately be absent/empty. Responds with
+   * the error itself and returns undefined when the body is unusable; returns
+   * `{}` for an empty body so callers can treat both alike.
+   */
+  private async readOptionalJsonObject(req: IncomingMessage, res: ServerResponse): Promise<Record<string, unknown> | undefined> {
+    let body: string;
+    try {
+      body = await readBody(req);
+    } catch {
+      this.sendJson(res, 413, { ok: false, message: 'Request body too large (max 1 MB)' });
+      return undefined;
+    }
+    const trimmed = body.trim();
+    if (trimmed.length === 0) { return {}; }
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        throw new Error('not an object');
+      }
+      return parsed as Record<string, unknown>;
+    } catch {
+      this.sendJson(res, 400, { ok: false, message: 'Request body must be a JSON object' });
+      return undefined;
     }
   }
 
@@ -1365,10 +1579,13 @@ export class HttpApiServer {
   /**
    * POST /api/upload-image handler (Issue #4279).
    *
-   * Accepts `{ filePath }` and delegates to the channel's uploadImage capability
-   * (reads the local image and returns a Feishu image_key for card embedding).
-   * Channel-agnostic (no chatId). Uses a local filePath (see handleUploadFile
-   * rationale: the REST face is localhost-bound, co-located, exact REST API parity).
+   * Accepts `{ filePath, chatId? }` and delegates to the channel's uploadImage
+   * capability (reads the local image and returns a Feishu image_key for card
+   * embedding). Uses a local filePath (see handleUploadFile rationale: the
+   * REST face is localhost-bound, co-located, exact REST API parity).
+   * T-083 R3 (#5254): `chatId` (optional) carries the conversation/channel
+   * attribution; with multiple Feishu apps configured the request uploads via
+   * the owning channel's credentials instead of an arbitrary app.
    * Response: `{ ok: true, success, imageKey? }`.
    */
   private async handleUploadImage(
@@ -1416,8 +1633,16 @@ export class HttpApiServer {
       return;
     }
 
+    // T-083 R3: optional chat attribution; type-check so a malformed value is a
+    // clean 400 instead of a handler-side 500.
+    const { chatId } = raw;
+    if (chatId !== undefined && (typeof chatId !== 'string' || !chatId)) {
+      this.sendJson(res, 400, { ok: false, message: 'chatId must be a non-empty string when provided' });
+      return;
+    }
+
     try {
-      const result = await this.uploadImageHandler(raw.filePath as string);
+      const result = await this.uploadImageHandler(raw.filePath as string, chatId);
       this.sendJson(res, 200, { ok: true, ...result });
     } catch (err) {
       logger.error({ err }, 'uploadImage handler error');

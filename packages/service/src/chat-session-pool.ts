@@ -11,12 +11,29 @@
  * @see Issue #1040 - Separate disclaude service code to @disclaude/service
  */
 
-import { type AgentQueryOptions, type MessageBuilderOptions, type CwdProvider, type CwdResolution, type AgentPreset, type AgentSessionOptions, type AgentPresets, type BaseAgentConfig, type ChatFailureRecord, buildSessionKey, chatIdOfSessionKey, createLogger, getProvider, Config, resolveAgentPreset } from '@disclaude/core';
+import {
+  type AgentQueryOptions,
+  type MessageBuilderOptions,
+  type CwdProvider,
+  type CwdResolution,
+  type AgentPreset,
+  type AgentSessionOptions,
+  type AgentPresets,
+  type BaseAgentConfig,
+  type ChatFailureRecord,
+  buildSessionKey,
+  chatIdOfSessionKey,
+  createLogger,
+  getProvider,
+  Config,
+  resolveAgentPreset,
+} from '@disclaude/core';
 import { statSync } from 'node:fs';
 import { AgentFactory } from './agents/factory.js';
 import type { ChatAgentCallbacks } from './agents/types.js';
 import type { ChatAgent } from './agents/chat-agent.js';
 import type { ServiceTurnRecoveryStore } from './service-turn-recovery.js';
+import type { AgentSelectionStore } from './agent-selection-store.js';
 
 /**
  * Options for ChatSessionPool initialization.
@@ -29,9 +46,22 @@ export interface ChatSessionPoolOptions {
   configureQueryOptions?: (options: AgentQueryOptions, chatId: string) => AgentQueryOptions;
   /** Named runtime presets. Defaults to Config.getAgentPresets(). */
   agentPresets?: AgentPresets;
+  /**
+   * Durable per-chat agent selections recorded by `/agent use` (#5476).
+   * Below this session's own explicit switch, above the per-app default.
+   */
+  agentSelections?: AgentSelectionStore;
+  /**
+   * Default preset for a chat's owning app or named channel declaration
+   * (`channels.feishu.agent` / `channels.<name>.agent`, #5254). Below the
+   * chat's saved /agent use choice and above the global default.
+   */
+  defaultAgentPresetForChat?: (chatId: string) => string | undefined;
   /** Backend availability probe; injectable for deterministic tests. */
-  validatePresetBackend?: (backend: AgentPreset['agentBackend'], config: BaseAgentConfig) =>
-    { available: boolean; unavailableReason?: string };
+  validatePresetBackend?: (
+    backend: AgentPreset['agentBackend'],
+    config: BaseAgentConfig
+  ) => { available: boolean; unavailableReason?: string };
   /**
    * Channel-specific MessageBuilderOptions.
    *
@@ -153,8 +183,14 @@ export class ChatSessionPool {
   /** Release a completed temporary scope only if it still owns the pool slot. */
   releaseChatAgent(chatId: string, sessionId: string, agent: ChatAgent): void {
     const key = this.sessionKeyOf(chatId, sessionId);
-    if (this.agents.get(key) !== agent) { return; }
-    try { agent.reset(); } finally { this.reset(chatId, false, sessionId); }
+    if (this.agents.get(key) !== agent) {
+      return;
+    }
+    try {
+      agent.reset();
+    } finally {
+      this.reset(chatId, false, sessionId);
+    }
   }
 
   /** Keyed by buildSessionKey(chatId, threadRootId) — see class doc (Issue #4587 part 2). */
@@ -211,34 +247,79 @@ export class ChatSessionPool {
     }));
   }
 
-  getActiveAgentPreset(chatId: string, threadRootId?: string): ActiveAgentPreset | undefined {
+  /**
+   * Base preset selection shared by every caller: this session's explicit
+   * /agent use > the chat's saved selection (#5476) > the owning app's or
+   * named channel declaration's default (#5254/#5476) > the global default.
+   */
+  private resolvePreset(chatId: string, sessionKey: string) {
     if (!this.presets) { return undefined; }
-    const sessionKey = this.sessionKeyOf(chatId, threadRootId);
-    const resolved = resolveAgentPreset(this.presets, this.selectedPresetBySession.get(sessionKey));
-    return resolved.ok
+    const requested = this.selectedPresetBySession.get(sessionKey)
+      ?? this.options.agentSelections?.get(chatId)?.presetName
+      ?? this.options.defaultAgentPresetForChat?.(chatId);
+    return resolveAgentPreset(this.presets, requested);
+  }
+
+  /** Refuse a chat-wide selection change while an affected session still owns work. */
+  private selectionChangeBusy(chatId: string): boolean {
+    return [...this.projectSessions.values()].some(scope => {
+      if (scope.chatId !== chatId) { return false; }
+      const key = this.sessionKeyOf(scope.chatId, scope.threadRootId);
+      if (this.selectedPresetBySession.has(key)) { return false; }
+      const agent = this.agents.get(key);
+      return agent?.isBusy === true || agent?.hasPendingWork === true;
+    });
+  }
+
+  /** Reset the chat's sessions that follow the chat-wide selection (#5476). */
+  private resetSelectionFollowingSessions(chatId: string): void {
+    for (const scope of this.projectSessions.values()) {
+      if (scope.chatId !== chatId) { continue; }
+      const key = this.sessionKeyOf(scope.chatId, scope.threadRootId);
+      if (!this.selectedPresetBySession.has(key)) { this.reset(scope.chatId, undefined, scope.threadRootId); }
+    }
+  }
+
+  getActiveAgentPreset(chatId: string, threadRootId?: string): ActiveAgentPreset | undefined {
+    const resolved = this.resolvePreset(chatId, this.sessionKeyOf(chatId, threadRootId));
+    return resolved?.ok
       ? { name: resolved.name, agentBackend: resolved.preset.agentBackend, model: resolved.preset.model }
       : undefined;
   }
 
   /**
    * Select a preset for one chat/thread. Existing agents are replaced only
-   * after the candidate backend and ChatAgent construct successfully.
+   * after the candidate backend and ChatAgent construct successfully, and —
+   * when a selection store is wired — after the choice is durably saved for
+   * the chat (#5476), so a failure leaves the current session untouched.
+   * Other sessions of the same chat that follow the chat-wide selection are
+   * reset to pick it up on their next message.
    */
   switchAgentPreset(
     chatId: string,
     presetName: string,
-    threadRootId?: string
+    threadRootId?: string,
+    actorId?: string
   ): AgentPresetSwitchResult {
     if (!this.presets) {
       return { ok: false, error: 'No named agent presets are configured (add an agents: map)' };
     }
     const resolved = resolveAgentPreset(this.presets, presetName);
-    if (!resolved.ok) { return resolved; }
+    if (!resolved.ok) {
+      return resolved;
+    }
 
     const sessionKey = this.sessionKeyOf(chatId, threadRootId);
     const previous = this.agents.get(sessionKey);
     if (previous?.isBusy) {
-      return { ok: false, error: 'The current chat is busy; wait for the response or use /stop before switching presets' };
+      return {
+        ok: false,
+        error:
+          'The current chat is busy; wait for the response or use /stop before switching presets',
+      };
+    }
+    if (this.options.agentSelections && this.selectionChangeBusy(chatId)) {
+      return { ok: false, error: 'Another session of this chat is busy; wait for the response or use /stop before switching presets' };
     }
 
     let info: { available: boolean; unavailableReason?: string };
@@ -248,7 +329,10 @@ export class ChatSessionPool {
         ? this.options.validatePresetBackend(resolved.preset.agentBackend, config)
         : getProvider(resolved.preset.agentBackend, resolved.preset).getInfo(config);
     } catch {
-      return { ok: false, error: `Could not validate agent preset "${resolved.name}". Check backend configuration and availability; the current session is unchanged.` };
+      return {
+        ok: false,
+        error: `Could not validate agent preset "${resolved.name}". Check backend configuration and availability; the current session is unchanged.`,
+      };
     }
     if (!info.available) {
       return {
@@ -266,6 +350,20 @@ export class ChatSessionPool {
         return {
           ok: false,
           error: `Could not activate agent preset "${resolved.name}": ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+    }
+
+    // Persist before any destructive side effect (forgetSession/dispose) so a
+    // failed save cannot leave the chat half-switched (#5476).
+    if (this.options.agentSelections) {
+      try {
+        this.options.agentSelections.set(chatId, resolved.name, actorId ?? 'unknown');
+      } catch (error) {
+        candidate?.dispose();
+        return {
+          ok: false,
+          error: `Could not save the agent selection for this chat: ${error instanceof Error ? error.message : String(error)}. The current session is unchanged.`,
         };
       }
     }
@@ -292,6 +390,9 @@ export class ChatSessionPool {
       this.skipHistoryChatIds.add(sessionKey);
     }
     this.selectedPresetBySession.set(sessionKey, resolved.name);
+    // The issuing session now owns an explicit selection, so the sweep below
+    // only resets the chat's other selection-following sessions (#5476).
+    if (this.options.agentSelections) { this.resetSelectionFollowingSessions(chatId); }
     return {
       ok: true,
       active: {
@@ -310,7 +411,7 @@ export class ChatSessionPool {
     skipHistory = false,
     sdkSessionKey = chatId,
     modelOverride?: string,
-    freezeDirectory = false,
+    freezeDirectory = false
   ): ChatAgent {
     let { cwdProvider, cwdResolver } = this.options;
     const { configureQueryOptions } = this.options;
@@ -323,8 +424,16 @@ export class ChatSessionPool {
         cwdProvider = () => directory;
         cwdResolver = () => {
           let available = false;
-          try { available = statSync(directory).isDirectory(); } catch { /* fail closed */ }
-          return { effectiveCwd: directory, boundWorkingDir: directory, reason: available ? 'bound' : 'bound-missing' };
+          try {
+            available = statSync(directory).isDirectory();
+          } catch {
+            /* fail closed */
+          }
+          return {
+            effectiveCwd: directory,
+            boundWorkingDir: directory,
+            reason: available ? 'bound' : 'bound-missing',
+          };
         };
       }
     }
@@ -336,11 +445,18 @@ export class ChatSessionPool {
       sdkSessionKey,
       turnRecovery: this.options.turnRecovery,
       failureRecorder: this.options.failureRecorder,
-      ...(configureQueryOptions ? { configureQueryOptions: (options: AgentQueryOptions) => configureQueryOptions(options, chatId) } : {}),
-      ...(preset ? {
-        ...preset,
-        settings: preset,
-      } : {}),
+      ...(configureQueryOptions
+        ? {
+            configureQueryOptions: (options: AgentQueryOptions) =>
+              configureQueryOptions(options, chatId),
+          }
+        : {}),
+      ...(preset
+        ? {
+            ...preset,
+            settings: preset,
+          }
+        : {}),
       ...(modelOverride !== undefined ? { model: modelOverride } : {}),
     });
   }
@@ -413,7 +529,7 @@ export class ChatSessionPool {
     chatId: string,
     callbacks: ChatAgentCallbacks,
     threadRootId?: string,
-    session?: AgentSessionOptions,
+    session?: AgentSessionOptions
   ): ChatAgent {
     if (this.isShuttingDown) {
       throw new Error('Disclaude service is shutting down; the message was not started');
@@ -428,9 +544,7 @@ export class ChatSessionPool {
     }
     if (!agent) {
       const skipHistory = session?.skipHistory ?? this.skipHistoryChatIds.has(sessionKey);
-      const selected = this.presets
-        ? resolveAgentPreset(this.presets, this.selectedPresetBySession.get(sessionKey))
-        : undefined;
+      const selected = this.resolvePreset(chatId, sessionKey);
       agent = this.createAgent(
         chatId,
         callbacks,
@@ -454,7 +568,9 @@ export class ChatSessionPool {
     }
     // Rejected requests must not replace the delivery owner used by preset switches.
     this.callbacksBySession.set(sessionKey, callbacks);
-    if (!session) { this.projectSessions.set(sessionKey, { chatId, threadRootId }); }
+    if (!session) {
+      this.projectSessions.set(sessionKey, { chatId, threadRootId });
+    }
     // Issue #4169: Track usage for idle eviction.
     this.lastUsedAt.set(sessionKey, Date.now());
     // Issue #4256: Track peak concurrent agents for leak diagnostics. Each
@@ -475,19 +591,27 @@ export class ChatSessionPool {
   /** Whether any persistent session affected by a Project change still owns work. */
   isProjectBusy(chatId: string): boolean {
     for (const [key, scope] of this.projectSessions) {
-      if (scope.chatId !== chatId) { continue; }
+      if (scope.chatId !== chatId) {
+        continue;
+      }
       const agent = this.agents.get(key);
       // The pending-work signal also covers history admission and background
       // tasks in runtimes that expose it, beyond the current visible turn.
-      if (agent && (agent.isBusy || ('hasPendingWork' in agent && agent.hasPendingWork === true))) { return true; }
+      if (agent && (agent.isBusy || ('hasPendingWork' in agent && agent.hasPendingWork === true))) {
+        return true;
+      }
     }
     return false;
   }
 
   /** Refresh the chat-wide binding without resetting directory-pinned executions. */
   resetProjectSessions(chatId: string): void {
-    const roots = new Set([undefined, ...[...this.projectSessions.values()]
-      .filter(scope => scope.chatId === chatId).map(scope => scope.threadRootId)]);
+    const roots = new Set([
+      undefined,
+      ...[...this.projectSessions.values()]
+        .filter((scope) => scope.chatId === chatId)
+        .map((scope) => scope.threadRootId),
+    ]);
     for (const threadRootId of roots) {
       this.reset(chatId, undefined, threadRootId);
     }
@@ -540,9 +664,7 @@ export class ChatSessionPool {
     // it must fire even when no ChatAgent instance exists (the chat may have
     // been idle-evicted from this pool while its codex stash lived on). Keyed
     // by the same scoped native session key used during construction.
-    const selected = this.presets
-      ? resolveAgentPreset(this.presets, this.selectedPresetBySession.get(sessionKey))
-      : undefined;
+    const selected = this.resolvePreset(chatId, sessionKey);
     if (selected?.ok) {
       getProvider(selected.preset.agentBackend, selected.preset).forgetSession?.(sessionKey);
     } else {
@@ -577,12 +699,17 @@ export class ChatSessionPool {
     return this.agents.get(this.sessionKeyOf(chatId, threadRootId))?.canSteer() ?? false;
   }
 
-  async steer(chatId: string, prompt: string, threadRootId?: string): Promise<
-    { ok: true; message: string } | { ok: false; error: string }
-  > {
+  async steer(
+    chatId: string,
+    prompt: string,
+    threadRootId?: string
+  ): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
     const agent = this.agents.get(this.sessionKeyOf(chatId, threadRootId));
     if (!agent?.isBusy) {
-      return { ok: false, error: 'No active turn to steer. Send the message normally to start or queue a turn.' };
+      return {
+        ok: false,
+        error: 'No active turn to steer. Send the message normally to start or queue a turn.',
+      };
     }
     try {
       const result = await agent.steer(prompt);
@@ -616,29 +743,42 @@ export class ChatSessionPool {
    * Stop accepting new turns, allow a bounded drain, then persist and report
    * any remaining turns as interrupted before releasing their agents.
    */
-  async shutdownForServiceRestart(options: {
-    drainTimeoutMs?: number;
-    noticeTimeoutMs?: number;
-  } = {}): Promise<void> {
+  async shutdownForServiceRestart(
+    options: {
+      drainTimeoutMs?: number;
+      noticeTimeoutMs?: number;
+    } = {}
+  ): Promise<void> {
     this.isShuttingDown = true;
     this.stopIdleSweep();
-    for (const agent of this.agents.values()) { agent.beginServiceShutdown(); }
+    for (const agent of this.agents.values()) {
+      agent.beginServiceShutdown();
+    }
     const drainTimeoutMs = Math.max(0, options.drainTimeoutMs ?? 10_000);
     const noticeTimeoutMs = Math.max(0, options.noticeTimeoutMs ?? 2_000);
     const deadline = Date.now() + drainTimeoutMs;
-    const hasPendingWork = (): boolean => [...this.agents.values()].some(agent => agent.hasPendingWork);
+    const hasPendingWork = (): boolean =>
+      [...this.agents.values()].some((agent) => agent.hasPendingWork);
 
     while (hasPendingWork() && Date.now() < deadline) {
-      await new Promise<void>(resolve => setTimeout(resolve, Math.min(25, deadline - Date.now())));
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, Math.min(25, deadline - Date.now()))
+      );
     }
 
     const remaining = [...this.agents.entries()].filter(([, agent]) => agent.hasPendingWork);
     if (remaining.length > 0) {
       logger.warn(
-        { count: remaining.length, sessionKeys: remaining.map(([sessionKey]) => sessionKey), drainTimeoutMs },
+        {
+          count: remaining.length,
+          sessionKeys: remaining.map(([sessionKey]) => sessionKey),
+          drainTimeoutMs,
+        },
         'Service shutdown drain expired; interrupting remaining agent turns (Issue #5273)'
       );
-      await Promise.allSettled(remaining.map(([, agent]) => agent.interruptForServiceRestart(noticeTimeoutMs)));
+      await Promise.allSettled(
+        remaining.map(([, agent]) => agent.interruptForServiceRestart(noticeTimeoutMs))
+      );
     }
     this.disposeAll();
   }
@@ -660,7 +800,9 @@ export class ChatSessionPool {
    * leak.
    */
   startIdleSweep(): void {
-    if (this.idleSweepTimer) { return; }
+    if (this.idleSweepTimer) {
+      return;
+    }
     const interval = this.options.idleSweepIntervalMs ?? DEFAULT_IDLE_SWEEP_INTERVAL_MS;
     this.idleSweepTimer = setInterval(() => {
       const evicted = this.evictIdleAgents();
@@ -697,13 +839,26 @@ export class ChatSessionPool {
       if (agent.isBusy || agent.hasPendingWork) {
         continue;
       }
-      if (timeout <= 0) { continue; }
+      if (timeout <= 0) {
+        continue;
+      }
       const last = Math.max(this.lastUsedAt.get(sessionKey) ?? now, agent.lastActivityAt ?? 0);
       if (now - last >= timeout) {
-        logger.info({ sessionKey, isBusy: agent.isBusy, hasPendingWork: agent.hasPendingWork,
-          backgroundTaskCount: agent.activeBackgroundTaskCount ?? 0, turnStartedAtMs: agent.turnStartedAtMs,
-          lastUsedAt: last, lastActivityAt: agent.lastActivityAt, lastActivityType: agent.lastActivityType,
-          idleTimeoutMs: timeout, idleMs: now - last }, 'Evicting inactive agent');
+        logger.info(
+          {
+            sessionKey,
+            isBusy: agent.isBusy,
+            hasPendingWork: agent.hasPendingWork,
+            backgroundTaskCount: agent.activeBackgroundTaskCount ?? 0,
+            turnStartedAtMs: agent.turnStartedAtMs,
+            lastUsedAt: last,
+            lastActivityAt: agent.lastActivityAt,
+            lastActivityType: agent.lastActivityType,
+            idleTimeoutMs: timeout,
+            idleMs: now - last,
+          },
+          'Evicting inactive agent'
+        );
         this.agents.delete(sessionKey);
         this.lastUsedAt.delete(sessionKey);
         // Do not retain channel closures after the owning agent is evicted.
@@ -735,7 +890,9 @@ export class ChatSessionPool {
   getPoolStats(): AgentPoolStats {
     let busy = 0;
     for (const agent of this.agents.values()) {
-      if (agent.isBusy) { busy++; }
+      if (agent.isBusy) {
+        busy++;
+      }
     }
     return {
       active: this.agents.size,

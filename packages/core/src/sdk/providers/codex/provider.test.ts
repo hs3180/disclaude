@@ -1306,10 +1306,19 @@ echo "E$n" >> "$CODEX_HOME/runs.log"
       .trim()
       .split('\n');
     expect(markers).toEqual(['S1', 'E1', 'S2', 'E2']); // strictly serialized
-    const statuses = (messagesTwo as Array<{ type: string; content: string }>)
-      .filter((m) => m.type === 'status')
-      .map((m) => m.content);
-    expect(statuses.join('\n')).toMatch(/排队/); // backpressure notice (#4634)
+    const statuses = (messagesTwo as Array<{ type: string; content: string; metadata?: { queueWait?: { running: number; capacity: number; queued: number } } }>)
+      .filter((m) => m.type === 'status');
+    // Backpressure (#4634) without harness-side receipt wording (#5713
+    // review round 2): the provider reports the wait as structured,
+    // content-free facts; the service layer's unified busy-input receipt is
+    // the only place the notice text is built.
+    const waitMarkers = statuses.filter((m) => m.metadata?.queueWait);
+    expect(waitMarkers.length).toBeGreaterThanOrEqual(1);
+    expect(waitMarkers[0].content).toBe('');
+    expect(waitMarkers[0].metadata?.queueWait).toMatchObject({ running: 1, capacity: 1 });
+    expect(typeof waitMarkers[0].metadata?.queueWait?.queued).toBe('number');
+    // No provider-side notice wording remains in any status content.
+    expect(statuses.map((m) => m.content).join('\n')).not.toMatch(/排队|并发/);
     const stats = provider.getGovernanceStats();
     expect(stats.runningRuns).toBe(0);
     expect(stats.queuedRuns).toBe(0);

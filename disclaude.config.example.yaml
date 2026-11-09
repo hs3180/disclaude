@@ -58,6 +58,17 @@ agents:
       # rejected (an explicit env entry still overrides a computed default).
       # env:
       #   ANTHROPIC_SMALL_FAST_MODEL: your-small-model
+  # Optional mini-swe-agent runtime (Issue #5006): headless `mini` subprocess
+  # with LiteLLM/OpenAI-compatible model backends. Requires the mini-swe-agent
+  # CLI on PATH (`pipx install mini-swe-agent`); without it the backend
+  # reports a clear unavailable error. Execution is local-subprocess only.
+  # miniswe:
+  #   backend: miniswe
+  #   llm: miniswe-openai
+  #   miniswe:
+  #     binary: mini # default; the packaged mini-swe-agent alias is probed too
+  #     executionEnvironment: local # the only supported policy; docker/SWE-ReX are out of scope
+  #     timeoutMs: 0 # per-run wall-clock timeout; 0 disables (default)
 
   # Second runtime on the SAME provider: DSH sends llms.shared-gateway.defaultModel
   # verbatim, so changing the deployment default model means editing that one
@@ -134,6 +145,14 @@ llms:
   #     protocol: openai
   #     baseUrl: https://your-openai-compatible-api.example/v1
   #     apiKey: $GLM_API_KEY
+  # mini-swe-agent provider (Issue #5006): LiteLLM-style provider-prefixed
+  # model as the provider default; any model the endpoint serves also works.
+  # miniswe-openai:
+  #   defaultModel: openai/gpt-5.4
+  #   api:
+  #     protocol: openai
+  #     baseUrl: https://your-litellm-or-openai-compatible-api.example/v1
+  #     apiKey: $MINISWE_API_KEY
   #
   # Cross-boundary guard: a provider shared by Claude AND another backend must
   # NOT use a bare Claude alias as its defaultModel. Claude resolves "sonnet"
@@ -148,11 +167,34 @@ channels:
     enabled: false
     # Optional absolute path, same as login --state-dir; default ~/.disclaude/wechat
     # stateDir: /absolute/path/to/private/wechat-account
+    # Per-app default agent, below the chat's saved /agent use choice and
+    # above the global default (#5476). Dynamic accounts may instead set it on
+    # their channels.wechat:<registration-id> block.
+    # agent: assistant
   feishu:
     enabled: true
     appId: $FEISHU_APP_ID
     appSecret: $FEISHU_APP_SECRET
     streamingCard: false
+    # agent: assistant
+  # Multiple Feishu channels in one instance (#5254): declare each channel
+  # under its own name with `type: feishu` instead of the single feishu section
+  # above. Each channel keeps its own tenant token and lark-cli credentials and
+  # routes chats under a stable `feishu:<name>:` identity. `agent` is an
+  # optional named `agents` preset used as that channel's default (an explicit
+  # /agent use still wins). Shared settings in the feishu section above
+  # (streamingCard, deduplication) still apply to declarations; a declaration
+  # may override streamingCard.
+  # personal:
+  #   type: feishu
+  #   appId: $FEISHU_PERSONAL_APP_ID
+  #   appSecret: $FEISHU_PERSONAL_APP_SECRET
+  #   agent: assistant
+  # work:
+  #   type: feishu
+  #   appId: $FEISHU_WORK_APP_ID
+  #   appSecret: $FEISHU_WORK_APP_SECRET
+  #   agent: daily
   rest:
     enabled: false
     host: 127.0.0.1
