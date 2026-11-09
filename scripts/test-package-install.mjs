@@ -300,20 +300,162 @@ async function verifyPackage() {
   // Install through the actual distributed executable, without network or a
   // link to the checkout. Keep the plugin scoped to a separate user Project.
   const diagnosticsProject = join(temp, 'diagnostics project');
+  const cleanProject = join(temp, 'clean project');
   mkdirSync(diagnosticsProject);
+  mkdirSync(cleanProject);
   const pluginArgs = ['--project-dir', diagnosticsProject];
   assert.equal(JSON.parse(run(cli, ['plugins', 'list', ...pluginArgs])).data.installed, false);
   assert(!existsSync(join(diagnosticsProject, '.disclaude')), 'Listing plugins must remain read-only');
   assert.equal(JSON.parse(run(cli, ['plugins', 'install', 'diagnostics', ...pluginArgs])).data.changed, true);
   assert.equal(JSON.parse(run(cli, ['plugins', 'install', 'diagnostics', ...pluginArgs])).data.changed, false);
   assert.equal(JSON.parse(run(cli, ['plugins', 'update', 'diagnostics', ...pluginArgs])).data.changed, false);
-  run(process.execPath, ['--input-type=module', '-e', `
+  // Issue #5718: Pi delivers the installed diagnostics plugin through pi's OWN
+  // native skills channel, so the probe below drives the installed provider
+  // end-to-end instead of asserting an injected prompt manifest (the removed
+  // pre-#5718 contract). pi-agent-core stays a host-side optional dependency,
+  // so plant an offline stub mirroring the published 0.83.0 surface (loadSkills
+  // + formatSkillsForSystemPrompt + the /node NodeExecutionEnv — the same
+  // mirror as the vitest fakes) where the installed tree's bare-specifier
+  // resolution finds it, then remove it again after the probe.
+  const piStubPackage = join(installed, 'node_modules', '@earendil-works', 'pi-agent-core');
+  mkdirSync(piStubPackage, { recursive: true });
+  writeFileSync(
+    join(piStubPackage, 'package.json'),
+    JSON.stringify({
+      name: '@earendil-works/pi-agent-core',
+      version: '0.83.0',
+      type: 'module',
+      exports: { '.': './index.mjs', './node': './node.mjs' },
+    }) + '\n'
+  );
+  writeFileSync(
+    join(piStubPackage, 'index.mjs'),
+    String.raw`// Offline host-side stub of the published @earendil-works/pi-agent-core@0.83.0
+// surface, written by scripts/test-package-install.mjs. Mirrors the native
+// skills channel verified against the 0.83.0 tarball — loadSkills (recursive
+// SKILL.md discovery over REAL files) and formatSkillsForSystemPrompt (the
+// spec-compatible XML block) — plus the minimal Agent the provider bridge
+// drives. Same mirror as the vitest fakes; no model or network involvement.
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+
+const state = (globalThis.__piAcceptanceStub ||= {
+  ctorOptions: null,
+  nodeEnvCwds: [],
+  nodeEnvCleanups: 0,
+});
+
+export class Agent {
+  #listeners = [];
+  constructor(options) {
+    state.ctorOptions = options;
+  }
+  subscribe(listener) {
+    this.#listeners.push(listener);
+    return () => undefined;
+  }
+  async prompt() {
+    for (const listener of [...this.#listeners]) {
+      await listener({ type: 'agent_end', messages: [] });
+    }
+  }
+  followUp() {
+    return Promise.resolve();
+  }
+  abort() {}
+  waitForIdle() {
+    return Promise.resolve();
+  }
+}
+
+export function loadSkills(env, dirs) {
+  void env;
+  const skills = [];
+  const walk = dir => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.isFile() && entry.name === 'SKILL.md') {
+        const raw = readFileSync(full, 'utf8');
+        const frontmatter = /^---\n([\s\S]*?)\n---\n?/.exec(raw);
+        const meta = frontmatter?.[1] ?? '';
+        const name = /^name:\s*(.+)$/m.exec(meta)?.[1]?.trim().replace(/^["']|["']$/g, '');
+        const description = /^description:\s*(.+)$/m
+          .exec(meta)?.[1]
+          ?.trim()
+          .replace(/^["']|["']$/g, '');
+        if (name && description) {
+          skills.push({
+            name,
+            description,
+            content: raw.slice(frontmatter ? frontmatter[0].length : 0),
+            filePath: full,
+          });
+        }
+      }
+    }
+  };
+  for (const dir of Array.isArray(dirs) ? dirs : [dirs]) {
+    if (statSync(dir).isDirectory()) walk(dir);
+  }
+  return Promise.resolve({ skills, diagnostics: [] });
+}
+
+export function formatSkillsForSystemPrompt(skills) {
+  const visible = skills.filter(skill => !skill.disableModelInvocation);
+  if (visible.length === 0) return '';
+  const escape = value =>
+    value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
+  const lines = [
+    'The following skills provide specialized instructions for specific tasks.',
+    'Read the full skill file when the task matches its description.',
+    'When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.',
+    '',
+    '<available_skills>',
+  ];
+  for (const skill of visible) {
+    lines.push('  <skill>');
+    lines.push('    <name>' + escape(skill.name) + '</name>');
+    lines.push('    <description>' + escape(skill.description) + '</description>');
+    lines.push('    <location>' + escape(skill.filePath) + '</location>');
+    lines.push('  </skill>');
+  }
+  lines.push('</available_skills>');
+  return lines.join('\n');
+}`);
+  writeFileSync(
+    join(piStubPackage, 'node.mjs'),
+    String.raw`// /node subentry of the acceptance stub (see index.mjs).
+const state = (globalThis.__piAcceptanceStub ||= {
+  ctorOptions: null,
+  nodeEnvCwds: [],
+  nodeEnvCleanups: 0,
+});
+
+export class NodeExecutionEnv {
+  constructor(options) {
+    state.nodeEnvCwds.push(options.cwd);
+  }
+  cleanup() {
+    state.nodeEnvCleanups++;
+    return Promise.resolve();
+  }
+}`);
+  try {
+    run(process.execPath, ['--input-type=module', '-e', `
     import assert from 'node:assert/strict';
-    import { join, resolve } from 'node:path';
+    import { join } from 'node:path';
     import { readFileSync } from 'node:fs';
     import { pathToFileURL } from 'node:url';
     const root = ${JSON.stringify(installed)};
     const project = ${JSON.stringify(diagnosticsProject)};
+    const cleanProject = ${JSON.stringify(cleanProject)};
     const modulesRoot = ${JSON.stringify(isPrebuilt ? 'packages' : 'node_modules/@disclaude')};
     const load = file => import(pathToFileURL(join(root, modulesRoot, 'core/dist', file)).href);
     const { codexNativeSkillRoots } = await load('sdk/providers/codex/skill-sources.js');
@@ -327,13 +469,56 @@ async function verifyPackage() {
     const instructions = readFileSync(join(diagnosticsSkills, 'diagnose-logs/SKILL.md'), 'utf8');
     assert.match(instructions, /Disclaude service issues only/);
     assert(diagnosticsPluginManifest(project).includes('diagnose-logs'), 'DSH manifest must discover installed diagnostics');
-    const pi = adaptPiOptions({ settingSources: [], cwd: project }, diagnosticsPluginManifest(project));
-    const piReference = pi.systemPrompt.match(/\\[diagnose-logs\\]\\(([^)]+)\\)/)?.[1];
-    assert(piReference, 'Installed Pi prompt must discover diagnostics');
-    assert.match(readFileSync(resolve(project, decodeURIComponent(piReference)), 'utf8'), /Disclaude service issues only/);
+    // Issue #5718: the options adapter maps ONLY the user's own prompt —
+    // single-argument contract, no manifest parameter, no injected listing.
+    assert.equal(
+      adaptPiOptions({ settingSources: [], cwd: project, systemPrompt: 'be terse' }).systemPrompt,
+      'be terse',
+      'Pi options adapter must map the user prompt verbatim without injecting skills'
+    );
+    // Drive the INSTALLED provider end-to-end against the stubbed host runtime:
+    // the installed plugin must be discovered and loaded through pi's own
+    // native skills channel — never a Disclaude-authored prompt manifest.
+    const { PiAgentProvider } = await load('sdk/providers/pi/provider.js');
+    const piProvider = new PiAgentProvider();
+    piProvider.streamFn = () => ({});
+    const piQuery = async options => {
+      async function* piInput() {
+        yield { role: 'user', content: 'hi' };
+      }
+      for await (const message of piProvider.queryStream(piInput(), options).iterator) void message;
+    };
+    const pluginRoot = join(project, '.disclaude', 'plugins', 'diagnostics');
+    // The stub runtime module loads lazily inside the first query, so the
+    // shared fixture state is only reachable after that query settles.
+    await piQuery({ settingSources: [], cwd: project, projectRoot: project, systemPrompt: 'be terse' });
+    const piStub = globalThis.__piAcceptanceStub;
+    assert(piStub, 'The stubbed pi runtime did not initialize its fixture state');
+    const piPrompt = piStub.ctorOptions.initialState.systemPrompt;
+    assert(piPrompt.startsWith('be terse\\n\\n'), 'User system prompt must be preserved verbatim');
+    assert(piPrompt.includes('<available_skills>'), 'Pi native skills spec block must carry the installed skill');
+    assert(piPrompt.includes('<name>diagnose-logs</name>'), 'Pi native loadSkills must discover the installed diagnostics');
+    const piLocation = /<location>([^<]+)<\\/location>/.exec(piPrompt)?.[1];
+    assert(piLocation, 'Pi native skills block omitted the skill location');
+    assert(piLocation.startsWith(pluginRoot), 'Discovery must load the skill from the installed plugin root');
+    assert.match(readFileSync(piLocation, 'utf8'), /Disclaude service issues only/);
+    assert(!piPrompt.includes('Disclaude skills:'), 'No Disclaude-authored manifest may enter any prompt layer');
+    assert(!/\\[diagnose-logs\\]\\(/.test(piPrompt), 'The removed manifest-link injection must stay removed');
+    assert.deepEqual(piStub.nodeEnvCwds, [pluginRoot], 'loadSkills must run against the installed plugin root');
+    assert.equal(piStub.nodeEnvCleanups, 1, 'The discovery environment must be cleaned up');
+    // Explicit-install boundary: a clean project on the same runtime stays untouched.
+    piStub.ctorOptions = null;
+    piStub.nodeEnvCwds = [];
+    piStub.nodeEnvCleanups = 0;
+    await piQuery({ settingSources: [], cwd: cleanProject, projectRoot: cleanProject, systemPrompt: 'ordinary' });
+    assert.equal(piStub.ctorOptions.initialState.systemPrompt, 'ordinary',
+      'A clean project must not receive any skills block');
     assert(adaptOptions({ cwd: project, settingSources: [] }).plugins.some(item => item.path === diagnosticsPluginRoot(project)),
       'Claude must load the installed optional local plugin');
   `]);
+  } finally {
+    rmSync(piStubPackage, { recursive: true, force: true });
+  }
   assert.equal(JSON.parse(run(cli, ['plugins', 'remove', 'diagnostics', ...pluginArgs])).data.changed, true);
   assert.equal(JSON.parse(run(cli, ['plugins', 'list', ...pluginArgs])).data.installed, false);
   assert(!existsSync(join(diagnosticsProject, '.disclaude/plugins/diagnostics')));

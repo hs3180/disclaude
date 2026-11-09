@@ -37,10 +37,7 @@ import { stat } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { messageLogger } from '../utils/message-logger.js';
 import { WelcomeService } from '../platforms/feishu/welcome-service.js';
-import type {
-  ChannelSetupContext,
-  WiredChannelDescriptor,
-} from '../channel-lifecycle-manager.js';
+import type { ChannelSetupContext, WiredChannelDescriptor } from '../channel-lifecycle-manager.js';
 import {
   createChannelCallbacksFactory,
   createDefaultMessageHandler,
@@ -51,6 +48,37 @@ import {
   buildActionPrompts,
   validateInteractiveParams,
 } from '../platforms/feishu/card-builders/index.js';
+import type { TriggerModeManager } from './feishu/passive-mode.js';
+
+// ============================================================================
+// Feishu trigger mode adapter (T-083 R4)
+// ============================================================================
+
+/**
+ * Normalize the control-path chat id onto the manager's key space.
+ *
+ * T-083 R4 (#5254 rework): inbound filtering reads the mode map with the BARE
+ * `chat_id` from Feishu events, while the `/trigger` control path arrives with
+ * this channel's routed id (`feishu:<name>:oc_…`, prefixed by the emitControl
+ * callback). Unifying on bare platform keys at this adapter keeps the receipt
+ * and the actual filter state consistent for always/mention/auto; restart
+ * recovery (`initFromRecords`) uses the same bare keys. For the legacy
+ * single-app channel `toApiChatId` is the identity, so nothing changes there.
+ */
+export function createTriggerModeAdapter(
+  channel: Pick<FeishuChannel, 'toApiChatId'>,
+  triggerModeManager: Pick<TriggerModeManager, 'getMode' | 'setMode'>
+): {
+  getMode(chatId: string): 'mention' | 'always' | 'auto';
+  setMode(chatId: string, mode: 'mention' | 'always' | 'auto'): void;
+} {
+  return {
+    getMode: (chatId: string): 'mention' | 'always' | 'auto' =>
+      triggerModeManager.getMode(channel.toApiChatId(chatId)),
+    setMode: (chatId: string, mode: 'mention' | 'always' | 'auto') =>
+      triggerModeManager.setMode(channel.toApiChatId(chatId), mode),
+  };
+}
 
 // ============================================================================
 // REST Wired Descriptor
@@ -67,7 +95,12 @@ import {
 export const REST_WIRED_DESCRIPTOR: WiredChannelDescriptor<RestChannelConfig> = {
   type: 'rest',
   name: 'REST API',
-  factory: (config) => new RestChannel({ ...config, fileStorageServiceProvider: config.fileStorageServiceProvider ?? persistentFileStorageProvider }),
+  factory: (config) =>
+    new RestChannel({
+      ...config,
+      fileStorageServiceProvider:
+        config.fileStorageServiceProvider ?? persistentFileStorageProvider,
+    }),
   defaultCapabilities: {
     supportsCard: true,
     supportsThread: false,
@@ -105,15 +138,21 @@ export const REST_WIRED_DESCRIPTOR: WiredChannelDescriptor<RestChannelConfig> = 
       restChannel.setInputMessageRouter(context.inputMessageRouter);
       context.logger.info('REST /api/push endpoint configured via descriptor setup');
     } else {
-      context.logger.warn('InputMessageRouter not available — REST /api/push endpoint will return 503');
+      context.logger.warn(
+        'InputMessageRouter not available — REST /api/push endpoint will return 503'
+      );
     }
     // Issue #4256 (part 2): wire pool-stats provider so /api/health reports
     // live agent-pool state (active/busy/idle/peak/evictions) for leak diagnostics.
     restChannel.setAgentPoolStatsProvider(context.agentPool);
-    context.service.registerChannelHandlers('rest', {
-      ...createChannelApiHandlers(restChannel, { logger: context.logger, channelName: 'REST' }),
-      sendInteractive: () => Promise.reject(new Error('REST does not support interactive cards')),
-    }, restChannel);
+    context.service.registerChannelHandlers(
+      'rest',
+      {
+        ...createChannelApiHandlers(restChannel, { logger: context.logger, channelName: 'REST' }),
+        sendInteractive: () => Promise.reject(new Error('REST does not support interactive cards')),
+      },
+      restChannel
+    );
   },
 };
 
@@ -171,17 +210,12 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       extractAttachments: (message: IncomingMessage): FileRef[] | undefined => {
         const { attachments, chatId, messageType } = message;
         return attachments?.map((att) =>
-          createInboundAttachment(
-            att.fileName,
-            chatId,
-            messageType as 'image' | 'file' | 'media',
-            {
-              localPath: att.filePath,
-              mimeType: att.mimeType,
-              size: att.size,
-              messageId: message.messageId,
-            }
-          )
+          createInboundAttachment(att.fileName, chatId, messageType as 'image' | 'file' | 'media', {
+            localPath: att.filePath,
+            mimeType: att.mimeType,
+            size: att.size,
+            messageId: message.messageId,
+          })
         );
       },
     }),
@@ -204,21 +238,18 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       actionValue: string,
       actionText?: string
     ) => contextStore.generatePrompt(messageId, chatId, actionValue, actionText);
-    config.resolveActionText = (messageId, chatId, actionValue) => contextStore.getActionText?.(messageId, chatId, actionValue);
-    config.resolveActionThreadRoot = (messageId, chatId) => contextStore.getThreadRootId?.(messageId, chatId);
+    config.resolveActionText = (messageId, chatId, actionValue) =>
+      contextStore.getActionText?.(messageId, chatId, actionValue);
+    config.resolveActionThreadRoot = (messageId, chatId) =>
+      contextStore.getThreadRootId?.(messageId, chatId);
 
     // 2. Set up trigger mode adapter (Issue #2291: enum-based interface, #3345: 'auto' mode)
     // Adapter delegates to TriggerModeManager's native enum-based getMode/setMode.
     // The manager handles 'auto' mode resolution internally.
     const triggerModeManager = feishuChannel.getTriggerModeManager();
-    const triggerModeAdapter = {
-      getMode: (chatId: string): 'mention' | 'always' | 'auto' =>
-        triggerModeManager.getMode(chatId),
-      setMode: (chatId: string, mode: 'mention' | 'always' | 'auto') =>
-        triggerModeManager.setMode(chatId, mode),
-    };
+    const triggerModeAdapter = createTriggerModeAdapter(feishuChannel, triggerModeManager);
     const helpContext: ControlHandlerContext = {
-      ...context.controlHandlerContext as unknown as ControlHandlerContext,
+      ...(context.controlHandlerContext as unknown as ControlHandlerContext),
       goalStore: context.goalStore,
       goalExecution: context.goalExecution,
       triggerMode: triggerModeAdapter,
@@ -242,8 +273,11 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
     const welcomeService = new WelcomeService({
       generateWelcomeMessage,
       generateHelpMessage: generateWelcomeMessage,
-      sendMessage: async (chatId, text) => { await feishuChannel.sendMessage({ chatId, type: 'text', text }); },
-      sendWelcomeMessage: (chatId, text, chatType) => feishuChannel.sendWelcomeMessage(chatId, text, chatType),
+      sendMessage: async (chatId, text) => {
+        await feishuChannel.sendMessage({ chatId, type: 'text', text });
+      },
+      sendWelcomeMessage: (chatId, text, chatType) =>
+        feishuChannel.sendWelcomeMessage(chatId, text, chatType),
     });
     helpContext.guidance = welcomeService;
     feishuChannel.setWelcomeService(welcomeService);
@@ -255,7 +289,10 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       const target = resolveGitHubIssueTarget(Config.getRawConfig());
       config.issueReportingClient = target ? new GitHubIssueClient(target) : undefined;
     } catch (error) {
-      context.logger.warn({ err: error }, 'github feedback configuration could not be resolved; /feedback submission stays disabled');
+      context.logger.warn(
+        { err: error },
+        'github feedback configuration could not be resolved; /feedback submission stays disabled'
+      );
     }
     helpContext.issueReporting = {
       sendConfirmation: (record, target) => feishuChannel.requestIssueReport(record, target),
@@ -300,23 +337,37 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       },
 
       // Issue #1571: Build interactive card from raw parameters using extracted builder
-      sendInteractive: async (chatId: string, params: {
-        question: string;
-        options: Array<{ text: string; value: string; type?: 'primary' | 'default' | 'danger' }>;
-        title?: string;
-        context?: string;
-        /** Reply parent message ID (om_...); legacy name, not Feishu's omt_... thread_id. */
-        threadId?: string;
-        /** Requested topic root message ID (om_...); verifies the parent and anchors fallback. */
-        threadRootId?: string;
-        actionPrompts?: Record<string, string>;
-      }) => {
-        const { question, options, title, context: cardContext, threadId, threadRootId, actionPrompts } = params;
+      sendInteractive: async (
+        chatId: string,
+        params: {
+          question: string;
+          options: Array<{ text: string; value: string; type?: 'primary' | 'default' | 'danger' }>;
+          title?: string;
+          context?: string;
+          /** Reply parent message ID (om_...); legacy name, not Feishu's omt_... thread_id. */
+          threadId?: string;
+          /** Requested topic root message ID (om_...); verifies the parent and anchors fallback. */
+          threadRootId?: string;
+          actionPrompts?: Record<string, string>;
+        }
+      ) => {
+        const {
+          question,
+          options,
+          title,
+          context: cardContext,
+          threadId,
+          threadRootId,
+          actionPrompts,
+        } = params;
 
         // Validate params at REST API boundary
         const validationError = validateInteractiveParams(params);
         if (validationError) {
-          context.logger.warn({ chatId, error: validationError }, 'sendInteractive: invalid params');
+          context.logger.warn(
+            { chatId, error: validationError },
+            'sendInteractive: invalid params'
+          );
           throw new Error(`Invalid interactive params: ${validationError}`);
         }
 
@@ -324,18 +375,25 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         const card = buildInteractiveCard({ question, options, title, context: cardContext });
 
         const messageId = await feishuChannel.sendMessage({
-          chatId, type: 'card', card, threadId, ...(threadRootId ? { threadRootId } : {}),
+          chatId,
+          type: 'card',
+          card,
+          threadId,
+          ...(threadRootId ? { threadRootId } : {}),
         });
         // A queued or unacknowledged send cannot support button registration or
         // prove delivery. Never manufacture a successful receipt (Issue #5259).
         if (typeof messageId !== 'string' || !messageId.trim()) {
-          throw new Error('Interactive card delivery returned no message_id; delivery is unconfirmed');
+          throw new Error(
+            'Interactive card delivery returned no message_id; delivery is unconfirmed'
+          );
         }
 
         // Preserve explicit instructions and fill unmapped buttons with their
         // visible labels and the original card context, never just route IDs.
         const resolvedActionPrompts = buildActionPrompts(options, actionPrompts, undefined, {
-          question, context: cardContext,
+          question,
+          context: cardContext,
         });
 
         return { messageId, actionPrompts: resolvedActionPrompts };
@@ -343,13 +401,20 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
 
       // Issue #631: Push instruction to a chat agent via InputMessageRouter
       // Issue #4063: Support waitForCompletion for Loop Runner turn detection
-      pushToAgent: async (chatId: string, message: string, options?: { waitForCompletion?: boolean }) => {
+      pushToAgent: async (
+        chatId: string,
+        message: string,
+        options?: { waitForCompletion?: boolean }
+      ) => {
         const router = context.inputMessageRouter;
         if (!router) {
           throw new Error('InputMessageRouter not initialized — cannot push to agent');
         }
 
-        context.logger.info({ chatId, messageLength: message.length, waitForCompletion: options?.waitForCompletion }, 'pushToAgent: routing system message');
+        context.logger.info(
+          { chatId, messageLength: message.length, waitForCompletion: options?.waitForCompletion },
+          'pushToAgent: routing system message'
+        );
 
         const systemMessage: SystemMessage = {
           id: `push_${crypto.randomUUID()}`,
@@ -367,7 +432,13 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       },
     };
 
-    context.service.registerFeishuHandlers(feishuHandlers);
+    // Legacy unscoped handlers exist only for the single-app channel; named
+    // declarations (`feishu:<name>` ids) are reachable exclusively through
+    // chatId-owning channel handlers, so a raw Feishu chat ID never resolves
+    // to one of them.
+    if (!feishuChannel.id.startsWith('feishu:')) {
+      context.service.registerFeishuHandlers(feishuHandlers);
+    }
     context.service.registerChannelHandlers('feishu', feishuHandlers, feishuChannel);
     context.logger.info('Feishu REST API handlers registered via descriptor setup');
   },
@@ -414,7 +485,9 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
     return (chatId, threadRootId) => ({
       ...factory(chatId, threadRootId),
       beginProcessing: (target) => (channel as WeChatChannel).beginTyping(target),
-      sendFile: async (target, filePath) => { await channel.sendMessage({ chatId: target, type: 'file', filePath }); },
+      sendFile: async (target, filePath) => {
+        await channel.sendMessage({ chatId: target, type: 'file', filePath });
+      },
     });
   },
 
@@ -422,10 +495,20 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
     createDefaultMessageHandler(channel, context, {
       channelName: 'WeChat channel',
       sendDoneSignal: false,
-      extractAttachments: (message) => message.attachments?.map(att => createInboundAttachment(
-        att.fileName, message.chatId, att.mimeType?.startsWith('image/') ? 'image' : 'file',
-        { localPath: att.filePath, size: att.size, mimeType: att.mimeType, messageId: message.messageId },
-      )),
+      extractAttachments: (message) =>
+        message.attachments?.map((att) =>
+          createInboundAttachment(
+            att.fileName,
+            message.chatId,
+            att.mimeType?.startsWith('image/') ? 'image' : 'file',
+            {
+              localPath: att.filePath,
+              size: att.size,
+              mimeType: att.mimeType,
+              messageId: message.messageId,
+            }
+          )
+        ),
     }),
 
   /**
@@ -452,7 +535,8 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
       ...baseHandlers,
 
       sendCard: () => Promise.reject(new Error('WeChat does not support cards; use send_text')),
-      sendInteractive: () => Promise.reject(new Error('WeChat does not support interactive cards; use send_text')),
+      sendInteractive: () =>
+        Promise.reject(new Error('WeChat does not support interactive cards; use send_text')),
       uploadFile: async (chatId, filePath, threadId) => {
         await wechatChannel.sendMessage({ chatId, type: 'file', filePath, threadId });
         // Issue #5722: report the requested delivery position like the shared
@@ -467,13 +551,20 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
       },
 
       // Issue #3814: pushToAgent reuses InputMessageRouter (same as Feishu)
-      pushToAgent: async (chatId: string, message: string, options?: { waitForCompletion?: boolean }) => {
+      pushToAgent: async (
+        chatId: string,
+        message: string,
+        options?: { waitForCompletion?: boolean }
+      ) => {
         const router = context.inputMessageRouter;
         if (!router) {
           throw new Error('InputMessageRouter not initialized — cannot push to agent');
         }
 
-        context.logger.info({ chatId, messageLength: message.length, waitForCompletion: options?.waitForCompletion }, 'pushToAgent: routing system message via WeChat');
+        context.logger.info(
+          { chatId, messageLength: message.length, waitForCompletion: options?.waitForCompletion },
+          'pushToAgent: routing system message via WeChat'
+        );
 
         const systemMessage: SystemMessage = {
           id: `push_${crypto.randomUUID()}`,

@@ -22,9 +22,15 @@ channels:
 | Component | Public identifier | Secret references |
 | --- | --- | --- |
 | Feishu WebSocket bot | `appId`: literal or reference | `appSecret` |
+| Feishu named channel declaration (`channels.<name>: { type: feishu }`) | `appId`: literal or reference | `appSecret` |
 | Feishu webhook metadata | none | `verificationToken`, `encryptKey`: reference syntax enforced, but the current WebSocket channel does not consume these webhook settings |
 | Ruliu adapter | `appKey`: literal or reference | `appSecret`, `checkToken`, `encodingAESKey` |
 | REST chat channel | none | optional `authToken`, bearer protection on all data/control/file routes except `GET /api/health` |
+
+Multiple Feishu apps are declared as sibling named channels with `type: feishu`
+(`disclaude.config.example.yaml`); each declaration resolves its `appId`/`appSecret`
+independently with the same reference rules as the single `channels.feishu` section,
+and the two shapes cannot be mixed in one config.
 
 Ruliu is an exported platform adapter, not a config-driven service channel. Its
 host integration must resolve each field with `resolveChannelCredential` before
