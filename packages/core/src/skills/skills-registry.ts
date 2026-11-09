@@ -158,7 +158,20 @@ export class SkillsRegistry {
   }
 }
 
-function metadataFromFrontmatter(source: string, directoryName: string): { description?: string } {
+/** A parsed SKILL.md: strict frontmatter metadata plus the raw instruction body. */
+export interface SkillDocument {
+  metadata: { name?: string; description?: string };
+  body: string;
+}
+
+/**
+ * Split one SKILL.md into its strict frontmatter metadata and instruction
+ * body. The same single parser serves discovery and body loading so a skill
+ * cannot validate one way and load another. Harness-native channels (DSH
+ * `ctx.skills`, #5717) reuse this instead of re-implementing frontmatter
+ * rules; the Pi adapter can consume it the same way (shared layer, T-100).
+ */
+export function parseSkillDocument(source: string, directoryName?: string): SkillDocument {
   const match = source.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!match) {throw new Error('missing strict frontmatter');}
   const fields = new Map<string, string>();
@@ -171,10 +184,22 @@ function metadataFromFrontmatter(source: string, directoryName: string): { descr
     if (fields.has(field[1]) || !field[2]) {throw new Error('invalid frontmatter value');}
     fields.set(field[1], field[2].replace(/^['"]|['"]$/g, ''));
   }
-  const declaredName = fields.get('name');
-  if (declaredName && declaredName !== directoryName) {throw new Error('frontmatter name does not match skill directory');}
+  if (directoryName !== undefined && fields.get('name') && fields.get('name') !== directoryName) {
+    throw new Error('frontmatter name does not match skill directory');
+  }
   const description = fields.get('description');
-  return description ? { description: sanitizeDescription(description) } : {};
+  return {
+    metadata: {
+      ...(fields.has('name') ? { name: fields.get('name') } : {}),
+      ...(description ? { description: sanitizeDescription(description) } : {}),
+    },
+    body: source.slice(match[0].length),
+  };
+}
+
+function metadataFromFrontmatter(source: string, directoryName: string): { description?: string } {
+  const { metadata } = parseSkillDocument(source, directoryName);
+  return metadata.description ? { description: metadata.description } : {};
 }
 
 function sanitizeDescription(description: string): string {
