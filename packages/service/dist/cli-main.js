@@ -37,6 +37,11 @@ import { AgentFactory } from './agents/factory.js';
 import { messageLogger } from './utils/message-logger.js';
 import { queryChatHistory } from './history/history-query.js';
 import { writeTaskReport } from './goals/task-report-inbox.js';
+// T-089 rework (#5197): on-demand research doc comment watch control client.
+import { runResearchWatchCli } from './research/watch-cli.js';
+// T-089 rework (#5197): service-side host of the watch session (dormant until
+// `disclaude research watch start` arrives over REST).
+import { ResearchCommentWatchService, createResearchCommentDelivery } from './research/watch-service.js';
 import { DEFAULT_WECHAT_STATE_DIR } from './channels/wechat/state-store.js';
 import { WeChatRegistry } from './channels/wechat/registry.js';
 import { WeChatRegistrationRuntime } from './channels/wechat/runtime.js';
@@ -77,6 +82,14 @@ export function parseArgs(args) {
             // Agent work/review proposals reach the host through the CLI, not
             // injected collector tools (#5560 review direction).
             options.command = 'board-report';
+        }
+        else if (arg === 'research') {
+            // T-089 rework (#5197): on-demand research doc comment watch control.
+            // The watch subcommand owns its own flags, so capture the rest verbatim
+            // and stop parsing here.
+            options.command = 'research';
+            options.researchArgs = args.slice(i + 1);
+            return options;
         }
         else if (options.command === 'board-report' && arg === 'write') {
             options.taskReport = options.taskReport ?? {};
@@ -163,10 +176,12 @@ disclaude - application service
 Usage:
   disclaude start [options]
   disclaude history query --chat <chatId> [--days N] [--limit N] [--format json|text]
+  disclaude research watch start|stop|status|add|remove [options]
 
 Commands:
   start           Start disclaude
   history query   Read locally available chat history (read-only, structured JSON; Issue #5603)
+  research watch  On-demand research document comment watching (#5197; 'research watch --help')
 
 Options:
   --config, -c PATH       Path to configuration file
@@ -317,6 +332,12 @@ export async function main() {
     if (options.command === 'board-report') {
         await runTaskReportCommand(options);
         process.exit(0);
+    }
+    // T-089 rework (#5197): thin REST client against the running service's
+    // watch session; no service startup, no logger/PID lock (like history).
+    if (options.command === 'research') {
+        const exitCode = await runResearchWatchCli(options.researchArgs ?? []);
+        process.exit(exitCode);
     }
     options.apiToken = resolveStartupApiToken(options.apiToken);
     // Initialize logger with file logging support.
@@ -679,6 +700,8 @@ export async function main() {
     let isShuttingDown = false;
     // Issue #3857 Phase 2: HTTP API server reference for shutdown
     let httpApiServer;
+    // T-089 rework (#5197): watch session host; created with the HTTP API below.
+    let researchCommentWatch;
     // #5519: cancels the bounded startup readiness wait when shutdown begins.
     const startupReadinessAbort = new AbortController();
     const shutdown = async () => {
@@ -693,6 +716,11 @@ export async function main() {
             // pool and channels go away.
             await backgroundTasks.close();
             await goalExecution?.close();
+            // T-089 (#5197): stop the research comment watch session loop.
+            // Fire-and-forget like monitor shutdown: stop() clears the loop timer
+            // synchronously; an in-flight delivery (awaiting an agent turn through
+            // waitForCompletion) must not block service shutdown.
+            void researchCommentWatch?.stop();
             await agentPool.shutdownForServiceRestart({ drainTimeoutMs: 10_000, noticeTimeoutMs: 2_000 });
             await httpApiServer?.stop();
             await wechatRuntime?.stop();
@@ -893,6 +921,16 @@ export async function main() {
             // Issue #5603: wire REST GET /api/history/query to the shared read-only
             // history backend (same module as `disclaude history query`).
             httpApiServer.setHistoryQueryHandler(options => queryChatHistory(options));
+            // T-089 rework (#5197, review 6677596913): wire the on-demand research
+            // doc comment watch session. Constructing the host is inert — no monitor
+            // and no timer exist until `disclaude research watch start` (or a direct
+            // POST /api/research/watch/start) begins a session; when nobody watches,
+            // the resident cost is one dormant object and five routes.
+            researchCommentWatch = new ResearchCommentWatchService({
+                watchDir: path.join(workspaceDir, '.disclaude', 'research-doc-watch'),
+                deliver: createResearchCommentDelivery(() => service.getInputMessageRouter()),
+            });
+            httpApiServer.setResearchWatchController(researchCommentWatch);
             // Issue #4279: wire REST /api/upload-image to the channel's uploadImage
             // capability (REST parity with the REST API method).
             httpApiServer.setUploadImageHandler((filePath) => service.uploadImage(filePath));

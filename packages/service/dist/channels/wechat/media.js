@@ -51,18 +51,127 @@ function mediaSignal(signal) {
  * 0.004 ms/byte (4 µs/byte) budget is a 250 KiB/s worst-case uplink floor;
  * 15 MiB thus gets 15s + 15,481,296 × 0.004ms ≈ 77s.
  * Downloads keep fetch streaming with the unchanged 15s signal.
+ *
+ * #5720 (T-101): the whole-budget deadline still expired end-to-end (2.5 MiB
+ * at ~25s, 8.34 MiB at ~48s — exactly `uploadDeadlineMs`), but a single timer
+ * over connect+write+receipt could not say which phase stalled. The deadline
+ * math is kept unchanged (it was correct); it is now split into bounded
+ * phase budgets with per-phase timing, so a production timeout names its
+ * phase instead of eating the total silently.
  */
 export const UPLOAD_DEADLINE_BASE_MS = 15_000;
 export const UPLOAD_DEADLINE_MS_PER_BYTE = 0.004;
+/** #5720: DNS+TCP+TLS must fit inside this slice of the total budget. */
+export const UPLOAD_CONNECT_BUDGET_MS = 10_000;
+/**
+ * #5720: no-activity watchdog. Any phase that stops making progress (socket
+ * drain, body finish, receipt bytes) for this long fails as a timeout even
+ * while the total budget still has room — a stalled link is surfaced at
+ * ~15s instead of burning a 25–77s size-aware budget on dead air.
+ */
+export const UPLOAD_STALL_BUDGET_MS = 15_000;
+/**
+ * #5720: a connect-phase failure is provably safe to retry (no ciphertext
+ * byte left the host): fresh negotiation + one more POST. Everything at or
+ * past body write is never retried here — the CDN may already hold the body,
+ * and the sendmessage step is not reached while the upload fails, so the
+ * user-visible message cannot be duplicated by this loop.
+ */
+export const UPLOAD_MAX_ATTEMPTS = 2;
+const RETRYABLE_CONNECT_CODES = new Set([
+    'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ECONNABORTED', 'EHOSTUNREACH',
+    'ENETUNREACH', 'UND_ERR_CONNECT_TIMEOUT',
+    // TLS handshake rejected before any body byte was writable.
+    'ERR_TLS_CERT_ALTNAME_INVALID', 'CERT_HAS_EXPIRED', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'DEPTH_ZERO_SELF_SIGNED_CERT',
+]);
 export function uploadDeadlineMs(encryptedBytes) {
     return UPLOAD_DEADLINE_BASE_MS + Math.max(0, encryptedBytes) * UPLOAD_DEADLINE_MS_PER_BYTE;
 }
-/** One POST via https.request; never follows redirects (fetch used redirect: 'error'). */
-function uploadPost(url, body, timeoutMs) {
+/** Tag a transport error with its phase snapshot; diagnostics are enums and numbers only. */
+function withProgress(error, progress) {
+    if (error && typeof error === 'object' && !error.uploadProgress) {
+        Object.defineProperty(error, 'uploadProgress', {
+            value: Object.freeze({ ...progress }), enumerable: false, configurable: true,
+        });
+    }
+    return error;
+}
+function readProgress(error) {
+    const progress = error && typeof error === 'object' ? error.uploadProgress : undefined;
+    return progress && typeof progress === 'object' ? progress : undefined;
+}
+const stallTarget = (phase) => phase === 'connect' ? 'connection establishment' : phase === 'write' ? 'request body write' : 'receipt response';
+const deadlineError = (phase) => Object.assign(new Error(`WeChat CDN upload stalled awaiting ${stallTarget(phase)}`), {
+    name: 'TimeoutError',
+    code: 'ETIMEDOUT',
+});
+/**
+ * One POST via https.request; never follows redirects (fetch used redirect: 'error').
+ *
+ * #5720: instruments the three transport phases — connect/TLS establishment,
+ * request-body write, receipt wait — under one total size-aware deadline with
+ * per-phase budgets: a bounded connect slice, a no-progress stall watchdog on
+ * every phase, and the unchanged total as the hard cap. Honors an optional
+ * AbortSignal (destroy → AbortError → reason=cancelled upstream).
+ */
+function uploadPost(url, body, timeoutMs, signal) {
     return new Promise((resolve, reject) => {
+        const started = Date.now();
+        let phase = 'connect';
+        let connectedAt;
+        let finishedAt;
+        let writtenBytes = 0;
+        let lastProgressAt = started;
+        let totalTimer;
+        let connectTimer;
+        let stallTimer;
+        const snapshot = () => ({
+            phase,
+            writtenBytes,
+            ...(connectedAt !== undefined ? { connectMs: connectedAt - started } : {}),
+            ...(finishedAt !== undefined && connectedAt !== undefined ? { writeMs: finishedAt - connectedAt } : {}),
+            ...(finishedAt !== undefined ? { responseMs: Date.now() - finishedAt } : {}),
+        });
+        const clearTimers = () => {
+            for (const timer of [totalTimer, connectTimer, stallTimer]) {
+                if (timer) {
+                    clearTimeout(timer);
+                }
+            }
+            totalTimer = connectTimer = stallTimer = undefined;
+        };
         const fail = (error) => {
-            clearTimeout(timer);
-            reject(error);
+            clearTimers();
+            signal?.removeEventListener('abort', onAbort);
+            reject(withProgress(error, snapshot()));
+        };
+        const markProgress = () => { lastProgressAt = Date.now(); };
+        /** A reused keep-alive socket never re-emits secureConnect; first write progress proves the connection. */
+        const markConnected = () => {
+            if (connectedAt !== undefined) {
+                return;
+            }
+            connectedAt = Date.now();
+            phase = 'write';
+            if (connectTimer) {
+                clearTimeout(connectTimer);
+                connectTimer = undefined;
+            }
+            markProgress();
+        };
+        const armStallWatchdog = () => {
+            if (stallTimer) {
+                clearTimeout(stallTimer);
+            }
+            const remaining = UPLOAD_STALL_BUDGET_MS - (Date.now() - lastProgressAt);
+            if (remaining <= 0) {
+                fail(deadlineError(phase));
+                return;
+            }
+            stallTimer = setTimeout(armStallWatchdog, remaining);
+        };
+        const onAbort = () => {
+            req.destroy(new DOMException('WeChat CDN upload cancelled', 'AbortError'));
         };
         const req = httpsRequest(url, {
             method: 'POST',
@@ -71,19 +180,43 @@ function uploadPost(url, body, timeoutMs) {
                 'content-length': String(body.length),
             },
         }, (res) => {
-            res.resume(); // Drain the tiny receipt body; only headers carry state.
+            markProgress(); // Response headers arrived: the receipt wait is making progress.
+            res.on('data', markProgress); // Drain the tiny receipt body; only headers carry state.
             res.on('end', () => {
-                clearTimeout(timer);
-                resolve({ status: res.statusCode ?? 0, headers: res.headers });
+                clearTimers();
+                signal?.removeEventListener('abort', onAbort);
+                resolve({ status: res.statusCode ?? 0, headers: res.headers, progress: snapshot() });
             });
             res.on('error', fail);
         });
-        const timer = setTimeout(() => {
-            req.destroy(Object.assign(new Error('WeChat CDN upload exceeded its deadline'), {
-                name: 'TimeoutError',
-                code: 'ETIMEDOUT',
-            }));
+        totalTimer = setTimeout(() => {
+            req.destroy(deadlineError(phase));
         }, timeoutMs);
+        connectTimer = setTimeout(() => {
+            connectTimer = undefined;
+            req.destroy(deadlineError('connect'));
+        }, Math.min(UPLOAD_CONNECT_BUDGET_MS, timeoutMs));
+        armStallWatchdog();
+        if (signal?.aborted) {
+            onAbort();
+        }
+        else {
+            signal?.addEventListener('abort', onAbort, { once: true });
+        }
+        req.on('socket', (socket) => {
+            socket.on('connect', markProgress); // TCP up; TLS handshake still pending.
+            socket.on('secureConnect', markConnected);
+            socket.on('drain', () => { markConnected(); markProgress(); });
+            socket.on('error', () => { });
+        });
+        req.on('drain', () => { markConnected(); markProgress(); });
+        req.on('finish', () => {
+            markConnected();
+            finishedAt = Date.now();
+            writtenBytes = body.length;
+            phase = 'response';
+            markProgress();
+        });
         req.on('error', fail);
         req.end(body);
     });
@@ -93,13 +226,16 @@ export async function uploadEncryptedMedia(params) {
     const started = Date.now();
     let stage = 'validate';
     let encryptedBytes = 0;
-    const failure = (reason, httpStatus, error) => new WeChatMediaUploadError({
+    let attempt = 0;
+    const failure = (reason, httpStatus, error, progress) => new WeChatMediaUploadError({
         stage,
         reason,
         bytes: params.fileData.length,
         encryptedBytes,
         elapsedMs: Date.now() - started,
         httpStatus,
+        attempt,
+        ...(progress ? { phases: { phase: progress.phase, writtenBytes: progress.writtenBytes, ...(progress.connectMs !== undefined ? { connectMs: progress.connectMs } : {}), ...(progress.writeMs !== undefined ? { writeMs: progress.writeMs } : {}), ...(progress.responseMs !== undefined ? { responseMs: progress.responseMs } : {}) } } : {}),
     }, error);
     try {
         if (params.fileData.length > WECHAT_MEDIA_MAX_BYTES) {
@@ -111,34 +247,67 @@ export async function uploadEncryptedMedia(params) {
         const encrypted = Buffer.concat([cipher.update(params.fileData), cipher.final()]);
         const filekey = randomBytes(16).toString('hex');
         encryptedBytes = encrypted.length;
-        stage = 'negotiate';
-        const spec = await params.requestUpload({
-            filekey,
-            to_user_id: params.to,
-            media_type: params.kind === 'image' ? 1 : params.kind === 'video' ? 2 : 3,
-            rawsize: params.fileData.length,
-            rawfilemd5: createHash('md5').update(params.fileData).digest('hex'),
-            filesize: encrypted.length,
-            no_need_thumb: true,
-            aeskey: key.toString('hex'),
-        });
-        stage = 'reference';
-        if (!spec.upload_full_url && !spec.upload_param) {
-            throw failure('reference');
+        let response;
+        while (true) {
+            attempt++;
+            stage = 'negotiate';
+            const spec = await params.requestUpload({
+                filekey,
+                to_user_id: params.to,
+                media_type: params.kind === 'image' ? 1 : params.kind === 'video' ? 2 : 3,
+                rawsize: params.fileData.length,
+                rawfilemd5: createHash('md5').update(params.fileData).digest('hex'),
+                filesize: encrypted.length,
+                no_need_thumb: true,
+                aeskey: key.toString('hex'),
+            });
+            stage = 'reference';
+            if (!spec.upload_full_url && !spec.upload_param) {
+                throw failure('reference');
+            }
+            const url = cdnUrl(spec.upload_full_url ||
+                `${CDN_BASE}/upload?encrypted_query_param=${encodeURIComponent(spec.upload_param ?? '')}&filekey=${filekey}`);
+            stage = 'upload';
+            try {
+                response = await uploadPost(url, encrypted, uploadDeadlineMs(encrypted.length), params.signal);
+                break;
+            }
+            catch (error) {
+                const progress = readProgress(error);
+                const cause = safeMediaCause(error);
+                // #5720 (T-101): retry only a provably pre-write failure — still in the
+                // connect phase, zero ciphertext bytes handed over, caller not cancelling,
+                // cause allowlisted as connect-establishment. Everything else (write
+                // stall, receipt wait, HTTP, cancelled, ambiguous ECONNRESET) throws.
+                const retriable = attempt < UPLOAD_MAX_ATTEMPTS &&
+                    progress?.phase === 'connect' &&
+                    progress.writtenBytes === 0 &&
+                    !params.signal?.aborted &&
+                    (cause?.name === 'TimeoutError' || (cause?.code !== undefined && RETRYABLE_CONNECT_CODES.has(cause.code)));
+                if (!retriable) {
+                    throw error;
+                }
+                // Bounded fields only: attempt, cause code, elapsed — never URL or key material.
+                logger.warn({ attempt, nextAttempt: attempt + 1, cause: cause?.code ?? cause?.name, elapsedMs: Date.now() - started }, 'WeChat CDN upload failed before any bytes were sent; renegotiating upload and retrying once');
+            }
         }
-        const url = cdnUrl(spec.upload_full_url ||
-            `${CDN_BASE}/upload?encrypted_query_param=${encodeURIComponent(spec.upload_param ?? '')}&filekey=${filekey}`);
-        stage = 'upload';
-        const response = await uploadPost(url, encrypted, uploadDeadlineMs(encrypted.length));
         const receiptHeader = response.headers['x-encrypted-param'];
         const downloadParam = Array.isArray(receiptHeader) ? receiptHeader[0] : receiptHeader;
         if (response.status < 200 || response.status >= 300) {
-            throw failure('http', response.status);
+            throw failure('http', response.status, undefined, response.progress);
         }
         stage = 'receipt';
         if (!downloadParam) {
-            throw failure('receipt');
+            throw failure('receipt', undefined, undefined, response.progress);
         }
+        // #5720: bounded per-phase timings on success make the healthy baseline
+        // measurable against the failing one (connect vs write vs receipt).
+        logger.info({
+            kind: params.kind, attempt, bytes: params.fileData.length, encryptedBytes,
+            phase: response.progress.phase, connectMs: response.progress.connectMs,
+            writeMs: response.progress.writeMs, responseMs: response.progress.responseMs,
+            diagnosticId: randomUUID().slice(0, 8),
+        }, 'WeChat CDN upload completed');
         return {
             media: {
                 encrypt_query_param: downloadParam,
@@ -168,7 +337,7 @@ export async function uploadEncryptedMedia(params) {
                         : cause?.name === 'AbortError'
                             ? 'cancelled'
                             : 'network';
-        const terminal = failure(reason, undefined, error);
+        const terminal = failure(reason, undefined, error, readProgress(error));
         logUploadFailure(terminal);
         throw terminal;
     }

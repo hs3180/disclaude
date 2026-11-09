@@ -9,6 +9,7 @@
 import { createLogger, sendCard } from "../../../core/dist/index.js";
 import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
 import { isChannelApiAvailable, getChannelApiErrorMessage, getChannelApiClient, buildChannelApiFallbackHint } from './channel-api-utils.js';
+import { resolveDeliveryPosition } from './delivery-position.js';
 import { invokeMessageSentCallback } from './callback-manager.js';
 const logger = createLogger('SendCard');
 /**
@@ -77,8 +78,21 @@ export async function send_card(params) {
             };
         }
         invokeMessageSentCallback(chatId);
-        logger.debug({ chatId, parentMessageId }, 'Card message sent');
-        return { success: true, message: '✅ Card message sent' };
+        // Issue #5722: echo the delivery position (same contract as send_file /
+        // send_text). The REST sendCard response may carry messageId (Issue #5722
+        // service-side); the position is derived from the --parent request.
+        const delivery = resolveDeliveryPosition({ parentMessageId, messageId: result.messageId });
+        if (delivery.parentOmitted) {
+            logger.warn({ chatId, messageId: result.messageId }, 'send_card without --parent: in a topic group the card starts a NEW topic instead of landing in the current one');
+        }
+        logger.debug({ chatId, parentMessageId, deliveryPosition: delivery.deliveryPosition }, 'Card message sent');
+        return {
+            success: true,
+            message: `✅ Card message sent ${delivery.suffix}`,
+            deliveryPosition: delivery.deliveryPosition,
+            ...(delivery.threadId ? { parentMessageId: delivery.threadId } : {}),
+            ...(result.messageId ? { messageId: result.messageId } : {}),
+        };
     }
     catch (error) {
         logger.error({ err: error, chatId }, 'send_card FAILED');

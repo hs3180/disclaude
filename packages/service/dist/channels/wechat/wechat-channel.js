@@ -464,6 +464,16 @@ export class WeChatChannel extends BaseChannel {
      *
      * Flow: read file → upload to CDN → send CDN URL as image or file message.
      * Auto-detects image vs file based on file extension.
+     *
+     * Issue #5719 (T-102): every attachment delivery is accounted SEPARATELY
+     * from model text output (`attachment_delivery` events, peer-hashed —
+     * never raw CDN keys or file content). A successful generation is not a
+     * delivered attachment: `upload_result` then `send_result` record the
+     * platform outcome, and `phoneReceipt: 'unverifiable_server_side'` marks
+     * the boundary no server log can cross — only the user seeing the file
+     * proves receipt. A failure is recorded as failed and re-thrown so the
+     * caller (model tool or REST handler) cannot mistake generation success
+     * for delivery.
      */
     async sendViaCdn(message) {
         if (!this.client || !message.filePath) {
@@ -480,31 +490,57 @@ export class WeChatChannel extends BaseChannel {
         const ext = path.extname(fileName).toLowerCase();
         const imageExtensions = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']);
         const kind = imageExtensions.has(ext) ? 'image' : ext === '.mp4' ? 'video' : 'file';
-        // Upload to CDN
-        const uploaded = await this.client.uploadMedia({
-            fileData,
-            fileName,
-            to: message.chatId,
-            kind,
-        });
-        // Auto-detect image vs file by extension
-        if (kind === 'image') {
-            return await this.client.sendImage({
-                to: message.chatId,
-                uploaded,
-                contextToken: this.contexts.get(message.chatId),
-            });
-        }
-        else if (kind === 'video') {
-            return await this.client.sendVideo({ to: message.chatId, uploaded, contextToken: this.contexts.get(message.chatId) });
-        }
-        else {
-            return await this.client.sendFile({
-                to: message.chatId,
-                uploaded,
+        const peerHash = createHash('sha256').update(message.chatId).digest('hex').slice(0, 12);
+        const base = {
+            event: 'attachment_delivery', peerHash, fileName, kind, bytes: stat.size,
+            phoneReceipt: 'unverifiable_server_side',
+        };
+        logger.info({ ...base, stage: 'attempt' }, 'WeChat attachment send attempt');
+        // Which phase a throw came from — the failure row must name the stage
+        // that actually broke (upload vs platform send), not a generic one.
+        let failedStage = 'upload_result';
+        try {
+            // Upload to CDN
+            const uploaded = await this.client.uploadMedia({
+                fileData,
                 fileName,
-                contextToken: this.contexts.get(message.chatId),
+                to: message.chatId,
+                kind,
             });
+            logger.info({ ...base, stage: 'upload_result', outcome: 'uploaded' }, 'WeChat attachment CDN upload accepted');
+            failedStage = 'send_result';
+            // Auto-detect image vs file by extension
+            let sentMessageId;
+            if (kind === 'image') {
+                sentMessageId = await this.client.sendImage({
+                    to: message.chatId,
+                    uploaded,
+                    contextToken: this.contexts.get(message.chatId),
+                });
+            }
+            else if (kind === 'video') {
+                sentMessageId = await this.client.sendVideo({ to: message.chatId, uploaded, contextToken: this.contexts.get(message.chatId) });
+            }
+            else {
+                sentMessageId = await this.client.sendFile({
+                    to: message.chatId,
+                    uploaded,
+                    fileName,
+                    contextToken: this.contexts.get(message.chatId),
+                });
+            }
+            logger.info({ ...base, stage: 'send_result', outcome: 'sent', messageId: typeof sentMessageId === 'string' ? sentMessageId : undefined }, 'WeChat attachment platform result: sent (generation ≠ delivery; phone receipt unverifiable server-side)');
+            return sentMessageId;
+        }
+        catch (error) {
+            // The artifact exists on disk and the model believes it produced it —
+            // this ledger row is what separates "generated" from "delivered".
+            logger.warn({ ...base, stage: failedStage, outcome: 'failed',
+                errorClass: error instanceof Error ? error.constructor.name : typeof error,
+                code: error instanceof WeChatApiError ? error.code : undefined }, failedStage === 'upload_result'
+                ? 'WeChat attachment CDN upload failed — generation success is NOT attachment delivery'
+                : 'WeChat attachment platform send failed — generation success is NOT attachment delivery');
+            throw error;
         }
     }
     /**

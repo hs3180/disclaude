@@ -12,14 +12,29 @@ export class WeChatMediaUploadError extends Error {
         const httpStatus = typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599 ? status : undefined;
         const apiCode = typeof upstream?.code === 'number' && Number.isSafeInteger(upstream.code) && Math.abs(upstream.code) <= 1_000_000_000 ? upstream.code : undefined;
         const elapsedMs = Math.max(0, Math.round(detail.elapsedMs));
+        const attempt = detail.attempt !== undefined && detail.attempt > 0 ? detail.attempt : 1;
+        const { phases } = detail;
+        const round = (value) => value === undefined ? undefined : Math.max(0, Math.round(value));
         const message = detail.reason === 'size' ? 'File too large: WeChat adapter limit is 20 MiB'
             : detail.reason === 'reference' ? 'WeChat upload response missing or unsupported upload URL'
                 : detail.reason === 'receipt' ? 'WeChat CDN upload missing download reference'
                     : 'WeChat media upload failed';
-        super(`${message}; message was not sent; stage=${detail.stage}, reason=${detail.reason}${httpStatus ? `, HTTP ${httpStatus}` : ''}` +
-            `${apiCode !== undefined ? `, API ${apiCode}` : ''}${cause ? `, ${cause.name}${cause.code ? `/${cause.code}` : ''}` : ''}; elapsedMs=${elapsedMs}, bytes=${detail.bytes}, encryptedBytes=${detail.encryptedBytes}, attempt=1; diagnostic ID ${diagnosticId}`, { cause });
+        super(`${message}; message was not sent; stage=${detail.stage}, reason=${detail.reason}` +
+            `${phases ? `, phase=${phases.phase}` : ''}${httpStatus ? `, HTTP ${httpStatus}` : ''}` +
+            `${apiCode !== undefined ? `, API ${apiCode}` : ''}${cause ? `, ${cause.name}${cause.code ? `/${cause.code}` : ''}` : ''}` +
+            `; elapsedMs=${elapsedMs}, bytes=${detail.bytes}, encryptedBytes=${detail.encryptedBytes}` +
+            `${phases ? `, writtenBytes=${phases.writtenBytes}` : ''}, attempt=${attempt}; diagnostic ID ${diagnosticId}`, { cause });
         this.name = 'WeChatMediaUploadError';
         this.authExpired = apiCode === -14 || httpStatus === 401;
-        this.detail = Object.freeze({ ...detail, httpStatus, apiCode, elapsedMs, attempt: 1, diagnosticId, messageSent: false, ...(cause ? { cause } : {}) });
+        this.detail = Object.freeze({
+            ...detail, httpStatus, apiCode, elapsedMs, attempt,
+            ...(phases ? {
+                phase: phases.phase, writtenBytes: phases.writtenBytes,
+                ...(phases.connectMs !== undefined ? { connectMs: round(phases.connectMs) } : {}),
+                ...(phases.writeMs !== undefined ? { writeMs: round(phases.writeMs) } : {}),
+                ...(phases.responseMs !== undefined ? { responseMs: round(phases.responseMs) } : {}),
+            } : {}),
+            diagnosticId, messageSent: false, ...(cause ? { cause } : {}),
+        });
     }
 }

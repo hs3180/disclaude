@@ -5,6 +5,7 @@
  * Routes subcommands to the appropriate package CLI:
  *   disclaude start [options]  → @disclaude/service
  *   disclaude channel <command> → @disclaude/channel-cli
+ *   disclaude research watch <cmd> → @disclaude/service (on-demand doc comment watch, #5197)
  *   disclaude service <cmd>    → scripts/launchd.mjs application service (Issue #5619)
  *   disclaude chromium-cdp <cmd> → scripts/launchd.mjs chromium-cdp (Issue #4807)
  *
@@ -47,6 +48,7 @@ function showHelp() {
       'Commands:',
       '  start [options]    Start disclaude',
       '  history query      Read locally available chat history (read-only, Issue #5603)',
+      '  research watch     Watch research document comments on demand (#5197; research watch --help)',
       '  board-report write Report task artifacts/review proposals (agents; JSON payload on stdin)',
       '  channel <command>  Send channel messages through the service',
       '  wechat <command>   Log in to personal WeChat or diagnose saved login',
@@ -95,6 +97,15 @@ const ROUTES = {
     keepCommand: true,
     jsonOutput: !['help', '--help', '-h'].includes(args[1])
       && !(args.includes('--format') && args[args.indexOf('--format') + 1] === 'text'),
+  },
+  // T-089 rework (#5197): on-demand research document comment watching. The
+  // watch subcommands are single-line JSON (agent-facing); help output is
+  // multi-line text and must bypass the JSON router.
+  research: {
+    file: resolve(ROOT, 'packages/service/dist/cli.js'),
+    keepCommand: true,
+    jsonOutput: !(['help', '--help', '-h'].includes(args[1])
+      || (args[1] === 'watch' && ['help', '--help', '-h', undefined].includes(args[2]))),
   },
   // Agent work/review proposals without injected collector tools (#5560).
   'board-report': {

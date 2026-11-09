@@ -10,6 +10,7 @@ import * as path from 'path';
 import { randomUUID } from 'node:crypto';
 import { Config, createLogger, uploadFile } from "../../../core/dist/index.js";
 import { isChannelApiAvailable, getChannelApiClient, buildChannelApiFallbackHint } from './channel-api-utils.js';
+import { resolveDeliveryPosition } from './delivery-position.js';
 const logger = createLogger('SendFile');
 /**
  * Upload file via REST API to DisclaudeService's LarkClientService.
@@ -85,13 +86,29 @@ export async function send_file(params) {
         }
         const fileSize = result.fileSize ?? 0;
         const sizeMB = (fileSize / 1024 / 1024).toFixed(2);
-        logger.info({ fileName, fileSize, chatId, threadReply: !!parentMessageId, messageId: result.messageId }, 'File sent successfully');
+        // Issue #5722: echo the actual delivery position. Without this, a send_file
+        // missing --parent in a topic group silently started a NEW topic while the
+        // success message stayed byte-identical to an in-topic reply. Prefer the
+        // server-confirmed position from the REST response; derive from the --parent
+        // request when the service does not report one.
+        const delivery = resolveDeliveryPosition({
+            parentMessageId,
+            deliveryPosition: result.deliveryPosition,
+            threadId: result.threadId,
+            messageId: result.messageId,
+        });
+        if (delivery.parentOmitted) {
+            logger.warn({ filePath: resolvedPath, chatId, messageId: result.messageId }, 'send_file without --parent: in a topic group the file starts a NEW topic instead of landing in the current one');
+        }
+        logger.info({ fileName, fileSize, chatId, deliveryPosition: delivery.deliveryPosition, threadId: delivery.threadId, messageId: result.messageId }, 'File sent successfully');
         return {
             success: true,
-            message: `✅ File sent: ${fileName} (${sizeMB} MB)`,
+            message: `✅ File sent: ${fileName} (${sizeMB} MB) ${delivery.suffix}`,
             fileName,
             fileSize,
             sizeMB,
+            deliveryPosition: delivery.deliveryPosition,
+            ...(delivery.threadId ? { parentMessageId: delivery.threadId } : {}),
             ...(result.messageId ? { messageId: result.messageId } : {}),
         };
     }

@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.22] - 2026-11-09
+
+### Added
+
+- Add on-demand research document comment watching: `disclaude research
+  watch start|stop|status` hosts a bounded watch session over the explicit
+  `research-doc-watch` registry, with per-document checkpoints, restart-safe
+  deduplication, exponential backoff, and surfaced error reports; new comments
+  are routed to the original Project chat's agent, and nothing is constructed
+  or scheduled while no session is running (#5197; #5708).
+- Report the real delivery position in channel CLI receipts: file, text, and
+  card sends echo `thread reply to <root>` or `chat root` with the message
+  id, the upload handler returns `messageId`/`deliveryPosition`/
+  `threadId`/`rootId` end to end over the REST protocol, and a topic-group
+  send without `--parent` gets an explicit warning while still sending
+  (#5722; #5730).
+
+### Changed
+
+- Split WeChat media CDN uploads into timed phases (connect incl. TLS,
+  write, response) with a 10s connect budget and a 15s stall watchdog, so
+  stuck uploads abort early with phase-level diagnostics instead of waiting
+  for the overall size-aware deadline; zero-byte connect failures retry once
+  safely, and upload errors carry phase/duration/byte-length details without
+  payload content (#5720; #5728).
+- Give long turns a 30s heartbeat timer backstop (silence detection with
+  duplicate-send guards) and layer delivery progress into
+  send-attempt-to-platform-result accounting: WeChat attachment delivery
+  reports attempt, upload result, and send result separately, and platform
+  receipts that cannot be verified are marked as such instead of implying
+  the user saw the message (#5719; #5729).
+
 ## [0.6.21] - 2026-11-09
 
 ### Added

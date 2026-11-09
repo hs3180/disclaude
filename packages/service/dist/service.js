@@ -230,6 +230,10 @@ export class DisclaudeService extends EventEmitter {
         if (!this.schedulerDeferred) {
             await this.startSchedulerSafely();
         }
+        // T-089 rework (#5197, review 6677596913): research doc comment watching is
+        // NOT auto-started. It exists only as an on-demand watch session started via
+        // `disclaude research watch start` (REST /api/research/watch/* wired in
+        // cli-main.ts); when nobody is watching there is no monitor and no timer.
         this.running = true;
         this.emit('started');
         logger.info({ instanceId: this.instanceId }, 'DisclaudeService started');
@@ -387,7 +391,8 @@ export class DisclaudeService extends EventEmitter {
      * the REST face is localhost-bound and the caller is co-located.
      *
      * @returns upload metadata (fileKey/fileType/fileName/fileSize) plus the
-     *   delivered message_id when the channel confirms one (Issue #5630)
+     *   delivered message_id when the channel confirms one (Issue #5630) and the
+     *   actual delivery position — thread-reply vs chat-root (Issue #5722)
      */
     async uploadFile(chatId, filePath, threadId) {
         const h = this.resolveApiHandlers(chatId);
@@ -437,10 +442,11 @@ export class DisclaudeService extends EventEmitter {
         if (!h) {
             throw new Error('No channel handlers available');
         }
-        // The channel handler returns Promise<void> (the REST API layer synthesizes
-        // success/messageId); REST confirms acceptance with { success: true }.
-        await h.sendCard(chatId, card, threadId, description);
-        return { success: true };
+        // Issue #5722: the channel handler now returns the platform message_id when
+        // the channel reports one (sendCard previously discarded it), so the REST
+        // layer can echo the delivery position like sendMessage/uploadFile.
+        const messageId = await h.sendCard(chatId, card, threadId, description);
+        return { success: true, ...(typeof messageId === 'string' && messageId ? { messageId } : {}) };
     }
     /**
      * Send an interactive card (with buttons) to a chat — builds+sends the card

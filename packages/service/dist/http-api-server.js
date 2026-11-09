@@ -78,6 +78,8 @@ export class HttpApiServer {
     listTempChatsHandler;
     /** Issue #5603: structured read-only chat history provider. */
     historyQueryHandler;
+    /** T-089 rework (#5197): research doc comment watch session controller. */
+    researchWatchController;
     uploadImageHandler;
     markChatRespondedHandler;
     selfSentRegistrar;
@@ -372,10 +374,23 @@ export class HttpApiServer {
         // Issue #5603: read-only structured chat history for agents (CLI parity).
         // GET but authRequired: the payload is conversation content, not a health check.
         this.addRoute('GET', '/api/history/query', this.handleHistoryQuery.bind(this), true);
+        // T-089 rework (#5197): on-demand research doc comment watch session
+        // (`disclaude research watch start|stop|status|add|remove`). The mutating
+        // routes are POSTs (token-gated); status is GET but authRequired because it
+        // exposes registrations and checkpoint payloads, like history query.
+        this.addRoute('POST', '/api/research/watch/start', this.handleResearchWatchStart.bind(this));
+        this.addRoute('POST', '/api/research/watch/stop', this.handleResearchWatchStop.bind(this));
+        this.addRoute('GET', '/api/research/watch/status', this.handleResearchWatchStatus.bind(this), true);
+        this.addRoute('POST', '/api/research/watch/register', this.handleResearchWatchRegister.bind(this));
+        this.addRoute('POST', '/api/research/watch/unregister', this.handleResearchWatchUnregister.bind(this));
     }
     /** Issue #5603: structured read-only chat history provider. */
     setHistoryQueryHandler(handler) {
         this.historyQueryHandler = handler;
+    }
+    /** T-089 rework (#5197): set the research doc comment watch session controller. */
+    setResearchWatchController(controller) {
+        this.researchWatchController = controller;
     }
     async handleHistoryQuery(req, res) {
         if (!this.historyQueryHandler) {
@@ -401,6 +416,172 @@ export class HttpApiServer {
         catch (err) {
             logger.error({ err }, 'history query handler error');
             this.sendJson(res, 500, { ok: false, message: err instanceof Error ? err.message : 'history query failed' });
+        }
+    }
+    /**
+     * T-089 rework (#5197): POST /api/research/watch/start — start (or confirm)
+     * the on-demand watch session. Optional body `{ intervalSec?: number }`
+     * (seconds; the monitor clamps the ms interval). Never auto-invoked: this
+     * route (via the `disclaude research watch start` CLI) is the only trigger.
+     */
+    async handleResearchWatchStart(req, res) {
+        if (!this.researchWatchController) {
+            this.sendJson(res, 503, { ok: false, message: 'research watch controller not configured' });
+            return;
+        }
+        const body = await this.readOptionalJsonObject(req, res);
+        if (!body) {
+            return;
+        }
+        let pollIntervalMs;
+        const { intervalSec } = body;
+        if (intervalSec !== undefined) {
+            if (typeof intervalSec !== 'number' || !Number.isFinite(intervalSec) || intervalSec <= 0) {
+                this.sendJson(res, 400, { ok: false, message: 'intervalSec must be a positive number of seconds' });
+                return;
+            }
+            pollIntervalMs = intervalSec * 1000;
+        }
+        try {
+            const result = await this.researchWatchController.start({ ...(pollIntervalMs !== undefined ? { pollIntervalMs } : {}) });
+            this.sendJson(res, 200, { ok: true, started: result.started, watch: result.status });
+        }
+        catch (err) {
+            logger.error({ err }, 'research watch start failed');
+            this.sendJson(res, 500, { ok: false, message: err instanceof Error ? err.message : 'research watch start failed' });
+        }
+    }
+    /** T-089 rework (#5197): POST /api/research/watch/stop — stop the session. */
+    async handleResearchWatchStop(_req, res) {
+        if (!this.researchWatchController) {
+            this.sendJson(res, 503, { ok: false, message: 'research watch controller not configured' });
+            return;
+        }
+        try {
+            const status = await this.researchWatchController.stop();
+            this.sendJson(res, 200, { ok: true, watch: status });
+        }
+        catch (err) {
+            logger.error({ err }, 'research watch stop failed');
+            this.sendJson(res, 500, { ok: false, message: err instanceof Error ? err.message : 'research watch stop failed' });
+        }
+    }
+    /** T-089 rework (#5197): GET /api/research/watch/status — session + checkpoint report. */
+    async handleResearchWatchStatus(_req, res) {
+        if (!this.researchWatchController) {
+            this.sendJson(res, 503, { ok: false, message: 'research watch controller not configured' });
+            return;
+        }
+        try {
+            const status = await this.researchWatchController.status();
+            this.sendJson(res, 200, { ok: true, watch: status });
+        }
+        catch (err) {
+            logger.error({ err }, 'research watch status failed');
+            this.sendJson(res, 500, { ok: false, message: err instanceof Error ? err.message : 'research watch status failed' });
+        }
+    }
+    /**
+     * T-089 rework (#5197): POST /api/research/watch/register — upsert the
+     * document → Project association. Explicit opt-in only: unregistered
+     * documents are never polled.
+     */
+    async handleResearchWatchRegister(req, res) {
+        if (!this.researchWatchController) {
+            this.sendJson(res, 503, { ok: false, message: 'research watch controller not configured' });
+            return;
+        }
+        const body = await this.readOptionalJsonObject(req, res);
+        if (!body) {
+            return;
+        }
+        const record = body;
+        if (typeof record.docToken !== 'string' || !record.docToken.trim()) {
+            this.sendJson(res, 400, { ok: false, message: 'Required fields: docToken (string), chatId (string)' });
+            return;
+        }
+        if (typeof record.chatId !== 'string' || !record.chatId.trim()) {
+            this.sendJson(res, 400, { ok: false, message: 'Required fields: docToken (string), chatId (string)' });
+            return;
+        }
+        for (const key of ['docType', 'projectName', 'registeredBy', 'identity']) {
+            if (record[key] !== undefined && typeof record[key] !== 'string') {
+                this.sendJson(res, 400, { ok: false, message: `${key} must be a string when present` });
+                return;
+            }
+        }
+        try {
+            const result = await this.researchWatchController.register({
+                docToken: record.docToken,
+                chatId: record.chatId,
+                ...(record.docType !== undefined ? { docType: record.docType } : {}),
+                ...(record.projectName !== undefined ? { projectName: record.projectName } : {}),
+                ...(record.registeredBy !== undefined ? { registeredBy: record.registeredBy } : {}),
+                ...(record.identity !== undefined ? { identity: record.identity } : {}),
+            });
+            if (!result.ok) {
+                this.sendJson(res, 400, { ok: false, message: result.error });
+                return;
+            }
+            this.sendJson(res, 200, { ok: true, registration: result.data });
+        }
+        catch (err) {
+            logger.error({ err }, 'research watch register failed');
+            this.sendJson(res, 500, { ok: false, message: err instanceof Error ? err.message : 'research watch register failed' });
+        }
+    }
+    /** T-089 rework (#5197): POST /api/research/watch/unregister — drop an association. */
+    async handleResearchWatchUnregister(req, res) {
+        if (!this.researchWatchController) {
+            this.sendJson(res, 503, { ok: false, message: 'research watch controller not configured' });
+            return;
+        }
+        const body = await this.readOptionalJsonObject(req, res);
+        if (!body) {
+            return;
+        }
+        const { docToken } = body;
+        if (typeof docToken !== 'string' || !docToken.trim()) {
+            this.sendJson(res, 400, { ok: false, message: 'Required field: docToken (string)' });
+            return;
+        }
+        try {
+            const result = await this.researchWatchController.unregister(docToken);
+            this.sendJson(res, 200, { ok: true, removed: result.removed });
+        }
+        catch (err) {
+            logger.error({ err }, 'research watch unregister failed');
+            this.sendJson(res, 500, { ok: false, message: err instanceof Error ? err.message : 'research watch unregister failed' });
+        }
+    }
+    /**
+     * Read a request body that may legitimately be absent/empty. Responds with
+     * the error itself and returns undefined when the body is unusable; returns
+     * `{}` for an empty body so callers can treat both alike.
+     */
+    async readOptionalJsonObject(req, res) {
+        let body;
+        try {
+            body = await readBody(req);
+        }
+        catch {
+            this.sendJson(res, 413, { ok: false, message: 'Request body too large (max 1 MB)' });
+            return undefined;
+        }
+        const trimmed = body.trim();
+        if (trimmed.length === 0) {
+            return {};
+        }
+        try {
+            const parsed = JSON.parse(trimmed);
+            if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+                throw new Error('not an object');
+            }
+            return parsed;
+        }
+        catch {
+            this.sendJson(res, 400, { ok: false, message: 'Request body must be a JSON object' });
+            return undefined;
         }
     }
     async handleChannelCapabilities(req, res) {
