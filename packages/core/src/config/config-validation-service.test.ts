@@ -10,7 +10,7 @@ describe('removed execution role settings', () => {
     expect(validateConfig({
       workspace: { dir: '/tmp/workspace' },
       agents: { default: { backend: 'claude', llm: 'default' } },
-      llms: { default: { model: 'sonnet', api: { protocol: 'anthropic' } } },
+      llms: { default: { defaultModel: 'sonnet', api: { protocol: 'anthropic' } } },
       channels: { feishu: { enabled: false } },
     } as DisclaudeConfig)).toBe(true);
   });

@@ -79,7 +79,11 @@ export interface ControlHandlerContext {
     listAgentPresets?(): Array<{ name: string; agentBackend: string; model: string }>;
     getActiveAgentPreset?(chatId: string, threadRootId?: string):
       { name: string; agentBackend: string; model: string } | undefined;
-    switchAgentPreset?(chatId: string, presetName: string, threadRootId?: string):
+    /**
+     * Switch the session's preset and durably save the choice for the chat
+     * (#5476). `actorId` records who switched in the persisted selection.
+     */
+    switchAgentPreset?(chatId: string, presetName: string, threadRootId?: string, actorId?: string):
       | { ok: true; active: { name: string; agentBackend: string; model: string }; sessionBoundary: 'new-session' }
       | { ok: false; error: string };
     steer?(chatId: string, prompt: string, threadRootId?: string):
@@ -113,17 +117,20 @@ export interface ControlHandlerContext {
   shutdown?: () => Promise<void>;
 
   /**
-   * Issue #5400: per-chat last-failure records backing /issue.
+   * Issue #5400: per-chat last-failure records backing /feedback (#5428).
    * The registry is fed by ChatAgent's failureRecorder wiring.
    */
   failureRegistry?: {
     get(chatId: string): ChatFailureRecord | undefined;
   };
 
+  /** Version embedded in locally generated issue drafts. */
+  serviceVersion?: string;
+
   /**
    * Issue #5400: channel hook that renders the sanitized confirmation card
-   * for a failure record (Feishu interactive card). Absent → /issue answers
-   * with text-only guidance instead.
+   * for a failure record (Feishu interactive card). Absent → /feedback answers
+   * with text-only guidance instead (#5428).
    */
   issueReporting?: {
     sendConfirmation(

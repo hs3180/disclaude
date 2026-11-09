@@ -9,7 +9,7 @@ import { handleTrigger } from './passive.js';
 import { handleProject } from './project.js';
 import { handleAgent } from './agent.js';
 import { handleSteer } from './steer.js';
-import { handleIssue } from './issue.js';
+import { handleFeedback } from './issue.js';
 import { handleGoal } from './goal.js';
 
 /**
@@ -27,12 +27,12 @@ export const commandRegistry: CommandDefinition[] = [
   { type: 'trigger', handler: handleTrigger as CommandDefinition['handler'], description: '切换触发模式', usage: '/trigger [mention|always|auto]',
     isAvailable: (c, command) => !!c.triggerMode && command.chatType !== 'p2p' },
   { type: 'project', handler: handleProject as CommandDefinition['handler'], description: '项目管理命令', usage: '/project [use|reset|info]', isAvailable: c => !!c.projectManager },
-  { type: 'agent', handler: handleAgent as CommandDefinition['handler'], description: '查看或切换 backend/model 预设', usage: '/agent [current|list|use <name>]',
+  { type: 'agent', handler: handleAgent as CommandDefinition['handler'], description: '查看或切换 backend/model 预设', usage: '/agent [current|list|use <preset>]',
     isAvailable: c => !!c.agentPool?.listAgentPresets && !!c.agentPool.getActiveAgentPreset && !!c.agentPool.switchAgentPreset && c.agentPool.listAgentPresets().length > 0 },
   { type: 'steer', handler: handleSteer as CommandDefinition['handler'], description: '运行中纠偏（需原生 turn/steer 支持）', usage: '/steer <instruction>',
     isAvailable: c => !!c.agentPool?.steer,
     showInHelp: (c, command) => c.agentPool.canSteer?.(command.chatId, command.threadRootId) === true },
-  { type: 'issue', handler: handleIssue as CommandDefinition['handler'], description: '一键上报本会话最近一次失败为 GitHub issue', usage: '/issue',
+  { type: 'feedback', handler: handleFeedback as CommandDefinition['handler'], description: '一键上报本会话最近一次失败为 GitHub issue', usage: '/feedback',
     isAvailable: c => !!c.failureRegistry },
   { type: 'goal', handler: handleGoal as CommandDefinition['handler'], description: '一键启动本聊天当前项目的目标', usage: '/goal <目标> | <验收要求…>',
     isAvailable: c => !!c.goalStore && !!c.projectManager },

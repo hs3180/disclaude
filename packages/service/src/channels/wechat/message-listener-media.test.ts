@@ -10,7 +10,10 @@ import type { WeChatUpdate } from './types.js';
 import { WeChatMediaError } from './media-error.js';
 
 const logger = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() }));
-vi.mock('@disclaude/core', () => ({ createLogger: () => logger }));
+vi.mock('@disclaude/core', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@disclaude/core')>()),
+  createLogger: () => logger,
+}));
 const owned: WeChatMessageListener[] = [], dirs: string[] = [];
 afterEach(async () => { for (const l of owned.splice(0)) { await l.stop(); } for (const d of dirs.splice(0)) { await fs.rm(d, { recursive: true, force: true }); } vi.restoreAllMocks(); });
 const image: WeChatUpdate = { message_id: 'image', from_user_id: 'peer', context_token: 'old-context', item_list: [{ type: 2, image_item: { media: { encrypt_query_param: 'private-ref', aes_key: 'private-key' } } }] };

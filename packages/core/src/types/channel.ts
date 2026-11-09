@@ -139,8 +139,9 @@ export type ControlCommandType =
   | 'agent'
   | 'steer'
   | 'goal'
-  // One-click GitHub issue reporting of the chat's last failure (Issue #5400)
-  | 'issue';
+  // One-click GitHub issue reporting of the chat's last failure (Issue #5400;
+  // #5428: /feedback is the canonical and only entry — /issue was removed)
+  | 'feedback';
 
 /**
  * Typed data schema for each command type (Issue #3529).
@@ -157,7 +158,10 @@ export interface CommandDataMap {
   project: { subcommand: string; workingDir?: string };
   /** /reset — reset agent, optionally skip history loading (Issue #3696) */
   reset: { skipContext?: boolean };
-  /** /agent — inspect or select a named runtime preset */
+  /**
+   * /agent — inspect/select presets. A plain `use <preset>` switch is saved
+   * for the chat and survives service restarts (#5476); no extra qualifiers.
+   */
   agent: { subcommand: string; preset?: string };
   steer: { prompt?: string };
   /** Explicit Goal record commands; execution is a separate capability. */

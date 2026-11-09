@@ -66,6 +66,16 @@ describe('tryHandleSlashCommand', () => {
     expect(deps.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining('用户直接发送') }));
   });
 
+  it('routes /feedback through the canonical control entry', async () => {
+    // Maintainer decision (PR #5697 comment 6679335183): /feedback is the
+    // canonical failure-reporting entry, so the router dispatches it like any
+    // other control command and relays the handler's reply.
+    const { deps } = makeDeps({ hasControlHandler: true, controlResponse: { success: true, message: 'accepted' } });
+    expect(await tryHandleSlashCommand(input('/feedback'), deps)).toBe(true);
+    expect(deps.emitControl).toHaveBeenCalledWith(expect.objectContaining({ type: 'feedback', chatId: 'oc_x' }));
+    expect(deps.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: 'accepted' }));
+  });
+
   it('carries the raw platform source ID outside Goal arguments into control dispatch', async () => {
     const { deps } = makeDeps({ hasControlHandler: true, controlResponse: { success: true, message: 'accepted' } });
     await tryHandleSlashCommand({ textWithoutMentions: '/goal start some-id 1', chatId: 'oc_x',
@@ -173,6 +183,17 @@ describe('tryHandleSlashCommand', () => {
     await tryHandleSlashCommand({ ...input(`/${command}`), threadRootId: 'om_original' }, deps);
     expect(deps.sendMessage).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
       chatId: 'oc_x', threadId: 'om_original', type: 'text',
+    }));
+  });
+
+  it('normalizes /agent use while preserving the Feishu actor and thread', async () => {
+    const { deps } = makeDeps({ hasControlHandler: true, controlResponse: { success: true, message: 'switched' } });
+    await tryHandleSlashCommand({
+      ...input('/agent use fast'), actorId: 'ou_user', sourceMessageId: 'om_source', threadRootId: 'om_topic',
+    }, deps);
+    expect(deps.emitControl).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'agent', chatId: 'oc_x', actorId: 'ou_user', sourceMessageId: 'om_source', threadRootId: 'om_topic',
+      data: { subcommand: 'use', preset: 'fast' },
     }));
   });
 

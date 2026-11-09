@@ -68,6 +68,9 @@ vi.mock('@disclaude/core', async (importOriginal) => {
     // Issue #4399: real driver so the streaming wiring is exercised end-to-end.
     StreamingReplyDriver: actual.StreamingReplyDriver,
     sanitizeDiagnosticText: actual.sanitizeDiagnosticText,
+    // T-085: failure diagnostics append a locally built prefilled issue URL.
+    createPrefilledIssueUrl: actual.createPrefilledIssueUrl,
+    DEFAULT_ISSUE_REPOSITORY: actual.DEFAULT_ISSUE_REPOSITORY,
     // Issue #4649 (review ①): real class — ChatAgent throws it from
     // setTurnPending and the tests below assert instanceof on the exact
     // class the production import resolves to.
@@ -151,7 +154,7 @@ vi.mock('../services/debug-group-service.js', () => ({
   })),
 }));
 
-import { ChatAgent } from './chat-agent.js';
+import { ChatAgent, HEARTBEAT_TIMER_SILENCE_MS, PROGRESS_HEARTBEAT_TICK_MS } from './chat-agent.js';
 import { createChannelCallbacksFactory, createDefaultMessageHandler } from '../utils/channel-handlers.js';
 import { registerFeishuInputSource, readVerifiedInputSource } from './input-provenance.js';
 import type { WiredContext } from '../channel-lifecycle-manager.js';
@@ -4069,7 +4072,7 @@ describe('ChatAgent (service)', () => {
       } finally { agent.dispose(); }
     });
 
-    it('records the fatal failure for the per-chat /issue registry (#5400)', async () => {
+    it('records the fatal failure for the per-chat /feedback registry (#5400)', async () => {
       const callbacks = createMockCallbacks();
       const recorded: any[] = [];
       const agent = new ChatAgent({ chatId: 'loop-failure', callbacks, apiKey: 'key', model: 'model', agentBackend: 'codex',
@@ -7955,6 +7958,262 @@ describe('Issue #5654: narration-silent heartbeat and side-effect receipts', () 
       expect(String(receipt[0])).toContain('系统不会自动重放');
     } finally {
       cleanup(agent);
+    }
+  });
+});
+
+describe('Issue #5719 (T-102): timer-backstop heartbeat and accounted progress delivery', () => {
+  const makeAgent = () => {
+    const cb = createMockCallbacks();
+    const agent = new ChatAgent({
+      chatId: 'hb-chat',
+      callbacks: cb,
+      apiKey: 'test-key',
+      model: 'test-model',
+      apiProtocol: 'anthropic',
+      apiBaseUrl: 'https://api.example.com',
+    });
+    // Same instance override the queue-receipt tests use: no agent teams.
+    (agent as any).isAgentTeamsEnabled = () => false;
+    return { agent, cb };
+  };
+  const cleanup = (agent: ChatAgent) => {
+    agent.reset();
+    ChatAgent.prototype.dispose.call(agent);
+  };
+  const sentTexts = (cb: ReturnType<typeof createMockCallbacks>) =>
+    cb.sendMessage.mock.calls.map((call: unknown[]) => call[1]).filter((text): text is string => typeof text === 'string');
+  const progressRows = (agent: ChatAgent, state?: string) =>
+    (agent as any).logger.info.mock.calls
+      .map(([record]: any[]) => record)
+      .filter((record: any) => record?.event === 'progress_delivery' && (state === undefined || record.state === state));
+
+  it('delivers a heartbeat while the turn waits inside ONE long tool call (timer backstop, zero SDK events)', async () => {
+    vi.useFakeTimers();
+    const { agent, cb } = makeAgent();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    (agent as any).createQueryStream.mockReturnValue({
+      handle: { close: vi.fn(), cancel: vi.fn() },
+      // The #5719 shape: one tool_use, then the whole ~10-minute wait inside
+      // that tool — NO further SDK event can arrive to drive the event path.
+      iterator: (async function* () {
+        yield { parsed: { type: 'tool_use', content: 'SECRET-TOOL-INPUT render video', metadata: { toolName: 'Browser' } } };
+        await gate;
+        yield { parsed: { type: 'tool_result', content: 'done' } };
+        yield { parsed: { type: 'text', content: 'final answer' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete', subtype: 'success' }, raw: {} };
+      })(),
+    });
+    try {
+      await agent.processMessage({ chatId: 'hb-chat', payload: '长任务', messageId: 't102-1' });
+      // Past TWO timer-backstop windows: the first heartbeat reports the
+      // completed tool call; the second — same tool STILL outstanding — is
+      // the pure pending-wait variant (toolsSinceLast === 0, liveness proof
+      // is only the outstanding tool result).
+      await vi.advanceTimersByTimeAsync(2 * HEARTBEAT_TIMER_SILENCE_MS + PROGRESS_HEARTBEAT_TICK_MS);
+      const heartbeats = sentTexts(cb).filter(text => text.includes('⏳'));
+      expect(heartbeats).toHaveLength(2);
+      expect(heartbeats[0]).toContain('期间完成 1 次工具调用');
+      // The pending-tool variant: the outstanding tool wait is the liveness proof.
+      expect(heartbeats[1]).toContain('仍在等待当前工具返回');
+      // 验收⑤脱敏: the heartbeat is a public-readable summary only — no raw
+      // tool content from the in-flight call.
+      expect(heartbeats.every(text => !text.includes('SECRET-TOOL-INPUT'))).toBe(true);
+      // 验收③ layering: attempt and platform result correlate on the same
+      // turn, and neither claims phone receipt.
+      const attempts = progressRows(agent, 'send_attempt');
+      const results = progressRows(agent, 'platform_result');
+      expect(attempts.length).toBeGreaterThanOrEqual(1);
+      expect(attempts.every((row: any) => row.turnMessageId === 't102-1' && row.phoneReceipt === 'unverifiable_server_side')).toBe(true);
+      expect(results.some((row: any) => row.outcome === 'sent' && row.turnMessageId === 't102-1')).toBe(true);
+      // No payload ever logged — length only.
+      expect(progressRows(agent).every((row: any) => typeof row.contentLength === 'number' && row.text === undefined && row.content === undefined)).toBe(true);
+      // The turn is NOT ended or failed by the heartbeat: it completes and
+      // delivers the final reply exactly once.
+      release();
+      await agent.turnCompleteFor('t102-1');
+      expect(sentTexts(cb).filter(text => text.includes('final answer'))).toHaveLength(1);
+      expect(sentTexts(cb).some(text => text.includes('❌ 本次请求中断'))).toBe(false);
+    } finally {
+      cleanup(agent);
+      await vi.runOnlyPendingTimersAsync();
+      vi.useRealTimers();
+    }
+  });
+
+  it('rate-controls the timer backstop: one heartbeat per silence window, never one per tick', async () => {
+    vi.useFakeTimers();
+    const { agent, cb } = makeAgent();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    (agent as any).createQueryStream.mockReturnValue({
+      handle: { close: vi.fn(), cancel: vi.fn() },
+      iterator: (async function* () {
+        yield { parsed: { type: 'tool_use', content: 'step', metadata: { toolName: 'gh' } } };
+        await gate;
+        yield { parsed: { type: 'text', content: 'done answer' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete', subtype: 'success' }, raw: {} };
+      })(),
+    });
+    try {
+      await agent.processMessage({ chatId: 'hb-chat', payload: '长任务', messageId: 't102-2' });
+      // Window + 10 ticks: the first due tick sends, the silence clock reset
+      // must hold the rest back (a broken reset would emit ~10 heartbeats).
+      await vi.advanceTimersByTimeAsync(HEARTBEAT_TIMER_SILENCE_MS + 10 * PROGRESS_HEARTBEAT_TICK_MS);
+      expect(sentTexts(cb).filter(text => text.includes('⏳'))).toHaveLength(1);
+      release();
+      await agent.turnCompleteFor('t102-2');
+    } finally {
+      cleanup(agent);
+      await vi.runOnlyPendingTimersAsync();
+      vi.useRealTimers();
+    }
+  });
+
+  it('timer backstop does not fire without liveness proof (no tool activity at all)', async () => {
+    vi.useFakeTimers();
+    const { agent, cb } = makeAgent();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    (agent as any).createQueryStream.mockReturnValue({
+      handle: { close: vi.fn(), cancel: vi.fn() },
+      // A parked stream that never ran a tool: silence is NOT evidence of work.
+      iterator: (async function* () {
+        await gate;
+        yield { parsed: { type: 'text', content: 'quiet answer' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete', subtype: 'success' }, raw: {} };
+      })(),
+    });
+    try {
+      await agent.processMessage({ chatId: 'hb-chat', payload: '任务', messageId: 't102-3' });
+      await vi.advanceTimersByTimeAsync(3 * HEARTBEAT_TIMER_SILENCE_MS);
+      expect(sentTexts(cb).some(text => text.includes('⏳'))).toBe(false);
+      release();
+      await agent.turnCompleteFor('t102-3');
+    } finally {
+      cleanup(agent);
+      await vi.runOnlyPendingTimersAsync();
+      vi.useRealTimers();
+    }
+  });
+
+  it('timer backstop stays parked between turns even with stale tool counters', async () => {
+    vi.useFakeTimers();
+    const { agent, cb } = makeAgent();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    (agent as any).createQueryStream.mockReturnValue({
+      handle: { close: vi.fn(), cancel: vi.fn() },
+      iterator: (async function* () {
+        // Turn 1 ends with un-heartbeated tool activity (stale counters).
+        yield { parsed: { type: 'tool_use', content: 'step', metadata: { toolName: 'gh' } } };
+        yield { parsed: { type: 'text', content: 'first answer' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete', subtype: 'success' }, raw: {} };
+        // Between turns the iterator parks — no live input.
+        await gate;
+        yield { parsed: { type: 'text', content: 'second answer' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete', subtype: 'success' }, raw: {} };
+      })(),
+    });
+    try {
+      await agent.processMessage({ chatId: 'hb-chat', payload: 'first', messageId: 't102-4a' });
+      await agent.turnCompleteFor('t102-4a');
+      // Silence far beyond the window while NO turn is running: the stale
+      // turnToolsSinceHeartbeat=1 must not authorize a heartbeat.
+      await vi.advanceTimersByTimeAsync(3 * HEARTBEAT_TIMER_SILENCE_MS);
+      expect(sentTexts(cb).some(text => text.includes('⏳'))).toBe(false);
+      const second = agent.processMessage({ chatId: 'hb-chat', payload: 'second', messageId: 't102-4b' });
+      release();
+      await second;
+      await agent.turnCompleteFor('t102-4b');
+      expect(sentTexts(cb).filter(text => text.includes('second answer'))).toHaveLength(1);
+      expect(sentTexts(cb).some(text => text.includes('⏳'))).toBe(false);
+    } finally {
+      cleanup(agent);
+      await vi.runOnlyPendingTimersAsync();
+      vi.useRealTimers();
+    }
+  });
+
+  it('records a failed heartbeat send as failed (never silent success), keeps the turn alive and rate-bounded', async () => {
+    vi.useFakeTimers();
+    const { agent, cb } = makeAgent();
+    cb.sendMessage.mockImplementation((_chatId: string, text: string) =>
+      typeof text === 'string' && text.includes('⏳')
+        ? Promise.reject(new Error('wechat channel rejected: 500'))
+        : Promise.resolve(undefined));
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    (agent as any).createQueryStream.mockReturnValue({
+      handle: { close: vi.fn(), cancel: vi.fn() },
+      iterator: (async function* () {
+        yield { parsed: { type: 'tool_use', content: 'step', metadata: { toolName: 'gh' } } };
+        await gate;
+        yield { parsed: { type: 'text', content: 'final answer' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete', subtype: 'success' }, raw: {} };
+      })(),
+    });
+    try {
+      await agent.processMessage({ chatId: 'hb-chat', payload: '长任务', messageId: 't102-5' });
+      await vi.advanceTimersByTimeAsync(HEARTBEAT_TIMER_SILENCE_MS + PROGRESS_HEARTBEAT_TICK_MS);
+      // The failure is accounted at platform_result layer — not swallowed.
+      const failedRows = progressRows(agent, 'platform_result').filter((row: any) => row.outcome === 'failed');
+      expect(failedRows).toHaveLength(1);
+      expect(failedRows[0].kind).toBe('heartbeat');
+      // Best-effort contract (#5288/#5719 验收②): the turn was not killed.
+      expect(sentTexts(cb).some(text => text.includes('❌ 本次请求中断'))).toBe(false);
+      // No retry burst: clocks reset even on failure. The single ⏳ attempt
+      // stays in mock.calls (it was attempted and rejected) — exactly one.
+      await vi.advanceTimersByTimeAsync(6 * PROGRESS_HEARTBEAT_TICK_MS);
+      expect(sentTexts(cb).filter(text => text.includes('⏳'))).toHaveLength(1);
+      expect(progressRows(agent, 'send_attempt').filter((row: any) => row.kind === 'heartbeat')).toHaveLength(1);
+      release();
+      await agent.turnCompleteFor('t102-5');
+      expect(sentTexts(cb).filter(text => text.includes('final answer'))).toHaveLength(1);
+    } finally {
+      cleanup(agent);
+      await vi.runOnlyPendingTimersAsync();
+      vi.useRealTimers();
+    }
+  });
+
+  it('a failed commentary send is recorded, not counted as delivered progress, and cannot fail the turn', async () => {
+    vi.useFakeTimers();
+    const { agent, cb } = makeAgent();
+    cb.sendMessage.mockImplementation((_chatId: string, text: string) =>
+      text === '公开进度：正在分析' ? Promise.reject(new Error('send failed: 429')) : Promise.resolve(undefined));
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    (agent as any).createQueryStream.mockReturnValue({
+      handle: { close: vi.fn(), cancel: vi.fn() },
+      iterator: (async function* () {
+        yield { parsed: { type: 'text', content: '公开进度：正在分析', metadata: { phase: 'commentary' } }, raw: {} };
+        yield { parsed: { type: 'tool_use', content: 'SECRET-TOOL-INPUT', metadata: { toolName: 'Bash' } } };
+        await gate;
+        yield { parsed: { type: 'text', content: 'final answer' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete', subtype: 'success' }, raw: {} };
+      })(),
+    });
+    try {
+      await agent.processMessage({ chatId: 'hb-chat', payload: '任务', messageId: 't102-6' });
+      // The commentary failure is accounted (attempt + failed result).
+      const failedRows = progressRows(agent, 'platform_result').filter((row: any) => row.outcome === 'failed' && row.kind === 'commentary');
+      expect(failedRows).toHaveLength(1);
+      // Not treated as delivered: the silence clock was NOT reset, so the
+      // timer backstop still reaches its window (a false "delivered" would
+      // have pushed the clock forward and suppressed this heartbeat).
+      await vi.advanceTimersByTimeAsync(HEARTBEAT_TIMER_SILENCE_MS + PROGRESS_HEARTBEAT_TICK_MS);
+      const heartbeats = sentTexts(cb).filter(text => text.includes('⏳'));
+      expect(heartbeats).toHaveLength(1);
+      expect(heartbeats[0]).not.toContain('SECRET-TOOL-INPUT');
+      release();
+      await agent.turnCompleteFor('t102-6');
+      expect(sentTexts(cb).filter(text => text.includes('final answer'))).toHaveLength(1);
+    } finally {
+      cleanup(agent);
+      await vi.runOnlyPendingTimersAsync();
+      vi.useRealTimers();
     }
   });
 });

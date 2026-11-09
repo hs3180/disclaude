@@ -18,7 +18,7 @@ describe('scheduled provider failure through the real agent and routing boundary
       writeFileSync(config, JSON.stringify({
         workspace: { dir: root },
         agents: { default: { backend: 'codex', llm: 'default' } },
-        llms: { default: { model: 'gpt-6-luna' } },
+        llms: { default: { defaultModel: 'gpt-6-luna' } },
       }));
       const script = `
         import assert from 'node:assert/strict';
