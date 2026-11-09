@@ -21,6 +21,8 @@ import {
   type ChannelApiHandlers,
   type FeishuCard,
   type UserMessage,
+  type ControlCommandType,
+  createControlCommand,
   createLogger as coreCreateLogger,
 } from '@disclaude/core';
 import type { ChatAgentCallbacks } from '../agents/types.js';
@@ -231,6 +233,31 @@ export function createDefaultMessageHandler(
       { chatId, messageId, messageType, contentLength: content.length, hasAttachments: !!message.attachments },
       `Processing message from ${options.channelName}`
     );
+
+    // #5476: channels without a dedicated slash router (WeChat) share the
+    // control handler. Unrecognized commands fall through as ordinary text,
+    // matching the Feishu command-router contract.
+    const text = content.trim();
+    if (text.startsWith('/')) {
+      const [command, ...args] = text.slice(1).split(/\s+/);
+      const threadRootId = metadata?.threadRootId as string | undefined;
+      const response = await context.controlHandler(createControlCommand(
+        command.toLowerCase() as ControlCommandType,
+        chatId,
+        { args },
+        {
+          ...(threadRootId ? { threadRootId } : {}),
+          ...(userId ? { actorId: userId } : {}),
+          ...(messageId ? { sourceMessageId: messageId } : {}),
+        },
+      ));
+      if (response?.message) {
+        await channel.sendMessage({
+          chatId, type: 'text', text: response.message, ...(threadRootId ? { threadId: threadRootId } : {}),
+        });
+        return;
+      }
+    }
 
     // Issue #3582: Route through InputMessageRouter when available (Phase 3)
     if (context.inputMessageRouter) {

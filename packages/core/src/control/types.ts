@@ -79,7 +79,11 @@ export interface ControlHandlerContext {
     listAgentPresets?(): Array<{ name: string; agentBackend: string; model: string }>;
     getActiveAgentPreset?(chatId: string, threadRootId?: string):
       { name: string; agentBackend: string; model: string } | undefined;
-    switchAgentPreset?(chatId: string, presetName: string, threadRootId?: string):
+    /**
+     * Switch the session's preset and durably save the choice for the chat
+     * (#5476). `actorId` records who switched in the persisted selection.
+     */
+    switchAgentPreset?(chatId: string, presetName: string, threadRootId?: string, actorId?: string):
       | { ok: true; active: { name: string; agentBackend: string; model: string }; sessionBoundary: 'new-session' }
       | { ok: false; error: string };
     steer?(chatId: string, prompt: string, threadRootId?: string):
