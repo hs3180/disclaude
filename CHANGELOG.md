@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.23] - 2026-11-09
+
+### Fixed
+
+- CI: pin the `datalayer-package` (Jupyter patch CLI) workflow runner to
+  `ubuntu-24.04` — `ubuntu-latest` rolled to 26.04, where the
+  `actions/setup-python` toolcache no longer provides Python 3.9, randomly
+  failing the Node18/Py3.9 compatibility leg and cancelling the Node24 leg
+  on main pushes and PRs that trigger the workflow (#5735). CI-only
+  change; the packaged runtime is identical to 0.6.22.
+
 ## [0.6.22] - 2026-11-09
 
 ### Added
