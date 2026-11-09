@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -1038,6 +1038,95 @@ describe('ChatAgent (service)', () => {
       expect(source).not.toContain('后端已确认接收');
       // The unified supplement hint lives in exactly one construction point.
       expect(source.match(/已交给当前运行的回合/g)).toHaveLength(1);
+    });
+
+    it('Issue #5713 review ⑥ (round 2): a backend run-capacity wait marker renders through the unified busy-input receipt', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_user_chat',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        apiProtocol: 'anthropic',
+      });
+      // The provider reports the governor wait as structured, content-free
+      // facts (#5713 round 2) — no wording is composed harness-side.
+      async function* queueWaitIterator() {
+        yield {
+          parsed: {
+            type: 'status',
+            content: '',
+            metadata: { queueWait: { running: 2, capacity: 2, queued: 3 } },
+          },
+        };
+        yield { parsed: { type: 'text', content: '清单整理完成。' } };
+        yield { parsed: { type: 'result', content: 'Done' } };
+      }
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: queueWaitIterator(),
+      });
+      try {
+        void agent.processMessage({
+          chatId: 'oc_user_chat',
+          payload: '整理仓库里的依赖清单',
+          messageId: 'msg_queue_wait_1',
+        });
+        await vi.waitFor(
+          () => {
+            expect(
+              (agent as any).logger.info.mock.calls.some(
+                (c: any[]) => c[1] === 'Result received, turn complete'
+              )
+            ).toBe(true);
+          },
+          { timeout: 1000, interval: 20 }
+        );
+        const receipts = localCallbacks.sendMessage.mock.calls
+          .filter((call: any[]) => call[0] === 'oc_user_chat')
+          .map((call: any[]) => call[1] as string)
+          .filter(text => text.includes('已接收并排队'));
+        // Exactly one receipt, built by the same unified builder as every other
+        // busy-input notice: admission line + the marker's real queue depth.
+        expect(receipts).toHaveLength(1);
+        expect(receipts[0]).toContain('⏳ 这条消息已接收并排队；模型会话容量释放后会自动处理，无需重新发送。');
+        expect(receipts[0]).toContain('前方还有 3 条排队');
+        // The retired harness-side governor wording must not resurface.
+        expect(receipts[0]).not.toContain('并发已满');
+        expect(receipts[0]).not.toContain('排队等候');
+      } finally { dispose(agent); }
+    });
+
+    it('Issue #5713 review ⑥ (round 2): harness modules keep no local busy/interrupt receipt construction', () => {
+      // The unified service layer (buildBusyInputReceipt in chat-agent.ts)
+      // is the only implementation path for busy-input/interjection notice
+      // text. Provider/harness sources may report structured facts
+      // (metadata.queueWait) but must not construct receipt wording — scan
+      // every non-test source under the provider modules for residue.
+      const providersRoot = new URL('../../../../packages/core/src/sdk/providers/', import.meta.url);
+      const fragments = [
+        '已接收并排队',       // unified queued-capacity line
+        '已交给当前运行的回合', // unified supplement line
+        '将在当前回合结束后处理', // unified queued-turn line
+        '前方还有',           // unified queue-depth context
+        '并发已满',           // retired codex governor notice
+        '排队等候',           // retired codex governor notice
+        '前面还有',           // retired codex governor queue-depth wording
+        '已送入当前会话的输入流', // retired per-harness streaming hint
+        '后端已确认接收',      // retired per-harness steer hint
+      ];
+      const scanned: string[] = [];
+      for (const entry of readdirSync(providersRoot, { recursive: true, encoding: 'utf8' })) {
+        if (!entry.endsWith('.ts') || entry.includes('.test.')) { continue; }
+        const source = readFileSync(new URL(entry, providersRoot), 'utf8');
+        scanned.push(entry);
+        for (const fragment of fragments) {
+          expect(source, `${entry} must not construct busy-receipt wording (${fragment})`).not.toContain(fragment);
+        }
+      }
+      // The scan must actually cover the harness modules — it fails loudly
+      // if the provider tree moves, instead of passing on an empty set.
+      expect(scanned.length).toBeGreaterThan(30);
     });
 
     it('Issue #5434: suppresses a replayed attachment-only input the running turn already consumed', async () => {

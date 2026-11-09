@@ -1210,7 +1210,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * input and Codex steer both render the same supplement line from this
    * single builder, and no harness/adapter keeps a private hint string — a
    * backend that gains native interjection support joins this same shape
-   * instead of adding its own wording. `queuedAhead` must already exclude
+   * instead of adding its own wording. Backend run-capacity waits are part
+   * of the same contract: providers surface `metadata.queueWait` facts on a
+   * content-free status and this builder renders them as the
+   * queued-capacity receipt. `queuedAhead` must already exclude
    * this input: an FIFO row passes depth-1 (its row was just pushed), while
    * a steered input never enters the FIFO and passes the depth as-is — a
    * supplement merged into the running turn never counts as its own queue
@@ -3253,6 +3256,23 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           this.stoppedQueryGenerations.add(myGeneration);
           if (this.sessionGeneration === myGeneration) { this.queryHandle?.close(); }
           break;
+        }
+
+        // Issue #5713 (review round 2): a provider's run-capacity wait marker
+        // (content-free status + metadata.queueWait facts) renders through the
+        // unified busy-input receipt — the ONE construction point for every
+        // busy/interjection notice. Harness modules report facts only; a
+        // backend that gains a run governor joins this same display contract
+        // instead of adding its own wording. `queued` already excludes this
+        // input (its row has not joined the waiter list yet). Delivery goes
+        // through the #5719 accounting wrapper like every progress notice.
+        if (parsed.type === 'status') {
+          const wait = parsed.metadata?.queueWait as AgentMessageMetadata['queueWait'] | undefined;
+          if (wait) {
+            this.logger.info({ chatId, queueWait: wait }, 'Backend run-capacity wait; unified busy-input receipt follows');
+            void deliverProgress('queued-input', this.buildBusyInputReceipt('queued-capacity', wait.queued),
+              resolveReplyThreadRoot());
+          }
         }
 
         // Send message content to callback
