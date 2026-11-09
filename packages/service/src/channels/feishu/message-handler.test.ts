@@ -492,6 +492,50 @@ describe('MessageHandler', () => {
       expect(mockState.claimMessage).not.toHaveBeenCalledWith('msg_self_echo');
     });
 
+    it('does not drop a same-message_id @mention received by a different app (T-106 dual-app)', async () => {
+      // App A already registered its send under its own routed key.
+      mockState.selfSentIds.add('feishu:a:msg_cross');
+      // App B's handler routes with its own prefix; the same bare message_id must NOT match.
+      const routeB = (id: string) => `feishu:b:${id}`;
+      const { handler } = createHandler({ routedMessageId: routeB });
+      await handler.handleMessageReceive(textEvent('legit mention', {
+        event: {
+          message: {
+            message_id: 'msg_cross',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ text: 'legit mention' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      }));
+      // Not a self-sent echo for app B → the message is processed normally.
+      expect(mockState.logIncomingMessage).toHaveBeenCalled();
+    });
+
+    it('still drops the echo on the OWNING app channel (T-106 same-app)', async () => {
+      mockState.selfSentIds.add('feishu:a:msg_own');
+      const routeA = (id: string) => `feishu:a:${id}`;
+      const { handler } = createHandler({ routedMessageId: routeA });
+      await handler.handleMessageReceive(textEvent('own echo', {
+        event: {
+          message: {
+            message_id: 'msg_own',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ text: 'own echo' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      }));
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+      expect(mockState.logIncomingMessage).not.toHaveBeenCalled();
+    });
+
     it('should dispatch only once for concurrent deliveries of the same message', async () => {
       const claimed = new Set<string>();
       mockState.claimMessage.mockImplementation((id: string) => {
