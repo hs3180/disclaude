@@ -80,9 +80,15 @@ export interface ResolveCardImagesResult {
 /**
  * Upload a local image file via REST API and return the Feishu image_key.
  *
+ * T-083 R3 (#5254): `chatId` carries the conversation/channel attribution so
+ * multi-app deployments upload via the owning channel's credentials.
+ *
  * @returns The image_key, or undefined if upload failed
  */
-async function uploadAndGetImageKey(filePath: string): Promise<string | undefined> {
+async function uploadAndGetImageKey(
+  filePath: string,
+  chatId?: string
+): Promise<string | undefined> {
   try {
     // Resolve to absolute path
     const absolutePath = resolve(filePath);
@@ -97,7 +103,7 @@ async function uploadAndGetImageKey(filePath: string): Promise<string | undefine
 
     // Issue #4280 (Phase 3, part 3): REST-only — direct ChannelApiClient.
     const apiClient = getChannelApiClient();
-    const result = await uploadImage(apiClient, absolutePath);
+    const result = await uploadImage(apiClient, absolutePath, chatId);
 
     if (result.success && result.imageKey) {
       logger.debug({ filePath: absolutePath, imageKey: result.imageKey }, 'Image uploaded successfully');
@@ -128,6 +134,12 @@ export async function resolveCardImages(
   card: Record<string, unknown>,
   /** Optional per-image progress (#4568) — fires after each upload settles. */
   onProgress?: ToolProgressCallback,
+  /**
+   * Optional conversation/channel attribution for the uploads (T-083 R3,
+   * #5254): with named multi-app Feishu channels the uploads must use the
+   * OWNING channel's credentials, selected by the chat the card targets.
+   */
+  chatId?: string,
 ): Promise<ResolveCardImagesResult> {
   let uploadedCount = 0;
   let failedCount = 0;
@@ -206,7 +218,7 @@ export async function resolveCardImages(
     };
 
     const uploadPromises = Array.from(pathToKey.keys()).map(async (filePath) => {
-      const imageKey = await uploadAndGetImageKey(filePath);
+      const imageKey = await uploadAndGetImageKey(filePath, chatId);
       if (imageKey) {
         pathToKey.set(filePath, imageKey);
         uploadedCount++;

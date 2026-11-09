@@ -49,6 +49,7 @@ import { FeishuAgentInput } from './agent-input.js';
 import { FeishuTaskQuestionCards } from './task-question-cards.js';
 import type { TaskQuestionFlowPorts } from '../../agents/task-question-flow.js';
 import { FeishuIssueReport } from './issue-report.js';
+import { FeishuAgentConfigCards, type FeishuAgentConfigAccess } from './agent-config-cards.js';
 import { FeishuPrivateWorkflows, type PrivateWorkflowRequest } from './private-workflows.js';
 import { tryHandleSlashCommand, tryHandleGuidance } from './command-router.js';
 import type { WelcomeService } from '../../platforms/feishu/welcome-service.js';
@@ -62,7 +63,10 @@ import {
 const logger = createLogger('MessageHandler');
 
 function sanitizeLifecycleReason(reason: unknown): string {
-  return String(reason).replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').slice(0, 240);
+  return String(reason)
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .slice(0, 240);
 }
 
 /**
@@ -91,7 +95,15 @@ function resourceFileName(fileName: string | undefined, fileKey: string): string
 export interface MessageCallbacks {
   emitMessage: (message: IncomingMessage) => Promise<void>;
   emitControl: (control: ControlCommand) => Promise<ControlResponse>;
-  sendMessage: (message: { chatId: string; type: string; text?: string; card?: Record<string, unknown>; description?: string; threadId?: string; filePath?: string }) => Promise<string | void>;
+  sendMessage: (message: {
+    chatId: string;
+    type: string;
+    text?: string;
+    card?: Record<string, unknown>;
+    description?: string;
+    threadId?: string;
+    filePath?: string;
+  }) => Promise<string | void>;
 
   /**
    * Resolve action prompt for a card action.
@@ -107,9 +119,13 @@ export interface MessageCallbacks {
     messageId: string,
     chatId: string,
     actionValue: string,
-    actionText?: string,
+    actionText?: string
   ) => string | undefined;
-  resolveActionText?: (messageId: string, chatId: string, actionValue: string) => string | undefined;
+  resolveActionText?: (
+    messageId: string,
+    chatId: string,
+    actionValue: string
+  ) => string | undefined;
   resolveActionThreadRoot?: (messageId: string, chatId: string) => string | undefined;
   /**
    * Called when a topic group message is received.
@@ -151,11 +167,16 @@ const THREAD_WALK_RETRY_DELAY_MS = 200;
 /** Issue #4319: short Chinese label for a media message type (thread-context display). */
 function mediaThreadLabel(messageType?: string): string {
   switch (messageType) {
-    case 'image': return '图片';
-    case 'file': return '文件';
-    case 'audio': return '语音';
-    case 'video': return '视频';
-    default: return '媒体';
+    case 'image':
+      return '图片';
+    case 'file':
+      return '文件';
+    case 'audio':
+      return '语音';
+    case 'video':
+      return '视频';
+    default:
+      return '媒体';
   }
 }
 
@@ -210,44 +231,88 @@ export class MessageHandler {
   private controlHandler: boolean;
   private getHasControlHandler: () => boolean;
   private tenantAccessToken: string;
+  private readonly toRoutedChatId: (chatId: string) => string;
+  private readonly toRoutedMessageId: (messageId: string) => string;
   private readonly privateInput?: FeishuPrivateInput;
   private agentInput?: FeishuAgentInput;
   private taskQuestionCards?: FeishuTaskQuestionCards;
-  private taskQuestionHost?: { appId: string; ports: Omit<TaskQuestionFlowPorts, 'send' | 'reconcileCard'> };
+  private taskQuestionHost?: {
+    appId: string;
+    ports: Omit<TaskQuestionFlowPorts, 'send' | 'reconcileCard'>;
+  };
   private issueReport?: FeishuIssueReport;
+  private agentConfigCards?: FeishuAgentConfigCards;
   private readonly issueClient?: () => GitHubIssueClient | undefined;
+  /** #4914: preset catalog + selection ports for the native config card. */
+  private readonly agentConfigAccess?: () => FeishuAgentConfigAccess | undefined;
   private welcomeService?: WelcomeService;
 
-  setWelcomeService(service: WelcomeService): void { this.welcomeService = service; }
+  setWelcomeService(service: WelcomeService): void {
+    this.welcomeService = service;
+  }
 
-  async requestAgentInput(request: import('@disclaude/core').AgentInputRequest, context: import('@disclaude/core').AgentInputContext): Promise<void> {
-    if (!this.agentInput) { throw new Error('Feishu input channel is unavailable'); }
+  async requestAgentInput(
+    request: import('@disclaude/core').AgentInputRequest,
+    context: import('@disclaude/core').AgentInputContext
+  ): Promise<void> {
+    if (!this.agentInput) {
+      throw new Error('Feishu input channel is unavailable');
+    }
     await this.agentInput.request(request, context);
   }
 
-  configureTaskQuestions(appId: string, ports: Omit<TaskQuestionFlowPorts, 'send' | 'reconcileCard'>): void {
-    if (this.taskQuestionHost) { throw new Error('Task question runtime is already configured'); }
+  configureTaskQuestions(
+    appId: string,
+    ports: Omit<TaskQuestionFlowPorts, 'send' | 'reconcileCard'>
+  ): void {
+    if (this.taskQuestionHost) {
+      throw new Error('Task question runtime is already configured');
+    }
     this.taskQuestionHost = { appId, ports };
-    if (this.client) { this.taskQuestionCards = new FeishuTaskQuestionCards(this.client, appId, ports); }
+    if (this.client) {
+      this.taskQuestionCards = new FeishuTaskQuestionCards(this.client, appId, ports);
+    }
   }
-  requestTaskQuestion(question: import('@disclaude/core').TaskQuestion): Promise<import('@disclaude/core').TaskQuestionRecord> {
-    if (!this.isRunning() || !this.taskQuestionCards) { return Promise.reject(new Error('Feishu task questions are unavailable')); }
+  requestTaskQuestion(
+    question: import('@disclaude/core').TaskQuestion
+  ): Promise<import('@disclaude/core').TaskQuestionRecord> {
+    if (!this.isRunning() || !this.taskQuestionCards) {
+      return Promise.reject(new Error('Feishu task questions are unavailable'));
+    }
     return this.taskQuestionCards.ask(question);
   }
   reconcileTaskQuestionWake(id: string): Promise<import('@disclaude/core').TaskQuestionRecord> {
-    if (!this.isRunning() || !this.taskQuestionCards) { return Promise.reject(new Error('Feishu task questions are unavailable')); }
+    if (!this.isRunning() || !this.taskQuestionCards) {
+      return Promise.reject(new Error('Feishu task questions are unavailable'));
+    }
     return this.taskQuestionCards.reconcileWake(id);
   }
   async drainTaskQuestions(): Promise<void> {
     const cards = this.taskQuestionCards;
-    if (cards) { await cards.close(); if (this.taskQuestionCards === cards) { this.taskQuestionCards = undefined; } }
+    if (cards) {
+      await cards.close();
+      if (this.taskQuestionCards === cards) {
+        this.taskQuestionCards = undefined;
+      }
+    }
   }
 
   /** Issue #5400: send the /feedback confirmation card for the chat's last failure. */
-  requestIssueReport(record: ChatFailureRecord, target: { chatId: string; threadRootId?: string; actorId?: string }):
-    Promise<{ ok: true } | { ok: false; error: string }> {
-    if (!this.issueReport) { return Promise.resolve({ ok: false, error: 'Feishu issue reporting is unavailable' }); }
+  requestIssueReport(
+    record: ChatFailureRecord,
+    target: { chatId: string; threadRootId?: string; actorId?: string }
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (!this.issueReport) {
+      return Promise.resolve({ ok: false, error: 'Feishu issue reporting is unavailable' });
+    }
     return this.issueReport.start(record, target);
+  }
+
+  /** #4914: send the /agent config card for the requesting actor. */
+  requestAgentConfigCard(target: { chatId: string; threadRootId?: string; actorId?: string }):
+    Promise<{ ok: true } | { ok: false; error: string }> {
+    if (!this.agentConfigCards) { return Promise.resolve({ ok: false, error: 'Feishu agent config cards are unavailable' }); }
+    return this.agentConfigCards.open(target);
   }
   private readonly privateWorkflows: FeishuPrivateWorkflows;
 
@@ -256,7 +321,9 @@ export class MessageHandler {
   }
 
   /** #5411: after a private input is consumed, wake the waiting chat session. */
-  setPrivateWorkflowNotifier(notify: import('./private-workflows.js').PrivateOutcomeNotifier): void {
+  setPrivateWorkflowNotifier(
+    notify: import('./private-workflows.js').PrivateOutcomeNotifier
+  ): void {
     this.privateWorkflows.setNotifier(notify);
   }
 
@@ -274,40 +341,76 @@ export class MessageHandler {
     hasControlHandler: () => boolean;
     tenantAccessToken: string;
     privateInput?: ActionBoundInput;
+    /** Named-channel routing: prefix chat/message IDs before persistence and agent routing. */
+    routedChatId?: (chatId: string) => string;
+    routedMessageId?: (messageId: string) => string;
     /** Issue #5400: resolved GitHub App client supplier for issue reporting. */
     issueClient?: () => GitHubIssueClient | undefined;
+    /** #4914: preset catalog/selection ports; injected by descriptor setup. */
+    agentConfigAccess?: () => FeishuAgentConfigAccess | undefined;
   }) {
     this.triggerModeManager = options.triggerModeManager;
     this.mentionDetector = options.mentionDetector;
     this.interactionManager = options.interactionManager;
     this.callbacks = options.callbacks;
-    this.privateWorkflows = new FeishuPrivateWorkflows(options.callbacks.sendMessage, this.updatePrivateCard);
+    this.privateWorkflows = new FeishuPrivateWorkflows(
+      options.callbacks.sendMessage,
+      this.updatePrivateCard
+    );
     this.isRunning = options.isRunning;
     this.getHasControlHandler = options.hasControlHandler;
     this.controlHandler = false;
     this.tenantAccessToken = options.tenantAccessToken;
+    this.toRoutedChatId = options.routedChatId ?? ((chatId: string) => chatId);
+    this.toRoutedMessageId = options.routedMessageId ?? ((messageId: string) => messageId);
     this.issueClient = options.issueClient;
-    if (options.privateInput) {this.privateInput = new FeishuPrivateInput(options.privateInput, options.callbacks.sendMessage, this.updatePrivateCard);}
-
+    this.agentConfigAccess = options.agentConfigAccess;
+    if (options.privateInput) {
+      this.privateInput = new FeishuPrivateInput(
+        options.privateInput,
+        options.callbacks.sendMessage,
+        this.updatePrivateCard
+      );
+    }
   }
 
-  private readonly updatePrivateCard = async (cardId: string, card: Record<string, unknown>): Promise<void> => {
-    if (!this.client) {return;}
-    const result = await this.client.im.message.patch({ path: { message_id: cardId }, data: { content: JSON.stringify(card) } });
-    if (result.code !== 0) {throw new Error('Private input card update failed');}
+  private readonly updatePrivateCard = async (
+    cardId: string,
+    card: Record<string, unknown>
+  ): Promise<void> => {
+    if (!this.client) {
+      return;
+    }
+    const result = await this.client.im.message.patch({
+      path: { message_id: cardId },
+      data: { content: JSON.stringify(card) },
+    });
+    if (result.code !== 0) {
+      throw new Error('Private input card update failed');
+    }
   };
 
   /**
    * Initialize the handler with client.
    */
   initialize(client: lark.Client): void {
-    if (this.taskQuestionCards) { throw new Error('Drain task questions before replacing the Feishu client'); }
+    if (this.taskQuestionCards) {
+      throw new Error('Drain task questions before replacing the Feishu client');
+    }
     this.client = client;
     this.agentInput?.close();
     this.agentInput = new FeishuAgentInput(client);
-    if (this.taskQuestionHost) { this.taskQuestionCards = new FeishuTaskQuestionCards(client, this.taskQuestionHost.appId, this.taskQuestionHost.ports); }
+    if (this.taskQuestionHost) {
+      this.taskQuestionCards = new FeishuTaskQuestionCards(
+        client,
+        this.taskQuestionHost.appId,
+        this.taskQuestionHost.ports
+      );
+    }
     this.issueReport?.close();
     this.issueReport = new FeishuIssueReport(client, this.issueClient ?? (() => undefined));
+    this.agentConfigCards?.close();
+    this.agentConfigCards = new FeishuAgentConfigCards(client, this.agentConfigAccess ?? (() => undefined));
     this.controlHandler = this.getHasControlHandler();
     logger.debug({ controlHandler: this.controlHandler }, 'MessageHandler initialized');
   }
@@ -340,7 +443,7 @@ export class MessageHandler {
     messageId: string,
     fileKey: string,
     resourceType: 'image' | 'file',
-    outputPath: string,
+    outputPath: string
   ): Promise<void> {
     // Use the same SDK authentication/cache as the channel. A startup token is
     // optional legacy configuration and can expire during a long-lived service.
@@ -357,7 +460,8 @@ export class MessageHandler {
     }
     const env = {
       ...process.env,
-      LARKSUITE_CLI_APP_ID: this.client?.appId || process.env.LARKSUITE_CLI_APP_ID || Config.FEISHU_APP_ID,
+      LARKSUITE_CLI_APP_ID:
+        this.client?.appId || process.env.LARKSUITE_CLI_APP_ID || Config.FEISHU_APP_ID,
       LARKSUITE_CLI_TENANT_ACCESS_TOKEN: token,
       LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1',
       LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1',
@@ -366,14 +470,21 @@ export class MessageHandler {
     const { stdout, stderr } = await promisify(execFile)(
       'npx',
       [
-        '@larksuite/cli', 'im', '+messages-resources-download',
-        '--message-id', messageId,
-        '--file-key', fileKey,
-        '--type', resourceType,
-        '--output', `./${path.basename(outputPath)}`,
-        '--as', 'bot',
+        '@larksuite/cli',
+        'im',
+        '+messages-resources-download',
+        '--message-id',
+        messageId,
+        '--file-key',
+        fileKey,
+        '--type',
+        resourceType,
+        '--output',
+        `./${path.basename(outputPath)}`,
+        '--as',
+        'bot',
       ],
-      { env, cwd: path.dirname(outputPath), timeout: 120_000 },
+      { env, cwd: path.dirname(outputPath), timeout: 120_000 }
     );
 
     if (stderr) {
@@ -391,7 +502,7 @@ export class MessageHandler {
     messageId: string,
     fileKey: string,
     resourceType: 'image' | 'file',
-    outputPath?: string,
+    outputPath?: string
   ): string {
     const ext = resourceType === 'image' ? 'jpg' : 'bin';
     const output = outputPath ?? `./downloaded_file.${ext}`;
@@ -413,7 +524,7 @@ export class MessageHandler {
    */
   private parseMediaContent(
     messageType: string,
-    content: string,
+    content: string
   ): { fileKey: string | undefined; fileName: string | undefined } | undefined {
     try {
       const parsed = JSON.parse(content);
@@ -451,7 +562,7 @@ export class MessageHandler {
   private buildMediaThreadGuidance(
     messageType: string,
     content: string,
-    messageId: string,
+    messageId: string
   ): string | undefined {
     const media = this.parseMediaContent(messageType, content);
     const fileKey = media?.fileKey;
@@ -459,7 +570,10 @@ export class MessageHandler {
     if (!fileKey || !fileName) {
       // Review nit #4: surface why we fell back to the placeholder instead of
       // going silent (the prior eager-download path logged on this branch).
-      logger.debug({ messageType, messageId }, 'No media key in thread context — using placeholder');
+      logger.debug(
+        { messageType, messageId },
+        'No media key in thread context — using placeholder'
+      );
       return undefined;
     }
 
@@ -473,9 +587,7 @@ export class MessageHandler {
     // messageId fallback also keeps same-thread media messages from colliding.
     const hasRealExt = fileName.includes('.');
     const ext = resourceType === 'image' ? 'jpg' : 'bin';
-    const outputPath = hasRealExt
-      ? `./downloads/${fileName}`
-      : `./downloads/${messageId}.${ext}`;
+    const outputPath = hasRealExt ? `./downloads/${fileName}` : `./downloads/${messageId}.${ext}`;
     const downloadCmd = this.buildDownloadCmd(messageId, fileKey, resourceType, outputPath);
 
     // Review nit #2: fileName is always non-empty here (image → image_<key>;
@@ -507,7 +619,7 @@ export class MessageHandler {
   private buildOnDemandFetchGuidance(
     kindLabel: string,
     messageId: string,
-    sender?: { sender_type?: string; id?: string },
+    sender?: { sender_type?: string; id?: string }
   ): string {
     const senderLabel = sender?.id || sender?.sender_type || 'unknown';
     return [
@@ -522,7 +634,9 @@ export class MessageHandler {
    * Clear the client (on stop).
    */
   clearClient(): void {
-    if (this.taskQuestionCards) { throw new Error('Drain task questions before clearing the Feishu client'); }
+    if (this.taskQuestionCards) {
+      throw new Error('Drain task questions before clearing the Feishu client');
+    }
     this.agentInput?.close();
     this.agentInput = undefined;
     this.issueReport?.close();
@@ -581,11 +695,22 @@ export class MessageHandler {
     userId?: string,
     metadata?: Record<string, unknown>
   ): void {
-    logger.info({
-      event: 'filter_result', reason, sanitizedReason: sanitizeLifecycleReason(reason),
-      traceId: messageId, runId: messageId, sourceMessageId: messageId, chatId,
-      target: chatId, userId, metadata, user_visible: false,
-    }, 'filter_result');
+    logger.info(
+      {
+        event: 'filter_result',
+        reason,
+        sanitizedReason: sanitizeLifecycleReason(reason),
+        traceId: messageId,
+        runId: messageId,
+        sourceMessageId: messageId,
+        chatId,
+        target: chatId,
+        userId,
+        metadata,
+        user_visible: false,
+      },
+      'filter_result'
+    );
   }
 
   /**
@@ -599,7 +724,10 @@ export class MessageHandler {
       // `slice(-CHAT_HISTORY.MAX_CONTEXT_LENGTH)` on a string getChatHistory had
       // already capped smaller — and assumed oldest→newest ordering that no
       // longer holds. Do not re-truncate here.
-      const history = await messageLogger.getChatHistory(chatId, CHAT_HISTORY.MAX_CONTEXT_LENGTH);
+      const history = await messageLogger.getChatHistory(
+        this.toRoutedChatId(chatId),
+        CHAT_HISTORY.MAX_CONTEXT_LENGTH
+      );
 
       if (!history || history.length === 0) {
         return undefined;
@@ -633,8 +761,7 @@ export class MessageHandler {
     parentId: string,
     maxDepth: number = 10
   ): Promise<
-    | { text: string | undefined; rootId: string | undefined; incomplete: boolean }
-    | undefined
+    { text: string | undefined; rootId: string | undefined; incomplete: boolean } | undefined
   > {
     if (!this.client) {
       return undefined;
@@ -674,7 +801,10 @@ export class MessageHandler {
             params: { user_id_type: 'open_id' },
           });
         } catch (fetchError) {
-          logger.debug({ err: fetchError, messageId: currentId }, 'Thread-walk fetch failed, retrying once');
+          logger.debug(
+            { err: fetchError, messageId: currentId },
+            'Thread-walk fetch failed, retrying once'
+          );
           await sleep(THREAD_WALK_RETRY_DELAY_MS);
           try {
             response = await this.client.im.message.get({
@@ -683,7 +813,9 @@ export class MessageHandler {
             });
           } catch (retryError) {
             logger.debug({ err: retryError, messageId: currentId }, 'Thread-walk retry failed');
-            if (!declaredRootId) { return undefined; }
+            if (!declaredRootId) {
+              return undefined;
+            }
             break;
           }
         }
@@ -717,7 +849,7 @@ export class MessageHandler {
           const guidance = this.buildMediaThreadGuidance(
             msgType || '',
             msg.body?.content || '{}',
-            msg.message_id || currentId,
+            msg.message_id || currentId
           );
           if (guidance) {
             text = guidance;
@@ -732,18 +864,25 @@ export class MessageHandler {
         if (msgType === 'merge_forward') {
           const forwardId = msg.message_id || currentId;
           const childTexts = items
-            .filter(item => item && item.upper_message_id === forwardId)
-            .map(child => this.extractMessageText(child.msg_type, child.body?.content || '{}').trim())
+            .filter((item) => item && item.upper_message_id === forwardId)
+            .map((child) =>
+              this.extractMessageText(child.msg_type, child.body?.content || '{}').trim()
+            )
             .filter(Boolean);
-          text = childTexts.length > 0
-            ? ['[合并转发消息]', ...childTexts.map(t => `- ${t}`)].join('\n')
-            : this.buildOnDemandFetchGuidance('合并转发消息', forwardId, msg.sender);
+          text =
+            childTexts.length > 0
+              ? ['[合并转发消息]', ...childTexts.map((t) => `- ${t}`)].join('\n')
+              : this.buildOnDemandFetchGuidance('合并转发消息', forwardId, msg.sender);
         } else if (msgType === 'interactive' && text === '[Interactive Card]') {
           // (b) a card that resisted extraction (unknown structure): give the
           //     agent an actionable reference — message_id + sender + a
           //     ready-to-run fetch command — instead of the generic placeholder
           //     that hides both the content and how to get it.
-          text = this.buildOnDemandFetchGuidance('卡片消息', msg.message_id || currentId, msg.sender);
+          text = this.buildOnDemandFetchGuidance(
+            '卡片消息',
+            msg.message_id || currentId,
+            msg.sender
+          );
         }
 
         if (text) {
@@ -773,25 +912,33 @@ export class MessageHandler {
 
       // Prefer Feishu's declared root even when history was truncated. Without
       // it, report only a visited ancestor and mark a capped walk incomplete.
-      const resolvedRootId = declaredRootId
-        || (rootId && visitedIds.has(rootId) ? rootId : lastVisitedWithParent);
+      const resolvedRootId =
+        declaredRootId || (rootId && visitedIds.has(rootId) ? rootId : lastVisitedWithParent);
 
       if (threadMessages.length === 0) {
         // No text assembled, but the root is still known — surface it so
         // session keying (part 2) works even when context text is empty.
-        return { text: undefined, rootId: resolvedRootId, incomplete: !walkComplete && !declaredRootId };
+        return {
+          text: undefined,
+          rootId: resolvedRootId,
+          incomplete: !walkComplete && !declaredRootId,
+        };
       }
 
       // Reverse to get chronological order (oldest first)
       threadMessages.reverse();
 
       // Format as thread history
-      const lines = threadMessages.map(m => {
+      const lines = threadMessages.map((m) => {
         const label = m.senderType === 'bot' ? '🤖' : '👤';
         return `${label} ${m.content}`;
       });
 
-      return { text: lines.join('\n\n'), rootId: resolvedRootId, incomplete: !walkComplete && !declaredRootId };
+      return {
+        text: lines.join('\n\n'),
+        rootId: resolvedRootId,
+        incomplete: !walkComplete && !declaredRootId,
+      };
     } catch (error) {
       logger.debug({ err: error, parentId }, 'Failed to get thread context');
       return undefined;
@@ -822,9 +969,7 @@ export class MessageHandler {
       // Issue #4316 nit ②: match by type (not id), so a card missing its id
       // still reads as a card rather than the generic placeholder.
       if (messageType === 'share_chat') {
-        return parsed.share_chat_id
-          ? `[分享的群名片: ${parsed.share_chat_id}]`
-          : '[分享的群名片]';
+        return parsed.share_chat_id ? `[分享的群名片: ${parsed.share_chat_id}]` : '[分享的群名片]';
       }
       if (messageType === 'share_user') {
         return parsed.share_user_id
@@ -862,7 +1007,9 @@ export class MessageHandler {
    * For image/file/media, downloads the file and returns both a text prompt
    * and a structured MessageAttachment so the agent can access the file.
    */
-  private async getQuotedMessageContext(parentId: string): Promise<QuotedMessageResult | undefined> {
+  private async getQuotedMessageContext(
+    parentId: string
+  ): Promise<QuotedMessageResult | undefined> {
     if (!this.client) {
       return undefined;
     }
@@ -908,7 +1055,13 @@ export class MessageHandler {
           // Issue #1711: Extract full text from interactive card messages
           const parsed = JSON.parse(msgContent);
           quotedText = extractFullCardContent(parsed);
-        } else if (msgType === 'image' || msgType === 'file' || msgType === 'media' || msgType === 'audio' || msgType === 'video') {
+        } else if (
+          msgType === 'image' ||
+          msgType === 'file' ||
+          msgType === 'media' ||
+          msgType === 'audio' ||
+          msgType === 'video'
+        ) {
           return await this.handleQuotedFileMessage(msgType, msgContent, msgId);
         }
       } catch {
@@ -935,11 +1088,14 @@ export class MessageHandler {
   private async handleQuotedFileMessage(
     messageType: string,
     content: string,
-    messageId: string,
+    messageId: string
   ): Promise<QuotedMessageResult | undefined> {
     const media = this.parseMediaContent(messageType, content);
     if (!media) {
-      logger.warn({ content, messageType, messageId }, 'Failed to parse quoted file message content');
+      logger.warn(
+        { content, messageType, messageId },
+        'Failed to parse quoted file message content'
+      );
       return undefined;
     }
     const { fileKey } = media;
@@ -973,7 +1129,9 @@ export class MessageHandler {
         const isCacheHitFor = async (candidate: string): Promise<boolean> => {
           try {
             await fs.access(candidate);
-            if ((await fs.stat(candidate)).size === 0) {return false;}
+            if ((await fs.stat(candidate)).size === 0) {
+              return false;
+            }
             const storedKey = (await fs.readFile(`${candidate}.key`, 'utf8')).trim();
             return storedKey === fileKey;
           } catch {
@@ -994,12 +1152,15 @@ export class MessageHandler {
           try {
             sibling = (await fs.readdir(downloadDir)).find(
               // Skip `<name>.key` sidecars (they also start with `<base>.`).
-              e => e !== base && e.startsWith(`${base}.`) && !e.endsWith('.key'),
+              (e) => e !== base && e.startsWith(`${base}.`) && !e.endsWith('.key')
             );
           } catch (readdirError) {
-            logger.debug({ err: readdirError, downloadDir }, 'Failed to list download dir for cache sibling lookup');
+            logger.debug(
+              { err: readdirError, downloadDir },
+              'Failed to list download dir for cache sibling lookup'
+            );
           }
-          if (sibling && await isCacheHitFor(path.join(downloadDir, sibling))) {
+          if (sibling && (await isCacheHitFor(path.join(downloadDir, sibling)))) {
             localPath = path.join(downloadDir, sibling);
             fileName = path.basename(sibling);
             cacheHit = true;
@@ -1009,13 +1170,16 @@ export class MessageHandler {
         if (cacheHit) {
           logger.debug({ fileKey, localPath }, 'Quoted file cache hit — skipping download');
         } else {
-          logger.info({ fileKey, fileName, localPath, quotedMessageId: messageId }, 'Downloading quoted file from Feishu');
+          logger.info(
+            { fileKey, fileName, localPath, quotedMessageId: messageId },
+            'Downloading quoted file from Feishu'
+          );
 
           await this.downloadResourceViaLarkCli(
             messageId,
             fileKey,
             mapResourceType(messageType),
-            localPath,
+            localPath
           );
 
           // Issue #1637, #1663: Ensure file has correct extension via magic bytes detection
@@ -1032,7 +1196,9 @@ export class MessageHandler {
               throw new Error(`Downloaded quoted file is empty (0 bytes): ${localPath}`);
             }
           } catch (statError) {
-            throw new Error(`Downloaded quoted file not found on disk: ${localPath}`, { cause: statError });
+            throw new Error(`Downloaded quoted file not found on disk: ${localPath}`, {
+              cause: statError,
+            });
           }
 
           // Issue #4326: persist the fileKey sidecar so future lookups can verify
@@ -1096,43 +1262,86 @@ export class MessageHandler {
       return;
     }
 
-    const { message_id, chat_id, chat_type: rawChatType, content, message_type, create_time, mentions, parent_id, root_id } = message;
+    const {
+      message_id,
+      chat_id,
+      chat_type: rawChatType,
+      content,
+      message_type,
+      create_time,
+      mentions,
+      parent_id,
+      root_id,
+    } = message;
     const threadId = message_id;
 
     if (!message_id || !chat_id || !content || !message_type) {
-      logger.info({ event: 'filter_result', reason: 'missing_fields', sanitizedReason: 'missing required message fields', traceId: message_id || 'unknown', runId: message_id || 'unknown', sourceMessageId: message_id, chatId: chat_id || 'unknown', target: chat_id, user_visible: false }, 'filter_result');
+      logger.info(
+        {
+          event: 'filter_result',
+          reason: 'missing_fields',
+          sanitizedReason: 'missing required message fields',
+          traceId: message_id || 'unknown',
+          runId: message_id || 'unknown',
+          sourceMessageId: message_id,
+          chatId: chat_id || 'unknown',
+          target: chat_id,
+          user_visible: false,
+        },
+        'filter_result'
+      );
       logger.warn('Missing required message fields');
       return;
     }
 
     // Pre-compute whether a bot sender @mentions our bot (bot-to-bot, #1742).
-    const botMentionsUs = sender?.sender_type === 'app' && this.mentionDetector.isBotMentioned(mentions);
+    const botMentionsUs =
+      sender?.sender_type === 'app' && this.mentionDetector.isBotMentioned(mentions);
 
     // Claim before topic lookup or other asynchronous work to close the
     // check-then-mark race during concurrent Feishu redelivery (Issue #4750).
     const filterVerdict = evaluateMessageFilters(
-      { messageId: message_id, createTime: create_time, senderType: sender?.sender_type, botMentionsUs },
       {
-        isProcessed: (id) => messageLogger.isMessageProcessed(id),
-        claim: (id) => messageLogger.claimMessage(id),
+        messageId: message_id,
+        createTime: create_time,
+        senderType: sender?.sender_type,
+        botMentionsUs,
+      },
+      {
+        isProcessed: (id) => messageLogger.isMessageProcessed(this.toRoutedMessageId(id)),
+        claim: (id) => messageLogger.claimMessage(this.toRoutedMessageId(id)),
         isSelfSent: (id) => messageLogger.isSelfSentMessage(id),
         maxMessageAge: this.MAX_MESSAGE_AGE,
-      },
+      }
     );
     if (!filterVerdict.passed) {
       const { reason } = filterVerdict;
       if (reason === 'duplicate') {
         logger.debug({ messageId: message_id }, 'Skipped duplicate message');
-        this.forwardFilteredMessage('duplicate', message_id, chat_id, content, extractOpenId(sender));
+        this.forwardFilteredMessage(
+          'duplicate',
+          message_id,
+          chat_id,
+          content,
+          extractOpenId(sender)
+        );
       } else if (reason === 'self_sent') {
         logger.debug({ messageId: message_id }, 'Skipped self-sent message echo (#5504)');
-        this.forwardFilteredMessage('self_sent', message_id, chat_id, content, extractOpenId(sender));
+        this.forwardFilteredMessage(
+          'self_sent',
+          message_id,
+          chat_id,
+          content,
+          extractOpenId(sender)
+        );
       } else if (reason === 'bot') {
         logger.debug('Skipped bot message (not mentioning our bot)');
         this.forwardFilteredMessage('bot', message_id, chat_id, content);
       } else {
         logger.debug({ messageId: message_id }, 'Skipped old message');
-        this.forwardFilteredMessage('old', message_id, chat_id, content, extractOpenId(sender), { age: filterVerdict.age });
+        this.forwardFilteredMessage('old', message_id, chat_id, content, extractOpenId(sender), {
+          age: filterVerdict.age,
+        });
       }
       return;
     }
@@ -1146,459 +1355,560 @@ export class MessageHandler {
         this.welcomeService?.registerPrivateChat(senderId, chat_id);
       }
 
-    // Bot-to-bot @mention messages that passed the filter are allowed through (#1742).
-    if (sender?.sender_type === 'app') {
-      logger.info({ messageId: message_id, chatId: chat_id }, 'Bot message mentions our bot, allowing through');
-    }
-
-    // Handle file/image messages - download to workspace and include path in prompt
-    if (message_type === 'image' || message_type === 'file' || message_type === 'media' || message_type === 'audio' || message_type === 'video') {
-      logger.info({ chatId: chat_id, messageType: message_type, messageId: message_id }, 'File/image message received');
-
-      // Parse content to extract file_key and file_name
-      let fileKey: string | undefined;
-      let fileName: string | undefined;
-      try {
-        const parsed = JSON.parse(content);
-        if (message_type === 'image') {
-          fileKey = parsed.image_key;
-          fileName = `image_${fileKey}`;
-        } else if (message_type === 'audio') {
-          // Issue #1966: Audio messages use file_key in content JSON
-          fileKey = parsed.file_key;
-          fileName = parsed.file_name || `audio_${fileKey}`;
-        } else {
-          fileKey = parsed.file_key;
-          fileName = parsed.file_name || `file_${fileKey}`;
-        }
-      } catch (parseError) {
-        logger.error({ err: parseError, content, messageType: message_type }, 'Failed to parse file message content');
+      // Bot-to-bot @mention messages that passed the filter are allowed through (#1742).
+      if (sender?.sender_type === 'app') {
+        logger.info(
+          { messageId: message_id, chatId: chat_id },
+          'Bot message mentions our bot, allowing through'
+        );
       }
 
-      if (!fileKey) {
-        logger.warn({ messageType: message_type, messageId: message_id }, 'No file_key found in message');
+      // Handle file/image messages - download to workspace and include path in prompt
+      if (
+        message_type === 'image' ||
+        message_type === 'file' ||
+        message_type === 'media' ||
+        message_type === 'audio' ||
+        message_type === 'video'
+      ) {
+        logger.info(
+          { chatId: chat_id, messageType: message_type, messageId: message_id },
+          'File/image message received'
+        );
+
+        // Parse content to extract file_key and file_name
+        let fileKey: string | undefined;
+        let fileName: string | undefined;
+        try {
+          const parsed = JSON.parse(content);
+          if (message_type === 'image') {
+            fileKey = parsed.image_key;
+            fileName = `image_${fileKey}`;
+          } else if (message_type === 'audio') {
+            // Issue #1966: Audio messages use file_key in content JSON
+            fileKey = parsed.file_key;
+            fileName = parsed.file_name || `audio_${fileKey}`;
+          } else {
+            fileKey = parsed.file_key;
+            fileName = parsed.file_name || `file_${fileKey}`;
+          }
+        } catch (parseError) {
+          logger.error(
+            { err: parseError, content, messageType: message_type },
+            'Failed to parse file message content'
+          );
+        }
+
+        if (!fileKey) {
+          logger.warn(
+            { messageType: message_type, messageId: message_id },
+            'No file_key found in message'
+          );
+          return;
+        }
+
+        // Download file to workspace/downloads directory
+        // CLI downloads use current SDK authentication or an explicit legacy token.
+        let localPath: string | undefined;
+        if (this.tenantAccessToken || this.client?.tokenManager) {
+          try {
+            const downloadDir = path.join(Config.getWorkspaceDir(), 'downloads');
+            await fs.mkdir(downloadDir, { recursive: true });
+            localPath = path.join(downloadDir, resourceFileName(fileName, fileKey));
+
+            logger.info({ fileKey, fileName, localPath }, 'Downloading file from Feishu');
+
+            await this.downloadResourceViaLarkCli(
+              message_id,
+              fileKey,
+              mapResourceType(message_type),
+              localPath
+            );
+
+            // Issue #2411: Verify file was actually written to disk
+            try {
+              const stat = await fs.stat(localPath);
+              if (stat.size === 0) {
+                throw new Error(`Downloaded file is empty (0 bytes): ${localPath}`);
+              }
+            } catch (statError) {
+              throw new Error(`Downloaded file not found on disk: ${localPath}`, {
+                cause: statError,
+              });
+            }
+
+            // Issue #1637, #1663: Ensure file has correct extension via magic bytes detection
+            const correctedPath = await ensureFileExtensionFromPath(localPath);
+            if (correctedPath !== localPath) {
+              localPath = correctedPath;
+              fileName = path.basename(correctedPath);
+            }
+
+            logger.info({ fileKey, localPath }, 'File downloaded successfully');
+          } catch (downloadError) {
+            logger.error(
+              { err: downloadError, fileKey, messageId: message_id },
+              'Failed to download file'
+            );
+            localPath = undefined;
+          }
+        }
+
+        // Log the incoming message
+        await messageLogger.logIncomingMessage(
+          message_id,
+          extractOpenId(sender) || 'unknown',
+          this.toRoutedChatId(chat_id),
+          `[${message_type} received]${localPath ? ` → ${localPath}` : ''}`,
+          message_type,
+          create_time
+        );
+
+        await this.addTypingReaction(message_id);
+
+        // Build content with file path for the agent prompt
+        let typeLabel: string;
+        if (message_type === 'image') {
+          typeLabel = '图片';
+        } else if (message_type === 'file') {
+          typeLabel = '文件';
+        } else if (message_type === 'audio') {
+          typeLabel = '语音消息';
+        } else if (message_type === 'video') {
+          typeLabel = '视频';
+        } else {
+          typeLabel = '媒体文件';
+        }
+        const resourceType = mapResourceType(message_type);
+        const downloadCmd = this.buildDownloadCmd(message_id, fileKey, resourceType);
+        const filePrompt = localPath
+          ? `用户${message_type === 'audio' ? '发送了一段' : '上传了一个'}${typeLabel}：${fileName || fileKey}\n\n这是当前消息中的附件，没有附带新的文字任务。请把这个附件作为当前消息处理；不要根据群聊历史复用已经完成或无关的旧任务。如果附件意图不明确，请先询问用户。\n\n文件已下载到本地: ${localPath}\n\n请使用 Read 工具读取该文件来查看内容。${message_type === 'image' ? '这是一个图片文件，Read 工具可以直接查看图片内容。' : message_type === 'audio' ? '这是一个音频文件。你可以根据自身能力处理音频（如调用 ASR 工具转录、分析音频特征等）。' : ''}\n\n如果文件读取失败，可以使用以下命令重新下载:\n${downloadCmd}`
+          : `用户${message_type === 'audio' ? '发送了一段' : '上传了一个'}${typeLabel}：${fileName || fileKey}，但自动下载失败。\n\n这是当前消息中的附件，没有附带新的文字任务。不要根据群聊历史推断或复用旧任务；如果无法获取这个附件，请明确说明并请用户重新发送或补充文字说明。\n\n你可以尝试手动下载该文件：\n- message_id: \`${message_id}\`\n- file_key: \`${fileKey}\`\n- 消息类型: ${message_type}\n- API type 参数: ${resourceType}\n\n下载命令:\n\`\`\`bash\n${downloadCmd}\n\`\`\``;
+
+        // Issue #3702: Build metadata for file/image messages to pass chatType and threadContext,
+        // ensuring intermediate message filtering works correctly in topic groups.
+        const fileMetadata: Record<string, unknown> = {};
+        // Issue #5434: media uploads carry no user-authored text task. Marking
+        // them lets the agent side recognize an attachment-only input that a
+        // running request may already have consumed, so it never resurfaces as
+        // an independent "what do you want me to do?" turn.
+        fileMetadata.attachmentOnly = true;
+        if (chat_type) {
+          fileMetadata.chatType = chat_type;
+        }
+        let fileThreadContext: string | undefined;
+        if (chat_type === 'topic' && parent_id) {
+          // Issue #4587 (part 1): capture the walked thread root for session keying
+          const threadInfo = await this.getThreadContext(parent_id);
+          fileThreadContext = threadInfo?.text;
+          // Event root identity survives history lookup failures. Legacy events
+          // without root_id use the API-declared or fully walked root if known.
+          fileMetadata.threadRootId =
+            root_id ||
+            (threadInfo && !threadInfo.incomplete && threadInfo.rootId
+              ? threadInfo.rootId
+              : parent_id);
+        } else if (chat_type === 'topic') {
+          // Issue #4587 (part 1, review fix): a topic media message with no
+          // parent_id starts a new thread — same rule as the text path. Without
+          // this, part 2's session keying would treat thread-starting media as
+          // chat-scoped (no identity), diverging from the text path.
+          fileMetadata.threadRootId = root_id || message_id;
+        }
+        if (fileThreadContext) {
+          fileMetadata.threadContext = fileThreadContext;
+        }
+
+        // Issue #3828: Apply @mention/trigger mode check for file/image messages in group/topic chats
+        const fileBotMentioned = this.mentionDetector.isBotMentioned(mentions);
+        if (isGroupChat(chat_type) && !fileBotMentioned) {
+          if (
+            this.triggerModeManager.getMode(chat_id) === 'auto' &&
+            this.triggerModeManager.needsSmallGroupRecheck(chat_id)
+          ) {
+            await this.checkAndAutoDisableSmallGroup(chat_id);
+          }
+          if (!this.triggerModeManager.isTriggerEnabled(chat_id)) {
+            logger.debug(
+              { messageId: message_id, chatId: chat_id, chat_type, messageType: message_type },
+              'Skipped file/image message in group chat without @mention (trigger mode disabled)'
+            );
+            this.forwardFilteredMessage(
+              'trigger_mode',
+              message_id,
+              chat_id,
+              filePrompt,
+              extractOpenId(sender),
+              { chat_type, messageType: message_type }
+            );
+            return;
+          }
+        }
+
+        // Get chat history context when bot IS mentioned in group/topic for file messages
+        // Issue #4304: Skip group-level chat history for topic groups — it mixes
+        // messages from different threads. Topic groups already have thread-isolated
+        // context set above (fileThreadContext at line ~753).
+        if (isGroupChat(chat_type) && chat_type !== 'topic' && fileBotMentioned) {
+          const chatHistoryContext = await this.getChatHistoryContext(chat_id);
+          if (chatHistoryContext) {
+            fileMetadata.chatHistoryContext = chatHistoryContext;
+          }
+        }
+
+        const incoming: IncomingMessage = {
+          messageId: `${message_id}-${message_type === 'audio' ? 'audio' : 'file'}`,
+          chatId: chat_id,
+          userId: extractOpenId(sender),
+          content: filePrompt,
+          messageType: message_type === 'audio' ? 'audio' : 'file',
+          timestamp: create_time,
+          threadId,
+          attachments: localPath
+            ? [{ fileName: fileName || fileKey, filePath: localPath }]
+            : undefined,
+          metadata: Object.keys(fileMetadata).length > 0 ? fileMetadata : undefined,
+        };
+        registerFeishuInputSource(incoming, message_id, sender?.sender_type);
+        await this.callbacks.emitMessage(incoming);
         return;
       }
 
-      // Download file to workspace/downloads directory
-      // CLI downloads use current SDK authentication or an explicit legacy token.
-      let localPath: string | undefined;
-      if (this.tenantAccessToken || this.client?.tokenManager) {
-        try {
-          const downloadDir = path.join(Config.getWorkspaceDir(), 'downloads');
-          await fs.mkdir(downloadDir, { recursive: true });
-          localPath = path.join(downloadDir, resourceFileName(fileName, fileKey));
+      // Handle text, post, share_chat, and interactive messages
+      // Issue #846: Add support for share_chat (forwarded chat history) messages
+      // Issue #3657: Add support for interactive (card) messages
+      if (
+        message_type !== 'text' &&
+        message_type !== 'post' &&
+        message_type !== 'share_chat' &&
+        message_type !== 'interactive'
+      ) {
+        logger.debug({ messageType: message_type }, 'Skipped unsupported message type');
+        this.forwardFilteredMessage(
+          'unsupported',
+          message_id,
+          chat_id,
+          content,
+          extractOpenId(sender),
+          { messageType: message_type }
+        );
+        return;
+      }
 
-          logger.info({ fileKey, fileName, localPath }, 'Downloading file from Feishu');
-
-          await this.downloadResourceViaLarkCli(
-            message_id,
-            fileKey,
-            mapResourceType(message_type),
-            localPath,
-          );
-
-          // Issue #2411: Verify file was actually written to disk
-          try {
-            const stat = await fs.stat(localPath);
-            if (stat.size === 0) {
-              throw new Error(`Downloaded file is empty (0 bytes): ${localPath}`);
-            }
-          } catch (statError) {
-            throw new Error(`Downloaded file not found on disk: ${localPath}`, { cause: statError });
-          }
-
-          // Issue #1637, #1663: Ensure file has correct extension via magic bytes detection
-          const correctedPath = await ensureFileExtensionFromPath(localPath);
-          if (correctedPath !== localPath) {
-            localPath = correctedPath;
-            fileName = path.basename(correctedPath);
-          }
-
-          logger.info({ fileKey, localPath }, 'File downloaded successfully');
-        } catch (downloadError) {
-          logger.error({ err: downloadError, fileKey, messageId: message_id }, 'Failed to download file');
-          localPath = undefined;
+      // Parse content
+      let text = '';
+      try {
+        const parsed = JSON.parse(content);
+        if (message_type === 'text') {
+          text = parsed.text?.trim() || '';
+        } else if (message_type === 'post' && parsed.content && Array.isArray(parsed.content)) {
+          text = parsePostContent(parsed.content);
+        } else if (message_type === 'share_chat') {
+          // Issue #846: Parse share_chat (forwarded/merged chat history) messages
+          text = parseShareChatContent(parsed);
+        } else if (message_type === 'interactive') {
+          // Issue #3657: Parse interactive card messages
+          text = extractFullCardContent(parsed);
         }
-      }
-
-      // Log the incoming message
-      await messageLogger.logIncomingMessage(
-        message_id,
-        extractOpenId(sender) || 'unknown',
-        chat_id,
-        `[${message_type} received]${localPath ? ` → ${localPath}` : ''}`,
-        message_type,
-        create_time
-      );
-
-      await this.addTypingReaction(message_id);
-
-      // Build content with file path for the agent prompt
-      let typeLabel: string;
-      if (message_type === 'image') {
-        typeLabel = '图片';
-      } else if (message_type === 'file') {
-        typeLabel = '文件';
-      } else if (message_type === 'audio') {
-        typeLabel = '语音消息';
-      } else if (message_type === 'video') {
-        typeLabel = '视频';
-      } else {
-        typeLabel = '媒体文件';
-      }
-      const resourceType = mapResourceType(message_type);
-      const downloadCmd = this.buildDownloadCmd(message_id, fileKey, resourceType);
-      const filePrompt = localPath
-        ? `用户${message_type === 'audio' ? '发送了一段' : '上传了一个'}${typeLabel}：${fileName || fileKey}\n\n这是当前消息中的附件，没有附带新的文字任务。请把这个附件作为当前消息处理；不要根据群聊历史复用已经完成或无关的旧任务。如果附件意图不明确，请先询问用户。\n\n文件已下载到本地: ${localPath}\n\n请使用 Read 工具读取该文件来查看内容。${message_type === 'image' ? '这是一个图片文件，Read 工具可以直接查看图片内容。' : message_type === 'audio' ? '这是一个音频文件。你可以根据自身能力处理音频（如调用 ASR 工具转录、分析音频特征等）。' : ''}\n\n如果文件读取失败，可以使用以下命令重新下载:\n${downloadCmd}`
-        : `用户${message_type === 'audio' ? '发送了一段' : '上传了一个'}${typeLabel}：${fileName || fileKey}，但自动下载失败。\n\n这是当前消息中的附件，没有附带新的文字任务。不要根据群聊历史推断或复用旧任务；如果无法获取这个附件，请明确说明并请用户重新发送或补充文字说明。\n\n你可以尝试手动下载该文件：\n- message_id: \`${message_id}\`\n- file_key: \`${fileKey}\`\n- 消息类型: ${message_type}\n- API type 参数: ${resourceType}\n\n下载命令:\n\`\`\`bash\n${downloadCmd}\n\`\`\``;
-
-      // Issue #3702: Build metadata for file/image messages to pass chatType and threadContext,
-      // ensuring intermediate message filtering works correctly in topic groups.
-      const fileMetadata: Record<string, unknown> = {};
-      // Issue #5434: media uploads carry no user-authored text task. Marking
-      // them lets the agent side recognize an attachment-only input that a
-      // running request may already have consumed, so it never resurfaces as
-      // an independent "what do you want me to do?" turn.
-      fileMetadata.attachmentOnly = true;
-      if (chat_type) {
-        fileMetadata.chatType = chat_type;
-      }
-      let fileThreadContext: string | undefined;
-      if (chat_type === 'topic' && parent_id) {
-        // Issue #4587 (part 1): capture the walked thread root for session keying
-        const threadInfo = await this.getThreadContext(parent_id);
-        fileThreadContext = threadInfo?.text;
-        // Event root identity survives history lookup failures. Legacy events
-        // without root_id use the API-declared or fully walked root if known.
-        fileMetadata.threadRootId = root_id || (threadInfo && !threadInfo.incomplete && threadInfo.rootId
-          ? threadInfo.rootId
-          : parent_id);
-      } else if (chat_type === 'topic') {
-        // Issue #4587 (part 1, review fix): a topic media message with no
-        // parent_id starts a new thread — same rule as the text path. Without
-        // this, part 2's session keying would treat thread-starting media as
-        // chat-scoped (no identity), diverging from the text path.
-        fileMetadata.threadRootId = root_id || message_id;
-      }
-      if (fileThreadContext) {
-        fileMetadata.threadContext = fileThreadContext;
-      }
-
-      // Issue #3828: Apply @mention/trigger mode check for file/image messages in group/topic chats
-      const fileBotMentioned = this.mentionDetector.isBotMentioned(mentions);
-      if (isGroupChat(chat_type) && !fileBotMentioned) {
-        if (this.triggerModeManager.getMode(chat_id) === 'auto'
-          && this.triggerModeManager.needsSmallGroupRecheck(chat_id)) {
-          await this.checkAndAutoDisableSmallGroup(chat_id);
-        }
-        if (!this.triggerModeManager.isTriggerEnabled(chat_id)) {
-          logger.debug(
-            { messageId: message_id, chatId: chat_id, chat_type, messageType: message_type },
-            'Skipped file/image message in group chat without @mention (trigger mode disabled)'
+      } catch (parseError) {
+        // Issue #4083: Handle non-JSON interactive card content (<card> format)
+        if (message_type === 'interactive' && content) {
+          text = extractFullCardContent(content);
+        } else {
+          logger.info(
+            {
+              event: 'filter_result',
+              reason: 'parse_failure',
+              sanitizedReason: sanitizeLifecycleReason(parseError),
+              traceId: message_id,
+              runId: message_id,
+              sourceMessageId: message_id,
+              chatId: chat_id,
+              target: chat_id,
+              user_visible: false,
+            },
+            'filter_result'
           );
-          this.forwardFilteredMessage('trigger_mode', message_id, chat_id, filePrompt, extractOpenId(sender), { chat_type, messageType: message_type });
+          logger.error('Failed to parse content');
           return;
         }
       }
 
-      // Get chat history context when bot IS mentioned in group/topic for file messages
-      // Issue #4304: Skip group-level chat history for topic groups — it mixes
-      // messages from different threads. Topic groups already have thread-isolated
-      // context set above (fileThreadContext at line ~753).
-      if (isGroupChat(chat_type) && chat_type !== 'topic' && fileBotMentioned) {
-        const chatHistoryContext = await this.getChatHistoryContext(chat_id);
-        if (chatHistoryContext) {
-          fileMetadata.chatHistoryContext = chatHistoryContext;
+      if (!text) {
+        logger.debug('Skipped empty text');
+        this.forwardFilteredMessage('empty', message_id, chat_id, content, extractOpenId(sender));
+        return;
+      }
+
+      // Log message
+      await messageLogger.logIncomingMessage(
+        message_id,
+        extractOpenId(sender) || 'unknown',
+        this.toRoutedChatId(chat_id),
+        text,
+        message_type,
+        create_time
+      );
+
+      // Issue #4031: Emit topic group message notification if enabled.
+      // Placed BEFORE trigger_mode check so notifications fire for all topic messages,
+      // regardless of whether the bot is @mentioned.
+      if (
+        chat_type === 'topic' &&
+        this.callbacks.onTopicMessage &&
+        Config.getRawConfig().channels?.feishu?.topicNotify?.enabled === true
+      ) {
+        try {
+          const senderOpenId = extractOpenId(sender);
+          const senderName = extractSenderName({
+            sender,
+            sender_name: sender?.sender_id,
+          } as unknown as { [key: string]: unknown });
+          this.callbacks.onTopicMessage({
+            type: 'topic_group_message',
+            chatId: chat_id,
+            rootId: root_id || parent_id || message_id,
+            threadId: message_id,
+            sender: {
+              name: senderName,
+              openId: senderOpenId,
+            },
+            content: (text || '').substring(0, 500),
+            isReply: !!parent_id,
+            timestamp: create_time ? new Date(create_time).toISOString() : new Date().toISOString(),
+          });
+        } catch (topicNotifyError) {
+          logger.warn(
+            { err: topicNotifyError, messageId: message_id },
+            'Failed to emit topic group notification (non-critical)'
+          );
         }
       }
 
-      const incoming: IncomingMessage = {
-        messageId: `${message_id}-${message_type === 'audio' ? 'audio' : 'file'}`,
+      // Check for control commands
+      const botMentioned = this.mentionDetector.isBotMentioned(mentions);
+      const textWithoutMentions = stripLeadingMentions(text, mentions);
+
+      // Group chat trigger mode (Issue #2291: triggerMode enum, #3345: 'auto' mode)
+      // Issue #2052: Auto-enable trigger mode for 2-member group chats (bot + 1 user)
+      // Issue #3592: Re-check small group status even when already marked (allows unmarking when group grows)
+      const isTriggerCommand = textWithoutMentions.startsWith('/trigger');
+      if (isGroupChat(chat_type) && !botMentioned && !isTriggerCommand) {
+        // Issue #3592: Always re-check small group status in 'auto' mode (with throttle)
+        // In 'mention' mode, user explicitly wants mention-only regardless of group size
+        if (
+          this.triggerModeManager.getMode(chat_id) === 'auto' &&
+          this.triggerModeManager.needsSmallGroupRecheck(chat_id)
+        ) {
+          await this.checkAndAutoDisableSmallGroup(chat_id);
+        }
+        if (!this.triggerModeManager.isTriggerEnabled(chat_id)) {
+          logger.debug(
+            { messageId: message_id, chatId: chat_id, chat_type },
+            'Skipped group chat message without @mention (trigger mode disabled)'
+          );
+          this.forwardFilteredMessage(
+            'trigger_mode',
+            message_id,
+            chat_id,
+            text,
+            extractOpenId(sender),
+            { chat_type }
+          );
+          return;
+        }
+      }
+
+      if (/^\/private(?:\s|$)/.test(textWithoutMentions.trim())) {
+        if (chat_type !== 'p2p' || sender?.sender_type !== 'user') {
+          await this.callbacks.sendMessage({
+            chatId: chat_id,
+            type: 'text',
+            text: '请在与机器人的私聊中发起私密鉴权。',
+          });
+          return;
+        }
+        const action = textWithoutMentions.trim().slice('/private'.length).trim();
+        try {
+          if (!this.privateInput) {
+            throw new Error('No private input consumer');
+          }
+          await this.privateInput.request(action, extractOpenId(sender) ?? '', chat_id, message_id);
+        } catch {
+          await this.callbacks.sendMessage({
+            chatId: chat_id,
+            type: 'text',
+            text: '当前操作未注册或暂时不可用，请让 agent 确认鉴权操作名称。',
+          });
+        }
+        return;
+      }
+
+      // Add typing reaction
+      await this.addTypingReaction(message_id);
+
+      // Issue #4587 (part 3) review fix: slash-prefixed text skips the reply and
+      // history fetches below. A recognized command is consumed by the router
+      // before those results are ever read — for a file parent the quoted fetch
+      // downloads the real resource via lark-cli and the download is immediately
+      // dropped. An UNrecognized `/xxx` still falls through as a normal message
+      // (skill invocations such as /mineru-pdf rely on quoted context), so it is
+      // fetched after the router declines — matching main's dispatch-then-fetch
+      // ordering. getThreadContext stays at thread-root resolution: commands in
+      // topic groups need threadRootId to address the right agent slot.
+      const isSlashCommand = textWithoutMentions.startsWith('/');
+      // Get quoted/replied message context if this is a reply
+      let quotedMessageResult: { text: string; attachment?: MessageAttachment } | undefined;
+      if (parent_id && !isSlashCommand) {
+        quotedMessageResult = await this.getQuotedMessageContext(parent_id);
+      }
+
+      // Get chat history context for trigger mode (Issue #2193: renamed from passive mode)
+      // Issue #3989: For topic groups, use thread context only (not flat chat history)
+      // to avoid mixing messages from different threads.
+      const isTriggerModeMention = isGroupChat(chat_type) && botMentioned;
+      let chatHistoryContext: string | undefined;
+      let threadContext: string | undefined;
+      // Issue #4587 (part 1): thread root for topic-group session keying (part 2)
+      let threadRootId: string | undefined;
+
+      if (chat_type === 'topic') {
+        if (parent_id) {
+          // Topic groups: build thread context from parent chain only
+          const threadInfo =
+            isSlashCommand && root_id ? undefined : await this.getThreadContext(parent_id);
+          threadContext = threadInfo?.text;
+          // A canonical event root does not depend on history availability.
+          // parent_id is only a best-effort fallback for legacy events whose
+          // API lookup also cannot establish the root.
+          threadRootId =
+            root_id ||
+            (threadInfo && !threadInfo.incomplete ? (threadInfo.rootId ?? parent_id) : parent_id);
+        } else {
+          // A topic message without parent_id starts a new thread — it IS the root
+          threadRootId = root_id || message_id;
+        }
+      } else if (root_id) {
+        // Issue #5464: p2p and regular-group MESSAGE TOPICS carry their thread
+        // identity in root_id — Feishu only sets it for messages inside a topic,
+        // so a main-conversation message keeps the undefined identity. Without
+        // this branch every p2p input collapses onto the chat-level last-known
+        // root, and a fresh main-session task inherits the old topic's anchor
+        // and busy-input steering. The topic root itself also reports root_id
+        // (== its own id), so roots and replies resolve to the same identity.
+        threadRootId = root_id;
+      } else if (isTriggerModeMention && chat_type !== 'topic') {
+        // Regular groups: use flat chat history.
+        // Issue #4304 (part 2): topic groups never use flat chat history — it
+        // mixes messages across threads. A topic message without parent_id gets
+        // no injected context here, matching the file/image path.
+        // Issue #4587 (part 3) review fix: skipped for slash commands — a
+        // consumed command never reads it, and an unrecognized one re-fetches
+        // below after the router declines.
+        if (!isSlashCommand) {
+          chatHistoryContext = await this.getChatHistoryContext(chat_id);
+        }
+      }
+
+      // Handle commands (Issue #4126 part 2: extracted to channels/feishu/command-router.ts)
+      // Issue #4587 (part 3): resolve thread identity BEFORE dispatching, so a
+      // /reset or /stop typed inside a topic-group thread addresses that
+      // thread's agent slot rather than the chat-scoped one.
+      const commandInput: import('./command-router.js').CommandRouterInput = {
+        textWithoutMentions,
+        mentions,
         chatId: chat_id,
-        userId: extractOpenId(sender),
-        content: filePrompt,
-        messageType: message_type === 'audio' ? 'audio' : 'file',
-        timestamp: create_time,
-        threadId,
-        attachments: localPath ? [{ fileName: fileName || fileKey, filePath: localPath }] : undefined,
-        metadata: Object.keys(fileMetadata).length > 0 ? fileMetadata : undefined,
+        threadRootId,
+        sourceMessageId: message_id,
+        senderType: sender?.sender_type,
+        ...(chat_type === 'p2p' || chat_type === 'group' || chat_type === 'topic'
+          ? { chatType: chat_type }
+          : {}),
+        actorId: extractOpenId(sender),
       };
-      registerFeishuInputSource(incoming, message_id, sender?.sender_type);
-      await this.callbacks.emitMessage(incoming);
-      return;
-    }
-
-    // Handle text, post, share_chat, and interactive messages
-    // Issue #846: Add support for share_chat (forwarded chat history) messages
-    // Issue #3657: Add support for interactive (card) messages
-    if (message_type !== 'text' && message_type !== 'post' && message_type !== 'share_chat' && message_type !== 'interactive') {
-      logger.debug({ messageType: message_type }, 'Skipped unsupported message type');
-      this.forwardFilteredMessage('unsupported', message_id, chat_id, content, extractOpenId(sender), { messageType: message_type });
-      return;
-    }
-
-    // Parse content
-    let text = '';
-    try {
-      const parsed = JSON.parse(content);
-      if (message_type === 'text') {
-        text = parsed.text?.trim() || '';
-      } else if (message_type === 'post' && parsed.content && Array.isArray(parsed.content)) {
-        text = parsePostContent(parsed.content);
-      } else if (message_type === 'share_chat') {
-        // Issue #846: Parse share_chat (forwarded/merged chat history) messages
-        text = parseShareChatContent(parsed);
-      } else if (message_type === 'interactive') {
-        // Issue #3657: Parse interactive card messages
-        text = extractFullCardContent(parsed);
-      }
-      } catch (parseError) {
-      // Issue #4083: Handle non-JSON interactive card content (<card> format)
-      if (message_type === 'interactive' && content) {
-        text = extractFullCardContent(content);
-      } else {
-        logger.info({ event: 'filter_result', reason: 'parse_failure', sanitizedReason: sanitizeLifecycleReason(parseError), traceId: message_id, runId: message_id, sourceMessageId: message_id, chatId: chat_id, target: chat_id, user_visible: false }, 'filter_result');
-        logger.error('Failed to parse content');
-        return;
-      }
-    }
-
-    if (!text) {
-      logger.debug('Skipped empty text');
-      this.forwardFilteredMessage('empty', message_id, chat_id, content, extractOpenId(sender));
-      return;
-    }
-
-    // Log message
-    await messageLogger.logIncomingMessage(
-      message_id,
-      extractOpenId(sender) || 'unknown',
-      chat_id,
-      text,
-      message_type,
-      create_time
-    );
-
-    // Issue #4031: Emit topic group message notification if enabled.
-    // Placed BEFORE trigger_mode check so notifications fire for all topic messages,
-    // regardless of whether the bot is @mentioned.
-    if (chat_type === 'topic' && this.callbacks.onTopicMessage
-        && Config.getRawConfig().channels?.feishu?.topicNotify?.enabled === true) {
-      try {
-        const senderOpenId = extractOpenId(sender);
-        const senderName = extractSenderName({ sender, sender_name: sender?.sender_id } as unknown as { [key: string]: unknown });
-        this.callbacks.onTopicMessage({
-          type: 'topic_group_message',
-          chatId: chat_id,
-          rootId: root_id || parent_id || message_id,
-          threadId: message_id,
-          sender: {
-            name: senderName,
-            openId: senderOpenId,
-          },
-          content: (text || '').substring(0, 500),
-          isReply: !!parent_id,
-          timestamp: create_time
-            ? new Date(create_time).toISOString()
-            : new Date().toISOString(),
-        });
-      } catch (topicNotifyError) {
-        logger.warn(
-          { err: topicNotifyError, messageId: message_id },
-          'Failed to emit topic group notification (non-critical)'
-        );
-      }
-    }
-
-    // Check for control commands
-    const botMentioned = this.mentionDetector.isBotMentioned(mentions);
-    const textWithoutMentions = stripLeadingMentions(text, mentions);
-
-    // Group chat trigger mode (Issue #2291: triggerMode enum, #3345: 'auto' mode)
-    // Issue #2052: Auto-enable trigger mode for 2-member group chats (bot + 1 user)
-    // Issue #3592: Re-check small group status even when already marked (allows unmarking when group grows)
-    const isTriggerCommand = textWithoutMentions.startsWith('/trigger');
-    if (isGroupChat(chat_type) && !botMentioned && !isTriggerCommand) {
-      // Issue #3592: Always re-check small group status in 'auto' mode (with throttle)
-      // In 'mention' mode, user explicitly wants mention-only regardless of group size
-      if (this.triggerModeManager.getMode(chat_id) === 'auto'
-        && this.triggerModeManager.needsSmallGroupRecheck(chat_id)) {
-        await this.checkAndAutoDisableSmallGroup(chat_id);
-      }
-      if (!this.triggerModeManager.isTriggerEnabled(chat_id)) {
-        logger.debug({ messageId: message_id, chatId: chat_id, chat_type }, 'Skipped group chat message without @mention (trigger mode disabled)');
-        this.forwardFilteredMessage('trigger_mode', message_id, chat_id, text, extractOpenId(sender), { chat_type });
-        return;
-      }
-    }
-
-    if (/^\/private(?:\s|$)/.test(textWithoutMentions.trim())) {
-      if (chat_type !== 'p2p' || sender?.sender_type !== 'user') {
-        await this.callbacks.sendMessage({ chatId: chat_id, type: 'text', text: '请在与机器人的私聊中发起私密鉴权。' });
-        return;
-      }
-      const action = textWithoutMentions.trim().slice('/private'.length).trim();
-      try {
-        if (!this.privateInput) {throw new Error('No private input consumer');}
-        await this.privateInput.request(action, extractOpenId(sender) ?? '', chat_id, message_id);
-      } catch {
-        await this.callbacks.sendMessage({ chatId: chat_id, type: 'text', text: '当前操作未注册或暂时不可用，请让 agent 确认鉴权操作名称。' });
-      }
-      return;
-    }
-
-    // Add typing reaction
-    await this.addTypingReaction(message_id);
-
-    // Issue #4587 (part 3) review fix: slash-prefixed text skips the reply and
-    // history fetches below. A recognized command is consumed by the router
-    // before those results are ever read — for a file parent the quoted fetch
-    // downloads the real resource via lark-cli and the download is immediately
-    // dropped. An UNrecognized `/xxx` still falls through as a normal message
-    // (skill invocations such as /mineru-pdf rely on quoted context), so it is
-    // fetched after the router declines — matching main's dispatch-then-fetch
-    // ordering. getThreadContext stays at thread-root resolution: commands in
-    // topic groups need threadRootId to address the right agent slot.
-    const isSlashCommand = textWithoutMentions.startsWith('/');
-    // Get quoted/replied message context if this is a reply
-    let quotedMessageResult: { text: string; attachment?: MessageAttachment } | undefined;
-    if (parent_id && !isSlashCommand) {
-      quotedMessageResult = await this.getQuotedMessageContext(parent_id);
-    }
-
-    // Get chat history context for trigger mode (Issue #2193: renamed from passive mode)
-    // Issue #3989: For topic groups, use thread context only (not flat chat history)
-    // to avoid mixing messages from different threads.
-    const isTriggerModeMention = isGroupChat(chat_type) && botMentioned;
-    let chatHistoryContext: string | undefined;
-    let threadContext: string | undefined;
-    // Issue #4587 (part 1): thread root for topic-group session keying (part 2)
-    let threadRootId: string | undefined;
-
-    if (chat_type === 'topic') {
-      if (parent_id) {
-        // Topic groups: build thread context from parent chain only
-        const threadInfo = isSlashCommand && root_id ? undefined : await this.getThreadContext(parent_id);
-        threadContext = threadInfo?.text;
-        // A canonical event root does not depend on history availability.
-        // parent_id is only a best-effort fallback for legacy events whose
-        // API lookup also cannot establish the root.
-        threadRootId = root_id || (threadInfo && !threadInfo.incomplete
-          ? threadInfo.rootId ?? parent_id
-          : parent_id);
-      } else {
-        // A topic message without parent_id starts a new thread — it IS the root
-        threadRootId = root_id || message_id;
-      }
-    } else if (root_id) {
-      // Issue #5464: p2p and regular-group MESSAGE TOPICS carry their thread
-      // identity in root_id — Feishu only sets it for messages inside a topic,
-      // so a main-conversation message keeps the undefined identity. Without
-      // this branch every p2p input collapses onto the chat-level last-known
-      // root, and a fresh main-session task inherits the old topic's anchor
-      // and busy-input steering. The topic root itself also reports root_id
-      // (== its own id), so roots and replies resolve to the same identity.
-      threadRootId = root_id;
-    } else if (isTriggerModeMention && chat_type !== 'topic') {
-      // Regular groups: use flat chat history.
-      // Issue #4304 (part 2): topic groups never use flat chat history — it
-      // mixes messages across threads. A topic message without parent_id gets
-      // no injected context here, matching the file/image path.
-      // Issue #4587 (part 3) review fix: skipped for slash commands — a
-      // consumed command never reads it, and an unrecognized one re-fetches
-      // below after the router declines.
-      if (!isSlashCommand) {
-        chatHistoryContext = await this.getChatHistoryContext(chat_id);
-      }
-    }
-
-    // Handle commands (Issue #4126 part 2: extracted to channels/feishu/command-router.ts)
-    // Issue #4587 (part 3): resolve thread identity BEFORE dispatching, so a
-    // /reset or /stop typed inside a topic-group thread addresses that
-    // thread's agent slot rather than the chat-scoped one.
-    const commandInput: import('./command-router.js').CommandRouterInput = {
-      textWithoutMentions, mentions, chatId: chat_id, threadRootId, sourceMessageId: message_id, senderType: sender?.sender_type,
-      ...(chat_type === 'p2p' || chat_type === 'group' || chat_type === 'topic' ? { chatType: chat_type } : {}),
-      actorId: extractOpenId(sender),
-    };
-    const commandDeps = {
+      const commandDeps = {
         hasControlHandler: this.controlHandler,
         emitControl: (command) => this.callbacks.emitControl(command),
         sendMessage: async (reply) => {
           await this.callbacks.sendMessage(reply);
         },
       } satisfies import('./command-router.js').CommandRouterDeps;
-    const commandHandled = await tryHandleSlashCommand(commandInput, commandDeps);
-    if (commandHandled) {
-      return;
-    }
-    if (message_type === 'text' && (!parent_id || chat_type === 'topic') && await tryHandleGuidance(commandInput, commandDeps, this.welcomeService)) { return; }
+      const commandHandled = await tryHandleSlashCommand(commandInput, commandDeps);
+      if (commandHandled) {
+        return;
+      }
+      if (
+        message_type === 'text' &&
+        (!parent_id || chat_type === 'topic') &&
+        (await tryHandleGuidance(commandInput, commandDeps, this.welcomeService))
+      ) {
+        return;
+      }
 
-    // Issue #4587 (part 3) review fix: the router declined — this is an
-    // unrecognized `/xxx` (e.g. a skill invocation) processed as a normal
-    // message. Fetch the context we skipped above so reply/history context
-    // behaves exactly as it did before the dispatch moved (main ordering).
-    if (isSlashCommand) {
-      if (parent_id) {
-        quotedMessageResult = await this.getQuotedMessageContext(parent_id);
-        if (chat_type === 'topic' && root_id) {
-          threadContext = (await this.getThreadContext(parent_id))?.text;
+      // Issue #4587 (part 3) review fix: the router declined — this is an
+      // unrecognized `/xxx` (e.g. a skill invocation) processed as a normal
+      // message. Fetch the context we skipped above so reply/history context
+      // behaves exactly as it did before the dispatch moved (main ordering).
+      if (isSlashCommand) {
+        if (parent_id) {
+          quotedMessageResult = await this.getQuotedMessageContext(parent_id);
+          if (chat_type === 'topic' && root_id) {
+            threadContext = (await this.getThreadContext(parent_id))?.text;
+          }
+        }
+        if (isTriggerModeMention && chat_type !== 'topic') {
+          chatHistoryContext = await this.getChatHistoryContext(chat_id);
         }
       }
-      if (isTriggerModeMention && chat_type !== 'topic') {
-        chatHistoryContext = await this.getChatHistoryContext(chat_id);
+
+      // Build metadata
+      const metadata: Record<string, unknown> = {};
+      if (chat_type) {
+        metadata.chatType = chat_type;
       }
-    }
+      if (quotedMessageResult?.text) {
+        metadata.quotedMessage = quotedMessageResult.text;
+      }
+      if (chatHistoryContext) {
+        metadata.chatHistoryContext = chatHistoryContext;
+      }
+      if (
+        isTriggerModeMention &&
+        chat_type !== 'topic' &&
+        message_type === 'text' &&
+        textWithoutMentions.trim() === ''
+      ) {
+        metadata.pendingQuestionEligible = true;
+      }
+      if (threadContext) {
+        metadata.threadContext = threadContext;
+      }
+      if (threadRootId) {
+        // Issue #4587 (part 1): stable thread identity for session keying
+        metadata.threadRootId = threadRootId;
+      }
 
-    // Build metadata
-    const metadata: Record<string, unknown> = {};
-    if (chat_type) {
-      metadata.chatType = chat_type;
-    }
-    if (quotedMessageResult?.text) {
-      metadata.quotedMessage = quotedMessageResult.text;
-    }
-    if (chatHistoryContext) {
-      metadata.chatHistoryContext = chatHistoryContext;
-    }
-    if (
-      isTriggerModeMention &&
-      chat_type !== 'topic' &&
-      message_type === 'text' &&
-      textWithoutMentions.trim() === ''
-    ) {
-      metadata.pendingQuestionEligible = true;
-    }
-    if (threadContext) {
-      metadata.threadContext = threadContext;
-    }
-    if (threadRootId) {
-      // Issue #4587 (part 1): stable thread identity for session keying
-      metadata.threadRootId = threadRootId;
-    }
+      // Build attachments from quoted message if available
+      const quotedAttachments = quotedMessageResult?.attachment
+        ? [quotedMessageResult.attachment]
+        : undefined;
 
-    // Build attachments from quoted message if available
-    const quotedAttachments = quotedMessageResult?.attachment
-      ? [quotedMessageResult.attachment]
-      : undefined;
-
-    // Attest only accepted raw user events; card-action/system inputs use other paths.
-    const incoming: IncomingMessage = {
-      messageId: message_id,
-      chatId: chat_id,
-      userId: extractOpenId(sender),
-      content: text,
-      messageType: message_type,
-      timestamp: create_time,
-      threadId,
-      metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
-      attachments: quotedAttachments,
-    };
-    registerFeishuInputSource(incoming, message_id, sender?.sender_type);
-    await this.callbacks.emitMessage(incoming);
+      // Attest only accepted raw user events; card-action/system inputs use other paths.
+      const incoming: IncomingMessage = {
+        messageId: message_id,
+        chatId: chat_id,
+        userId: extractOpenId(sender),
+        content: text,
+        messageType: message_type,
+        timestamp: create_time,
+        threadId,
+        metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+        attachments: quotedAttachments,
+      };
+      registerFeishuInputSource(incoming, message_id, sender?.sender_type);
+      await this.callbacks.emitMessage(incoming);
     } catch (error) {
-      messageLogger.releaseMessage(message_id);
+      messageLogger.releaseMessage(this.toRoutedMessageId(message_id));
       throw error;
     }
   }
@@ -1606,7 +1916,9 @@ export class MessageHandler {
   /**
    * Handle card action event from WebSocket.
    */
-  async handleCardAction(data: FeishuCardActionEventData): Promise<void | { toast: { type: 'info'; content: string } }> {
+  async handleCardAction(
+    data: FeishuCardActionEventData
+  ): Promise<void | { toast: { type: 'info'; content: string } }> {
     if (!this.isRunning()) {
       return;
     }
@@ -1614,18 +1926,32 @@ export class MessageHandler {
     // Parse actual Feishu event structure
     const rawData = data as Record<string, unknown>;
     if (FeishuTaskQuestionCards.isCallback(rawData)) {
-      return this.taskQuestionCards?.handleAuthenticatedCallback(rawData)
-        ?? { toast: { type: 'info', content: '任务反馈暂不可用；原问题和已保存的回答会保留。' } };
+      return (
+        this.taskQuestionCards?.handleAuthenticatedCallback(rawData) ?? {
+          toast: { type: 'info', content: '任务反馈暂不可用；原问题和已保存的回答会保留。' },
+        }
+      );
     }
     if (FeishuAgentInput.isCallback(rawData)) {
-      void this.agentInput?.submit(rawData).catch(() => logger.warn('Agent input callback could not be handled'));
+      void this.agentInput
+        ?.submit(rawData)
+        .catch(() => logger.warn('Agent input callback could not be handled'));
       return;
     }
     // Issue #5400: /feedback confirmation cards resolve without an agent turn,
     // so reporting still works when the agent runtime itself has failed.
     if (FeishuIssueReport.isCallback(rawData)) {
-      void this.issueReport?.submit(rawData).catch(() => logger.warn('Issue report callback could not be handled'));
+      void this.issueReport
+        ?.submit(rawData)
+        .catch(() => logger.warn('Issue report callback could not be handled'));
       return;
+    }
+    // #4914: /agent config cards are presenter-only workflows over the same
+    // preset selection service; they never enter the agent turn path. Must be
+    // matched before the private-input form fallback (form_value payloads).
+    if (FeishuAgentConfigCards.isCallback(rawData)) {
+      void this.agentConfigCards?.submit(rawData).catch(() => logger.warn('Agent config card callback could not be handled'));
+      return { toast: { type: 'info', content: '已收到操作，配置卡片将更新；若长时间未更新请重新发起 /agent config。' } };
     }
     if (FeishuPrivateInput.isPrivateCallback(rawData)) {
       const action = rawData.action as { tag?: unknown } | undefined;
@@ -1636,45 +1962,70 @@ export class MessageHandler {
       }
       // Acknowledge promptly; the one-shot handoff consumes before awaiting.
       // Consumer failures never enter ordinary logs or the agent channel.
-      void this.privateWorkflows.submit(rawData).then(async handled => {
-        if (!handled) {
-          if (this.privateInput) {await this.privateInput.submit(rawData);}
-          else {await FeishuPrivateInput.reject(rawData, this.callbacks.sendMessage, this.updatePrivateCard);}
-        }
-      }).catch(() => logger.warn('Private input delivery failed'));
+      void this.privateWorkflows
+        .submit(rawData)
+        .then(async (handled) => {
+          if (!handled) {
+            if (this.privateInput) {
+              await this.privateInput.submit(rawData);
+            } else {
+              await FeishuPrivateInput.reject(
+                rawData,
+                this.callbacks.sendMessage,
+                this.updatePrivateCard
+              );
+            }
+          }
+        })
+        .catch(() => logger.warn('Private input delivery failed'));
       // Even a malformed callback lacking safe routing IDs gets visible feedback.
-      return { toast: { type: 'info', content: '已收到提交；若表单已过期、失效或服务重启，请重新发起。' } };
+      return {
+        toast: { type: 'info', content: '已收到提交；若表单已过期、失效或服务重启，请重新发起。' },
+      };
     }
     // Feishu reuses the card message id for every button click. Prefer its
     // event id for a stable unique agent input id, with a UUID fallback.
     const eventId = typeof rawData.event_id === 'string' ? rawData.event_id : undefined;
-    const context = rawData.context as { open_message_id?: string; open_chat_id?: string } | undefined;
-    const operator = rawData.operator as { open_id?: string; user_id?: string; union_id?: string } | undefined;
-    const actionData = rawData.action as { value?: string; tag?: string; type?: string; text?: string } | undefined;
+    const context = rawData.context as
+      | { open_message_id?: string; open_chat_id?: string }
+      | undefined;
+    const operator = rawData.operator as
+      | { open_id?: string; user_id?: string; union_id?: string }
+      | undefined;
+    const actionData = rawData.action as
+      | { value?: string; tag?: string; type?: string; text?: string }
+      | undefined;
 
     const message_id = context?.open_message_id;
     const chat_id = context?.open_chat_id;
-    const action = actionData ? {
-      type: actionData.tag ?? actionData.type ?? '',
-      value: actionData.value ?? '',
-      trigger: 'button' as const,
-      text: actionData.text,
-    } : undefined;
-    const user = operator ? {
-      sender_id: {
-        open_id: operator.open_id ?? '',
-        user_id: operator.user_id,
-        union_id: operator.union_id,
-      },
-    } : undefined;
+    const action = actionData
+      ? {
+          type: actionData.tag ?? actionData.type ?? '',
+          value: actionData.value ?? '',
+          trigger: 'button' as const,
+          text: actionData.text,
+        }
+      : undefined;
+    const user = operator
+      ? {
+          sender_id: {
+            open_id: operator.open_id ?? '',
+            user_id: operator.user_id,
+            union_id: operator.union_id,
+          },
+        }
+      : undefined;
 
     if (!action || !message_id || !chat_id) {
-      logger.warn({
-        hasAction: !!action,
-        hasMessageId: !!message_id,
-        hasChatId: !!chat_id,
-        eventData: JSON.stringify(data),
-      }, 'Missing required card action fields');
+      logger.warn(
+        {
+          hasAction: !!action,
+          hasMessageId: !!message_id,
+          hasChatId: !!chat_id,
+          eventData: JSON.stringify(data),
+        },
+        'Missing required card action fields'
+      );
       return;
     }
 
@@ -1682,7 +2033,10 @@ export class MessageHandler {
     try {
       threadRootId = this.callbacks.resolveActionThreadRoot?.(message_id, chat_id);
     } catch (err) {
-      logger.warn({ err, messageId: message_id, chatId: chat_id }, 'Failed to resolve card thread root');
+      logger.warn(
+        { err, messageId: message_id, chatId: chat_id },
+        'Failed to resolve card thread root'
+      );
     }
 
     logger.info(
@@ -1697,7 +2051,10 @@ export class MessageHandler {
     );
 
     // Send user-visible confirmation message
-    const buttonText = this.callbacks.resolveActionText?.(message_id, chat_id, action.value) || action.text || action.value;
+    const buttonText =
+      this.callbacks.resolveActionText?.(message_id, chat_id, action.value) ||
+      action.text ||
+      action.value;
 
     if (buttonText) {
       try {
@@ -1708,7 +2065,10 @@ export class MessageHandler {
           threadId: message_id,
         });
       } catch (error) {
-        logger.warn({ err: error, messageId: message_id, chatId: chat_id }, 'Failed to send user confirmation');
+        logger.warn(
+          { err: error, messageId: message_id, chatId: chat_id },
+          'Failed to send user confirmation'
+        );
       }
     }
 
@@ -1723,14 +2083,17 @@ export class MessageHandler {
           message_id,
           chat_id,
           action.value,
-          buttonText,
+          buttonText
         );
         messageContent = promptFromTemplate || defaultMessage;
       } else {
         messageContent = defaultMessage;
       }
     } catch (err) {
-      logger.warn({ err, messageId: message_id, chatId: chat_id }, 'Failed to resolve action prompt, using default');
+      logger.warn(
+        { err, messageId: message_id, chatId: chat_id },
+        'Failed to resolve action prompt, using default'
+      );
       messageContent = defaultMessage;
     }
 
@@ -1750,21 +2113,28 @@ export class MessageHandler {
     // message_id, so the click can no longer mark the card message as
     // "processed" and suppress a later im.message.receive for the same card.
     // (issue #4197 方案 A)
-    await messageLogger.logCardInteraction(
-      message_id,
-      user?.sender_id?.open_id || 'unknown',
-      chat_id,
-      messageContent,
-    ).catch(err => {
-      logger.warn({ err, messageId: message_id, chatId: chat_id }, 'Failed to log card action');
-    });
+    await messageLogger
+      .logCardInteraction(
+        message_id,
+        user?.sender_id?.open_id || 'unknown',
+        this.toRoutedChatId(chat_id),
+        messageContent
+      )
+      .catch((err) => {
+        logger.warn({ err, messageId: message_id, chatId: chat_id }, 'Failed to log card action');
+      });
 
     // Card actions use the same local agent pipeline as text messages.
     let emitFailed = false;
     const cardActionMessageId = `card_action_${message_id}_${eventId ?? crypto.randomUUID()}`;
     try {
       logger.debug(
-        { messageId: cardActionMessageId, cardMessageId: message_id, chatId: chat_id, actionValue: action.value },
+        {
+          messageId: cardActionMessageId,
+          cardMessageId: message_id,
+          chatId: chat_id,
+          actionValue: action.value,
+        },
         'Emitting card action as local message to agent'
       );
       await this.callbacks.emitMessage({
@@ -1790,15 +2160,23 @@ export class MessageHandler {
       );
     } catch (error) {
       emitFailed = true;
-      logger.error({ err: error, messageId: message_id, chatId: chat_id }, 'Failed to emit card action message');
+      logger.error(
+        { err: error, messageId: message_id, chatId: chat_id },
+        'Failed to emit card action message'
+      );
       // Issue #1357: Notify user that their card action was not processed
-      this.callbacks.sendMessage({
-        chatId: chat_id,
-        type: 'text',
-        text: '❌ 处理卡片操作时发生错误，请重试。',
-      }).catch((notifyErr) => {
-        logger.error({ err: notifyErr, chatId: chat_id }, 'Failed to send card action error notification');
-      });
+      this.callbacks
+        .sendMessage({
+          chatId: chat_id,
+          type: 'text',
+          text: '❌ 处理卡片操作时发生错误，请重试。',
+        })
+        .catch((notifyErr) => {
+          logger.error(
+            { err: notifyErr, chatId: chat_id },
+            'Failed to send card action error notification'
+          );
+        });
     }
 
     // Try to handle via InteractionManager (only if emit succeeded — the agent
@@ -1816,7 +2194,10 @@ export class MessageHandler {
 
         await this.interactionManager.handleAction(compatEvent);
       } catch (error) {
-        logger.error({ err: error, messageId: message_id, chatId: chat_id }, 'Card action handler error');
+        logger.error(
+          { err: error, messageId: message_id, chatId: chat_id },
+          'Card action handler error'
+        );
 
         await this.callbacks.sendMessage({
           chatId: chat_id,
@@ -1850,7 +2231,7 @@ export class MessageHandler {
    */
   private async resolveTopicChatType(
     chatId: string,
-    eventChatType: string | undefined,
+    eventChatType: string | undefined
   ): Promise<string | undefined> {
     // Only group chats can be topic groups; p2p is never topic. Preserving a
     // literal `'topic'` event value keeps existing tests (and any future event
@@ -1860,7 +2241,9 @@ export class MessageHandler {
     }
     const cached = this.chatModeCache.get(chatId);
     if (cached !== undefined) {
-      return isThreadCapableGroup(cached.chatMode, cached.groupMessageType) ? 'topic' : eventChatType;
+      return isThreadCapableGroup(cached.chatMode, cached.groupMessageType)
+        ? 'topic'
+        : eventChatType;
     }
     if (!this.client) {
       return eventChatType;
@@ -1878,14 +2261,17 @@ export class MessageHandler {
       if (isThreadCapableGroup(chatMode, groupMessageType)) {
         logger.debug(
           { chatId, chatMode, groupMessageType },
-          'Thread-capable group detected (event chat_type was "group")',
+          'Thread-capable group detected (event chat_type was "group")'
         );
         return 'topic';
       }
       return eventChatType;
     } catch (error) {
       // Don't cache the failure — let the next message retry.
-      logger.debug({ err: error, chatId }, 'Failed to fetch chat_mode for topic detection; falling back to event chat_type');
+      logger.debug(
+        { err: error, chatId },
+        'Failed to fetch chat_mode for topic detection; falling back to event chat_type'
+      );
       return eventChatType;
     }
   }
@@ -1927,14 +2313,14 @@ export class MessageHandler {
         this.triggerModeManager.markAsSmallGroup(chatId);
         logger.info(
           { chatId, userCount, botCount, totalMembers },
-          'Small group detected (≤2 members), auto-enabling trigger mode',
+          'Small group detected (≤2 members), auto-enabling trigger mode'
         );
       } else {
         // Issue #3592: Unmark if group has grown beyond 2 members
         this.triggerModeManager.unmarkSmallGroup(chatId);
         logger.debug(
           { chatId, userCount, botCount, totalMembers },
-          'Group has more than 2 members, trigger mode disabled',
+          'Group has more than 2 members, trigger mode disabled'
         );
       }
 
