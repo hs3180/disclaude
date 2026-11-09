@@ -59,7 +59,7 @@ describe('parseBackendSelection (#5168)', () => {
   it.each([
     ['all', ALL],
     ['ALL', ALL],
-    ['claude,pi,codex,deepseek', ALL],
+    ['claude,pi,codex,dsh', ALL],
     [' codex , dsh ', ['codex', 'dsh']],
     ['Codex', ['codex']],
     ['codex,codex', ['codex']],
@@ -79,7 +79,20 @@ describe('parseBackendSelection (#5168)', () => {
       expect(message).toContain("'bogus'");
       expect(message).toContain('claude, pi, codex, dsh');
       expect(message).toContain('DISCLAUDE_BACKENDS');
-      expect(message).toContain('deepseek=dsh');
+      expect(message).not.toContain('alias');
+    }
+  });
+
+  it('rejects the removed deepseek alias instead of silently mapping it to dsh', () => {
+    expect(() => parseBackendSelection('deepseek')).toThrow(BackendSelectionError);
+    try {
+      parseBackendSelection('claude,deepseek');
+      expect.unreachable('must throw');
+    } catch (error) {
+      const message = (error as Error).message;
+      expect(message).toContain("'deepseek'");
+      expect(message).toContain('claude, pi, codex, dsh');
+      expect(message).not.toContain('alias');
     }
   });
 
@@ -205,8 +218,17 @@ describe('install-backends CLI (#5168)', () => {
     expect(stdout).toBe('');
   });
 
+  it('fails with a clear error for the removed deepseek alias', async () => {
+    const { code, stdout, stderr } = await runScript(['--stage', 'globals', '--backends', 'deepseek']);
+    expect(code).not.toBe(0);
+    expect(stderr).toContain("Unknown DISCLAUDE_BACKENDS entry 'deepseek'");
+    expect(stderr).toContain('claude, pi, codex, dsh');
+    expect(stderr).not.toContain('alias');
+    expect(stdout).toBe('');
+  });
+
   it('honors DISCLAUDE_BACKENDS and version env vars', async () => {
-    const dry = await runScript(['--stage', 'globals', '--dry-run'], { DISCLAUDE_BACKENDS: 'deepseek', DSH_VERSION: '1.2.3' });
+    const dry = await runScript(['--stage', 'globals', '--dry-run'], { DISCLAUDE_BACKENDS: 'dsh', DSH_VERSION: '1.2.3' });
     expect(dry.code).toBe(0);
     expect(dry.stdout).toContain('@deepseek-ai/dsh@1.2.3');
     expect(dry.stdout).not.toContain('@openai/codex@');

@@ -7,9 +7,9 @@
  * installs at startup (the entrypoint only prints a diagnostic line).
  *
  * Selection: the `DISCLAUDE_BACKENDS` build arg (env var here) — `all`
- * (default) or a comma-separated subset of the canonical names below.
- * `deepseek` is an alias for `dsh`. Unknown names fail with a clear error
- * listing the valid ones.
+ * (default) or a comma-separated subset of the canonical names below
+ * (canonical spellings only — no aliases). Unknown names fail with a clear
+ * error listing the valid ones.
  *
  * Stages (mirrored by the RUN lines in Dockerfile.service):
  *   app      builder stage, after `pnpm install --prod`: installs the `pi`
@@ -102,9 +102,6 @@ export const BACKEND_SPECS = {
   },
 };
 
-/** Accepted spellings that map onto canonical names (#5168 example text). */
-export const BACKEND_ALIASES = { deepseek: 'dsh' };
-
 export const DEFAULT_SELECTION = 'all';
 
 /**
@@ -128,8 +125,9 @@ export class BackendSelectionError extends Error {}
  *
  * - unset/undefined → the default selection (`all`)
  * - `all` (any case) → every canonical backend
- * - comma-separated list: trimmed, case-insensitive, aliases resolved,
- *   duplicates collapse; `all` may be mixed with names
+ * - comma-separated list: trimmed, case-insensitive, canonical names only
+ *   (no aliases — `dsh` is the canonical spelling, matching the runtime
+ *   `agentBackend` union), duplicates collapse; `all` may be mixed with names
  * - empty/whitespace-only string, or an unknown name → BackendSelectionError
  *   with a message that names the offender and the valid values
  *
@@ -157,17 +155,13 @@ export function parseBackendSelection(raw) {
       }
       continue;
     }
-    const canonical = BACKEND_ALIASES[trimmed] ?? trimmed;
-    if (!BACKEND_SPECS[canonical]) {
-      const aliases = Object.entries(BACKEND_ALIASES)
-        .map(([alias, name]) => `${alias}=${name}`)
-        .join(', ');
+    if (!BACKEND_SPECS[trimmed]) {
       throw new BackendSelectionError(
         `Unknown DISCLAUDE_BACKENDS entry '${trimmed}'. ` +
-          `Valid: ${VALID_NAMES.join(', ')}${aliases ? ` (aliases: ${aliases})` : ''}, or 'all'.`
+          `Valid: ${VALID_NAMES.join(', ')}, or 'all'.`
       );
     }
-    selected.add(canonical);
+    selected.add(trimmed);
   }
   if (selected.size === 0) {
     throw new BackendSelectionError(

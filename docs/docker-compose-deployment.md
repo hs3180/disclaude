@@ -43,10 +43,11 @@ DISCLAUDE_BACKENDS=codex,dsh
 | `claude` | `claude` | nothing extra — the version-pinned `@anthropic-ai/claude-agent-sdk` ships via `pnpm-lock.yaml` | lockfile |
 | `pi` | `pi` | `@earendil-works/pi-agent-core` + `@earendil-works/pi-ai` into `/app/node_modules` (production module resolution; `--no-save`, no lockfile change) | `PI_VERSION` (0.83.0) |
 | `codex` | `codex` | `@openai/codex` CLI globally (on `PATH`) | `CODEX_VERSION` (0.154.0) |
-| `dsh` (alias `deepseek`) | `dsh` | `@deepseek-ai/dsh` CLI globally (on `PATH`) | `DSH_VERSION` (0.1.2-rc.1) |
+| `dsh` | `dsh` | `@deepseek-ai/dsh` CLI globally (on `PATH`) | `DSH_VERSION` (0.1.2-rc.1) |
 
-The backend's canonical name is `dsh` (matching the runtime config); the
-build arg also accepts the alias `deepseek`. The pinned defaults in
+Backend names are canonical-only: `dsh` matches the runtime `agentBackend`
+spelling (`backend: deepseek` is rejected by the runtime config, see
+[docs/dsh-backend.md](dsh-backend.md)). The pinned defaults in
 `Dockerfile.service`, `docker-compose.yml` and
 `docker/install-backends.mjs` are kept in sync by
 `tests/docker-backends.test.ts`. Override a pin only with an exact version —

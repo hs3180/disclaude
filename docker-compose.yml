@@ -41,8 +41,9 @@ services:
         GH_INSTALL_MODE: ${GH_INSTALL_MODE:-apt-repo}
         GH_DEB_URL: ${GH_DEB_URL:-}
         # Issue #5168: harness backends baked in at build time — 'all' (default)
-        # or a comma-separated subset of claude, pi, codex, dsh (alias
-        # deepseek); unknown names fail the build. Versions stay pinned for
+        # or a comma-separated subset of claude, pi, codex, dsh (canonical
+        # names only, no aliases); unknown names fail the build. Versions stay
+        # pinned for
         # reproducible builds; defaults mirror Dockerfile.service and
         # docker/install-backends.mjs (drift-guarded by tests/docker-backends.test.ts).
         DISCLAUDE_BACKENDS: ${DISCLAUDE_BACKENDS:-all}

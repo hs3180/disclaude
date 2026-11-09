@@ -30,9 +30,10 @@ ARG CODEX_VERSION=0.154.0
 ARG DSH_VERSION=0.1.2-rc.1
 # Issue #5168: declare which harness backends the image pre-installs at build
 # time. 'all' (default) or a comma-separated subset of: claude, pi, codex, dsh
-# (alias: deepseek). Unknown names fail the build with a clear error listing
-# the valid ones. Versions are pinned per backend; the defaults here, in
-# docker-compose.yml and in docker/install-backends.mjs (DEFAULT_VERSIONS) are
+# (canonical names only — no aliases). Unknown names fail the build with a
+# clear error listing the valid ones. Versions are pinned per backend; the
+# defaults here, in docker-compose.yml and in docker/install-backends.mjs
+# (DEFAULT_VERSIONS) are
 # kept in sync by tests/docker-backends.test.ts. Never pass secrets as build
 # args — ARG values persist in the image history (none are needed here).
 ARG DISCLAUDE_BACKENDS=all
