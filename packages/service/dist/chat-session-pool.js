@@ -10,7 +10,7 @@
  *
  * @see Issue #1040 - Separate disclaude service code to @disclaude/service
  */
-import { buildSessionKey, chatIdOfSessionKey, createLogger, getProvider, Config, resolveAgentPreset } from "../../core/dist/index.js";
+import { buildSessionKey, chatIdOfSessionKey, createLogger, getProvider, Config, resolveAgentPreset, } from "../../core/dist/index.js";
 import { statSync } from 'node:fs';
 import { AgentFactory } from './agents/factory.js';
 const logger = createLogger('ChatSessionPool');
@@ -102,6 +102,11 @@ export class ChatSessionPool {
             model: preset.model,
         }));
     }
+    /**
+     * Base preset selection shared by every caller: this session's explicit
+     * /agent use > the chat's saved selection (#5476) > the owning app's or
+     * named channel declaration's default (#5254/#5476) > the global default.
+     */
     resolvePreset(chatId, sessionKey) {
         if (!this.presets) {
             return undefined;
@@ -162,7 +167,10 @@ export class ChatSessionPool {
         const sessionKey = this.sessionKeyOf(chatId, threadRootId);
         const previous = this.agents.get(sessionKey);
         if (previous?.isBusy) {
-            return { ok: false, error: 'The current chat is busy; wait for the response or use /stop before switching presets' };
+            return {
+                ok: false,
+                error: 'The current chat is busy; wait for the response or use /stop before switching presets',
+            };
         }
         if (this.options.agentSelections && this.selectionChangeBusy(chatId)) {
             return { ok: false, error: 'Another session of this chat is busy; wait for the response or use /stop before switching presets' };
@@ -175,7 +183,10 @@ export class ChatSessionPool {
                 : getProvider(resolved.preset.agentBackend, resolved.preset).getInfo(config);
         }
         catch {
-            return { ok: false, error: `Could not validate agent preset "${resolved.name}". Check backend configuration and availability; the current session is unchanged.` };
+            return {
+                ok: false,
+                error: `Could not validate agent preset "${resolved.name}". Check backend configuration and availability; the current session is unchanged.`,
+            };
         }
         if (!info.available) {
             return {
@@ -264,8 +275,14 @@ export class ChatSessionPool {
                     try {
                         available = statSync(directory).isDirectory();
                     }
-                    catch { /* fail closed */ }
-                    return { effectiveCwd: directory, boundWorkingDir: directory, reason: available ? 'bound' : 'bound-missing' };
+                    catch {
+                        /* fail closed */
+                    }
+                    return {
+                        effectiveCwd: directory,
+                        boundWorkingDir: directory,
+                        reason: available ? 'bound' : 'bound-missing',
+                    };
                 };
             }
         }
@@ -277,11 +294,17 @@ export class ChatSessionPool {
             sdkSessionKey,
             turnRecovery: this.options.turnRecovery,
             failureRecorder: this.options.failureRecorder,
-            ...(configureQueryOptions ? { configureQueryOptions: (options) => configureQueryOptions(options, chatId) } : {}),
-            ...(preset ? {
-                ...preset,
-                settings: preset,
-            } : {}),
+            ...(configureQueryOptions
+                ? {
+                    configureQueryOptions: (options) => configureQueryOptions(options, chatId),
+                }
+                : {}),
+            ...(preset
+                ? {
+                    ...preset,
+                    settings: preset,
+                }
+                : {}),
             ...(modelOverride !== undefined ? { model: modelOverride } : {}),
         });
     }
@@ -413,8 +436,12 @@ export class ChatSessionPool {
     }
     /** Refresh the chat-wide binding without resetting directory-pinned executions. */
     resetProjectSessions(chatId) {
-        const roots = new Set([undefined, ...[...this.projectSessions.values()]
-                .filter(scope => scope.chatId === chatId).map(scope => scope.threadRootId)]);
+        const roots = new Set([
+            undefined,
+            ...[...this.projectSessions.values()]
+                .filter((scope) => scope.chatId === chatId)
+                .map((scope) => scope.threadRootId),
+        ]);
         for (const threadRootId of roots) {
             this.reset(chatId, undefined, threadRootId);
         }
@@ -503,7 +530,10 @@ export class ChatSessionPool {
     async steer(chatId, prompt, threadRootId) {
         const agent = this.agents.get(this.sessionKeyOf(chatId, threadRootId));
         if (!agent?.isBusy) {
-            return { ok: false, error: 'No active turn to steer. Send the message normally to start or queue a turn.' };
+            return {
+                ok: false,
+                error: 'No active turn to steer. Send the message normally to start or queue a turn.',
+            };
         }
         try {
             const result = await agent.steer(prompt);
@@ -545,13 +575,17 @@ export class ChatSessionPool {
         const drainTimeoutMs = Math.max(0, options.drainTimeoutMs ?? 10_000);
         const noticeTimeoutMs = Math.max(0, options.noticeTimeoutMs ?? 2_000);
         const deadline = Date.now() + drainTimeoutMs;
-        const hasPendingWork = () => [...this.agents.values()].some(agent => agent.hasPendingWork);
+        const hasPendingWork = () => [...this.agents.values()].some((agent) => agent.hasPendingWork);
         while (hasPendingWork() && Date.now() < deadline) {
-            await new Promise(resolve => setTimeout(resolve, Math.min(25, deadline - Date.now())));
+            await new Promise((resolve) => setTimeout(resolve, Math.min(25, deadline - Date.now())));
         }
         const remaining = [...this.agents.entries()].filter(([, agent]) => agent.hasPendingWork);
         if (remaining.length > 0) {
-            logger.warn({ count: remaining.length, sessionKeys: remaining.map(([sessionKey]) => sessionKey), drainTimeoutMs }, 'Service shutdown drain expired; interrupting remaining agent turns (Issue #5273)');
+            logger.warn({
+                count: remaining.length,
+                sessionKeys: remaining.map(([sessionKey]) => sessionKey),
+                drainTimeoutMs,
+            }, 'Service shutdown drain expired; interrupting remaining agent turns (Issue #5273)');
             await Promise.allSettled(remaining.map(([, agent]) => agent.interruptForServiceRestart(noticeTimeoutMs)));
         }
         this.disposeAll();
@@ -616,10 +650,18 @@ export class ChatSessionPool {
             }
             const last = Math.max(this.lastUsedAt.get(sessionKey) ?? now, agent.lastActivityAt ?? 0);
             if (now - last >= timeout) {
-                logger.info({ sessionKey, isBusy: agent.isBusy, hasPendingWork: agent.hasPendingWork,
-                    backgroundTaskCount: agent.activeBackgroundTaskCount ?? 0, turnStartedAtMs: agent.turnStartedAtMs,
-                    lastUsedAt: last, lastActivityAt: agent.lastActivityAt, lastActivityType: agent.lastActivityType,
-                    idleTimeoutMs: timeout, idleMs: now - last }, 'Evicting inactive agent');
+                logger.info({
+                    sessionKey,
+                    isBusy: agent.isBusy,
+                    hasPendingWork: agent.hasPendingWork,
+                    backgroundTaskCount: agent.activeBackgroundTaskCount ?? 0,
+                    turnStartedAtMs: agent.turnStartedAtMs,
+                    lastUsedAt: last,
+                    lastActivityAt: agent.lastActivityAt,
+                    lastActivityType: agent.lastActivityType,
+                    idleTimeoutMs: timeout,
+                    idleMs: now - last,
+                }, 'Evicting inactive agent');
                 this.agents.delete(sessionKey);
                 this.lastUsedAt.delete(sessionKey);
                 // Do not retain channel closures after the owning agent is evicted.

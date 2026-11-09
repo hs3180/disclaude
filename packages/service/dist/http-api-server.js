@@ -1158,10 +1158,13 @@ export class HttpApiServer {
     /**
      * POST /api/upload-image handler (Issue #4279).
      *
-     * Accepts `{ filePath }` and delegates to the channel's uploadImage capability
-     * (reads the local image and returns a Feishu image_key for card embedding).
-     * Channel-agnostic (no chatId). Uses a local filePath (see handleUploadFile
-     * rationale: the REST face is localhost-bound, co-located, exact REST API parity).
+     * Accepts `{ filePath, chatId? }` and delegates to the channel's uploadImage
+     * capability (reads the local image and returns a Feishu image_key for card
+     * embedding). Uses a local filePath (see handleUploadFile rationale: the
+     * REST face is localhost-bound, co-located, exact REST API parity).
+     * T-083 R3 (#5254): `chatId` (optional) carries the conversation/channel
+     * attribution; with multiple Feishu apps configured the request uploads via
+     * the owning channel's credentials instead of an arbitrary app.
      * Response: `{ ok: true, success, imageKey? }`.
      */
     async handleUploadImage(req, res, _params) {
@@ -1199,8 +1202,15 @@ export class HttpApiServer {
             this.sendJson(res, 400, { ok: false, message: 'filePath must be non-empty' });
             return;
         }
+        // T-083 R3: optional chat attribution; type-check so a malformed value is a
+        // clean 400 instead of a handler-side 500.
+        const { chatId } = raw;
+        if (chatId !== undefined && (typeof chatId !== 'string' || !chatId)) {
+            this.sendJson(res, 400, { ok: false, message: 'chatId must be a non-empty string when provided' });
+            return;
+        }
         try {
-            const result = await this.uploadImageHandler(raw.filePath);
+            const result = await this.uploadImageHandler(raw.filePath, chatId);
             this.sendJson(res, 200, { ok: true, ...result });
         }
         catch (err) {

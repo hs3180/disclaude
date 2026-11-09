@@ -868,13 +868,16 @@ export class CodexAgentProvider {
                     sessionGovernor.touchSession(sessionKey);
                     // Backpressure UX (#4634): announce the wait BEFORE it happens —
                     // never silence. (Also announce when merely joining the queue.)
+                    // Issue #5713 (review round 2): facts only, no receipt wording —
+                    // harness modules never build busy/interjection notices; the
+                    // service layer's unified busy-input receipt renders this marker.
                     const pre = governorSink.getStats();
                     if (options.capacityAdmission !== 'reject' && (pre.runningRuns >= pre.maxConcurrentRuns || pre.queuedRuns > 0)) {
                         pushSynthetic({
                             type: 'status',
-                            content: `⏳ Codex 并发已满（${pre.runningRuns}/${pre.maxConcurrentRuns} 运行中）` +
-                                `——排队等候，前面还有 ${pre.queuedRuns} 个任务…`,
-                            role: 'assistant',
+                            content: '',
+                            role: 'system',
+                            metadata: { queueWait: { running: pre.runningRuns, capacity: pre.maxConcurrentRuns, queued: pre.queuedRuns } },
                         });
                     }
                     const lease = await governorSink.acquireRun(options.capacityAdmission);

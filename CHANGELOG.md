@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.24] - 2026-11-09
+
+### Added
+
+- Accept multiple named Feishu apps on a single instance: channels
+  declared with `type: feishu` under their own name each keep their own
+  tenant token and lark-cli credentials, route chats under a stable
+  `feishu:<name>:` identity, and can set a per-channel default agent
+  preset (an explicit `/agent use` still wins); text, cards, button
+  callbacks, private-input flows, and image uploads use the owning
+  channel's credentials, and the legacy single-app section behaves
+  exactly as before when no declarations exist (#5254; #5700).
+- Preinstall harness backends at Docker build time: the
+  `DISCLAUDE_BACKENDS` build arg accepts `all` or a comma-separated
+  subset of `claude`/`pi`/`codex`/`dsh`, driving a reproducible
+  build-stage installer with pinned versions — CLI backends land on
+  PATH and the Pi runtime packages in the production module-resolution
+  path; unknown names fail the build with an actionable error, and no
+  secrets or runtime configuration enter the image layers (#5168;
+  #5710).
+- Add mini-swe-agent as an optional agent provider (`miniswe` backend):
+  presets reference a LiteLLM-style provider-prefixed model, the `mini`
+  CLI is detected with a clear unavailable error when missing, and
+  Disclaude tasks map to local headless subprocess execution with
+  isolated workspaces, per-run timeouts, and credentials redacted from
+  chat and logs (#5006; #5711).
+
+### Changed
+
+- Unify busy-input receipts across harnesses: the shared service-layer
+  hint is now the only receipt source, and the Codex native interjection
+  confirmation carries the current task summary, elapsed time, and queue
+  context instead of a fixed line; harness-side standalone receipt
+  building is removed so any backend that gains interjection support
+  follows the same shape (#5713; #5714).
+
+### Fixed
+
+- Stop injecting the self-made skills manifest into Pi sessions when
+  the optional diagnostics plugin is installed: the Pi backend now
+  registers Disclaude built-in skills through the shared
+  native-skill-channel contract and fails fast with an actionable
+  diagnostic when a skill source cannot be delivered natively, instead
+  of silently splicing a fabricated manifest into the system prompt
+  (#5718; #5727).
+
 ## [0.6.23] - 2026-11-09
 
 ### Fixed

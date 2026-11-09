@@ -88,7 +88,7 @@ export class BaseAgent {
         // an explicit per-agent override. Build options for the resolved backend.
         this.agentBackend =
             config.agentBackend ??
-                (['claude', 'codex', 'pi', 'dsh'].includes(this.sdkProvider.name)
+                (['claude', 'codex', 'pi', 'dsh', 'miniswe'].includes(this.sdkProvider.name)
                     ? this.sdkProvider.name
                     : undefined);
         // Issue #5410: gateway models ride modelOverrides, so gate the feature on

@@ -26,7 +26,10 @@ import { tryHandleSlashCommand, tryHandleGuidance } from './command-router.js';
 import { extractOpenId, parsePostContent, parseShareChatContent, extractSenderName, } from './content-parser.js';
 const logger = createLogger('MessageHandler');
 function sanitizeLifecycleReason(reason) {
-    return String(reason).replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').slice(0, 240);
+    return String(reason)
+        .replace(/[\r\n\t]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .slice(0, 240);
 }
 /**
  * Map Feishu message type to resource download API `type` parameter.
@@ -63,11 +66,16 @@ const THREAD_WALK_RETRY_DELAY_MS = 200;
 /** Issue #4319: short Chinese label for a media message type (thread-context display). */
 function mediaThreadLabel(messageType) {
     switch (messageType) {
-        case 'image': return '图片';
-        case 'file': return '文件';
-        case 'audio': return '语音';
-        case 'video': return '视频';
-        default: return '媒体';
+        case 'image':
+            return '图片';
+        case 'file':
+            return '文件';
+        case 'audio':
+            return '语音';
+        case 'video':
+            return '视频';
+        default:
+            return '媒体';
     }
 }
 /**
@@ -120,6 +128,8 @@ export class MessageHandler {
     controlHandler;
     getHasControlHandler;
     tenantAccessToken;
+    toRoutedChatId;
+    toRoutedMessageId;
     privateInput;
     agentInput;
     taskQuestionCards;
@@ -127,7 +137,9 @@ export class MessageHandler {
     issueReport;
     issueClient;
     welcomeService;
-    setWelcomeService(service) { this.welcomeService = service; }
+    setWelcomeService(service) {
+        this.welcomeService = service;
+    }
     async requestAgentInput(request, context) {
         if (!this.agentInput) {
             throw new Error('Feishu input channel is unavailable');
@@ -193,6 +205,8 @@ export class MessageHandler {
         this.getHasControlHandler = options.hasControlHandler;
         this.controlHandler = false;
         this.tenantAccessToken = options.tenantAccessToken;
+        this.toRoutedChatId = options.routedChatId ?? ((chatId) => chatId);
+        this.toRoutedMessageId = options.routedMessageId ?? ((messageId) => messageId);
         this.issueClient = options.issueClient;
         if (options.privateInput) {
             this.privateInput = new FeishuPrivateInput(options.privateInput, options.callbacks.sendMessage, this.updatePrivateCard);
@@ -202,7 +216,10 @@ export class MessageHandler {
         if (!this.client) {
             return;
         }
-        const result = await this.client.im.message.patch({ path: { message_id: cardId }, data: { content: JSON.stringify(card) } });
+        const result = await this.client.im.message.patch({
+            path: { message_id: cardId },
+            data: { content: JSON.stringify(card) },
+        });
         if (result.code !== 0) {
             throw new Error('Private input card update failed');
         }
@@ -270,12 +287,19 @@ export class MessageHandler {
             LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1',
         };
         const { stdout, stderr } = await promisify(execFile)('npx', [
-            '@larksuite/cli', 'im', '+messages-resources-download',
-            '--message-id', messageId,
-            '--file-key', fileKey,
-            '--type', resourceType,
-            '--output', `./${path.basename(outputPath)}`,
-            '--as', 'bot',
+            '@larksuite/cli',
+            'im',
+            '+messages-resources-download',
+            '--message-id',
+            messageId,
+            '--file-key',
+            fileKey,
+            '--type',
+            resourceType,
+            '--output',
+            `./${path.basename(outputPath)}`,
+            '--as',
+            'bot',
         ], { env, cwd: path.dirname(outputPath), timeout: 120_000 });
         if (stderr) {
             if (!stdout) {
@@ -361,9 +385,7 @@ export class MessageHandler {
         // messageId fallback also keeps same-thread media messages from colliding.
         const hasRealExt = fileName.includes('.');
         const ext = resourceType === 'image' ? 'jpg' : 'bin';
-        const outputPath = hasRealExt
-            ? `./downloads/${fileName}`
-            : `./downloads/${messageId}.${ext}`;
+        const outputPath = hasRealExt ? `./downloads/${fileName}` : `./downloads/${messageId}.${ext}`;
         const downloadCmd = this.buildDownloadCmd(messageId, fileKey, resourceType, outputPath);
         // Review nit #2: fileName is always non-empty here (image → image_<key>;
         // otherwise file_name || <type>_<key> with fileKey already checked), so the
@@ -456,9 +478,17 @@ export class MessageHandler {
      */
     forwardFilteredMessage(reason, messageId, chatId, _content, userId, metadata) {
         logger.info({
-            event: 'filter_result', reason, sanitizedReason: sanitizeLifecycleReason(reason),
-            traceId: messageId, runId: messageId, sourceMessageId: messageId, chatId,
-            target: chatId, userId, metadata, user_visible: false,
+            event: 'filter_result',
+            reason,
+            sanitizedReason: sanitizeLifecycleReason(reason),
+            traceId: messageId,
+            runId: messageId,
+            sourceMessageId: messageId,
+            chatId,
+            target: chatId,
+            userId,
+            metadata,
+            user_visible: false,
         }, 'filter_result');
     }
     /**
@@ -472,7 +502,7 @@ export class MessageHandler {
             // `slice(-CHAT_HISTORY.MAX_CONTEXT_LENGTH)` on a string getChatHistory had
             // already capped smaller — and assumed oldest→newest ordering that no
             // longer holds. Do not re-truncate here.
-            const history = await messageLogger.getChatHistory(chatId, CHAT_HISTORY.MAX_CONTEXT_LENGTH);
+            const history = await messageLogger.getChatHistory(this.toRoutedChatId(chatId), CHAT_HISTORY.MAX_CONTEXT_LENGTH);
             if (!history || history.length === 0) {
                 return undefined;
             }
@@ -589,12 +619,13 @@ export class MessageHandler {
                 if (msgType === 'merge_forward') {
                     const forwardId = msg.message_id || currentId;
                     const childTexts = items
-                        .filter(item => item && item.upper_message_id === forwardId)
-                        .map(child => this.extractMessageText(child.msg_type, child.body?.content || '{}').trim())
+                        .filter((item) => item && item.upper_message_id === forwardId)
+                        .map((child) => this.extractMessageText(child.msg_type, child.body?.content || '{}').trim())
                         .filter(Boolean);
-                    text = childTexts.length > 0
-                        ? ['[合并转发消息]', ...childTexts.map(t => `- ${t}`)].join('\n')
-                        : this.buildOnDemandFetchGuidance('合并转发消息', forwardId, msg.sender);
+                    text =
+                        childTexts.length > 0
+                            ? ['[合并转发消息]', ...childTexts.map((t) => `- ${t}`)].join('\n')
+                            : this.buildOnDemandFetchGuidance('合并转发消息', forwardId, msg.sender);
                 }
                 else if (msgType === 'interactive' && text === '[Interactive Card]') {
                     // (b) a card that resisted extraction (unknown structure): give the
@@ -628,21 +659,28 @@ export class MessageHandler {
             }
             // Prefer Feishu's declared root even when history was truncated. Without
             // it, report only a visited ancestor and mark a capped walk incomplete.
-            const resolvedRootId = declaredRootId
-                || (rootId && visitedIds.has(rootId) ? rootId : lastVisitedWithParent);
+            const resolvedRootId = declaredRootId || (rootId && visitedIds.has(rootId) ? rootId : lastVisitedWithParent);
             if (threadMessages.length === 0) {
                 // No text assembled, but the root is still known — surface it so
                 // session keying (part 2) works even when context text is empty.
-                return { text: undefined, rootId: resolvedRootId, incomplete: !walkComplete && !declaredRootId };
+                return {
+                    text: undefined,
+                    rootId: resolvedRootId,
+                    incomplete: !walkComplete && !declaredRootId,
+                };
             }
             // Reverse to get chronological order (oldest first)
             threadMessages.reverse();
             // Format as thread history
-            const lines = threadMessages.map(m => {
+            const lines = threadMessages.map((m) => {
                 const label = m.senderType === 'bot' ? '🤖' : '👤';
                 return `${label} ${m.content}`;
             });
-            return { text: lines.join('\n\n'), rootId: resolvedRootId, incomplete: !walkComplete && !declaredRootId };
+            return {
+                text: lines.join('\n\n'),
+                rootId: resolvedRootId,
+                incomplete: !walkComplete && !declaredRootId,
+            };
         }
         catch (error) {
             logger.debug({ err: error, parentId }, 'Failed to get thread context');
@@ -674,9 +712,7 @@ export class MessageHandler {
             // Issue #4316 nit ②: match by type (not id), so a card missing its id
             // still reads as a card rather than the generic placeholder.
             if (messageType === 'share_chat') {
-                return parsed.share_chat_id
-                    ? `[分享的群名片: ${parsed.share_chat_id}]`
-                    : '[分享的群名片]';
+                return parsed.share_chat_id ? `[分享的群名片: ${parsed.share_chat_id}]` : '[分享的群名片]';
             }
             if (messageType === 'share_user') {
                 return parsed.share_user_id
@@ -759,7 +795,11 @@ export class MessageHandler {
                     const parsed = JSON.parse(msgContent);
                     quotedText = extractFullCardContent(parsed);
                 }
-                else if (msgType === 'image' || msgType === 'file' || msgType === 'media' || msgType === 'audio' || msgType === 'video') {
+                else if (msgType === 'image' ||
+                    msgType === 'file' ||
+                    msgType === 'media' ||
+                    msgType === 'audio' ||
+                    msgType === 'video') {
                     return await this.handleQuotedFileMessage(msgType, msgContent, msgId);
                 }
             }
@@ -841,12 +881,12 @@ export class MessageHandler {
                     try {
                         sibling = (await fs.readdir(downloadDir)).find(
                         // Skip `<name>.key` sidecars (they also start with `<base>.`).
-                        e => e !== base && e.startsWith(`${base}.`) && !e.endsWith('.key'));
+                        (e) => e !== base && e.startsWith(`${base}.`) && !e.endsWith('.key'));
                     }
                     catch (readdirError) {
                         logger.debug({ err: readdirError, downloadDir }, 'Failed to list download dir for cache sibling lookup');
                     }
-                    if (sibling && await isCacheHitFor(path.join(downloadDir, sibling))) {
+                    if (sibling && (await isCacheHitFor(path.join(downloadDir, sibling)))) {
                         localPath = path.join(downloadDir, sibling);
                         fileName = path.basename(sibling);
                         cacheHit = true;
@@ -872,7 +912,9 @@ export class MessageHandler {
                         }
                     }
                     catch (statError) {
-                        throw new Error(`Downloaded quoted file not found on disk: ${localPath}`, { cause: statError });
+                        throw new Error(`Downloaded quoted file not found on disk: ${localPath}`, {
+                            cause: statError,
+                        });
                     }
                     // Issue #4326: persist the fileKey sidecar so future lookups can verify
                     // the cache belongs to this resource (guards against same-named collisions).
@@ -934,10 +976,20 @@ export class MessageHandler {
         if (!message) {
             return;
         }
-        const { message_id, chat_id, chat_type: rawChatType, content, message_type, create_time, mentions, parent_id, root_id } = message;
+        const { message_id, chat_id, chat_type: rawChatType, content, message_type, create_time, mentions, parent_id, root_id, } = message;
         const threadId = message_id;
         if (!message_id || !chat_id || !content || !message_type) {
-            logger.info({ event: 'filter_result', reason: 'missing_fields', sanitizedReason: 'missing required message fields', traceId: message_id || 'unknown', runId: message_id || 'unknown', sourceMessageId: message_id, chatId: chat_id || 'unknown', target: chat_id, user_visible: false }, 'filter_result');
+            logger.info({
+                event: 'filter_result',
+                reason: 'missing_fields',
+                sanitizedReason: 'missing required message fields',
+                traceId: message_id || 'unknown',
+                runId: message_id || 'unknown',
+                sourceMessageId: message_id,
+                chatId: chat_id || 'unknown',
+                target: chat_id,
+                user_visible: false,
+            }, 'filter_result');
             logger.warn('Missing required message fields');
             return;
         }
@@ -945,9 +997,14 @@ export class MessageHandler {
         const botMentionsUs = sender?.sender_type === 'app' && this.mentionDetector.isBotMentioned(mentions);
         // Claim before topic lookup or other asynchronous work to close the
         // check-then-mark race during concurrent Feishu redelivery (Issue #4750).
-        const filterVerdict = evaluateMessageFilters({ messageId: message_id, createTime: create_time, senderType: sender?.sender_type, botMentionsUs }, {
-            isProcessed: (id) => messageLogger.isMessageProcessed(id),
-            claim: (id) => messageLogger.claimMessage(id),
+        const filterVerdict = evaluateMessageFilters({
+            messageId: message_id,
+            createTime: create_time,
+            senderType: sender?.sender_type,
+            botMentionsUs,
+        }, {
+            isProcessed: (id) => messageLogger.isMessageProcessed(this.toRoutedMessageId(id)),
+            claim: (id) => messageLogger.claimMessage(this.toRoutedMessageId(id)),
             isSelfSent: (id) => messageLogger.isSelfSentMessage(id),
             maxMessageAge: this.MAX_MESSAGE_AGE,
         });
@@ -967,7 +1024,9 @@ export class MessageHandler {
             }
             else {
                 logger.debug({ messageId: message_id }, 'Skipped old message');
-                this.forwardFilteredMessage('old', message_id, chat_id, content, extractOpenId(sender), { age: filterVerdict.age });
+                this.forwardFilteredMessage('old', message_id, chat_id, content, extractOpenId(sender), {
+                    age: filterVerdict.age,
+                });
             }
             return;
         }
@@ -984,7 +1043,11 @@ export class MessageHandler {
                 logger.info({ messageId: message_id, chatId: chat_id }, 'Bot message mentions our bot, allowing through');
             }
             // Handle file/image messages - download to workspace and include path in prompt
-            if (message_type === 'image' || message_type === 'file' || message_type === 'media' || message_type === 'audio' || message_type === 'video') {
+            if (message_type === 'image' ||
+                message_type === 'file' ||
+                message_type === 'media' ||
+                message_type === 'audio' ||
+                message_type === 'video') {
                 logger.info({ chatId: chat_id, messageType: message_type, messageId: message_id }, 'File/image message received');
                 // Parse content to extract file_key and file_name
                 let fileKey;
@@ -1030,7 +1093,9 @@ export class MessageHandler {
                             }
                         }
                         catch (statError) {
-                            throw new Error(`Downloaded file not found on disk: ${localPath}`, { cause: statError });
+                            throw new Error(`Downloaded file not found on disk: ${localPath}`, {
+                                cause: statError,
+                            });
                         }
                         // Issue #1637, #1663: Ensure file has correct extension via magic bytes detection
                         const correctedPath = await ensureFileExtensionFromPath(localPath);
@@ -1046,7 +1111,7 @@ export class MessageHandler {
                     }
                 }
                 // Log the incoming message
-                await messageLogger.logIncomingMessage(message_id, extractOpenId(sender) || 'unknown', chat_id, `[${message_type} received]${localPath ? ` → ${localPath}` : ''}`, message_type, create_time);
+                await messageLogger.logIncomingMessage(message_id, extractOpenId(sender) || 'unknown', this.toRoutedChatId(chat_id), `[${message_type} received]${localPath ? ` → ${localPath}` : ''}`, message_type, create_time);
                 await this.addTypingReaction(message_id);
                 // Build content with file path for the agent prompt
                 let typeLabel;
@@ -1088,9 +1153,11 @@ export class MessageHandler {
                     fileThreadContext = threadInfo?.text;
                     // Event root identity survives history lookup failures. Legacy events
                     // without root_id use the API-declared or fully walked root if known.
-                    fileMetadata.threadRootId = root_id || (threadInfo && !threadInfo.incomplete && threadInfo.rootId
-                        ? threadInfo.rootId
-                        : parent_id);
+                    fileMetadata.threadRootId =
+                        root_id ||
+                            (threadInfo && !threadInfo.incomplete && threadInfo.rootId
+                                ? threadInfo.rootId
+                                : parent_id);
                 }
                 else if (chat_type === 'topic') {
                     // Issue #4587 (part 1, review fix): a topic media message with no
@@ -1105,8 +1172,8 @@ export class MessageHandler {
                 // Issue #3828: Apply @mention/trigger mode check for file/image messages in group/topic chats
                 const fileBotMentioned = this.mentionDetector.isBotMentioned(mentions);
                 if (isGroupChat(chat_type) && !fileBotMentioned) {
-                    if (this.triggerModeManager.getMode(chat_id) === 'auto'
-                        && this.triggerModeManager.needsSmallGroupRecheck(chat_id)) {
+                    if (this.triggerModeManager.getMode(chat_id) === 'auto' &&
+                        this.triggerModeManager.needsSmallGroupRecheck(chat_id)) {
                         await this.checkAndAutoDisableSmallGroup(chat_id);
                     }
                     if (!this.triggerModeManager.isTriggerEnabled(chat_id)) {
@@ -1133,7 +1200,9 @@ export class MessageHandler {
                     messageType: message_type === 'audio' ? 'audio' : 'file',
                     timestamp: create_time,
                     threadId,
-                    attachments: localPath ? [{ fileName: fileName || fileKey, filePath: localPath }] : undefined,
+                    attachments: localPath
+                        ? [{ fileName: fileName || fileKey, filePath: localPath }]
+                        : undefined,
                     metadata: Object.keys(fileMetadata).length > 0 ? fileMetadata : undefined,
                 };
                 registerFeishuInputSource(incoming, message_id, sender?.sender_type);
@@ -1143,7 +1212,10 @@ export class MessageHandler {
             // Handle text, post, share_chat, and interactive messages
             // Issue #846: Add support for share_chat (forwarded chat history) messages
             // Issue #3657: Add support for interactive (card) messages
-            if (message_type !== 'text' && message_type !== 'post' && message_type !== 'share_chat' && message_type !== 'interactive') {
+            if (message_type !== 'text' &&
+                message_type !== 'post' &&
+                message_type !== 'share_chat' &&
+                message_type !== 'interactive') {
                 logger.debug({ messageType: message_type }, 'Skipped unsupported message type');
                 this.forwardFilteredMessage('unsupported', message_id, chat_id, content, extractOpenId(sender), { messageType: message_type });
                 return;
@@ -1173,7 +1245,17 @@ export class MessageHandler {
                     text = extractFullCardContent(content);
                 }
                 else {
-                    logger.info({ event: 'filter_result', reason: 'parse_failure', sanitizedReason: sanitizeLifecycleReason(parseError), traceId: message_id, runId: message_id, sourceMessageId: message_id, chatId: chat_id, target: chat_id, user_visible: false }, 'filter_result');
+                    logger.info({
+                        event: 'filter_result',
+                        reason: 'parse_failure',
+                        sanitizedReason: sanitizeLifecycleReason(parseError),
+                        traceId: message_id,
+                        runId: message_id,
+                        sourceMessageId: message_id,
+                        chatId: chat_id,
+                        target: chat_id,
+                        user_visible: false,
+                    }, 'filter_result');
                     logger.error('Failed to parse content');
                     return;
                 }
@@ -1184,15 +1266,19 @@ export class MessageHandler {
                 return;
             }
             // Log message
-            await messageLogger.logIncomingMessage(message_id, extractOpenId(sender) || 'unknown', chat_id, text, message_type, create_time);
+            await messageLogger.logIncomingMessage(message_id, extractOpenId(sender) || 'unknown', this.toRoutedChatId(chat_id), text, message_type, create_time);
             // Issue #4031: Emit topic group message notification if enabled.
             // Placed BEFORE trigger_mode check so notifications fire for all topic messages,
             // regardless of whether the bot is @mentioned.
-            if (chat_type === 'topic' && this.callbacks.onTopicMessage
-                && Config.getRawConfig().channels?.feishu?.topicNotify?.enabled === true) {
+            if (chat_type === 'topic' &&
+                this.callbacks.onTopicMessage &&
+                Config.getRawConfig().channels?.feishu?.topicNotify?.enabled === true) {
                 try {
                     const senderOpenId = extractOpenId(sender);
-                    const senderName = extractSenderName({ sender, sender_name: sender?.sender_id });
+                    const senderName = extractSenderName({
+                        sender,
+                        sender_name: sender?.sender_id,
+                    });
                     this.callbacks.onTopicMessage({
                         type: 'topic_group_message',
                         chatId: chat_id,
@@ -1204,9 +1290,7 @@ export class MessageHandler {
                         },
                         content: (text || '').substring(0, 500),
                         isReply: !!parent_id,
-                        timestamp: create_time
-                            ? new Date(create_time).toISOString()
-                            : new Date().toISOString(),
+                        timestamp: create_time ? new Date(create_time).toISOString() : new Date().toISOString(),
                     });
                 }
                 catch (topicNotifyError) {
@@ -1223,8 +1307,8 @@ export class MessageHandler {
             if (isGroupChat(chat_type) && !botMentioned && !isTriggerCommand) {
                 // Issue #3592: Always re-check small group status in 'auto' mode (with throttle)
                 // In 'mention' mode, user explicitly wants mention-only regardless of group size
-                if (this.triggerModeManager.getMode(chat_id) === 'auto'
-                    && this.triggerModeManager.needsSmallGroupRecheck(chat_id)) {
+                if (this.triggerModeManager.getMode(chat_id) === 'auto' &&
+                    this.triggerModeManager.needsSmallGroupRecheck(chat_id)) {
                     await this.checkAndAutoDisableSmallGroup(chat_id);
                 }
                 if (!this.triggerModeManager.isTriggerEnabled(chat_id)) {
@@ -1235,7 +1319,11 @@ export class MessageHandler {
             }
             if (/^\/private(?:\s|$)/.test(textWithoutMentions.trim())) {
                 if (chat_type !== 'p2p' || sender?.sender_type !== 'user') {
-                    await this.callbacks.sendMessage({ chatId: chat_id, type: 'text', text: '请在与机器人的私聊中发起私密鉴权。' });
+                    await this.callbacks.sendMessage({
+                        chatId: chat_id,
+                        type: 'text',
+                        text: '请在与机器人的私聊中发起私密鉴权。',
+                    });
                     return;
                 }
                 const action = textWithoutMentions.trim().slice('/private'.length).trim();
@@ -1246,7 +1334,11 @@ export class MessageHandler {
                     await this.privateInput.request(action, extractOpenId(sender) ?? '', chat_id, message_id);
                 }
                 catch {
-                    await this.callbacks.sendMessage({ chatId: chat_id, type: 'text', text: '当前操作未注册或暂时不可用，请让 agent 确认鉴权操作名称。' });
+                    await this.callbacks.sendMessage({
+                        chatId: chat_id,
+                        type: 'text',
+                        text: '当前操作未注册或暂时不可用，请让 agent 确认鉴权操作名称。',
+                    });
                 }
                 return;
             }
@@ -1283,9 +1375,9 @@ export class MessageHandler {
                     // A canonical event root does not depend on history availability.
                     // parent_id is only a best-effort fallback for legacy events whose
                     // API lookup also cannot establish the root.
-                    threadRootId = root_id || (threadInfo && !threadInfo.incomplete
-                        ? threadInfo.rootId ?? parent_id
-                        : parent_id);
+                    threadRootId =
+                        root_id ||
+                            (threadInfo && !threadInfo.incomplete ? (threadInfo.rootId ?? parent_id) : parent_id);
                 }
                 else {
                     // A topic message without parent_id starts a new thread — it IS the root
@@ -1319,8 +1411,15 @@ export class MessageHandler {
             // /reset or /stop typed inside a topic-group thread addresses that
             // thread's agent slot rather than the chat-scoped one.
             const commandInput = {
-                textWithoutMentions, mentions, chatId: chat_id, threadRootId, sourceMessageId: message_id, senderType: sender?.sender_type,
-                ...(chat_type === 'p2p' || chat_type === 'group' || chat_type === 'topic' ? { chatType: chat_type } : {}),
+                textWithoutMentions,
+                mentions,
+                chatId: chat_id,
+                threadRootId,
+                sourceMessageId: message_id,
+                senderType: sender?.sender_type,
+                ...(chat_type === 'p2p' || chat_type === 'group' || chat_type === 'topic'
+                    ? { chatType: chat_type }
+                    : {}),
                 actorId: extractOpenId(sender),
             };
             const commandDeps = {
@@ -1334,7 +1433,9 @@ export class MessageHandler {
             if (commandHandled) {
                 return;
             }
-            if (message_type === 'text' && (!parent_id || chat_type === 'topic') && await tryHandleGuidance(commandInput, commandDeps, this.welcomeService)) {
+            if (message_type === 'text' &&
+                (!parent_id || chat_type === 'topic') &&
+                (await tryHandleGuidance(commandInput, commandDeps, this.welcomeService))) {
                 return;
             }
             // Issue #4587 (part 3) review fix: the router declined — this is an
@@ -1396,7 +1497,7 @@ export class MessageHandler {
             await this.callbacks.emitMessage(incoming);
         }
         catch (error) {
-            messageLogger.releaseMessage(message_id);
+            messageLogger.releaseMessage(this.toRoutedMessageId(message_id));
             throw error;
         }
     }
@@ -1410,17 +1511,22 @@ export class MessageHandler {
         // Parse actual Feishu event structure
         const rawData = data;
         if (FeishuTaskQuestionCards.isCallback(rawData)) {
-            return this.taskQuestionCards?.handleAuthenticatedCallback(rawData)
-                ?? { toast: { type: 'info', content: '任务反馈暂不可用；原问题和已保存的回答会保留。' } };
+            return (this.taskQuestionCards?.handleAuthenticatedCallback(rawData) ?? {
+                toast: { type: 'info', content: '任务反馈暂不可用；原问题和已保存的回答会保留。' },
+            });
         }
         if (FeishuAgentInput.isCallback(rawData)) {
-            void this.agentInput?.submit(rawData).catch(() => logger.warn('Agent input callback could not be handled'));
+            void this.agentInput
+                ?.submit(rawData)
+                .catch(() => logger.warn('Agent input callback could not be handled'));
             return;
         }
         // Issue #5400: /feedback confirmation cards resolve without an agent turn,
         // so reporting still works when the agent runtime itself has failed.
         if (FeishuIssueReport.isCallback(rawData)) {
-            void this.issueReport?.submit(rawData).catch(() => logger.warn('Issue report callback could not be handled'));
+            void this.issueReport
+                ?.submit(rawData)
+                .catch(() => logger.warn('Issue report callback could not be handled'));
             return;
         }
         if (FeishuPrivateInput.isPrivateCallback(rawData)) {
@@ -1432,7 +1538,9 @@ export class MessageHandler {
             }
             // Acknowledge promptly; the one-shot handoff consumes before awaiting.
             // Consumer failures never enter ordinary logs or the agent channel.
-            void this.privateWorkflows.submit(rawData).then(async (handled) => {
+            void this.privateWorkflows
+                .submit(rawData)
+                .then(async (handled) => {
                 if (!handled) {
                     if (this.privateInput) {
                         await this.privateInput.submit(rawData);
@@ -1441,9 +1549,12 @@ export class MessageHandler {
                         await FeishuPrivateInput.reject(rawData, this.callbacks.sendMessage, this.updatePrivateCard);
                     }
                 }
-            }).catch(() => logger.warn('Private input delivery failed'));
+            })
+                .catch(() => logger.warn('Private input delivery failed'));
             // Even a malformed callback lacking safe routing IDs gets visible feedback.
-            return { toast: { type: 'info', content: '已收到提交；若表单已过期、失效或服务重启，请重新发起。' } };
+            return {
+                toast: { type: 'info', content: '已收到提交；若表单已过期、失效或服务重启，请重新发起。' },
+            };
         }
         // Feishu reuses the card message id for every button click. Prefer its
         // event id for a stable unique agent input id, with a UUID fallback.
@@ -1453,19 +1564,23 @@ export class MessageHandler {
         const actionData = rawData.action;
         const message_id = context?.open_message_id;
         const chat_id = context?.open_chat_id;
-        const action = actionData ? {
-            type: actionData.tag ?? actionData.type ?? '',
-            value: actionData.value ?? '',
-            trigger: 'button',
-            text: actionData.text,
-        } : undefined;
-        const user = operator ? {
-            sender_id: {
-                open_id: operator.open_id ?? '',
-                user_id: operator.user_id,
-                union_id: operator.union_id,
-            },
-        } : undefined;
+        const action = actionData
+            ? {
+                type: actionData.tag ?? actionData.type ?? '',
+                value: actionData.value ?? '',
+                trigger: 'button',
+                text: actionData.text,
+            }
+            : undefined;
+        const user = operator
+            ? {
+                sender_id: {
+                    open_id: operator.open_id ?? '',
+                    user_id: operator.user_id,
+                    union_id: operator.union_id,
+                },
+            }
+            : undefined;
         if (!action || !message_id || !chat_id) {
             logger.warn({
                 hasAction: !!action,
@@ -1490,7 +1605,9 @@ export class MessageHandler {
             userId: user?.sender_id?.open_id,
         }, 'Card action received');
         // Send user-visible confirmation message
-        const buttonText = this.callbacks.resolveActionText?.(message_id, chat_id, action.value) || action.text || action.value;
+        const buttonText = this.callbacks.resolveActionText?.(message_id, chat_id, action.value) ||
+            action.text ||
+            action.value;
         if (buttonText) {
             try {
                 await this.callbacks.sendMessage({
@@ -1538,14 +1655,21 @@ export class MessageHandler {
         // message_id, so the click can no longer mark the card message as
         // "processed" and suppress a later im.message.receive for the same card.
         // (issue #4197 方案 A)
-        await messageLogger.logCardInteraction(message_id, user?.sender_id?.open_id || 'unknown', chat_id, messageContent).catch(err => {
+        await messageLogger
+            .logCardInteraction(message_id, user?.sender_id?.open_id || 'unknown', this.toRoutedChatId(chat_id), messageContent)
+            .catch((err) => {
             logger.warn({ err, messageId: message_id, chatId: chat_id }, 'Failed to log card action');
         });
         // Card actions use the same local agent pipeline as text messages.
         let emitFailed = false;
         const cardActionMessageId = `card_action_${message_id}_${eventId ?? crypto.randomUUID()}`;
         try {
-            logger.debug({ messageId: cardActionMessageId, cardMessageId: message_id, chatId: chat_id, actionValue: action.value }, 'Emitting card action as local message to agent');
+            logger.debug({
+                messageId: cardActionMessageId,
+                cardMessageId: message_id,
+                chatId: chat_id,
+                actionValue: action.value,
+            }, 'Emitting card action as local message to agent');
             await this.callbacks.emitMessage({
                 // The card id is not unique per click. Keep it in metadata for
                 // prompt/history lookup, but use a unique id for agent turn state.
@@ -1569,11 +1693,13 @@ export class MessageHandler {
             emitFailed = true;
             logger.error({ err: error, messageId: message_id, chatId: chat_id }, 'Failed to emit card action message');
             // Issue #1357: Notify user that their card action was not processed
-            this.callbacks.sendMessage({
+            this.callbacks
+                .sendMessage({
                 chatId: chat_id,
                 type: 'text',
                 text: '❌ 处理卡片操作时发生错误，请重试。',
-            }).catch((notifyErr) => {
+            })
+                .catch((notifyErr) => {
                 logger.error({ err: notifyErr, chatId: chat_id }, 'Failed to send card action error notification');
             });
         }
@@ -1631,7 +1757,9 @@ export class MessageHandler {
         }
         const cached = this.chatModeCache.get(chatId);
         if (cached !== undefined) {
-            return isThreadCapableGroup(cached.chatMode, cached.groupMessageType) ? 'topic' : eventChatType;
+            return isThreadCapableGroup(cached.chatMode, cached.groupMessageType)
+                ? 'topic'
+                : eventChatType;
         }
         if (!this.client) {
             return eventChatType;

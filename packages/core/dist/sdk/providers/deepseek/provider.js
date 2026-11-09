@@ -10,8 +10,25 @@ import { adaptDeepSeekEvent } from './event-adapter.js';
 import { createDshNativeProfileOverlay, dshApiProvider, DSH_API_CREDENTIAL_ENV, } from './native-profile.js';
 import { DshSessionBindings } from './session-bindings.js';
 import { resolveDshCompaction } from './compaction.js';
-import { diagnosticsPluginManifest } from '../../../skills/diagnostics-plugin.js';
+import { assertNoUndeliverableSkillSources, } from '../../../skills/native-skill-channel.js';
 const logger = createLogger('DeepSeekHarnessProvider');
+/**
+ * Verified 2026-11-07 against the vendored @deepseek-ai/dsh-* 0.1.2-rc.1
+ * runtime and the dsh CLI 0.1.2-rc.1: no skills service on any context, no
+ * SKILL.md discovery, and no skills method on the SDK stdio protocol
+ * (`initialize`/`session/prompt`/`shutdown` only). The wire vocabulary's
+ * `SkillInvocationSource` is a UI-side message provenance, not a host
+ * registration API, and `systemPrompt.section()` would only relocate a
+ * host-authored manifest into another prompt layer.
+ */
+const DSH_SKILL_CHANNEL = {
+    harness: 'DSH (DeepSeek Harness)',
+    evidence: 'the harness exposes no native skill registration/discovery API ' +
+        '(verified against vendored @deepseek-ai/dsh-* 0.1.2-rc.1: no skills service, ' +
+        'no SKILL.md discovery, no skills method on the SDK stdio protocol)',
+    remedy: 'Run plugins remove diagnostics for DSH-only projects, or use a backend with ' +
+        'a native skills channel (claude, codex app-server transport).',
+};
 function dshHome(configured) {
     const value = configured?.trim() || join(homedir(), '.dsh');
     return resolve(value === '~' ? homedir() : value.startsWith('~/') ? join(homedir(), value.slice(2)) : value);
@@ -145,8 +162,13 @@ export class DeepSeekHarnessProvider {
         const descriptors = prepareTools(options.tools);
         const tools = new Map(descriptors.map((tool) => [tool.name, tool]));
         const cwd = resolve(options.cwd ?? process.cwd());
-        const diagnostics = diagnosticsPluginManifest(options.projectRoot ?? cwd, cwd);
-        const systemPrompt = diagnostics ? [options.systemPrompt, diagnostics].filter(Boolean).join('\n\n') : options.systemPrompt;
+        // Native skill discovery (#5717, sharing the codex #5520 fail-fast shape):
+        // DSH has no native skills channel (see DSH_SKILL_CHANNEL), so the opt-in
+        // diagnostics plugin cannot be delivered on this backend. Fail fast with
+        // the remedy when that explicit installation exists — never fabricate a
+        // skills manifest into the system prompt. The explicit-install boundary
+        // is preserved: projects without the plugin run unchanged.
+        assertNoUndeliverableSkillSources(DSH_SKILL_CHANNEL, options.projectRoot ?? cwd);
         const binding = this.bindings.reserve(options.sessionKey, cwd);
         if (this.active.has(binding.sessionId)) {
             throw new Error('Native DSH conversation already has an active query');
@@ -244,7 +266,7 @@ export class DeepSeekHarnessProvider {
                     ...(options.reasoningEffort === undefined
                         ? {}
                         : { reasoningEffort: options.reasoningEffort }),
-                    ...(systemPrompt === undefined ? {} : { systemPrompt }),
+                    ...(options.systemPrompt === undefined ? {} : { systemPrompt: options.systemPrompt }),
                     tools: descriptors.map(({ name, description, inputSchema, outputSchema }) => ({
                         name,
                         description,

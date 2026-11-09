@@ -34,7 +34,12 @@ export function toPiUserMessage(content) {
     return { role: 'user', content, timestamp: Date.now() };
 }
 /**
- * Dynamically import pi-agent-core and extract the `Agent` constructor.
+ * Dynamically import pi-agent-core and extract the runtime slice: the `Agent`
+ * constructor plus, when the installed version exports them, pi's native
+ * skills channel (`loadSkills` + `formatSkillsForSystemPrompt`) and the
+ * `/node` subentry's `NodeExecutionEnv` (verified in 0.83.0; pre-0.83.0
+ * runtimes simply leave them absent and the provider's capability probe
+ * reports the gap explicitly).
  *
  * The import result is cached (success AND failure): validateConfig() may
  * probe repeatedly, but the actual module load should happen at most once per
@@ -45,22 +50,42 @@ export function toPiUserMessage(content) {
 export function loadPiRuntime() {
     if (!runtimePromise) {
         runtimePromise = (async () => {
+            let mod;
             try {
-                const mod = (await import(PI_SPECIFIER));
+                mod = (await import(PI_SPECIFIER));
                 if (typeof mod.Agent !== 'function') {
                     throw new Error(`${PI_SPECIFIER} did not export an Agent constructor`);
                 }
-                return { Agent: mod.Agent };
             }
             catch (err) {
                 // Re-wrap so callers always get a clear message, never a raw
                 // ERR_MODULE_NOT_FOUND with a specifier stack they must decode.
-                const message = err instanceof Error && err.message.includes(PI_SPECIFIER)
-                    ? err.message
-                    : String(err);
+                const message = err instanceof Error && err.message.includes(PI_SPECIFIER) ? err.message : String(err);
                 throw new Error(`PiAgentProvider: ${PI_SPECIFIER} is not installed or failed to load (${message}). ` +
                     'Install it as a dependency of the host to use the pi backend (see docs/pi-backend.md).');
             }
+            const runtime = { Agent: mod.Agent };
+            // Native skills channel: extracted only when the installed runtime
+            // exports the whole surface — a partial surface stays absent so the
+            // provider's capability probe fails explicitly, never half-works.
+            if (typeof mod.loadSkills === 'function' &&
+                typeof mod.formatSkillsForSystemPrompt === 'function') {
+                runtime.skills = {
+                    loadSkills: mod.loadSkills,
+                    formatSkillsForSystemPrompt: mod.formatSkillsForSystemPrompt,
+                };
+            }
+            try {
+                const node = (await import(`${PI_SPECIFIER}/node`));
+                if (typeof node.NodeExecutionEnv === 'function') {
+                    runtime.ExecutionEnv = node.NodeExecutionEnv;
+                }
+            }
+            catch {
+                // Optional `/node` subentry: absent on runtimes that predate it or do
+                // not export it; the capability probe handles the gap explicitly.
+            }
+            return runtime;
         })();
     }
     return runtimePromise;

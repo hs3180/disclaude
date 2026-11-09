@@ -10,19 +10,20 @@ import path from 'path';
 import { existsSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { createLogger } from '../utils/logger.js';
-import { loadConfigFile, getConfigFromFile, validateConfig, getPreloadedConfig, } from './loader.js';
+import { loadConfigFile, getConfigFromFile, validateConfig, getPreloadedConfig } from './loader.js';
 import { resolveAgentPreset } from './agent-presets.js';
 import { resolveConfiguredAgents, validateResolvedAgent } from './resolved-agents.js';
 import { resolveCodexModelSetting, resolveCodexReasoningEffort } from './codex-settings.js';
 import { channelCredentialErrors, resolveChannelCredential } from './channel-credentials.js';
 import { secretConfigurationErrors } from './secret-references.js';
-import { setRuntimeContext } from '../agents/types.js';
+import { setRuntimeContext, } from '../agents/types.js';
 // Re-export sub-modules
 export * from './types.js';
 export * from './loader.js';
 export * from './agent-presets.js';
 export * from './resolved-agents.js';
 export * from './channel-credentials.js';
+export * from './channel-declarations.js';
 export * from './github-feedback.js';
 export { loadRuntimeEnv, setRuntimeEnv, deleteRuntimeEnv } from './runtime-env.js';
 const logger = createLogger('Config');
@@ -33,7 +34,9 @@ const fileConfigOnly = getConfigFromFile(fileConfig);
 channelCredentialErrors(fileConfigOnly);
 const resolvedAgents = resolveConfiguredAgents(fileConfigOnly);
 const agentPresets = resolvedAgents.ok ? resolvedAgents.presets : {};
-const defaultSelection = Object.keys(agentPresets).length ? resolveAgentPreset(agentPresets) : undefined;
+const defaultSelection = Object.keys(agentPresets).length
+    ? resolveAgentPreset(agentPresets)
+    : undefined;
 const defaultAgent = defaultSelection?.ok ? defaultSelection.preset : undefined;
 const configLoaded = fileConfig._fromFile;
 /**
@@ -156,8 +159,12 @@ export class Config {
         return configRelativeDir;
     }
     // Feishu/Lark configuration (from config file)
-    static get FEISHU_APP_ID() { return resolveChannelCredential(fileConfigOnly, 'feishu', 'appId'); }
-    static get FEISHU_APP_SECRET() { return resolveChannelCredential(fileConfigOnly, 'feishu', 'appSecret'); }
+    static get FEISHU_APP_ID() {
+        return resolveChannelCredential(fileConfigOnly, 'feishu', 'appId');
+    }
+    static get FEISHU_APP_SECRET() {
+        return resolveChannelCredential(fileConfigOnly, 'feishu', 'appSecret');
+    }
     static FEISHU_CLI_CHAT_ID = fileConfigOnly.channels?.feishu?.cliChatId || '';
     // Issue #4400 / #4208: gray-rollout flag for native streaming replies.
     // Plumbed through to FeishuChannelConfig.streamingCard in resolveChannelConfigs.
@@ -190,7 +197,7 @@ export class Config {
     });
     static CODEX_REASONING_EFFORT = this.CODEX_REASONING_EFFORT_SETTING.value;
     static CODEX_REASONING_EFFORT_SOURCE = this.CODEX_REASONING_EFFORT_SETTING.source;
-    static CLAUDE_MODEL = this.AGENT_BACKEND === 'codex' ? this.CODEX_MODEL : defaultAgent?.model ?? '';
+    static CLAUDE_MODEL = this.AGENT_BACKEND === 'codex' ? this.CODEX_MODEL : (defaultAgent?.model ?? '');
     static CODEX_SANDBOX = defaultAgent?.codexSandbox;
     static FULL_ACCESS = defaultAgent?.fullAccess;
     static CODEX_NETWORK_ACCESS = defaultAgent?.codexNetworkAccess;
@@ -303,8 +310,11 @@ export class Config {
         }
         const selected = resolveAgentPreset(resolved.presets);
         if (selected.ok && selected.preset.agentBackend === 'codex') {
-            resolved.presets[selected.name] = { ...selected.preset, model: this.CODEX_MODEL,
-                reasoningEffort: this.CODEX_REASONING_EFFORT };
+            resolved.presets[selected.name] = {
+                ...selected.preset,
+                model: this.CODEX_MODEL,
+                reasoningEffort: this.CODEX_REASONING_EFFORT,
+            };
         }
         return resolved.presets;
     }
@@ -367,11 +377,16 @@ export class Config {
         }
         const { preset } = selected;
         return {
-            apiKey: preset.apiKey, model: preset.model,
-            apiProtocol: preset.apiProtocol, apiBaseUrl: preset.apiBaseUrl,
-            agentBackend: preset.agentBackend, permissionMode: preset.permissionMode,
-            env: preset.env, credentialEnvKeys: preset.credentialEnvKeys,
-            llm: preset.llm, reasoningEffort: preset.reasoningEffort,
+            apiKey: preset.apiKey,
+            model: preset.model,
+            apiProtocol: preset.apiProtocol,
+            apiBaseUrl: preset.apiBaseUrl,
+            agentBackend: preset.agentBackend,
+            permissionMode: preset.permissionMode,
+            env: preset.env,
+            credentialEnvKeys: preset.credentialEnvKeys,
+            llm: preset.llm,
+            reasoningEffort: preset.reasoningEffort,
             maxConcurrentSessions: preset.maxConcurrentSessions,
             settings: preset,
         };

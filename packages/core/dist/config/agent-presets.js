@@ -1,5 +1,5 @@
 /** Pure validation and default selection for named agent presets. */
-const VALID_BACKENDS = new Set(['claude', 'pi', 'codex', 'dsh']);
+const VALID_BACKENDS = new Set(['claude', 'pi', 'codex', 'dsh', 'miniswe']);
 /**
  * Validate the public `agents:` map and resolve its effective default preset.
  *
@@ -30,7 +30,7 @@ export function validateAgentPresets(agents, options = {}) {
         }
         const preset = raw;
         if (!VALID_BACKENDS.has(preset.agentBackend)) {
-            errors.push(`agents.${name}.agentBackend must be one of: claude, pi, codex, dsh`);
+            errors.push(`agents.${name}.agentBackend must be one of: claude, pi, codex, dsh, miniswe`);
         }
         if (typeof preset.model !== 'string' ||
             (!options.allowUnconfiguredModel && !preset.model.trim())) {

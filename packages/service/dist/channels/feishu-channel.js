@@ -147,6 +147,8 @@ function isDefiniteFeishuApiRejection(err) {
 export class FeishuChannel extends BaseChannel {
     appId;
     appSecret;
+    /** Undefined in single-app mode — bare Feishu IDs stay bit-identical. */
+    routePrefix;
     client;
     // Issue #4400 (#4208 P2-c): Card Kit streaming state.
     // `streamingSequences` holds the per-card monotonic `sequence` counter that
@@ -180,15 +182,70 @@ export class FeishuChannel extends BaseChannel {
      * older than `WS_HEALTH.OFFLINE_QUEUE.MAX_MESSAGE_AGE_MS` are discarded.
      */
     offlineQueue = [];
+    /** Append this app's route prefix before persistence and agent routing. */
+    toRoutedChatId(chatId) {
+        if (!this.routePrefix || !chatId || chatId.startsWith(this.routePrefix)) {
+            return chatId;
+        }
+        return `${this.routePrefix}${chatId}`;
+    }
+    toRoutedMessageId(messageId) {
+        if (!this.routePrefix || !messageId || messageId.startsWith(this.routePrefix)) {
+            return messageId;
+        }
+        return `${this.routePrefix}${messageId}`;
+    }
+    /** Strip only this app's prefix at the Feishu API boundary; history keeps the routed ID. */
+    toApiChatId(chatId) {
+        return this.routePrefix && chatId.startsWith(this.routePrefix)
+            ? chatId.slice(this.routePrefix.length)
+            : chatId;
+    }
     requestPrivateWorkflow(request) {
-        return this.feishuMessageHandler.requestPrivateWorkflow(request);
+        // T-083 R1 (#5254 rework): the workflow layer binds and compares PLATFORM
+        // chat ids — the form callback round-trips the bare `open_chat_id`. Strip
+        // this channel's route prefix at the adapter boundary and reject ids that
+        // are not bare Feishu chats, instead of loosening the actor/card/nonce
+        // binding comparisons. The caller's request object stays untouched.
+        const chatId = this.toApiChatId(request.chatId);
+        if (!/^o[cu]_/.test(chatId)) {
+            return Promise.reject(new Error(`Private workflow target ${request.chatId} is not a Feishu chat of channel ${this.id}; use this channel's chat ID`));
+        }
+        return this.feishuMessageHandler.requestPrivateWorkflow({ ...request, chatId });
     }
     /** #5411: route consumed private-input outcomes back to the waiting session. */
     setPrivateWorkflowNotifier(notify) {
-        this.feishuMessageHandler.setPrivateWorkflowNotifier(notify);
+        // T-083 R5: the workflows layer reports the bare platform chat id it
+        // bound; the waiting session lives under this channel's routed id, so
+        // re-prefix at the adapter boundary. Notifiers installed per instance
+        // therefore route back to their own named conversations.
+        this.feishuMessageHandler.setPrivateWorkflowNotifier((chatId, message) => notify(this.toRoutedChatId(chatId), message));
     }
     requestAgentInput(request, context) {
-        return this.feishuMessageHandler.requestAgentInput(request, context);
+        // T-083 R2: convert host-routed targets to bare platform ids at the
+        // platform adapter boundary — FeishuAgentInput echoes API-returned bare
+        // ids in its target checks and passes `receive_id` straight to the Feishu
+        // API (direct-create must never see a prefixed id). The caller's context
+        // object is not mutated, so answer continuation keeps the host
+        // conversation identity.
+        const chatId = this.toApiChatId(context.chatId);
+        if (!/^o[cu]_/.test(chatId)) {
+            return Promise.reject(new Error(`Agent input target ${context.chatId} is not a Feishu chat of channel ${this.id}; use this channel's chat ID`));
+        }
+        const platformContext = {
+            ...context,
+            chatId,
+            // Message ids share the same route prefix; toApiChatId is a plain
+            // prefix strip, so it applies to them equally.
+            sourceMessageId: this.toApiChatId(context.sourceMessageId),
+            ...(context.threadRootId !== undefined
+                ? { threadRootId: this.toApiChatId(context.threadRootId) }
+                : {}),
+            ...(context.replyRootId !== undefined
+                ? { replyRootId: context.replyRootId === null ? null : this.toApiChatId(context.replyRootId) }
+                : {}),
+        };
+        return this.feishuMessageHandler.requestAgentInput(request, platformContext);
     }
     configureTaskQuestions(ports) {
         this.feishuMessageHandler.configureTaskQuestions(this.appId, ports);
@@ -209,6 +266,9 @@ export class FeishuChannel extends BaseChannel {
         // missing credentials without being overridden by ambient configuration.
         this.appId = config.appId ?? Config.FEISHU_APP_ID;
         this.appSecret = config.appSecret ?? Config.FEISHU_APP_SECRET;
+        this.routePrefix = config.channelName ? `${this.id}:` : undefined;
+        const toRoutedChatId = (chatId) => this.routePrefix && chatId ? `${this.routePrefix}${chatId}` : chatId;
+        const toRoutedMessageId = (messageId) => this.routePrefix && messageId ? `${this.routePrefix}${messageId}` : messageId;
         // Initialize modular components
         this.triggerModeManager = new TriggerModeManager();
         this.mentionDetector = new MentionDetector();
@@ -217,11 +277,11 @@ export class FeishuChannel extends BaseChannel {
         // Create message callbacks
         const callbacks = {
             emitMessage: async (message) => {
-                await this.emitMessage(message);
+                await this.emitMessage({ ...message, chatId: toRoutedChatId(message.chatId) });
             },
             emitControl: async (control) => {
                 if (this.controlHandler) {
-                    return await this.emitControl(control);
+                    return await this.emitControl({ ...control, chatId: toRoutedChatId(control.chatId) });
                 }
                 return { success: false };
             },
@@ -230,9 +290,9 @@ export class FeishuChannel extends BaseChannel {
             },
             // Descriptor setup installs the resolver after this constructor returns.
             // Read it at callback time instead of capturing the initial undefined value.
-            resolveActionPrompt: (...args) => config.resolveActionPrompt?.(...args),
-            resolveActionText: (...args) => config.resolveActionText?.(...args),
-            resolveActionThreadRoot: (...args) => config.resolveActionThreadRoot?.(...args),
+            resolveActionPrompt: (...args) => config.resolveActionPrompt?.(args[0], toRoutedChatId(args[1]), args[2], args[3]),
+            resolveActionText: (...args) => config.resolveActionText?.(args[0], toRoutedChatId(args[1]), args[2]),
+            resolveActionThreadRoot: (...args) => config.resolveActionThreadRoot?.(args[0], toRoutedChatId(args[1])),
             // Issue #4031: Emit topic message events through InternalEventBus
             onTopicMessage: (event) => {
                 eventBus.emit('feishu.topic.message', event);
@@ -244,9 +304,13 @@ export class FeishuChannel extends BaseChannel {
             interactionManager: this.interactionManager,
             callbacks,
             privateInput: config.privateInput,
+            routedChatId: toRoutedChatId,
+            routedMessageId: toRoutedMessageId,
             isRunning: () => this.isRunning,
             hasControlHandler: () => !!this.controlHandler,
-            tenantAccessToken: process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN || '',
+            tenantAccessToken: this.routePrefix
+                ? ''
+                : process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN || '',
             // Issue #5400: descriptor setup injects the GitHub client after this
             // constructor returns; read it at callback time like the resolvers above.
             issueClient: () => config.issueReportingClient,
@@ -430,10 +494,13 @@ export class FeishuChannel extends BaseChannel {
         // Narrow client type for use inside closure (TS can't narrow this.client in closures)
         // eslint-disable-next-line prefer-destructuring
         const client = this.client;
+        // Persistence and ownership keep the routed chat ID; Feishu APIs need the bare ID.
+        const apiChatId = this.toApiChatId(message.chatId);
         const assertApiSuccess = (response) => {
             if (response.code !== undefined && response.code !== 0) {
                 throw Object.assign(new Error(`Feishu message rejected: ${response.code} ${response.msg ?? ''}`), {
-                    code: response.code, msg: response.msg,
+                    code: response.code,
+                    msg: response.msg,
                 });
             }
         };
@@ -450,8 +517,11 @@ export class FeishuChannel extends BaseChannel {
                 try {
                     const response = await client.im.message.get({ path: { message_id: parent } });
                     assertApiSuccess(response);
-                    const item = response.data?.items?.find(entry => entry.message_id === parent);
-                    if (item && !item.deleted && item.chat_id === message.chatId && item.root_id === threadRootId) {
+                    const item = response.data?.items?.find((entry) => entry.message_id === parent);
+                    if (item &&
+                        !item.deleted &&
+                        item.chat_id === apiChatId &&
+                        item.root_id === threadRootId) {
                         return parent;
                     }
                 }
@@ -470,19 +540,22 @@ export class FeishuChannel extends BaseChannel {
             if (!threadRootId) {
                 return messageId;
             }
-            const locationMatches = (item) => !!item && item.message_id === messageId && item.root_id === threadRootId &&
-                item.chat_id === message.chatId && !!item.thread_id;
+            const locationMatches = (item) => !!item &&
+                item.message_id === messageId &&
+                item.root_id === threadRootId &&
+                item.chat_id === apiChatId &&
+                !!item.thread_id;
             if (locationMatches(data)) {
                 return messageId;
             }
             if ((data?.root_id && data.root_id !== threadRootId) ||
-                (data?.chat_id && data.chat_id !== message.chatId)) {
+                (data?.chat_id && data.chat_id !== apiChatId)) {
                 throw new Error(`Feishu delivered ${messageId} outside the requested topic; do not resend`);
             }
             try {
                 const response = await client.im.message.get({ path: { message_id: messageId } });
                 assertApiSuccess(response);
-                const item = response.data?.items?.find(entry => entry.message_id === messageId);
+                const item = response.data?.items?.find((entry) => entry.message_id === messageId);
                 if (locationMatches(item)) {
                     return messageId;
                 }
@@ -497,7 +570,8 @@ export class FeishuChannel extends BaseChannel {
             const response = await client.im.message.reply({
                 path: { message_id: target },
                 data: {
-                    msg_type: msgType, content,
+                    msg_type: msgType,
+                    content,
                     ...(message.type === 'card' || threadRootId ? { reply_in_thread: true } : {}),
                 },
             });
@@ -519,9 +593,10 @@ export class FeishuChannel extends BaseChannel {
                         logger.warn({ threadId, threadRootId, chatId: message.chatId, ...extractFeishuApiError(err) }, 'Reply parent was rejected; retrying once at the explicit topic root');
                         return replyTo(threadRootId, msgType, content);
                     }
-                    if (threadRootId || message.type === 'card' ||
-                        (options.avoidRetryAfterAmbiguousThreadReply || message.type === 'file') &&
-                            !isDefiniteFeishuApiRejection(err)) {
+                    if (threadRootId ||
+                        message.type === 'card' ||
+                        ((options.avoidRetryAfterAmbiguousThreadReply || message.type === 'file') &&
+                            !isDefiniteFeishuApiRejection(err))) {
                         throw err;
                     }
                     logger.warn({
@@ -536,7 +611,7 @@ export class FeishuChannel extends BaseChannel {
                     receive_id_type: 'chat_id',
                 },
                 data: {
-                    receive_id: message.chatId,
+                    receive_id: apiChatId,
                     msg_type: msgType,
                     content,
                 },
@@ -799,7 +874,13 @@ export class FeishuChannel extends BaseChannel {
                         throw new Error(`Failed to upload file: ${fileName}`);
                     }
                     const uploadedAt = Date.now();
-                    logger.info({ chatId: message.chatId, fileKey, fileName, fileType, uploadMs: uploadedAt - uploadStartedAt }, 'File uploaded, sending message');
+                    logger.info({
+                        chatId: message.chatId,
+                        fileKey,
+                        fileName,
+                        fileType,
+                        uploadMs: uploadedAt - uploadStartedAt,
+                    }, 'File uploaded, sending message');
                     // Send file message
                     fileMessageId = await sendFeishuMessage('file', JSON.stringify({ file_key: fileKey }));
                     logger.info({
@@ -952,8 +1033,10 @@ export class FeishuChannel extends BaseChannel {
                 ? new FeishuCardKitClient({
                     getTenantAccessToken: () => tokenManager.getTenantAccessToken(),
                 })
-                : createCardKitClientFromEnv();
-            return this.streamingCardKitClient;
+                : this.routePrefix
+                    ? undefined
+                    : createCardKitClientFromEnv();
+            return this.streamingCardKitClient ?? null;
         }
         catch (err) {
             logger.warn({ err }, 'startStreaming: Card Kit client unavailable (tenant token missing?) — declining to sendMessage');
@@ -994,6 +1077,7 @@ export class FeishuChannel extends BaseChannel {
             logger.warn({ chatId }, 'startStreaming: lark IM client not ready — declining to sendMessage');
             return null;
         }
+        const apiChatId = this.toApiChatId(chatId);
         try {
             // Step 1: create the streaming card entity → card_id.
             const created = await cardKitClient.createCard(buildStreamingPlaceholderCard());
@@ -1013,7 +1097,7 @@ export class FeishuChannel extends BaseChannel {
                 })
                 : await larkClient.im.message.create({
                     params: { receive_id_type: 'chat_id' },
-                    data: { receive_id: chatId, msg_type: 'interactive', content },
+                    data: { receive_id: apiChatId, msg_type: 'interactive', content },
                 });
             if (sent.code !== undefined && sent.code !== 0) {
                 throw new Error(`Streaming card delivery failed: ${sent.code}`);
@@ -1057,7 +1141,8 @@ export class FeishuChannel extends BaseChannel {
             // Replace both regions atomically; otherwise the completed answer keeps
             // the original 'thinking' placeholder visible to users.
             await client.updateCard(id, buildStreamingPlaceholderCard({
-                thinkingPlaceholder: '✍️ 回复中…', replyText: text,
+                thinkingPlaceholder: '✍️ 回复中…',
+                replyText: text,
             }), sequence);
         }
         else {
@@ -1133,6 +1218,9 @@ export class FeishuChannel extends BaseChannel {
      * Issue #3824: Channel ownership query for post-restart routing.
      */
     ownsChatId(chatId) {
+        if (this.routePrefix) {
+            return chatId.startsWith(this.routePrefix);
+        }
         return chatId.startsWith('oc_') || chatId.startsWith('ou_');
     }
     // Delegate trigger mode methods to TriggerModeManager (Issue #2193: renamed from PassiveMode)
@@ -1171,15 +1259,19 @@ export class FeishuChannel extends BaseChannel {
         if (!this.client || !this.isRunning) {
             throw new Error('Welcome channel is unavailable');
         }
+        const routedChatId = this.toRoutedChatId(chatId);
+        const apiChatId = this.toApiChatId(routedChatId);
         const response = await this.client.im.message.create({
-            params: { receive_id_type: chatId.startsWith('ou_') ? 'open_id' : 'chat_id' },
-            data: { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text }) },
+            params: { receive_id_type: apiChatId.startsWith('ou_') ? 'open_id' : 'chat_id' },
+            data: { receive_id: apiChatId, msg_type: 'text', content: JSON.stringify({ text }) },
         });
         if (response.code !== 0 || !response.data?.message_id) {
             throw new Error('Welcome delivery was not confirmed');
         }
-        await messageLogger.logOutgoingMessage(response.data.message_id, chatId, text, 'text').catch(error => {
-            logger.warn({ error, chatId }, 'Failed to record welcome receipt');
+        await messageLogger
+            .logOutgoingMessage(response.data.message_id, routedChatId, text, 'text')
+            .catch((error) => {
+            logger.warn({ error, chatId: routedChatId }, 'Failed to record welcome receipt');
         });
     }
     /**
@@ -1216,25 +1308,26 @@ export class FeishuChannel extends BaseChannel {
         if (!this.client || !chatId) {
             return;
         }
+        const routedChatId = this.toRoutedChatId(chatId);
         try {
             const resp = await this.client.im.message.create({
                 params: { receive_id_type: 'chat_id' },
                 data: {
-                    receive_id: chatId,
+                    receive_id: this.toApiChatId(routedChatId),
                     msg_type: 'text',
                     content: buildTextContent(text),
                 },
             });
             const msgId = resp.data?.message_id;
             if (msgId) {
-                messageLogger.logOutgoingMessage(msgId, chatId, text, 'text').catch((err) => {
-                    logger.warn({ err, chatId, msgId }, 'Failed to log outgoing notification message');
+                messageLogger.logOutgoingMessage(msgId, routedChatId, text, 'text').catch((err) => {
+                    logger.warn({ err, chatId: routedChatId, msgId }, 'Failed to log outgoing notification message');
                 });
             }
         }
         catch (notifyErr) {
             // Never throw from error notification — just log the secondary failure
-            logger.error({ err: notifyErr, chatId }, 'Failed to send error notification to user');
+            logger.error({ err: notifyErr, chatId: routedChatId }, 'Failed to send error notification to user');
         }
     }
     /**

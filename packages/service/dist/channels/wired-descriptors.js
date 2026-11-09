@@ -24,6 +24,26 @@ import { WelcomeService } from '../platforms/feishu/welcome-service.js';
 import { createChannelCallbacksFactory, createDefaultMessageHandler, createChannelApiHandlers, } from '../utils/channel-handlers.js';
 import { buildInteractiveCard, buildActionPrompts, validateInteractiveParams, } from '../platforms/feishu/card-builders/index.js';
 // ============================================================================
+// Feishu trigger mode adapter (T-083 R4)
+// ============================================================================
+/**
+ * Normalize the control-path chat id onto the manager's key space.
+ *
+ * T-083 R4 (#5254 rework): inbound filtering reads the mode map with the BARE
+ * `chat_id` from Feishu events, while the `/trigger` control path arrives with
+ * this channel's routed id (`feishu:<name>:oc_…`, prefixed by the emitControl
+ * callback). Unifying on bare platform keys at this adapter keeps the receipt
+ * and the actual filter state consistent for always/mention/auto; restart
+ * recovery (`initFromRecords`) uses the same bare keys. For the legacy
+ * single-app channel `toApiChatId` is the identity, so nothing changes there.
+ */
+export function createTriggerModeAdapter(channel, triggerModeManager) {
+    return {
+        getMode: (chatId) => triggerModeManager.getMode(channel.toApiChatId(chatId)),
+        setMode: (chatId, mode) => triggerModeManager.setMode(channel.toApiChatId(chatId), mode),
+    };
+}
+// ============================================================================
 // REST Wired Descriptor
 // ============================================================================
 /**
@@ -37,7 +57,10 @@ import { buildInteractiveCard, buildActionPrompts, validateInteractiveParams, } 
 export const REST_WIRED_DESCRIPTOR = {
     type: 'rest',
     name: 'REST API',
-    factory: (config) => new RestChannel({ ...config, fileStorageServiceProvider: config.fileStorageServiceProvider ?? persistentFileStorageProvider }),
+    factory: (config) => new RestChannel({
+        ...config,
+        fileStorageServiceProvider: config.fileStorageServiceProvider ?? persistentFileStorageProvider,
+    }),
     defaultCapabilities: {
         supportsCard: true,
         supportsThread: false,
@@ -144,10 +167,7 @@ export const FEISHU_WIRED_DESCRIPTOR = {
         // Adapter delegates to TriggerModeManager's native enum-based getMode/setMode.
         // The manager handles 'auto' mode resolution internally.
         const triggerModeManager = feishuChannel.getTriggerModeManager();
-        const triggerModeAdapter = {
-            getMode: (chatId) => triggerModeManager.getMode(chatId),
-            setMode: (chatId, mode) => triggerModeManager.setMode(chatId, mode),
-        };
+        const triggerModeAdapter = createTriggerModeAdapter(feishuChannel, triggerModeManager);
         const helpContext = {
             ...context.controlHandlerContext,
             goalStore: context.goalStore,
@@ -156,7 +176,12 @@ export const FEISHU_WIRED_DESCRIPTOR = {
             getHelpCapabilities: () => feishuChannel.getCapabilities(),
         };
         const generateWelcomeMessage = (chatId, chatType) => {
-            const command = { type: 'help', chatId, chatType, ...(chatId.startsWith('ou_') ? { actorId: chatId } : {}) };
+            const command = {
+                type: 'help',
+                chatId,
+                chatType,
+                ...(chatId.startsWith('ou_') ? { actorId: chatId } : {}),
+            };
             if (helpContext.isCommandAllowed && !helpContext.isCommandAllowed(command)) {
                 return undefined;
             }
@@ -165,7 +190,9 @@ export const FEISHU_WIRED_DESCRIPTOR = {
         const welcomeService = new WelcomeService({
             generateWelcomeMessage,
             generateHelpMessage: generateWelcomeMessage,
-            sendMessage: async (chatId, text) => { await feishuChannel.sendMessage({ chatId, type: 'text', text }); },
+            sendMessage: async (chatId, text) => {
+                await feishuChannel.sendMessage({ chatId, type: 'text', text });
+            },
             sendWelcomeMessage: (chatId, text, chatType) => feishuChannel.sendWelcomeMessage(chatId, text, chatType),
         });
         helpContext.guidance = welcomeService;
@@ -199,7 +226,7 @@ export const FEISHU_WIRED_DESCRIPTOR = {
             },
             // Issue #1571: Build interactive card from raw parameters using extracted builder
             sendInteractive: async (chatId, params) => {
-                const { question, options, title, context: cardContext, threadId, threadRootId, actionPrompts } = params;
+                const { question, options, title, context: cardContext, threadId, threadRootId, actionPrompts, } = params;
                 // Validate params at REST API boundary
                 const validationError = validateInteractiveParams(params);
                 if (validationError) {
@@ -209,7 +236,11 @@ export const FEISHU_WIRED_DESCRIPTOR = {
                 // Build card using extracted builder (disclaude service owns the full card lifecycle)
                 const card = buildInteractiveCard({ question, options, title, context: cardContext });
                 const messageId = await feishuChannel.sendMessage({
-                    chatId, type: 'card', card, threadId, ...(threadRootId ? { threadRootId } : {}),
+                    chatId,
+                    type: 'card',
+                    card,
+                    threadId,
+                    ...(threadRootId ? { threadRootId } : {}),
                 });
                 // A queued or unacknowledged send cannot support button registration or
                 // prove delivery. Never manufacture a successful receipt (Issue #5259).
@@ -219,7 +250,8 @@ export const FEISHU_WIRED_DESCRIPTOR = {
                 // Preserve explicit instructions and fill unmapped buttons with their
                 // visible labels and the original card context, never just route IDs.
                 const resolvedActionPrompts = buildActionPrompts(options, actionPrompts, undefined, {
-                    question, context: cardContext,
+                    question,
+                    context: cardContext,
                 });
                 return { messageId, actionPrompts: resolvedActionPrompts };
             },
@@ -244,7 +276,13 @@ export const FEISHU_WIRED_DESCRIPTOR = {
                 return { success: true };
             },
         };
-        context.service.registerFeishuHandlers(feishuHandlers);
+        // Legacy unscoped handlers exist only for the single-app channel; named
+        // declarations (`feishu:<name>` ids) are reachable exclusively through
+        // chatId-owning channel handlers, so a raw Feishu chat ID never resolves
+        // to one of them.
+        if (!feishuChannel.id.startsWith('feishu:')) {
+            context.service.registerFeishuHandlers(feishuHandlers);
+        }
         context.service.registerChannelHandlers('feishu', feishuHandlers, feishuChannel);
         context.logger.info('Feishu REST API handlers registered via descriptor setup');
     },
@@ -288,13 +326,20 @@ export const WECHAT_WIRED_DESCRIPTOR = {
         return (chatId, threadRootId) => ({
             ...factory(chatId, threadRootId),
             beginProcessing: (target) => channel.beginTyping(target),
-            sendFile: async (target, filePath) => { await channel.sendMessage({ chatId: target, type: 'file', filePath }); },
+            sendFile: async (target, filePath) => {
+                await channel.sendMessage({ chatId: target, type: 'file', filePath });
+            },
         });
     },
     createMessageHandler: (channel, context) => createDefaultMessageHandler(channel, context, {
         channelName: 'WeChat channel',
         sendDoneSignal: false,
-        extractAttachments: (message) => message.attachments?.map(att => createInboundAttachment(att.fileName, message.chatId, att.mimeType?.startsWith('image/') ? 'image' : 'file', { localPath: att.filePath, size: att.size, mimeType: att.mimeType, messageId: message.messageId })),
+        extractAttachments: (message) => message.attachments?.map((att) => createInboundAttachment(att.fileName, message.chatId, att.mimeType?.startsWith('image/') ? 'image' : 'file', {
+            localPath: att.filePath,
+            size: att.size,
+            mimeType: att.mimeType,
+            messageId: message.messageId,
+        })),
     }),
     /**
      * Post-registration setup for WeChat channel.

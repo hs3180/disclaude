@@ -16,7 +16,7 @@ const CONFIG_KEYS = new Set([
     '_source',
     '_fromFile',
 ]);
-const BACKENDS = new Set(['claude', 'pi', 'codex', 'dsh']);
+const BACKENDS = new Set(['claude', 'pi', 'codex', 'dsh', 'miniswe']);
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 /** Full Claude model IDs as modelOverrides keys (Issue #5410); bare aliases are rejected below. */
 const CLAUDE_MODEL_ID = /^claude-[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -178,6 +178,7 @@ export function resolveConfiguredAgents(config) {
             'codexSandbox',
             'codexNetworkAccess',
             'codex',
+            'miniswe',
             'maxConcurrentTasks',
             'enableAgentTeams',
             'autoCompactWindow',
@@ -194,7 +195,7 @@ export function resolveConfiguredAgents(config) {
         if (!BACKENDS.has(agent.backend)) {
             errors.push(raw.backend === 'deepseek'
                 ? `${field}.backend deepseek is unsupported; use backend: dsh`
-                : `${field}.backend must be claude, pi, codex or dsh`);
+                : `${field}.backend must be claude, pi, codex, dsh or miniswe`);
         }
         if (typeof agent.llm !== 'string' || !Object.hasOwn(llms, agent.llm)) {
             errors.push(`${field}.llm must reference a defined llms entry`);
@@ -260,6 +261,37 @@ export function resolveConfiguredAgents(config) {
             if (agent.codex.weeklyLimitCooldownMs !== undefined &&
                 (!Number.isInteger(agent.codex.weeklyLimitCooldownMs) || agent.codex.weeklyLimitCooldownMs <= 0)) {
                 errors.push(`${field}.codex.weeklyLimitCooldownMs must be a positive integer`);
+            }
+        }
+        if (agent.miniswe !== undefined) {
+            if (!mapping(agent.miniswe)) {
+                errors.push(`${field}.miniswe must be a mapping`);
+            }
+            else {
+                for (const key of Object.keys(agent.miniswe)) {
+                    if (!['binary', 'executionEnvironment', 'timeoutMs'].includes(key)) {
+                        errors.push(`${field}.miniswe.${key} is unsupported`);
+                    }
+                }
+                if (agent.miniswe.binary !== undefined &&
+                    (typeof agent.miniswe.binary !== 'string' || !agent.miniswe.binary.trim())) {
+                    errors.push(`${field}.miniswe.binary must be a non-empty string`);
+                }
+                if (agent.miniswe.executionEnvironment !== undefined) {
+                    if (agent.miniswe.executionEnvironment === 'local') {
+                        // The only implemented policy: subprocess in the managed workspace.
+                    }
+                    else {
+                        errors.push(`${field}.miniswe.executionEnvironment must be local; docker and SWE-ReX execution environments are out of scope for this adapter (run those as native mini-swe-agent workflows, #5006)`);
+                    }
+                }
+                if (agent.miniswe.timeoutMs !== undefined &&
+                    (!Number.isInteger(agent.miniswe.timeoutMs) || agent.miniswe.timeoutMs < 0)) {
+                    errors.push(`${field}.miniswe.timeoutMs must be a non-negative integer`);
+                }
+            }
+            if (agent.backend !== 'miniswe') {
+                errors.push(`${field}.miniswe requires backend: miniswe`);
             }
         }
         if (agent.mode !== undefined) {
@@ -354,6 +386,12 @@ export function resolveConfiguredAgents(config) {
         }
         if (agent.backend === 'dsh' && (!llm.api || !llm.api.baseUrl)) {
             errors.push(`llms.${agent.llm}.api with protocol, baseUrl and credential reference is required for DSH`);
+        }
+        // mini-swe-agent resolves its model through LiteLLM from the bound LLM
+        // connection; without an api block it would silently fall back to the
+        // interactive global setup the headless child can never complete.
+        if (agent.backend === 'miniswe' && !llm.api) {
+            errors.push(`llms.${agent.llm}.api with protocol, credential reference and (for custom endpoints) baseUrl is required for mini-swe`);
         }
         const protocol = llm.api?.protocol;
         const keyEnv = llm.api ? apiCredentialEnvName(llm.api) : undefined;

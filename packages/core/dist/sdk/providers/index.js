@@ -9,3 +9,5 @@ export { CodexAgentProvider } from './codex/index.js';
 // Issue #4741: DeepSeek harness backend registration and configuration probe.
 export { DeepSeekHarnessProvider } from './deepseek/provider.js';
 export { DshSessionPool } from './deepseek/dsh-session-pool.js';
+// Issue #5006: optional mini-swe-agent backend (headless CLI subprocess).
+export { MiniSweAgentProvider, MINI_DEFAULT_BINARY, MINI_DEFAULT_TIMEOUT_MS } from './miniswe/index.js';

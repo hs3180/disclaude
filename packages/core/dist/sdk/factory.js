@@ -6,6 +6,9 @@
  */
 import { createHash } from 'node:crypto';
 import { ClaudeSDKProvider, PiAgentProvider, CodexAgentProvider, DeepSeekHarnessProvider, } from './providers/index.js';
+// Imported from its own module so provider-list tests that mock
+// ./providers/index.js do not need to know about the optional backend.
+import { MiniSweAgentProvider, } from './providers/miniswe/index.js';
 import { Config } from '../config/index.js';
 /**
  * Map a resolved agent preset (or global agent config) onto the DSH
@@ -30,7 +33,31 @@ export function dshOptions(settings) {
             : {}),
     };
 }
+/**
+ * mini-swe-agent options (Issue #5006) from the selected agent preset.
+ *
+ * Execution settings only — endpoint, model and credentials belong to the
+ * bound llms.<name>.api connection and never pass through this path.
+ */
+function minisweOptions(settings) {
+    const block = settings?.miniswe;
+    return {
+        ...(block?.binary ? { binary: block.binary } : {}),
+        ...(block?.executionEnvironment ? { executionEnvironment: block.executionEnvironment } : {}),
+        ...(block?.timeoutMs !== undefined ? { timeoutMs: block.timeoutMs } : {}),
+    };
+}
 function providerCacheKey(type, settings) {
+    if (type === 'miniswe') {
+        // Provider variants differ by execution settings only; credentials are
+        // never part of the key.
+        const options = minisweOptions(settings);
+        return JSON.stringify({
+            binary: options.binary ?? 'mini',
+            executionEnvironment: options.executionEnvironment ?? 'local',
+            timeoutMs: options.timeoutMs ?? 0,
+        });
+    }
     if (type !== 'dsh') {
         return 'default';
     }
@@ -70,6 +97,10 @@ const providerRegistry = new Map([
         }),
     ],
     ['dsh', (settings) => new DeepSeekHarnessProvider(dshOptions(settings))],
+    // Issue #5006: optional mini-swe-agent backend (headless CLI subprocess,
+    // LiteLLM/OpenAI-compatible model backends). Fail-fast binary detection and
+    // unavailable reporting live in the provider.
+    ['miniswe', (settings) => new MiniSweAgentProvider(minisweOptions(settings))],
 ]);
 /**
  * 默认 Provider 类型
