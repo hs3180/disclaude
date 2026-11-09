@@ -17,11 +17,56 @@ function dataOf(response) {
   return response?.data && typeof response.data === 'object' ? response.data : response;
 }
 
+const RUNTIME_KEYS = new Set(['preset', 'harness', 'model', 'thinking']);
+
+/**
+ * Issue #4913: validate a declared runtime profile against the service's
+ * configured enabled catalog BEFORE the group is created, so an incompatible
+ * or unsupported declaration aborts with an actionable error and never
+ * produces a half-configured active group. The declaration never carries
+ * credentials or endpoints — a named preset or an explicit
+ * harness/model/thinking triple only.
+ */
+async function preflightRuntime(runtime, fetchImpl = fetch) {
+  if (runtime === undefined || runtime === null) { return undefined; }
+  if (typeof runtime !== 'object' || Array.isArray(runtime)) {
+    throw new Error('runtime_must_be_object');
+  }
+  const unknown = Object.keys(runtime).filter((key) => !RUNTIME_KEYS.has(key));
+  if (unknown.length > 0) {
+    throw new Error(`runtime_rejects_fields:${unknown.join(',')}`);
+  }
+  for (const [key, value] of Object.entries(runtime)) {
+    if (typeof value !== 'string' || !value.trim()) { throw new Error(`runtime_${key}_must_be_nonempty_string`); }
+  }
+  const baseUrl = process.env.DISCLAUDE_API_BASE_URL?.replace(/\/+$/, '');
+  if (!baseUrl) {
+    throw new Error('runtime_preflight_requires_DISCLAUDE_API_BASE_URL');
+  }
+  const headers = { 'Content-Type': 'application/json' };
+  const token = process.env.DISCLAUDE_API_TOKEN?.trim();
+  if (token) { headers.Authorization = `Bearer ${token}`; }
+  const response = await fetchImpl(`${baseUrl}/api/agent-runtime`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ runtime }),
+    signal: AbortSignal.timeout(15000),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || body.ok !== true) {
+    throw new Error(`runtime_rejected:${body.message ?? response.status}`);
+  }
+  return body.profile;
+}
+
 export function positioningPost({
   topic,
   ledgerRule = '本群台账只记录本群决策与交付，原群历史不重复搬运。',
-}) {
-  return `【群定位声明】讨论：${topic}\n- 本群管什么：只讨论「${topic}」及该话题的决策与交付。\n- 原群/原 thread 保留什么：原有其他话题与历史上下文，不再承接本话题讨论。\n- 执行流水去处：本话题的进度、执行流水与交付只发到本群。\n- 台账规则：${ledgerRule}`;
+}, runtimeProfile) {
+  const runtimeLine = runtimeProfile
+    ? `\n- 运行时：本群由 **${runtimeProfile.name ?? runtimeProfile.agentBackend}**（${runtimeProfile.agentBackend}${runtimeProfile.model ? ` / ${runtimeProfile.model}` : ''}${runtimeProfile.thinking ? ` / thinking: ${runtimeProfile.thinking}` : ''}）服务，首回合即生效；会话内可用 /agent use 临时切换。`
+    : '';
+  return `【群定位声明】讨论：${topic}\n- 本群管什么：只讨论「${topic}」及该话题的决策与交付。\n- 原群/原 thread 保留什么：原有其他话题与历史上下文，不再承接本话题讨论。\n- 执行流水去处：本话题的进度、执行流水与交付只发到本群。\n- 台账规则：${ledgerRule}${runtimeLine}`;
 }
 
 export function migrationCard({ topic, chatId, ownerOpenId }) {
@@ -48,6 +93,8 @@ export async function createDiscussion(input, run = execute) {
   ) {
     throw new Error('invalid_idempotency_key');
   }
+  // Issue #4913: validate the runtime declaration before any Feishu API call.
+  const profile = await preflightRuntime(input.runtime, input.fetchImpl);
 
   const invoke = async (args, stage) => {
     try {
@@ -79,7 +126,7 @@ export async function createDiscussion(input, run = execute) {
   );
   const chatId = requiredId(created?.chat_id ?? created?.chatId, 'oc_', 'new_chat_id');
 
-  const firstPost = positioningPost(input);
+  const firstPost = positioningPost(input, profile);
   const sent = dataOf(
     await invoke(
       ['im', '+messages-send', '--chat-id', chatId, '--text', firstPost, ...sendOptions],
@@ -117,7 +164,14 @@ export async function createDiscussion(input, run = execute) {
     'om_',
     'migration_message_id'
   );
-  return { chatId, ownerOpenId, firstPostMessageId, pinned: true, migrationMessageId };
+  return {
+    chatId,
+    ownerOpenId,
+    firstPostMessageId,
+    pinned: true,
+    migrationMessageId,
+    ...(profile ? { runtime: profile } : {}),
+  };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

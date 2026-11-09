@@ -2,21 +2,49 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { isCodexReasoningEffort, type CodexReasoningEffort } from '@disclaude/core';
+
+/**
+ * Creation-time overrides stored alongside a preset binding (#4913): an
+ * explicit {harness, model, thinking} declaration rides a catalog preset of
+ * the chosen harness, overriding its model/effort for this chat.
+ */
+export interface AgentSelectionOverrides {
+  model?: string;
+  reasoningEffort?: CodexReasoningEffort;
+}
 
 export interface AgentSelection {
   chatId: string;
   presetName: string;
   updatedBy: string;
   updatedAt: string;
+  overrides?: AgentSelectionOverrides;
+  /** Who set the binding: a `/agent use` command or a creation-time declaration (#4913). */
+  origin?: 'command' | 'creation';
 }
 
 interface AgentSelectionDocument { version: 1; selections: Record<string, AgentSelection> }
 
 function validSelection(value: AgentSelection, chatId: string): boolean {
-  return value !== null && typeof value === 'object' && value.chatId === chatId
-    && typeof value.presetName === 'string' && !!value.presetName.trim()
-    && typeof value.updatedBy === 'string' && !!value.updatedBy.trim()
-    && typeof value.updatedAt === 'string' && Number.isFinite(Date.parse(value.updatedAt));
+  if (value === null || typeof value !== 'object' || value.chatId !== chatId
+    || typeof value.presetName !== 'string' || !value.presetName.trim()
+    || typeof value.updatedBy !== 'string' || !value.updatedBy.trim()
+    || typeof value.updatedAt !== 'string' || !Number.isFinite(Date.parse(value.updatedAt))) {
+    return false;
+  }
+  if (value.origin !== undefined && value.origin !== 'command' && value.origin !== 'creation') {
+    return false;
+  }
+  if (value.overrides !== undefined) {
+    const { model, reasoningEffort } = value.overrides;
+    if (typeof value.overrides !== 'object'
+      || (model !== undefined && (typeof model !== 'string' || !model.trim()))
+      || (reasoningEffort !== undefined && !isCodexReasoningEffort(reasoningEffort))) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -52,15 +80,22 @@ export class AgentSelectionStore {
     return selection ? { ...selection } : undefined;
   }
 
-  set(chatId: string, presetName: string, actorId: string): AgentSelection {
+  set(chatId: string, presetName: string, actorId: string, extras: { overrides?: AgentSelectionOverrides; origin?: 'command' | 'creation' } = {}): AgentSelection {
     const previous = this.selections[chatId];
-    const selection = { chatId, presetName, updatedBy: actorId, updatedAt: new Date().toISOString() };
+    const selection: AgentSelection = {
+      chatId,
+      presetName,
+      updatedBy: actorId,
+      updatedAt: new Date().toISOString(),
+      ...(extras.overrides ? { overrides: { ...extras.overrides } } : {}),
+      ...(extras.origin ? { origin: extras.origin } : {}),
+    };
     this.selections[chatId] = selection;
     try { this.write(); } catch (error) {
       if (previous) { this.selections[chatId] = previous; } else { delete this.selections[chatId]; }
       throw error;
     }
-    return { ...selection };
+    return { ...selection, ...(selection.overrides ? { overrides: { ...selection.overrides } } : {}) };
   }
 
   private write(): void {

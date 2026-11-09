@@ -104,8 +104,19 @@ export interface PushResponse {
 
 /**
  * Handler for push requests. Routes a message to the appropriate agent.
+ * The optional runtime declaration (#4913) is already validated and durably
+ * bound by the caller BEFORE this handler runs, so the first prompt of a
+ * newly created chat runs on the selected runtime.
  */
 export type PushHandler = (chatId: string, message: string) => Promise<void>;
+
+/** Issue #4913: result of resolving/validating a creation-time runtime declaration. */
+export type RuntimeProfileDeclarerResult =
+  | { ok: true; active: { name: string; agentBackend: string; model: string; thinking?: string; origin?: string } }
+  | { ok: false; error: string };
+/** Issue #4913: resolves/validates a creation-time runtime declaration (sync or async). */
+export type RuntimeProfileDeclarer = (chatId: string, runtime: unknown, actorId: string, options?: { persist?: boolean }) =>
+  RuntimeProfileDeclarerResult | Promise<RuntimeProfileDeclarerResult>;
 
 /**
  * Response payload for uploadFile (mirrors REST API ChannelApiResponsePayloads).
@@ -349,6 +360,8 @@ export class HttpApiServer {
   private startTime = 0;
   private instanceId?: string;
   private pushHandler?: PushHandler;
+  /** Issue #4913: creation-time runtime profile validation/binding. */
+  private runtimeProfileDeclarer?: RuntimeProfileDeclarer;
   private uploadFileHandler?: UploadFileHandler;
   /** Issue #5630: in-flight uploads keyed by idempotencyKey (same-key retries join one delivery). */
   private readonly uploadFileInFlight = new Map<
@@ -444,6 +457,18 @@ export class HttpApiServer {
    */
   setPushHandler(handler: PushHandler): void {
     this.pushHandler = handler;
+  }
+
+  /**
+   * Set the runtime profile declarer (#4913): validates a creation-time
+   * declaration (named preset or explicit harness/model/thinking) against the
+   * configured enabled catalog and durably binds it to the chat. Used by
+   * POST /api/push before the first prompt is routed and by the validate-only
+   * POST /api/agent-runtime probe that group-creation scripts call BEFORE the
+   * group exists.
+   */
+  setRuntimeProfileDeclarer(declarer: RuntimeProfileDeclarer): void {
+    this.runtimeProfileDeclarer = declarer;
   }
 
   /**
@@ -700,6 +725,7 @@ export class HttpApiServer {
     // event is filtered instead of looping back into the agent.
     this.addRoute('POST', '/api/self-sent/:messageId', this.handleSelfSent.bind(this));
     this.addRoute('POST', '/api/push', this.handlePush.bind(this));
+    this.addRoute('POST', '/api/agent-runtime', this.handleAgentRuntime.bind(this));
     // Issue #4031: SSE endpoint for topic group message notifications
     this.addRoute('GET', '/api/topic-stream', this.handleTopicStream.bind(this));
     // Issue #5603: read-only structured chat history for agents (CLI parity).
@@ -1112,20 +1138,86 @@ export class HttpApiServer {
       return;
     }
 
-    const { chatId, message } = parsed as { chatId: string; message: string };
+    const { chatId, message, runtime } = parsed as { chatId: string; message: string; runtime?: unknown };
 
     if (!chatId || !message) {
       this.sendJson(res, 400, { ok: false, message: 'chatId and message must be non-empty' });
       return;
     }
 
+    // Issue #4913: bind the declared runtime BEFORE routing the first prompt,
+    // so the chat's first turn already runs on the selected runtime. A failed
+    // resolution rejects the push — no prompt is delivered on a fallback.
+    let profile: RuntimeProfileDeclarerResult | undefined;
+    if (runtime !== undefined) {
+      if (!this.runtimeProfileDeclarer) {
+        this.sendJson(res, 503, { ok: false, message: 'Runtime profiles are not available on this node' });
+        return;
+      }
+      try {
+        profile = await this.runtimeProfileDeclarer(chatId, runtime, 'http-push');
+      } catch (error) {
+        this.sendJson(res, 400, { ok: false, message: error instanceof Error ? error.message : 'Invalid runtime declaration' });
+        return;
+      }
+      if (!profile.ok) {
+        this.sendJson(res, 422, { ok: false, message: profile.error });
+        return;
+      }
+    }
+
     try {
       await this.pushHandler(chatId, message);
-      this.sendJson(res, 200, { ok: true, message: 'Push accepted' });
+      this.sendJson(res, 200, {
+        ok: true,
+        message: 'Push accepted',
+        ...(profile?.ok ? { profile: profile.active } : {}),
+      });
     } catch (err) {
       logger.error({ err, chatId }, 'Push handler error');
       const msg = err instanceof Error ? err.message : 'Push failed';
       this.sendJson(res, 500, { ok: false, message: msg });
+    }
+  }
+
+  /**
+   * POST /api/agent-runtime — validate-only probe (Issue #4913).
+   *
+   * Group-creation scripts call this BEFORE the group exists so an
+   * incompatible or unsupported declaration aborts creation with an
+   * actionable error instead of producing a half-configured active group.
+   * Body: { runtime: { preset } | { harness, model, thinking } }.
+   */
+  private async handleAgentRuntime(
+    req: IncomingMessage,
+    res: ServerResponse,
+    _params: Record<string, string>
+  ): Promise<void> {
+    if (!this.runtimeProfileDeclarer) {
+      this.sendJson(res, 503, { ok: false, message: 'Runtime profiles are not available on this node' });
+      return;
+    }
+    let parsed: { runtime?: unknown; chatId?: unknown };
+    try {
+      parsed = JSON.parse(await readBody(req)) as typeof parsed;
+    } catch {
+      this.sendJson(res, 400, { ok: false, message: 'Invalid JSON body' });
+      return;
+    }
+    if (parsed.runtime === undefined) {
+      this.sendJson(res, 400, { ok: false, message: 'Required field: runtime' });
+      return;
+    }
+    try {
+      const result = await this.runtimeProfileDeclarer(
+        typeof parsed.chatId === 'string' && parsed.chatId ? parsed.chatId : 'validate-only',
+        parsed.runtime,
+        'agent-runtime-validate',
+        { persist: false }
+      );
+      this.sendJson(res, result.ok ? 200 : 422, result.ok ? { ok: true, profile: result.active } : { ok: false, message: result.error });
+    } catch (error) {
+      this.sendJson(res, 400, { ok: false, message: error instanceof Error ? error.message : 'Invalid runtime declaration' });
     }
   }
 

@@ -105,4 +105,26 @@ describe('push_to_agent', () => {
     expect(result.error).toContain('Router not initialized');
     expect(mockPushToAgent).toHaveBeenCalledWith('oc_test123', 'Hello');
   });
+
+  it('passes a creation-time runtime declaration through and echoes the bound profile (#4913)', async () => {
+    mockPushToAgent.mockResolvedValue({
+      success: true,
+      profile: { name: 'codex-main', agentBackend: 'codex', model: 'gpt-5.3-codex', thinking: 'high' },
+    });
+
+    const result = await push_to_agent({
+      chatId: 'oc_new_group',
+      message: 'Kick off the discussion.',
+      runtime: { harness: 'codex', model: 'gpt-5.3-codex', thinking: 'high' },
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockPushToAgent).toHaveBeenCalledWith(
+      'oc_new_group',
+      'Kick off the discussion.',
+      { runtime: { harness: 'codex', model: 'gpt-5.3-codex', thinking: 'high' } }
+    );
+    expect(result.message).toContain('codex-main');
+    expect(result.message).toContain('thinking high');
+  });
 });

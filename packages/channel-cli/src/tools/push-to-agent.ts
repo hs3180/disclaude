@@ -20,12 +20,20 @@ const logger = createLogger('PushToAgent');
  *
  * @param params.chatId - Target chat ID
  * @param params.message - The instruction text to push
+ * @param params.runtime - Optional creation-time runtime profile (Issue #4913):
+ *   a named preset (`{ preset }`) or an explicit `{ harness, model, thinking }`
+ *   triple. The service resolves it against the configured enabled catalog and
+ *   durably binds it to the chat BEFORE this message is routed, so a newly
+ *   created group's first turn already runs on the selected runtime. Invalid
+ *   or unsupported declarations fail the push with an actionable error — no
+ *   silent fallback, no prompt delivered on the default runtime.
  */
 export async function push_to_agent(params: {
   chatId: string;
   message: string;
+  runtime?: { preset?: string; harness?: string; model?: string; thinking?: string };
 }): Promise<SendMessageResult> {
-  const { chatId, message } = params;
+  const { chatId, message, runtime } = params;
 
   logger.info({
     chatId,
@@ -54,7 +62,9 @@ export async function push_to_agent(params: {
     logger.debug({ chatId }, 'Using REST API for push_to_agent');
     // Issue #4280 (Phase 3, part 3): REST-only — direct ChannelApiClient.
     const apiClient = getChannelApiClient();
-    const result = await pushToAgent(apiClient, chatId, message);
+    const result = runtime
+      ? await pushToAgent(apiClient, chatId, message, { runtime })
+      : await pushToAgent(apiClient, chatId, message);
     if (!result.success) {
       const errorMsg = getChannelApiErrorMessage(result.errorType, result.error);
       logger.error({ chatId, errorType: result.errorType, error: result.error }, 'REST API push_to_agent failed');
@@ -66,7 +76,12 @@ export async function push_to_agent(params: {
     }
 
     logger.debug({ chatId }, 'push_to_agent succeeded');
-    return { success: true, message: '✅ Instruction pushed to agent successfully' };
+    // Issue #4913: surface the effective runtime the first turn will use.
+    const {profile} = (result as { profile?: { name?: string; agentBackend?: string; model?: string; thinking?: string } });
+    const profileNote = profile
+      ? ` Runtime bound: ${profile.name} (${profile.agentBackend} / ${profile.model}${profile.thinking ? ` / thinking ${profile.thinking}` : ''}).`
+      : '';
+    return { success: true, message: `✅ Instruction pushed to agent successfully.${profileNote}` };
 
   } catch (error) {
     logger.error({ err: error, chatId }, 'push_to_agent FAILED');

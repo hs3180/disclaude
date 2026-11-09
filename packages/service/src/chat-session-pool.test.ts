@@ -407,7 +407,9 @@ describe('ChatSessionPool', () => {
           ok: true, active: { name: 'deep', reasoningEffort: 'high' },
         });
         expect(pool.getActiveAgentPreset('chat-effort')).toEqual({
-          name: 'deep', agentBackend: 'codex', model: 'gpt-5.1', reasoningEffort: 'high',
+          // #4913 merge: the same effort also surfaces as `thinking` for the
+          // creation-profile/status consumers alongside #4914's field.
+          name: 'deep', agentBackend: 'codex', model: 'gpt-5.1', reasoningEffort: 'high', thinking: 'high',
         });
       } finally { pool.disposeAll(); }
     });
@@ -1778,6 +1780,98 @@ describe('ChatSessionPool', () => {
     it('chatIdOfSessionKey inverts buildSessionKey', () => {
       expect(chatIdOfSessionKey('oc_topic')).toBe('oc_topic');
       expect(chatIdOfSessionKey('oc_topic::om_threadA')).toBe('oc_topic');
+    });
+  });
+
+  describe('creation-time runtime profiles (#4913)', () => {
+    const presets = {
+      default: { apiKey: 'test-key', llm: 'test', agentBackend: 'claude' as const, model: 'claude-sonnet' },
+      codex: { apiKey: 'test-key', llm: 'test', agentBackend: 'codex' as const, model: 'gpt-5.2-codex' },
+    };
+    /** Minimal in-memory stand-in for the durable AgentSelectionStore. */
+    const fakeStore = (): { store: import('./agent-selection-store.js').AgentSelectionStore; selections: Map<string, unknown> } => {
+      const selections = new Map<string, unknown>();
+      const store = {
+        get: (chatId: string) => selections.get(chatId),
+        set: (chatId: string, presetName: string, updatedBy: string, extras: { overrides?: { model?: string; reasoningEffort?: string }; origin?: string } = {}) => {
+          const value = { chatId, presetName, updatedBy, updatedAt: new Date().toISOString(), ...extras };
+          selections.set(chatId, value);
+          return value;
+        },
+      };
+      return { store: store as unknown as import('./agent-selection-store.js').AgentSelectionStore, selections };
+    };
+
+    it('persists a named-preset binding before the first agent runs on it', () => {
+      const { store, selections } = fakeStore();
+      const pool = new ChatSessionPool({ agentPresets: presets, agentSelections: store });
+      const declared = pool.declareChatRuntimeProfile('oc_new', { preset: 'codex' }, 'creator');
+      expect(declared).toMatchObject({ ok: true, active: { name: 'codex', agentBackend: 'codex', model: 'gpt-5.2-codex', origin: 'creation' } });
+      expect(selections.get('oc_new')).toMatchObject({ presetName: 'codex', updatedBy: 'creator', origin: 'creation' });
+      pool.getOrCreateChatAgent('oc_new', createMockCallbacks());
+      expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith('pilot', 'oc_new', expect.anything(), expect.objectContaining({ agentBackend: 'codex', model: 'gpt-5.2-codex' }));
+      pool.disposeAll();
+    });
+
+    it('applies an explicit triple as overrides on the catalog preset of that harness', () => {
+      const { store } = fakeStore();
+      const pool = new ChatSessionPool({ agentPresets: presets, agentSelections: store });
+      const declared = pool.declareChatRuntimeProfile('oc_explicit', { harness: 'codex', model: 'gpt-5.3-codex', thinking: 'high' }, 'creator');
+      expect(declared).toMatchObject({ ok: true, active: { model: 'gpt-5.3-codex', thinking: 'high', origin: 'creation' } });
+      pool.getOrCreateChatAgent('oc_explicit', createMockCallbacks());
+      expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith('pilot', 'oc_explicit', expect.anything(), expect.objectContaining({ model: 'gpt-5.3-codex', reasoningEffort: 'high' }));
+      expect(pool.getActiveAgentPreset('oc_explicit')).toMatchObject({ name: 'codex', model: 'gpt-5.3-codex', thinking: 'high', origin: 'creation' });
+      pool.disposeAll();
+    });
+
+    it('rejects unsupported thinking with an actionable error and binds nothing', () => {
+      const { store, selections } = fakeStore();
+      const pool = new ChatSessionPool({ agentPresets: presets, agentSelections: store });
+      expect(selections.size).toBe(0);
+      const rejected = pool.declareChatRuntimeProfile('oc_bad', { harness: 'claude', model: 'claude-sonnet', thinking: 'high' }, 'creator');
+      expect(rejected).toMatchObject({ ok: false, error: expect.stringContaining('does not support a thinking level') });
+      expect(selections.size).toBe(0);
+      // The chat keeps falling back to the catalog default — not another preset.
+      pool.getOrCreateChatAgent('oc_bad', createMockCallbacks());
+      expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith('pilot', 'oc_bad', expect.anything(), expect.objectContaining({ agentBackend: 'claude', model: 'claude-sonnet' }));
+      pool.disposeAll();
+    });
+
+    it('validate-only probes bind nothing (group-creation preflight)', () => {
+      const { store, selections } = fakeStore();
+      const pool = new ChatSessionPool({ agentPresets: presets, agentSelections: store });
+      const probe = pool.declareChatRuntimeProfile('oc_probe', { preset: 'codex' }, 'preflight', { persist: false });
+      expect(probe).toMatchObject({ ok: true, active: { name: 'codex' } });
+      expect(selections.size).toBe(0);
+      pool.disposeAll();
+    });
+
+    it('is idempotent: re-declaring the same profile keeps the binding (no silent default)', () => {
+      const { store, selections } = fakeStore();
+      const pool = new ChatSessionPool({ agentPresets: presets, agentSelections: store });
+      expect(pool.declareChatRuntimeProfile('oc_retry', { preset: 'codex' }, 'creator')).toMatchObject({ ok: true });
+      expect(pool.declareChatRuntimeProfile('oc_retry', { preset: 'codex' }, 'creator')).toMatchObject({ ok: true });
+      expect(selections.get('oc_retry')).toMatchObject({ presetName: 'codex', origin: 'creation' });
+      pool.disposeAll();
+    });
+
+    it('creation binding outranks the per-app default but an in-session /agent use outranks it (#4913/T-068)', () => {
+      const { store } = fakeStore();
+      const pool = new ChatSessionPool({
+        agentPresets: presets,
+        agentSelections: store,
+        defaultAgentPresetForChat: () => 'default',
+        validatePresetBackend: () => ({ available: true }),
+      });
+      expect(pool.declareChatRuntimeProfile('oc_chain', { preset: 'codex' }, 'creator')).toMatchObject({ ok: true });
+      // creation binding > per-app default
+      pool.getOrCreateChatAgent('oc_chain', createMockCallbacks());
+      expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith('pilot', 'oc_chain', expect.anything(), expect.objectContaining({ agentBackend: 'codex' }));
+      // in-session /agent use > creation binding
+      expect(pool.switchAgentPreset('oc_chain', 'default', undefined, 'user')).toMatchObject({ ok: true, active: { name: 'default' } });
+      pool.getOrCreateChatAgent('oc_chain', createMockCallbacks());
+      expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith('pilot', 'oc_chain', expect.anything(), expect.objectContaining({ agentBackend: 'claude', model: 'claude-sonnet' }));
+      pool.disposeAll();
     });
   });
 });
