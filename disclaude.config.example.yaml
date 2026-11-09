@@ -121,11 +121,16 @@ channels:
     enabled: false
     # Optional absolute path, same as login --state-dir; default ~/.disclaude/wechat
     # stateDir: /absolute/path/to/private/wechat-account
+    # Per-app default agent, below the chat's saved /agent use choice and
+    # above the global default (#5476). Dynamic accounts may instead set it on
+    # their channels.wechat:<registration-id> block.
+    # agent: assistant
   feishu:
     enabled: true
     appId: $FEISHU_APP_ID
     appSecret: $FEISHU_APP_SECRET
     streamingCard: false
+    # agent: assistant
   rest:
     enabled: false
     host: 127.0.0.1

@@ -63,6 +63,28 @@ describe('normalizeCommandData', () => {
     });
   });
 
+  describe('agent command', () => {
+    it('should keep the plain use form on the preset argument', () => {
+      const result = normalizeCommandData('agent', { args: ['use', 'fast'] });
+      expect(result).toEqual({ subcommand: 'use', preset: 'fast' });
+    });
+
+    it('should ignore extra tokens — the plain switch carries the persistence itself (#5476)', () => {
+      const result = normalizeCommandData('agent', { args: ['use', 'fast', '--bind', 'oc_target'] });
+      expect(result).toEqual({ subcommand: 'use', preset: 'fast' });
+    });
+
+    it('should default to the current subcommand without arguments', () => {
+      const result = normalizeCommandData('agent', { args: [] });
+      expect(result).toEqual({ subcommand: 'current' });
+    });
+
+    it('should lowercase the subcommand while keeping the preset verbatim', () => {
+      const result = normalizeCommandData('agent', { args: ['USE', 'Fast'] });
+      expect(result).toEqual({ subcommand: 'use', preset: 'Fast' });
+    });
+  });
+
   describe('commands without data', () => {
     it('should return undefined for help', () => {
       const result = normalizeCommandData('help', { args: [] });

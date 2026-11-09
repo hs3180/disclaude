@@ -114,6 +114,26 @@ describe('send_text', () => {
     });
   });
 
+  describe('delivery position echo (#5722)', () => {
+    it('with --parent: success message marks the thread reply', async () => {
+      mockChannelApiClient.sendMessage.mockResolvedValue({ success: true, messageId: 'msg_reply_1' });
+      const result = await send_text({ text: 'reply', chatId: 'oc_topic_group', parentMessageId: 'om_topic_root' });
+      expect(result.success).toBe(true);
+      expect(result.message).toBe('✅ Text message sent — thread reply to om_topic_root (messageId msg_reply_1)');
+      expect(result.deliveryPosition).toBe('thread-reply');
+      expect(result.message).not.toContain('⚠️');
+    });
+
+    it('without --parent: success message marks chat root and warns about the NEW topic', async () => {
+      mockChannelApiClient.sendMessage.mockResolvedValue({ success: true, messageId: 'msg_root_1' });
+      const result = await send_text({ text: 'hello', chatId: 'oc_topic_group' });
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('— chat root (messageId msg_root_1)');
+      expect(result.message).toContain('⚠️ Sent without --parent');
+      expect(result.deliveryPosition).toBe('chat-root');
+    });
+  });
+
   describe('REST API failure', () => {
     it('should return error when REST API send fails', async () => {
       mockChannelApiClient.sendMessage.mockResolvedValue({ success: false, error: 'Connection lost', errorType: 'channel_api_request_failed' });
