@@ -38,6 +38,36 @@ disclaude channel send_text --chat CHAT_ID \
 
 不要尝试对全文评论调用不受支持的原线程回复。若通知命令失败，保留已写入并回读确认的文档，不重放文档写入；在当前对话中说明文档已更新、回读已确认，但通知未送达。没有实质性修改或核验不完整时，不发“已处理”提醒。
 
+## 输出文档评论按需监听（watch）
+
+评论监控默认关闭：disclaude 服务不会自动监听任何文档。仅当你或用户明确希望继续跟进某份已交付报告的评论时，才按需开启监听会话；不需要时停止，不监听时没有任何后台轮询。
+
+用 disclaude CLI 的 watch 指令管理（服务需在运行；受管 agent 已继承 `DISCLAUDE_API_BASE_URL` / `DISCLAUDE_API_TOKEN`）：
+
+```sh
+# 登记文档与当前 Project 会话的关联（显式登记才监听，未登记的文档不会被扫描）
+disclaude research watch add --doc <docToken> --chat <当前Project会话> \
+  [--type docx] [--project 报告主题] [--as user]
+# 开启监听会话（--interval 秒，有效范围 10s–1h）
+disclaude research watch start [--interval 300]
+# 查看会话、检查点与错误报告
+disclaude research watch status
+# 停止会话（登记与检查点保留，之后可再 start 续听）
+disclaude research watch stop
+# 不再需要该文档的关联
+disclaude research watch remove --doc <docToken>
+```
+
+会话语义：
+
+- 只读取已登记文档的评论，以登记身份访问（默认 `user`，即当前用户可见范围）；未登记的文档永远不会被扫描。
+- 会话首个周期做基线：开启时已存在的评论只记录、不重发；之后的新评论按文档/评论者/时间/原项目关联送回登记的 Project 会话，由你在原研究上下文判断采纳、需进一步核验并追问、或有依据地不采纳——watch 本身不修改文档、不答复评论。
+- 检查点持久化：轮询重叠、重复评论事件、停止后重启会话都不重复送达；重新 `start` 从检查点续听，不重放旧评论。
+- 评论读取或送达失败会显式记录并按指数退避重试，不静默丢弃；`watch status` 的 `recentErrors` 与各文档 `lastError` 可查。
+- 收到评论事件后的修订遵循本参考「定点修改与核验」的方法，评论者通知遵循「全文评论处理完成后的通知」的边界；不要因为开了监听就自动改写报告或未经确认自动答复评论。
+
+监听不是研究交付的默认步骤；服务未运行或未暴露 REST API 时上述指令会失败并给出原因，此时在当前对话中说明监听不可用即可，不影响已交付的报告。
+
 ## 可选完整快照工具
 
 仓库脚本适用于评论很多、分页核验容易出错或需要比较大段修订的场景，不是每次研究的必经流程：
