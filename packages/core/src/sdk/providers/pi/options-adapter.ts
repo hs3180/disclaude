@@ -59,14 +59,19 @@ export interface PiAdaptedOptions {
  * unresolvable inputs (Claude-specific presets) yield `undefined` fields rather
  * than errors, so the caller can fall back to pi defaults.
  *
+ * Issue #5718: this adapter no longer concatenates any skills manifest into
+ * the system prompt. Skill delivery on pi goes exclusively through the
+ * provider's native channel (pi's own `loadSkills` discovery + pi's own
+ * `formatSkillsForSystemPrompt` spec block), composed where the Agent is
+ * constructed — never a Disclaude-authored skills listing in any prompt layer.
+ *
  * @param options - disclaude unified query options (`types.ts` `AgentQueryOptions`).
  * @returns the pi-relevant subset (system prompt / model
  *   string / env); see `PiAdaptedOptions` for the deferred-items contract.
  */
-export function adaptPiOptions(options: AgentQueryOptions, skillManifest = ''): PiAdaptedOptions {
-  const prompt = resolveSystemPrompt(options);
+export function adaptPiOptions(options: AgentQueryOptions): PiAdaptedOptions {
   return {
-    systemPrompt: skillManifest ? [prompt, skillManifest].filter(Boolean).join('\n\n') : prompt,
+    systemPrompt: resolveSystemPrompt(options),
     model: options.model,
     env: options.env,
   };

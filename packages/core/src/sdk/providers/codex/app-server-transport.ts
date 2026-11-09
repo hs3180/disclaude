@@ -42,6 +42,12 @@ export interface CodexAppServerTransportOptions {
   userInputTimeoutMs?: number;
   /** Native skill-directory registration also uses the experimental protocol. */
   experimentalApi?: boolean;
+  /**
+   * Extra `-c key=value` config overrides for the child (Issue #5338): used
+   * to inject the upstream `model_provider` / `model_providers` entry when
+   * the bound LLM uses API access instead of the ChatGPT login.
+   */
+  configArgs?: readonly string[];
 }
 
 export interface CodexAppServerDynamicToolSpec {
@@ -122,6 +128,7 @@ export class CodexAppServerTransport {
       sessionKey: options.sessionKey, runId: randomUUID(), ...options.correlation,
     }));
     this.child = spawn(options.binary ?? 'codex', ['app-server', '--stdio', ...CODEX_BROWSER_DISABLE_ARGS,
+      ...(options.configArgs ?? []),
       ...(options.onUserInput ? [
         '--enable', 'default_mode_request_user_input',
         // The feature flag alone exposes the protocol surface. Codex 0.155
