@@ -48,7 +48,7 @@ const { mockGetConfigFromFile, mockGetPreloadedConfig } = vi.hoisted(() => ({
     agents: { default: { backend: 'claude', llm: 'default', enableAgentTeams: true } },
     llms: {
       default: {
-        model: 'glm-4',
+        defaultModel: 'glm-4',
         api: {
           protocol: 'anthropic',
           apiKey: '$TEST_LLM_DEFAULT_KEY',

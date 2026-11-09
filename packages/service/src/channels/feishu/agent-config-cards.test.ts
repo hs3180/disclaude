@@ -216,7 +216,9 @@ describe('FeishuAgentConfigCards flow', () => {
     expect(confirm).toContain('确认生效');
 
     await cards.submit(click({ token, op: 'apply', messageId }));
-    expect(sw).toHaveBeenCalledExactlyOnceWith('oc_chat', 'codex-deep', undefined);
+    // #5476: the card forwards its bound actor so the persisted chat
+    // selection records who switched — same contract as `/agent use`.
+    expect(sw).toHaveBeenCalledExactlyOnceWith('oc_chat', 'codex-deep', undefined, 'ou_actor');
     const applied = cardContent(client.calls.patch.at(-1)!);
     expect(applied).toContain('已生效');
     expect(applied).toContain('gpt-5.1');
@@ -235,7 +237,7 @@ describe('FeishuAgentConfigCards flow', () => {
     // Single-preset harness (claude) auto-advances to confirm after the pick.
     await cards.submit(click({ token, op: 'next', formValue: { agent_config_select: 'claude' }, messageId: 'om_1' }));
     await cards.submit(click({ token, op: 'apply', messageId: 'om_1' }));
-    expect(sw).toHaveBeenCalledWith('oc_chat', 'claude-main', 'om_topic');
+    expect(sw).toHaveBeenCalledWith('oc_chat', 'claude-main', 'om_topic', 'ou_actor');
   });
 
   it('refreshes dependent options when an upstream choice changes before confirm', async () => {

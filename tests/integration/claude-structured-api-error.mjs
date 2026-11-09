@@ -19,7 +19,7 @@ const base = `http://127.0.0.1:${server.address().port}`;
 const config = join(owned, 'config.json');
 await writeFile(config, JSON.stringify({
   agents: { owned: { backend: 'claude', llm: 'owned' } },
-  llms: { owned: { model: 'fixture-model', api: { protocol: 'anthropic', baseUrl: base, apiKey: '$OWNED_CLAUDE_API_KEY' } } },
+  llms: { owned: { defaultModel: 'fixture-model', api: { protocol: 'anthropic', baseUrl: base, apiKey: '$OWNED_CLAUDE_API_KEY' } } },
   channels: {}, workspace: { dir: owned }, logging: { level: 'info', pretty: false },
 }), { mode: 0o600 });
 await mkdir(join(owned, 'claude'));

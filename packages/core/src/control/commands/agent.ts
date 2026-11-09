@@ -36,7 +36,9 @@ export const handleAgent: CommandHandler<'agent'> = async (
     if (!name) {
       return { success: false, message: 'Usage: `/agent use <preset>`' };
     }
-    const result = api.switchAgentPreset(command.chatId, name, command.threadRootId);
+    // The switch also saves the choice for the chat, so the same preset is
+    // reused by this chat's next messages and after service restarts (#5476).
+    const result = api.switchAgentPreset(command.chatId, name, command.threadRootId, command.actorId);
     if (!result.ok) {
       const canList = !context.isCommandAllowed || context.isCommandAllowed({
         ...command, data: { subcommand: 'list' },
@@ -52,7 +54,7 @@ export const handleAgent: CommandHandler<'agent'> = async (
     }
     return {
       success: true,
-      message: `✅ Active agent: ${formatPreset(result.active)}\n\nA new native session will be used; context is not migrated across presets. The selection lasts until this service restarts.`,
+      message: `✅ Active agent: ${formatPreset(result.active)}\n\nA new native session will be used; context is not migrated across presets. The choice is saved for this chat and survives service restarts.`,
     };
   }
 
@@ -100,6 +102,6 @@ export const handleAgent: CommandHandler<'agent'> = async (
     ? '\n\nSwitch or review it with `/agent config` — a card with restricted options, no model IDs to type.'
     : '';
   return active
-    ? { success: true, message: `🤖 Active agent: ${formatPreset(active)}\n\nSelection scope: this chat/session; persistence: until service restart.${cardHint}` }
+    ? { success: true, message: `🤖 Active agent: ${formatPreset(active)}\n\nSelection precedence: /agent use (this session) > the chat's saved /agent use choice > per-app default > global default.${cardHint}` }
     : { success: false, message: 'No named agent presets are configured (legacy `agent:` configuration remains active).' };
 };

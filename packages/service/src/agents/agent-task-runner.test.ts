@@ -16,7 +16,7 @@ it.each(['concurrent', 'cancel-one', 'stop-before-start', 'stop-active', 'close-
       const configPath = join(root, 'config.json');
       writeFileSync(configPath, JSON.stringify({ workspace: { dir: root },
         agents: { default: { backend: 'claude', llm: 'default' } },
-        llms: { default: { model: 'offline-fixture', api: { protocol: 'anthropic', apiKey: '$TEST_LLM_DEFAULT_KEY' } } },
+        llms: { default: { defaultModel: 'offline-fixture', api: { protocol: 'anthropic', apiKey: '$TEST_LLM_DEFAULT_KEY' } } },
       }));
       const script = `
         import assert from 'node:assert/strict';

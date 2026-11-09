@@ -48,9 +48,10 @@ export function buildHelpMessage(command: ControlCommand, context: ControlHandle
   if (available.has('agent')) {
     // #4914: recommend by scenario — the card is the zero-recall path (no
     // preset names or model IDs to remember), commands stay as the alternative.
+    // #5702: switches (card or command) save per chat and survive restarts.
     tips.push(context.agentConfigUi
-      ? '用 `/agent config` 打开配置卡片，在受限选项中查看并切换 harness / model / thinking；也可用 `/agent list` + `/agent use <name>`。'
-      : '用 `/agent list` 查看 backend/model 预设，`/agent use <name>` 切换并开始新会话。');
+      ? '用 `/agent config` 打开配置卡片，在受限选项中查看并切换 harness / model / thinking；也可用 `/agent list` + `/agent use <name>`。切换按聊天保存，服务重启后仍生效。'
+      : '用 `/agent list` 查看 backend/model 预设，`/agent use <name>` 切换并开始新会话；切换按聊天保存，服务重启后仍生效。');
   }
   if (context.guidance && available.has('help')) { tips.push('自动指引每个聊天至多 5 分钟一次；`/help off` 关闭，`/help on` 恢复（重启后恢复默认）。'); }
 

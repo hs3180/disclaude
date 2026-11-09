@@ -273,8 +273,8 @@ describe('WiredChannelDescriptors', () => {
       const access = config.agentConfigAccess!;
       expect(access.listPresets()).toEqual([{ name: 'default', agentBackend: 'claude', model: 'claude-sonnet' }]);
       expect(access.getActivePreset('oc_1')).toMatchObject({ name: 'default' });
-      access.switchAgentPreset('oc_1', 'default');
-      expect(switchAgentPreset).toHaveBeenCalledExactlyOnceWith('oc_1', 'default', undefined);
+      access.switchAgentPreset('oc_1', 'default', undefined, 'ou_actor');
+      expect(switchAgentPreset).toHaveBeenCalledExactlyOnceWith('oc_1', 'default', undefined, 'ou_actor');
       expect(access.isCommandAllowed?.({ type: 'agent', chatId: 'oc_1', data: { subcommand: 'use' } })).toBe(true);
       expect(isCommandAllowed).toHaveBeenCalled();
 

@@ -26,12 +26,13 @@ describe('/agent', () => {
     expect(result.message).toContain('**fast** — pi / glm-fast');
   });
 
-  it('reports the fresh-session and process-lifetime boundaries after switching', async () => {
+  it('reports the fresh-session boundary and the per-chat persistence after switching', async () => {
     const result = await handleAgent({ type: 'agent', chatId: 'a', data: { subcommand: 'use', preset: 'fast' } }, context());
     expect(result).toMatchObject({ success: true });
     expect(result.message).toContain('pi / glm-fast');
     expect(result.message).toContain('context is not migrated');
-    expect(result.message).toContain('service restarts');
+    expect(result.message).toContain('saved for this chat');
+    expect(result.message).toContain('survives service restarts');
   });
 
   it('gives an executable next step after a failed switch without claiming the selection changed', async () => {
@@ -142,5 +143,26 @@ describe('/agent', () => {
       expect(result.message).toContain('`/agent list`');
       expect(result.error).toBe('boom');
     });
+  });
+
+  it('forwards the actor with the switch so the choice is saved for the chat (#5476)', async () => {
+    const switchPreset = vi.fn((): { ok: true; active: { name: string; agentBackend: string; model: string }; sessionBoundary: 'new-session' } =>
+      ({ ok: true, active: { name: 'fast', agentBackend: 'pi', model: 'glm-fast' }, sessionBoundary: 'new-session' }));
+    const ctx = context({ switchAgentPreset: switchPreset });
+    const result = await handleAgent({
+      type: 'agent', chatId: 'a', actorId: 'ou_user', threadRootId: 'om_topic',
+      data: { subcommand: 'use', preset: 'fast' },
+    }, ctx);
+    expect(result.success).toBe(true);
+    expect(switchPreset).toHaveBeenCalledWith('a', 'fast', 'om_topic', 'ou_user');
+  });
+
+  it('documents the selection precedence chain on /agent current (#5476)', async () => {
+    const result = await handleAgent({ type: 'agent', chatId: 'a', data: { subcommand: 'current' } }, context());
+    expect(result.success).toBe(true);
+    expect(result.message).toContain('/agent use (this session)');
+    expect(result.message).toContain("the chat's saved /agent use choice");
+    expect(result.message).toContain('per-app default');
+    expect(result.message).toContain('global default');
   });
 });

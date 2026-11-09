@@ -9,6 +9,7 @@
 
 import { createLogger, sendMessage, type ChannelApiFailureDetails, type ChannelApiMethodResult } from '@disclaude/core';
 import { isChannelApiAvailable, getChannelApiErrorMessage, getChannelApiClient, buildChannelApiFallbackHint } from './channel-api-utils.js';
+import { resolveDeliveryPosition } from './delivery-position.js';
 import { invokeMessageSentCallback, setMessageSentCallback, getMessageSentCallback } from './callback-manager.js';
 import type { SendMessageResult } from './types.js';
 
@@ -90,8 +91,22 @@ export async function send_text(params: {
     }
 
     invokeMessageSentCallback(chatId);
-    logger.debug({ chatId, parentMessageId }, 'Text message sent');
-    return { success: true, message: '✅ Text message sent' };
+    // Issue #5722: echo the delivery position (same contract as send_file /
+    // send_card) so a missing --parent in a topic group is visible in the
+    // success output instead of silently starting a NEW topic. The REST
+    // response carries no position yet — derive from the --parent request.
+    const delivery = resolveDeliveryPosition({ parentMessageId, messageId: result.messageId });
+    if (delivery.parentOmitted) {
+      logger.warn({ chatId, messageId: result.messageId }, 'send_text without --parent: in a topic group the message starts a NEW topic instead of landing in the current one');
+    }
+    logger.debug({ chatId, parentMessageId, deliveryPosition: delivery.deliveryPosition }, 'Text message sent');
+    return {
+      success: true,
+      message: `✅ Text message sent ${delivery.suffix}`,
+      deliveryPosition: delivery.deliveryPosition,
+      ...(delivery.threadId ? { parentMessageId: delivery.threadId } : {}),
+      ...(result.messageId ? { messageId: result.messageId } : {}),
+    };
 
   } catch (error) {
     logger.error({ err: error, chatId }, 'send_text FAILED');

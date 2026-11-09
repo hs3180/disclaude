@@ -21,6 +21,8 @@ import {
   type ChannelApiHandlers,
   type FeishuCard,
   type UserMessage,
+  type ControlCommandType,
+  createControlCommand,
   createLogger as coreCreateLogger,
 } from '@disclaude/core';
 import type { ChatAgentCallbacks } from '../agents/types.js';
@@ -241,6 +243,31 @@ export function createDefaultMessageHandler(
       `Processing message from ${options.channelName}`
     );
 
+    // #5476: channels without a dedicated slash router (WeChat) share the
+    // control handler. Unrecognized commands fall through as ordinary text,
+    // matching the Feishu command-router contract.
+    const text = content.trim();
+    if (text.startsWith('/')) {
+      const [command, ...args] = text.slice(1).split(/\s+/);
+      const threadRootId = metadata?.threadRootId as string | undefined;
+      const response = await context.controlHandler(createControlCommand(
+        command.toLowerCase() as ControlCommandType,
+        chatId,
+        { args },
+        {
+          ...(threadRootId ? { threadRootId } : {}),
+          ...(userId ? { actorId: userId } : {}),
+          ...(messageId ? { sourceMessageId: messageId } : {}),
+        },
+      ));
+      if (response?.message) {
+        await channel.sendMessage({
+          chatId, type: 'text', text: response.message, ...(threadRootId ? { threadId: threadRootId } : {}),
+        });
+        return;
+      }
+    }
+
     // Issue #3582: Route through InputMessageRouter when available (Phase 3)
     if (context.inputMessageRouter) {
       const senderOpenId = userId;
@@ -391,7 +418,10 @@ export function createChannelApiHandlers(
       description?: string
     ) => {
       try {
-        await channel.sendMessage({ chatId, type: 'card', card, threadId, description });
+        // Issue #5722: surface the platform message_id like sendMessage/uploadFile
+        // so the REST layer can echo the delivery position (thread reply vs chat
+        // root). Channels whose sendMessage returns void simply yield undefined.
+        return await channel.sendMessage({ chatId, type: 'card', card, threadId, description });
       } catch (error) {
         logger.error({ err: error, chatId, channel: channelName, handler: 'sendCard' }, 'REST API handler failed');
         throw error;
@@ -400,7 +430,7 @@ export function createChannelApiHandlers(
 
     uploadFile: async (chatId: string, filePath: string, threadId?: string) => {
       logger.debug(
-        { chatId, filePath, channel: channelName },
+        { chatId, filePath, threadId, channel: channelName },
         'uploadFile: using channel.sendMessage — file metadata may be incomplete'
       );
       let messageId: string | void;
@@ -416,12 +446,24 @@ export function createChannelApiHandlers(
       // NOTE: fileKey and fileSize are synthetic placeholders.
       // channel.sendMessage() does not return real file metadata.
       // Callers should not rely on these fields for business logic.
+      // Issue #5722: report the actual delivery position alongside the message_id
+      // so callers can tell a thread/topic reply from a parent-less send. In Feishu
+      // topic groups a parent-less send does NOT land in the current topic — it
+      // starts a NEW topic whose root is the delivered message itself (maintainer
+      // evidence: im +messages-mget shows thread_message_position=-1); that
+      // misplacement was previously invisible because the success output was
+      // byte-identical to an in-topic reply.
+      const deliveredMessageId = typeof messageId === 'string' && messageId ? messageId : undefined;
+      const isThreadReply = !!threadId;
       return {
         fileKey: '',    // synthetic — not available via sendMessage
         fileType: 'file',
         fileName: filePath.split('/').pop() || 'file',
         fileSize: 0,    // synthetic — not available via sendMessage
-        ...(typeof messageId === 'string' && messageId ? { messageId } : {}),
+        ...(deliveredMessageId ? { messageId: deliveredMessageId } : {}),
+        deliveryPosition: isThreadReply ? ('thread-reply' as const) : ('chat-root' as const),
+        ...(isThreadReply ? { threadId } : {}),
+        ...(!isThreadReply && deliveredMessageId ? { rootId: deliveredMessageId } : {}),
       };
     },
   };

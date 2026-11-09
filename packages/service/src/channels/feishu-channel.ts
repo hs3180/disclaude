@@ -240,7 +240,7 @@ export interface FeishuChannelConfig {
   resolveActionText?: (messageId: string, chatId: string, actionValue: string) => string | undefined;
   resolveActionThreadRoot?: (messageId: string, chatId: string) => string | undefined;
   /**
-   * Issue #5400: GitHub App client used by /issue confirmation cards.
+   * Issue #5400: GitHub App client used by /feedback confirmation cards.
    * Injected by the wired-descriptor setup from the `github` config section;
    * undefined disables submission (cards still render the summary).
    */
@@ -329,7 +329,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     return this.feishuMessageHandler.reconcileTaskQuestionWake(id);
   }
 
-  /** Issue #5400: send the /issue confirmation card for the chat's last failure. */
+  /** Issue #5400: send the /feedback confirmation card for the chat's last failure. */
   requestIssueReport(record: import('@disclaude/core').ChatFailureRecord, target: { chatId: string; threadRootId?: string; actorId?: string }):
     Promise<{ ok: true } | { ok: false; error: string }> {
     return this.feishuMessageHandler.requestIssueReport(record, target);

@@ -52,7 +52,8 @@ export interface FeishuAgentConfigAccess {
   switchAgentPreset(
     chatId: string,
     presetName: string,
-    threadRootId?: string
+    threadRootId?: string,
+    actorId?: string
   ): { ok: true; active: AgentConfigPresetOption } | { ok: false; error: string };
   /** Host access policy, re-checked at callback time; absent = same openness as commands. */
   isCommandAllowed?(command: ControlCommand<'agent'>): boolean;
@@ -216,7 +217,7 @@ export function buildAgentConfigCard(token: string, view: CardView): Record<stri
     elements.push(
       { tag: 'div', text: plain('✅ 已生效') },
       ...(applied ? [{ tag: 'markdown', content: profileLine(applied) }] : []),
-      { tag: 'div', text: plain('将开始新的原生会话；上下文不跨预设迁移。选择保留至服务重启。') }
+      { tag: 'div', text: plain('将开始新的原生会话；上下文不跨预设迁移。切换按聊天保存，服务重启后仍生效。') }
     );
     return finishCard(elements, 'green');
   }
@@ -260,7 +261,7 @@ export function buildAgentConfigCard(token: string, view: CardView): Record<stri
     const preset = view.presets.find(p => p.name === view.selection.preset);
     elements.push(
       { tag: 'markdown', content: `${STEP_LABEL.confirm}：将切换到 ${preset ? profileLine(preset) : view.selection.preset ?? ''}` },
-      { tag: 'div', text: plain('确认后开始新的原生会话；上下文不跨预设迁移；选择保留至服务重启（与 `/agent use` 相同）。') },
+      { tag: 'div', text: plain('确认后开始新的原生会话；上下文不跨预设迁移；切换按聊天保存，服务重启后仍生效（与 `/agent use` 相同）。') },
       { tag: 'button', name: `${PREFIX}${token}`, type: 'primary_filled', text: plain('确认生效'), value: { op: 'apply' } },
       { tag: 'button', name: `${PREFIX}${token}`, type: 'default', text: plain('重新选择'), value: { op: 'restart' } },
       { tag: 'button', name: `${PREFIX}${token}`, type: 'danger', text: plain('取消'), value: { op: 'cancel' } }
@@ -487,7 +488,9 @@ export class FeishuAgentConfigCards {
       p.error = undefined;
       // Failure to repaint must not turn an explicit apply into a retry loop.
       await this.paint(p).catch(() => {});
-      const result = access.switchAgentPreset(p.chatId, preset.name, p.threadRootId);
+      // #5476: forward the operator so the persisted chat selection records
+      // who switched — the card path and `/agent use` stay semantically equal.
+      const result = access.switchAgentPreset(p.chatId, preset.name, p.threadRootId, p.actorId);
       if (result.ok) {
         p.phase = 'applied';
         p.active = result.active;

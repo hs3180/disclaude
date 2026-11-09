@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- Remove the `/issue` command entirely; `/feedback` is the only reporting
+  entry and `/issue` input now follows the standard unknown-command path
+  (#5428).
+
 ## [0.6.7] - 2026-10-23
 
 ### Added
