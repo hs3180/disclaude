@@ -11,7 +11,6 @@ import type { AgentInputContext } from '../../user-input.js';
 import type { ClaudeQueryOptions } from './provider.js';
 import { createClaudeToolServer, claudeToolNames, CLAUDE_HOST_SERVER } from './tool-adapter.js';
 import { createAskUserQuestionPermission } from './ask-user-question.js';
-import { splitModelOverrides } from './model-alias.js';
 import * as path from 'node:path';
 import { Config } from '../../../config/index.js';
 import { installedDiagnosticsPlugin } from '../../../skills/diagnostics-plugin.js';
@@ -145,11 +144,14 @@ export function adaptOptions(
   // entry yet — keep them out of the settings file; the provider resolves
   // them against the booted session and merges the full-ID map before the
   // first input.
-  const { static: staticModelOverrides } = splitModelOverrides(options.modelOverrides);
-  if (Object.keys(staticModelOverrides).length) {
+  // Issue #5422 (r2): modelOverrides arrives fully static — bare behavesAs
+  // aliases are compiled into three-tier parameter mappings at config time
+  // from the user-declared agents.<name>.claude.models mapping, so the
+  // runtime needs no alias resolution or catalog lookup.
+  if (options.modelOverrides && Object.keys(options.modelOverrides).length) {
     sdkOptions.settings = {
       ...(sdkOptions.settings as object | undefined),
-      modelOverrides: staticModelOverrides,
+      modelOverrides: options.modelOverrides,
     };
   }
 

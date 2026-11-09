@@ -394,12 +394,23 @@ export function resolveConfiguredAgents(
           }
         }
         if (agent.claude.behavesAs !== undefined) {
-          // Issue #5422: a bare alias is resolved against the running Claude
-          // catalog at first use instead of being pinned here; anything that
-          // is neither a full ID nor a known alias stays a config error.
+          // Issue #5422 (r2): a bare alias names one of the three model tiers
+          // the user declares in `models` (omitted tiers derived from the
+          // provider defaultModel). It is compiled into the full three-tier
+          // parameter mapping at config time — never resolved against a
+          // running Claude catalog — so anything that is neither a full ID
+          // nor a declared tier is a config error listing the declared tiers.
           const behavesAs = typeof agent.claude.behavesAs === 'string' ? agent.claude.behavesAs.trim() : '';
-          if (!behavesAs || !(CLAUDE_MODEL_ID.test(behavesAs) || BARE_CLAUDE_ALIAS.test(behavesAs))) {
-            errors.push(`${field}.claude.behavesAs must be a full Claude model ID such as claude-opus-5 or a bare alias such as opus`);
+          const declaredTiers = Object.keys(agent.claude.models ?? {}).filter((tier) =>
+            Object.hasOwn(CLAUDE_TIER_ENV, tier)
+          );
+          const tierList = declaredTiers.length ? declaredTiers.join(', ') : Object.keys(CLAUDE_TIER_ENV).join(', ');
+          if (!CLAUDE_MODEL_ID.test(behavesAs)) {
+            if (!behavesAs) {
+              errors.push(`${field}.claude.behavesAs must be a full Claude model ID such as claude-opus-5 or a declared bare tier alias (declared: ${tierList})`);
+            } else if (!Object.hasOwn(CLAUDE_TIER_ENV, behavesAs.toLowerCase())) {
+              errors.push(`${field}.claude.behavesAs "${behavesAs}" is not a declared model tier (declared: ${tierList}); declare it under ${field}.claude.models or use a full Claude model ID`);
+            }
           }
           if (agent.claude.modelOverrides !== undefined) {
             errors.push(`${field}.claude.behavesAs and modelOverrides are mutually exclusive`);
@@ -502,6 +513,25 @@ export function resolveConfiguredAgents(
     const tierEnv = backend === 'claude' ? claudeTierEnvironment(agent.claude, defaultModel) : undefined;
     // Same trimmed form the validation branch above accepted (Issue #5422).
     const behavesAs = typeof agent.claude?.behavesAs === 'string' ? agent.claude.behavesAs.trim() : undefined;
+    // Issue #5422 (r2): a bare tier alias compiles the user-declared
+    // three-tier mapping itself (omitted tiers derived from defaultModel) —
+    // the same source the tier environment uses, so changing `models`
+    // changes behavesAs behavior globally. An explicit full ID compiles one
+    // entry, unchanged.
+    const behavesAsOverrides = (): Record<string, string> | undefined => {
+      if (!behavesAs || !defaultModel) {
+        return agent.claude?.modelOverrides;
+      }
+      if (CLAUDE_MODEL_ID.test(behavesAs)) {
+        return { [behavesAs]: defaultModel };
+      }
+      return Object.fromEntries(
+        (Object.keys(CLAUDE_TIER_ENV) as ClaudeTier[]).map((tier) => [
+          tier,
+          (typeof agent.claude?.models?.[tier] === 'string' ? agent.claude.models[tier].trim() : '') || defaultModel,
+        ])
+      );
+    };
     presets[name] = {
       ...settings,
       agentBackend: backend,
@@ -509,15 +539,7 @@ export function resolveConfiguredAgents(
       reasoningEffort: llm.reasoningEffort,
       maxConcurrentSessions: llm.maxConcurrentSessions,
       // Claude owns its model names; other runtimes never receive this metadata.
-      // Issue #5422: a bare alias cannot be pinned here — its catalog ID is
-      // only knowable from the booted Claude session — so it rides the
-      // modelOverrides map as the key itself and the Claude provider
-      // resolves it against the session catalog before the first input.
-      modelOverrides: backend === 'claude'
-        ? behavesAs && defaultModel
-          ? { [behavesAs]: defaultModel }
-          : agent.claude?.modelOverrides
-        : undefined,
+      modelOverrides: backend === 'claude' ? behavesAsOverrides() : undefined,
       model: defaultModel,
       apiKey: keyEnv ? (process.env[keyEnv] ?? '') : '',
       apiProtocol: protocol,

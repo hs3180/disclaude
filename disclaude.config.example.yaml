@@ -43,14 +43,15 @@ agents:
         sonnet: kimi-k3-flash # default tier
         haiku: kimi-k3-air # fast/background tier
       # Capability slot for the provider defaultModel when it is a gateway ID
-      # Claude Code does not know. The three tier samples above (opus, sonnet,
-      # haiku) are where those alias identities are declared; behavesAs takes
-      # either a full Claude model ID, or one of those bare aliases — reusing
-      # the same opus/sonnet/haiku identity `models` maps — which resolves
-      # against the running Claude catalog at first use, so the mapping
-      # survives Claude Code upgrades that rename catalog IDs (Issue #5422).
-      # behavesAs: claude-opus-5 # full ID, compiled at config time
-      # behavesAs: opus # bare alias: the opus tier identity above, resolved at first use
+      # Claude Code does not know. The three tier mappings above (opus, sonnet,
+      # haiku) ARE the behavesAs declaration: a bare alias writes exactly those
+      # three mappings into the behavesAs parameter mapping at config time
+      # (omitted tiers derived from defaultModel), so editing the tier models
+      # above changes behavesAs behavior everywhere (Issue #5422). An alias
+      # that is not one of the declared tiers is rejected at config time with
+      # the declared tiers listed.
+      # behavesAs: claude-opus-5 # full ID: one entry, compiled at config time
+      # behavesAs: opus # bare tier alias: the three mappings above become the parameter mapping
       # Alternative to behavesAs (mutually exclusive): map several full Claude
       # model IDs to provider IDs, e.g. a multi-model gateway:
       # modelOverrides:

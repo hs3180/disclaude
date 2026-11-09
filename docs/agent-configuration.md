@@ -178,21 +178,18 @@ is older. For multi-slot mappings set `agents.<name>.claude.modelOverrides` dire
 a raw Claude Code `modelOverrides` map (full Claude model ID → provider ID),
 mutually exclusive with `behavesAs`.
 
-`behavesAs` also accepts a bare alias (Issue #5422). The alias names one of the
-tier identities the three-tier `models` mapping declares — `opus`, `sonnet` or
-`haiku`: those three tier samples are where a deployment declares the alias
-identities, and a bare `behavesAs` reuses one of them for the provider default
-model (other catalog aliases such as `default` work too). A pinned full ID
-silently stops matching when a Claude Code upgrade renames catalog IDs,
-dropping the model back to the unknown-model 200k assumption. A bare alias
-instead compiles into the agent's `modelOverrides` as the key itself; the
-Claude provider resolves it against the booted session's `supportedModels()`
-catalog at first use (alias value → resolved full ID) and merges the resulting
-modelOverrides into the session before the first input is forwarded.
-Resolutions are cached for the process lifetime, keyed per LLM binding by its
-session environment (the bundled catalog only changes on restart). An alias
-missing from the catalog is an explicit error listing the
-available aliases — never a silent fallback — and it does not crash the session.
+`behavesAs` also accepts a bare tier alias (Issue #5422). The alias names one
+of the tier identities the three-tier `models` mapping declares — `opus`,
+`sonnet` or `haiku`: those three tier mappings the user sets above ARE the
+behavesAs declaration, and a bare `behavesAs` writes exactly them into the
+behavesAs parameter mapping at config time. The compile shares one source
+with the tier environment — every tier key maps to `models.<tier>`, an
+omitted tier deriving from the provider `defaultModel` — so editing
+`agents.<name>.claude.models` changes behavesAs behavior everywhere at once.
+Nothing resolves against the running Claude catalog and no first-use
+resolution path exists. An alias that is not one of the declared tiers
+(`opus`, `sonnet`, `haiku`) is an explicit config-time error listing the
+declared tiers — never a silent fallback.
 
 One binding can serve several harnesses (Issue #5679): bind both
 `backend: claude` and `backend: dsh` (or `pi`) agents to the same `llms` entry
