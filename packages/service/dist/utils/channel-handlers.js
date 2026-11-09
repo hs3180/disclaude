@@ -13,7 +13,7 @@
  *
  * @module utils/channel-handlers
  */
-import { createLogger as coreCreateLogger, } from "../../../core/dist/index.js";
+import { createControlCommand, createLogger as coreCreateLogger, } from "../../../core/dist/index.js";
 import { getIncomingInputSource } from '../agents/input-provenance.js';
 const routingLogger = coreCreateLogger('ChannelMessageRouter');
 /** Convert a timestamp (seconds or milliseconds) to ISO string, falling back to now. */
@@ -148,6 +148,25 @@ export function createDefaultMessageHandler(channel, context, options) {
         const source = getIncomingInputSource(message);
         const provenance = source === undefined ? {} : { runtimeSource: source };
         context.logger.info({ chatId, messageId, messageType, contentLength: content.length, hasAttachments: !!message.attachments }, `Processing message from ${options.channelName}`);
+        // #5476: channels without a dedicated slash router (WeChat) share the
+        // control handler. Unrecognized commands fall through as ordinary text,
+        // matching the Feishu command-router contract.
+        const text = content.trim();
+        if (text.startsWith('/')) {
+            const [command, ...args] = text.slice(1).split(/\s+/);
+            const threadRootId = metadata?.threadRootId;
+            const response = await context.controlHandler(createControlCommand(command.toLowerCase(), chatId, { args }, {
+                ...(threadRootId ? { threadRootId } : {}),
+                ...(userId ? { actorId: userId } : {}),
+                ...(messageId ? { sourceMessageId: messageId } : {}),
+            }));
+            if (response?.message) {
+                await channel.sendMessage({
+                    chatId, type: 'text', text: response.message, ...(threadRootId ? { threadId: threadRootId } : {}),
+                });
+                return;
+            }
+        }
         // Issue #3582: Route through InputMessageRouter when available (Phase 3)
         if (context.inputMessageRouter) {
             const senderOpenId = userId;

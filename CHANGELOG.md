@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.21] - 2026-11-09
+
+### Added
+
+- Persist each chat's `/agent use <preset>` selection across messages and
+  service restarts, and add per-application agent defaults (#5476; #5702).
+  Selection precedence is the current session's explicit switch, the chat's
+  saved choice, the owning application's `channels.<app>.agent` default, then
+  the global default. The existing command is the only switch surface: no new
+  bind command or parameter is added. Choices are stored in a validated,
+  owner-only, atomically written workspace document; failed saves preserve the
+  current session, and switching is refused while an affected session is busy.
+
 ## [0.6.20] - 2026-11-08
 
 ### Changed

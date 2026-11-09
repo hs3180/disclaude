@@ -46,6 +46,9 @@ export function normalizeCommandData(type, rawData) {
         case 'agent': {
             const args = Array.isArray(rawData.args) ? rawData.args : [];
             const subcommand = (args[0] ?? 'current').toLowerCase();
+            // `/agent use <preset>` is the only switch surface: the choice is saved
+            // for the chat (#5476, PR review: no extra commands or parameters), so
+            // plain positional parsing is enough and extra tokens are ignored.
             return {
                 subcommand,
                 ...(args[1] ? { preset: args[1] } : {}),

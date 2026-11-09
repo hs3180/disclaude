@@ -102,21 +102,56 @@ export class ChatSessionPool {
             model: preset.model,
         }));
     }
-    getActiveAgentPreset(chatId, threadRootId) {
+    resolvePreset(chatId, sessionKey) {
         if (!this.presets) {
             return undefined;
         }
-        const sessionKey = this.sessionKeyOf(chatId, threadRootId);
-        const resolved = resolveAgentPreset(this.presets, this.selectedPresetBySession.get(sessionKey));
-        return resolved.ok
+        const requested = this.selectedPresetBySession.get(sessionKey)
+            ?? this.options.agentSelections?.get(chatId)?.presetName
+            ?? this.options.defaultAgentPresetForChat?.(chatId);
+        return resolveAgentPreset(this.presets, requested);
+    }
+    /** Refuse a chat-wide selection change while an affected session still owns work. */
+    selectionChangeBusy(chatId) {
+        return [...this.projectSessions.values()].some(scope => {
+            if (scope.chatId !== chatId) {
+                return false;
+            }
+            const key = this.sessionKeyOf(scope.chatId, scope.threadRootId);
+            if (this.selectedPresetBySession.has(key)) {
+                return false;
+            }
+            const agent = this.agents.get(key);
+            return agent?.isBusy === true || agent?.hasPendingWork === true;
+        });
+    }
+    /** Reset the chat's sessions that follow the chat-wide selection (#5476). */
+    resetSelectionFollowingSessions(chatId) {
+        for (const scope of this.projectSessions.values()) {
+            if (scope.chatId !== chatId) {
+                continue;
+            }
+            const key = this.sessionKeyOf(scope.chatId, scope.threadRootId);
+            if (!this.selectedPresetBySession.has(key)) {
+                this.reset(scope.chatId, undefined, scope.threadRootId);
+            }
+        }
+    }
+    getActiveAgentPreset(chatId, threadRootId) {
+        const resolved = this.resolvePreset(chatId, this.sessionKeyOf(chatId, threadRootId));
+        return resolved?.ok
             ? { name: resolved.name, agentBackend: resolved.preset.agentBackend, model: resolved.preset.model }
             : undefined;
     }
     /**
      * Select a preset for one chat/thread. Existing agents are replaced only
-     * after the candidate backend and ChatAgent construct successfully.
+     * after the candidate backend and ChatAgent construct successfully, and —
+     * when a selection store is wired — after the choice is durably saved for
+     * the chat (#5476), so a failure leaves the current session untouched.
+     * Other sessions of the same chat that follow the chat-wide selection are
+     * reset to pick it up on their next message.
      */
-    switchAgentPreset(chatId, presetName, threadRootId) {
+    switchAgentPreset(chatId, presetName, threadRootId, actorId) {
         if (!this.presets) {
             return { ok: false, error: 'No named agent presets are configured (add an agents: map)' };
         }
@@ -128,6 +163,9 @@ export class ChatSessionPool {
         const previous = this.agents.get(sessionKey);
         if (previous?.isBusy) {
             return { ok: false, error: 'The current chat is busy; wait for the response or use /stop before switching presets' };
+        }
+        if (this.options.agentSelections && this.selectionChangeBusy(chatId)) {
+            return { ok: false, error: 'Another session of this chat is busy; wait for the response or use /stop before switching presets' };
         }
         let info;
         try {
@@ -158,6 +196,20 @@ export class ChatSessionPool {
                 };
             }
         }
+        // Persist before any destructive side effect (forgetSession/dispose) so a
+        // failed save cannot leave the chat half-switched (#5476).
+        if (this.options.agentSelections) {
+            try {
+                this.options.agentSelections.set(chatId, resolved.name, actorId ?? 'unknown');
+            }
+            catch (error) {
+                candidate?.dispose();
+                return {
+                    ok: false,
+                    error: `Could not save the agent selection for this chat: ${error instanceof Error ? error.message : String(error)}. The current session is unchanged.`,
+                };
+            }
+        }
         if (candidate) {
             // Construction is side-effect free with respect to the native SDK
             // session. Forget the selected backend only after construction succeeds,
@@ -182,6 +234,11 @@ export class ChatSessionPool {
             this.skipHistoryChatIds.add(sessionKey);
         }
         this.selectedPresetBySession.set(sessionKey, resolved.name);
+        // The issuing session now owns an explicit selection, so the sweep below
+        // only resets the chat's other selection-following sessions (#5476).
+        if (this.options.agentSelections) {
+            this.resetSelectionFollowingSessions(chatId);
+        }
         return {
             ok: true,
             active: {
@@ -303,9 +360,7 @@ export class ChatSessionPool {
         }
         if (!agent) {
             const skipHistory = session?.skipHistory ?? this.skipHistoryChatIds.has(sessionKey);
-            const selected = this.presets
-                ? resolveAgentPreset(this.presets, this.selectedPresetBySession.get(sessionKey))
-                : undefined;
+            const selected = this.resolvePreset(chatId, sessionKey);
             agent = this.createAgent(chatId, callbacks, selected?.ok ? selected.preset : undefined, skipHistory, sessionKey, session?.model, session !== undefined);
             this.agents.set(sessionKey, agent);
             // Issue #3696: clear skip-history flag after agent creation
@@ -412,9 +467,7 @@ export class ChatSessionPool {
         // it must fire even when no ChatAgent instance exists (the chat may have
         // been idle-evicted from this pool while its codex stash lived on). Keyed
         // by the same scoped native session key used during construction.
-        const selected = this.presets
-            ? resolveAgentPreset(this.presets, this.selectedPresetBySession.get(sessionKey))
-            : undefined;
+        const selected = this.resolvePreset(chatId, sessionKey);
         if (selected?.ok) {
             getProvider(selected.preset.agentBackend, selected.preset).forgetSession?.(sessionKey);
         }

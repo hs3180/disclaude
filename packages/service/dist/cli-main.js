@@ -20,6 +20,7 @@ import { SERVICE_VERSION } from './version.js';
 import { DisclaudeService } from './service.js';
 import { HttpApiServer } from './http-api-server.js';
 import { ChatSessionPool } from './chat-session-pool.js';
+import { AgentSelectionStore } from './agent-selection-store.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
 import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
@@ -457,8 +458,32 @@ export async function main() {
     // Issue #5400 (PR A): registry of each chat's most recent failure context,
     // recorded by ChatAgent for the /feedback entry (#5428).
     const failureRegistry = new ChatFailureRegistry();
+    let agentSelections;
+    try {
+        agentSelections = new AgentSelectionStore(path.join(workspaceDir, '.disclaude', 'agent-selections.json'));
+    }
+    catch (error) {
+        logger.fatal({ err: error, selectionPath: path.join(workspaceDir, '.disclaude', 'agent-selections.json') }, 'Cannot safely start with an invalid agent selection store (#5476)');
+        processLock?.release();
+        process.exit(1);
+    }
+    const configuredChannels = Config.getRawConfig().channels ?? {};
+    const perAppAgent = (chatId) => {
+        const channelId = service.getChannelManager().resolveChannelForChatId(chatId)?.id;
+        if (!channelId) {
+            return undefined;
+        }
+        const exact = configuredChannels[channelId];
+        const fallback = channelId === 'wechat' || channelId.startsWith('wechat:')
+            ? configuredChannels.wechat
+            : undefined;
+        const value = exact?.agent ?? fallback?.agent;
+        return typeof value === 'string' && value.trim() ? value : undefined;
+    };
     const agentPool = new ChatSessionPool({
         agentPresets: Config.getAgentPresets(),
+        agentSelections,
+        defaultAgentPresetForChat: perAppAgent,
         turnRecovery,
         // Issue #5400: per-chat last-failure registry backing the /feedback entry.
         failureRecorder: (failure) => failureRegistry.record(failure),
@@ -501,7 +526,7 @@ export async function main() {
             },
             listAgentPresets: () => agentPool.listAgentPresets(),
             getActiveAgentPreset: (chatId, threadRootId) => agentPool.getActiveAgentPreset(chatId, threadRootId),
-            switchAgentPreset: (chatId, presetName, threadRootId) => agentPool.switchAgentPreset(chatId, presetName, threadRootId),
+            switchAgentPreset: (chatId, presetName, threadRootId, actorId) => agentPool.switchAgentPreset(chatId, presetName, threadRootId, actorId),
             steer: (chatId, prompt, threadRootId) => agentPool.steer(chatId, prompt, threadRootId),
             canSteer: (chatId, threadRootId) => agentPool.canSteer(chatId, threadRootId),
         },
