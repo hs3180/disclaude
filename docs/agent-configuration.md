@@ -161,9 +161,26 @@ the first declaration is the default. `/agent use <name>` validates the selected
 connection before replacing the current chat's session. Failed preflight preserves
 the existing session. No credentials are required for dormant API bindings when
 the default runtime is native. A prompt schedule may also set `harness: <name>`
-(Issue #5731): that name is resolved, model-validated and preflighted for one
-isolated execution only, and never changes `/agent use`'s chat binding or the
-configured default. See the `schedule` skill for the schedule-file contract.
+and/or `model: <id>` (Issue #5731): the named harness is resolved, and the
+effective harness+model pair is validated under that harness's own rules and
+preflighted for one isolated execution only — never changing `/agent use`'s
+chat binding or the configured default. A model-only override is validated
+under the runtime resolved for the chat by the precedence below. See the
+`schedule` skill for the schedule-file contract.
+
+Selection precedence for each incoming session is `/agent use <preset>`
+(explicit, current session) > the chat's saved `/agent use` choice > the
+owning application's `channels.<app>.agent` default > the global default
+marker. A `/agent use <preset>` switch both activates the preset immediately
+(new native session, context not migrated, a failed switch leaves the session
+untouched) and saves the choice for the chat (`#5476`): the chat's next
+messages and new rounds reuse it without re-switching, and it survives
+service restarts through `workspace/.disclaude/agent-selections.json`
+(versioned and validated, owner-only atomic writes; a corrupt document fails
+startup). Sessions of a chat that never ran `/agent use` keep the per-app or
+global default unchanged. No separate commands or parameters were added —
+the plain `/agent use <preset>` carries the persistence, and a switch is
+refused while the chat has a busy session so no turn is interrupted.
 
 ## Migration
 
