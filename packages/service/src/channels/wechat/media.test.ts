@@ -12,6 +12,9 @@ import {
   uploadDeadlineMs,
   uploadEncryptedMedia,
   WECHAT_MEDIA_MAX_BYTES,
+  UPLOAD_CONNECT_BUDGET_MS,
+  UPLOAD_MAX_ATTEMPTS,
+  UPLOAD_STALL_BUDGET_MS,
 } from './media.js';
 import { channelError } from '../../channel-error.js';
 
@@ -41,7 +44,7 @@ afterEach(() => {
 let actualRequest: typeof https.request | undefined;
 
 /** Route only CDN upload requests to `fake`; every other https.request passes through untouched. */
-function injectUploadRequest(fake: () => ClientRequest): void {
+function injectUploadRequest(fake: (callback?: unknown) => ClientRequest): void {
   actualRequest ??= vi.mocked(https.request).getMockImplementation() as typeof https.request;
   vi.mocked(https.request).mockImplementation(((
     url: unknown,
@@ -50,7 +53,7 @@ function injectUploadRequest(fake: () => ClientRequest): void {
   ) => {
     const target = typeof url === 'string' ? url : url instanceof URL ? url.href : '';
     return target.includes('novac2c.cdn.weixin.qq.com')
-      ? fake()
+      ? fake(callback)
       : actualRequest!(url as never, options as never, callback as never);
   }) as unknown as typeof https.request);
 }
@@ -78,6 +81,46 @@ function stallUpload(): void {
       },
     });
     return req;
+  });
+}
+
+/**
+ * #5720 (T-101): drive the CDN POST through its real transport phase events —
+ * socket → secureConnect → drain/finish → response — so each phase boundary
+ * is observable. One scripted step per attempt; the last step repeats.
+ */
+interface UploadScriptContext {
+  req: EventEmitter;
+  socket: EventEmitter;
+  respond: (status: number, headers: Record<string, string>) => void;
+}
+
+function scriptUploads(...steps: ((context: UploadScriptContext) => void)[]): void {
+  let call = 0;
+  injectUploadRequest((callback) => {
+    const step = steps[Math.min(call++, steps.length - 1)];
+    const req = new EventEmitter();
+    const socket = new EventEmitter();
+    const respond = (status: number, headers: Record<string, string>) => {
+      const res = new EventEmitter() as EventEmitter & { statusCode?: number; headers?: Record<string, string> };
+      res.statusCode = status;
+      res.headers = headers;
+      (callback as unknown as (response: unknown) => void)(res);
+      res.emit('data', Buffer.alloc(0));
+      res.emit('end');
+    };
+    Object.assign(req, {
+      end: () => {
+        process.nextTick(() => {
+          req.emit('socket', socket);
+          step({ req, socket, respond });
+        });
+      },
+      destroy: (destroyError?: Error) => {
+        req.emit('error', destroyError ?? new Error('destroyed'));
+      },
+    });
+    return req as unknown as ClientRequest;
   });
 }
 
@@ -302,24 +345,28 @@ describe('WeChat encrypted CDN protocol', () => {
     expect(uploadDeadlineMs(15_481_296)).toBeLessThan(90_000);
   });
 
-  // Real setTimeout -> req.destroy(error) chain under fake timers; the stalled
+  // Real setTimeout -> req.destroy(error) chain under fake timers; a stalled
   // request must surface as reason=timeout via the TimeoutError/ETIMEDOUT mapping.
-  it('aborts a stalled upload at its deadline and classifies it as a timeout', async () => {
+  // #5720: the stall sits in connect establishment (no socket ever comes up),
+  // so it is retried once with a fresh negotiation before failing terminally.
+  it('aborts a stalled upload at its connect budget and classifies it as a timeout after one retry', async () => {
     vi.useFakeTimers();
     try {
+      const requestUpload = vi.fn(() => Promise.resolve({ upload_param: 'private-ref' }));
       stallUpload();
       const pending = uploadEncryptedMedia({
         fileData: Buffer.from('fixture'),
         to: 'peer',
         kind: 'file',
-        requestUpload: () => Promise.resolve({ upload_param: 'private-ref' }),
+        requestUpload,
       });
       const expectation = expect(pending).rejects.toMatchObject({
-        detail: { stage: 'upload', reason: 'timeout', messageSent: false },
+        detail: { stage: 'upload', reason: 'timeout', phase: 'connect', writtenBytes: 0, attempt: 2, messageSent: false },
         cause: { name: 'TimeoutError', code: 'ETIMEDOUT' },
       });
-      await vi.advanceTimersByTimeAsync(15_000 + 16 * 4 + 1_000); // padded ciphertext: 16 bytes
+      await vi.advanceTimersByTimeAsync(2 * 10_000 + 1_000); // connect budget per attempt
       await expectation;
+      expect(requestUpload).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }
@@ -497,5 +544,227 @@ describe('WeChat encrypted CDN protocol', () => {
         '/unused'
       )
     ).rejects.toThrow('20 MiB');
+  });
+});
+
+/**
+ * #5720 (T-101): the size-aware deadline expired end-to-end (2.5 MiB at ~25s,
+ * 8.34 MiB at ~48s) without revealing whether connect, body write or the
+ * receipt wait stalled. These cases pin the phase taxonomy, the bounded
+ * budgets and the safe-retry boundary of the https.request upload chain.
+ */
+describe('WeChat CDN upload phase diagnostics (#5720)', () => {
+  const negotiate = () => Promise.resolve({ upload_param: 'private-upload-ref' });
+
+  it('delivers through all three phases on one attempt without renegotiating', async () => {
+    const requestUpload = vi.fn(negotiate);
+    scriptUploads(({ socket, req, respond }) => {
+      socket.emit('connect');
+      socket.emit('secureConnect');
+      socket.emit('drain');
+      req.emit('finish');
+      respond(200, { 'x-encrypted-param': 'phase-ok' });
+    });
+    await expect(
+      uploadEncryptedMedia({ fileData: Buffer.from('fixture'), to: 'peer', kind: 'video', requestUpload })
+    ).resolves.toMatchObject({ media: { encrypt_query_param: 'phase-ok' } });
+    expect(requestUpload).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a connect-phase timeout once with a fresh negotiation, then succeeds', async () => {
+    vi.useFakeTimers();
+    try {
+      const requestUpload = vi.fn(negotiate);
+      scriptUploads(
+        () => { /* socket never establishes: DNS/TCP/TLS black hole */ },
+        ({ socket, req, respond }) => {
+          socket.emit('secureConnect');
+          req.emit('finish');
+          respond(200, { 'x-encrypted-param': 'retry-ok' });
+        }
+      );
+      const pending = uploadEncryptedMedia({ fileData: Buffer.from('fixture'), to: 'peer', kind: 'video', requestUpload });
+      const expectation = expect(pending).resolves.toMatchObject({ media: { encrypt_query_param: 'retry-ok' } });
+      await vi.advanceTimersByTimeAsync(UPLOAD_CONNECT_BUDGET_MS + 500);
+      await expectation;
+      expect(requestUpload).toHaveBeenCalledTimes(2); // renegotiated: an upload URL is never reused after a failed attempt
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retries an ECONNREFUSED connect failure once and keeps the result redacted', async () => {
+    const requestUpload = vi.fn(negotiate);
+    scriptUploads(
+      ({ req }) => {
+        process.nextTick(() => req.emit('error', Object.assign(new Error('private-connect-detail'), { code: 'ECONNREFUSED' })));
+      },
+      ({ socket, req, respond }) => {
+        socket.emit('secureConnect');
+        req.emit('finish');
+        respond(200, { 'x-encrypted-param': 'refused-then-ok' });
+      }
+    );
+    await expect(
+      uploadEncryptedMedia({ fileData: Buffer.from('fixture'), to: 'peer', kind: 'file', requestUpload })
+    ).resolves.toMatchObject({ media: { encrypt_query_param: 'refused-then-ok' } });
+    expect(requestUpload).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails terminally when connection establishment never completes, naming the connect phase', async () => {
+    vi.useFakeTimers();
+    try {
+      const requestUpload = vi.fn(negotiate);
+      scriptUploads(() => { /* never connects on any attempt */ });
+      const pending = uploadEncryptedMedia({ fileData: Buffer.from('fixture'), to: 'peer', kind: 'video', requestUpload });
+      const error = pending.catch((error: Error & { detail?: Record<string, unknown> }) => error);
+      const expectation = expect(pending).rejects.toMatchObject({
+        detail: {
+          stage: 'upload', reason: 'timeout', phase: 'connect', writtenBytes: 0,
+          attempt: UPLOAD_MAX_ATTEMPTS, messageSent: false,
+        },
+        cause: { name: 'TimeoutError', code: 'ETIMEDOUT' },
+      });
+      await vi.advanceTimersByTimeAsync(UPLOAD_MAX_ATTEMPTS * UPLOAD_CONNECT_BUDGET_MS + 1_000);
+      await expectation;
+      const failure = (await error) as Error & { detail?: Record<string, unknown> };
+      expect(requestUpload).toHaveBeenCalledTimes(UPLOAD_MAX_ATTEMPTS);
+      expect(`${failure.message} ${JSON.stringify(failure.detail)}`).toContain('phase=connect');
+      expect(`${failure.message} ${failure.stack} ${JSON.stringify(failure)}`).not.toMatch(/private-/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('distinguishes a body-write stall: no retry, zero bytes confirmed, far below the size-aware total', async () => {
+    vi.useFakeTimers();
+    try {
+      const requestUpload = vi.fn(negotiate);
+      scriptUploads(({ socket }) => {
+        socket.emit('secureConnect'); // connected, but the body never makes progress
+      });
+      // 1 MiB total budget would be 15s + 4.2s; the stall watchdog must fire at 15s instead.
+      const pending = uploadEncryptedMedia({ fileData: Buffer.alloc(1024 * 1024), to: 'peer', kind: 'video', requestUpload });
+      const expectation = expect(pending).rejects.toMatchObject({
+        detail: {
+          stage: 'upload', reason: 'timeout', phase: 'write', writtenBytes: 0, attempt: 1, messageSent: false,
+          connectMs: 0,
+        },
+      });
+      await vi.advanceTimersByTimeAsync(UPLOAD_STALL_BUDGET_MS + 500);
+      await expectation;
+      expect(requestUpload).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('distinguishes a receipt-wait lag after the body was written and never resends it', async () => {
+    vi.useFakeTimers();
+    try {
+      const requestUpload = vi.fn(negotiate);
+      scriptUploads(({ socket, req }) => {
+        socket.emit('secureConnect');
+        socket.emit('drain');
+        req.emit('finish'); // ciphertext fully handed over; response headers never arrive
+      });
+      const pending = uploadEncryptedMedia({ fileData: Buffer.from('fixture'), to: 'peer', kind: 'video', requestUpload });
+      const expectation = expect(pending).rejects.toMatchObject({
+        detail: {
+          stage: 'upload', reason: 'timeout', phase: 'response', writtenBytes: 16, attempt: 1, messageSent: false,
+          connectMs: 0, writeMs: 0, responseMs: UPLOAD_STALL_BUDGET_MS,
+        },
+      });
+      await vi.advanceTimersByTimeAsync(UPLOAD_STALL_BUDGET_MS + 500);
+      await expectation;
+      expect(requestUpload).toHaveBeenCalledTimes(1); // body already written: no blind resend
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the size-aware total deadline as the hard cap while the link keeps making progress', async () => {
+    vi.useFakeTimers();
+    try {
+      const requestUpload = vi.fn(negotiate);
+      scriptUploads(({ req, socket }) => {
+        socket.emit('secureConnect');
+        const interval = setInterval(() => socket.emit('drain'), 1_000); // alive but crawling
+        req.on('error', () => clearInterval(interval));
+      });
+      // 32 KiB → total ≈ 15s + 131ms; drains keep the stall watchdog quiet, so only the total can fire.
+      const pending = uploadEncryptedMedia({ fileData: Buffer.alloc(32 * 1024), to: 'peer', kind: 'video', requestUpload });
+      const expectation = expect(pending).rejects.toMatchObject({
+        detail: { stage: 'upload', reason: 'timeout', phase: 'write', attempt: 1, messageSent: false },
+      });
+      await vi.advanceTimersByTimeAsync(30_000);
+      await expectation;
+      expect(requestUpload).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([403, 503])('reports upload HTTP %s at the response phase without retrying', async (status) => {
+    const requestUpload = vi.fn(negotiate);
+    scriptUploads(({ socket, req, respond }) => {
+      socket.emit('secureConnect');
+      req.emit('finish');
+      respond(status, {});
+    });
+    const error = await uploadEncryptedMedia({
+      fileData: Buffer.from('fixture'), to: 'peer', kind: 'file', requestUpload,
+    }).catch((error: Error) => error);
+    expect((error as { detail?: Record<string, unknown> }).detail).toMatchObject({
+      stage: 'upload', reason: 'http', httpStatus: status, phase: 'response', writtenBytes: 16, attempt: 1, messageSent: false,
+    });
+    expect(requestUpload).toHaveBeenCalledTimes(1);
+  });
+
+  it('names the receipt phase when the CDN accepts the body but returns no download reference', async () => {
+    const requestUpload = vi.fn(negotiate);
+    scriptUploads(({ socket, req, respond }) => {
+      socket.emit('secureConnect');
+      req.emit('finish');
+      respond(200, { 'content-type': 'text/plain' }); // 2xx without x-encrypted-param
+    });
+    await expect(
+      uploadEncryptedMedia({ fileData: Buffer.from('fixture'), to: 'peer', kind: 'file', requestUpload })
+    ).rejects.toMatchObject({
+      detail: { stage: 'receipt', reason: 'receipt', phase: 'response', attempt: 1, messageSent: false },
+    });
+    expect(requestUpload).toHaveBeenCalledTimes(1);
+  });
+
+  it('maps caller cancellation to reason=cancelled and never retries into a second POST', async () => {
+    const requestUpload = vi.fn(negotiate);
+    scriptUploads(({ socket }) => {
+      socket.emit('secureConnect'); // mid-write when the caller gives up
+    });
+    const controller = new AbortController();
+    const pending = uploadEncryptedMedia({
+      fileData: Buffer.from('fixture'), to: 'peer', kind: 'file', requestUpload, signal: controller.signal,
+    });
+    await new Promise((resolve) => setImmediate(resolve)); // let the fake request arm its listeners
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({
+      detail: { stage: 'upload', reason: 'cancelled', phase: 'write', writtenBytes: 0, attempt: 1, messageSent: false },
+    });
+    expect(requestUpload).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry an ambiguous ECONNRESET that may have already carried bytes', async () => {
+    const requestUpload = vi.fn(negotiate);
+    scriptUploads(({ socket, req }) => {
+      socket.emit('secureConnect');
+      socket.emit('drain');
+      req.emit('error', Object.assign(new Error('private-reset'), { code: 'ECONNRESET' }));
+    });
+    await expect(
+      uploadEncryptedMedia({ fileData: Buffer.alloc(64 * 1024), to: 'peer', kind: 'video', requestUpload })
+    ).rejects.toMatchObject({
+      detail: { stage: 'upload', reason: 'network', phase: 'write', attempt: 1, messageSent: false },
+    });
+    expect(requestUpload).toHaveBeenCalledTimes(1);
   });
 });

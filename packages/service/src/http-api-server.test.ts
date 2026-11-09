@@ -1379,4 +1379,94 @@ describe('HttpApiServer', () => {
       expect((await dispatch(server, { method: 'GET', url: '/api/ping' })).statusCode).toBe(200);
     });
   });
+
+  describe('research watch routes (T-089 rework, #5197)', () => {
+    const statusPayload = { running: false, registrations: [], docs: {}, recentErrors: [] };
+    function controller(overrides: Partial<import('./research/watch-service.js').ResearchCommentWatchService> = {}) {
+      return {
+        start: vi.fn().mockResolvedValue({ started: true, status: statusPayload }),
+        stop: vi.fn().mockResolvedValue(statusPayload),
+        status: vi.fn().mockResolvedValue(statusPayload),
+        register: vi.fn().mockResolvedValue({ ok: true, data: { docToken: 'doxcnA', docType: 'docx', chatId: 'oc_c', registeredAt: '2026-11-06T00:00:00.000Z', identity: 'user' } }),
+        unregister: vi.fn().mockResolvedValue({ removed: true }),
+        ...overrides,
+      };
+    }
+
+    it('start/stop delegate to the controller; unwired servers answer 503', async () => {
+      expect((await dispatch(server, { method: 'POST', url: '/api/research/watch/start' })).statusCode).toBe(503);
+      expect((await dispatch(server, { method: 'POST', url: '/api/research/watch/stop' })).statusCode).toBe(503);
+      expect((await dispatch(server, { method: 'GET', url: '/api/research/watch/status' })).statusCode).toBe(503);
+      expect((await dispatch(server, { method: 'POST', url: '/api/research/watch/register' })).statusCode).toBe(503);
+      expect((await dispatch(server, { method: 'POST', url: '/api/research/watch/unregister' })).statusCode).toBe(503);
+
+      const ctl = controller();
+      server.setResearchWatchController(ctl);
+      const started = await dispatch(server, { method: 'POST', url: '/api/research/watch/start', body: JSON.stringify({ intervalSec: 300 }) });
+      expect(started.statusCode).toBe(200);
+      expect(JSON.parse(started.body)).toEqual({ ok: true, started: true, watch: statusPayload });
+      expect(ctl.start).toHaveBeenCalledExactlyOnceWith({ pollIntervalMs: 300_000 });
+
+      const stopped = await dispatch(server, { method: 'POST', url: '/api/research/watch/stop' });
+      expect(stopped.statusCode).toBe(200);
+      expect(JSON.parse(stopped.body)).toEqual({ ok: true, watch: statusPayload });
+      // Empty/absent bodies are valid for start/stop.
+      expect(ctl.stop).toHaveBeenCalledExactlyOnceWith();
+    });
+
+    it('start validates intervalSec and rejects non-object bodies', async () => {
+      server.setResearchWatchController(controller());
+      expect((await dispatch(server, { method: 'POST', url: '/api/research/watch/start', body: JSON.stringify({ intervalSec: 0 }) })).statusCode).toBe(400);
+      expect((await dispatch(server, { method: 'POST', url: '/api/research/watch/start', body: JSON.stringify([1]) })).statusCode).toBe(400);
+      expect((await dispatch(server, { method: 'POST', url: '/api/research/watch/start', body: 'not json' })).statusCode).toBe(400);
+    });
+
+    it('status is token-gated despite being GET (registrations + checkpoint payload)', async () => {
+      server = new HttpApiServer({ port: 0, apiToken: 'agent-token' });
+      const ctl = controller();
+      server.setResearchWatchController(ctl);
+      expect((await dispatch(server, { method: 'GET', url: '/api/research/watch/status' })).statusCode).toBe(401);
+      expect(ctl.status).not.toHaveBeenCalled();
+      const response = await dispatch(server, { method: 'GET', url: '/api/research/watch/status', headers: { authorization: 'Bearer agent-token' } });
+      expect(response.statusCode).toBe(200);
+      expect(JSON.parse(response.body)).toEqual({ ok: true, watch: statusPayload });
+    });
+
+    it('register validates required fields and forwards optional ones', async () => {
+      const ctl = controller();
+      server.setResearchWatchController(ctl);
+      expect((await dispatch(server, { method: 'POST', url: '/api/research/watch/register', body: JSON.stringify({ chatId: 'oc_c' }) })).statusCode).toBe(400);
+      expect((await dispatch(server, { method: 'POST', url: '/api/research/watch/register', body: JSON.stringify({ docToken: 'doxcnA', chatId: 7 }) })).statusCode).toBe(400);
+      expect((await dispatch(server, { method: 'POST', url: '/api/research/watch/register', body: JSON.stringify({ docToken: 'doxcnA', chatId: 'oc_c', projectName: 3 }) })).statusCode).toBe(400);
+      expect(ctl.register).not.toHaveBeenCalled();
+
+      const response = await dispatch(server, {
+        method: 'POST',
+        url: '/api/research/watch/register',
+        body: JSON.stringify({ docToken: 'doxcnA', chatId: 'oc_c', docType: 'docx', projectName: 'P', registeredBy: 'ou_u', identity: 'user' }),
+      });
+      expect(response.statusCode).toBe(200);
+      expect(ctl.register).toHaveBeenCalledExactlyOnceWith({ docToken: 'doxcnA', chatId: 'oc_c', docType: 'docx', projectName: 'P', registeredBy: 'ou_u', identity: 'user' });
+      expect(JSON.parse(response.body).ok).toBe(true);
+    });
+
+    it('register maps a registry refusal to a 400 with its message', async () => {
+      server.setResearchWatchController(controller({
+        register: vi.fn().mockResolvedValue({ ok: false, error: '监控登记数已达上限 128,先取消不需要的文档' }),
+      } as Partial<import('./research/watch-service.js').ResearchCommentWatchService>));
+      const response = await dispatch(server, { method: 'POST', url: '/api/research/watch/register', body: JSON.stringify({ docToken: 'doxcnA', chatId: 'oc_c' }) });
+      expect(response.statusCode).toBe(400);
+      expect(JSON.parse(response.body).message).toContain('已达上限');
+    });
+
+    it('unregister requires docToken and forwards removals', async () => {
+      const ctl = controller();
+      server.setResearchWatchController(ctl);
+      expect((await dispatch(server, { method: 'POST', url: '/api/research/watch/unregister', body: JSON.stringify({}) })).statusCode).toBe(400);
+      const response = await dispatch(server, { method: 'POST', url: '/api/research/watch/unregister', body: JSON.stringify({ docToken: 'doxcnA' }) });
+      expect(response.statusCode).toBe(200);
+      expect(ctl.unregister).toHaveBeenCalledExactlyOnceWith('doxcnA');
+      expect(JSON.parse(response.body)).toEqual({ ok: true, removed: true });
+    });
+  });
 });
