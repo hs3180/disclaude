@@ -69,7 +69,23 @@ The precedence for a run is a selected per-chat/per-turn model, then a
 per-query `CODEX_MODEL`, the process `CODEX_MODEL`, the resolved configuration
 setting, and finally the Codex CLI default. Avoid setting the same model in
 several places; use the resolved run log to see the effective model and source.
-The Codex binding does not accept an API block.
+
+The bound `llms.<name>` picks the LLM access method with `via` (Issue #5338).
+`via: chatgpt` — the default for an `api`-less entry — rides the CLI's own
+ChatGPT login and subscription quota; declaring it together with an `api`
+block is rejected. `via: api` binds a compatible API LLM instead: the entry
+needs `api.protocol: openai` and an `api.baseUrl` (the runtime speaks the
+OpenAI Responses wire protocol), disclaude injects the connection as a
+namespaced upstream `model_providers` entry and passes the referenced
+credential to the child — the ChatGPT login is not involved at all, so an
+API-bound codex agent runs without `codex login`. Model ids on an API
+binding are not checked against the ChatGPT catalog; the actual provider
+validates them on the wire. A missing login, a rejected API credential and a
+quota limit each surface as their own access method's explicit error — they
+are never reported as (or silently degraded into) the other method's
+problem, and a codex runtime is never rejected just for binding an API LLM.
+See [agent configuration](agent-configuration.md) for the full `via` rules
+and mixed subscription+API deployments.
 
 When no Disclaude model override is set, the Codex CLI keeps its own model
 selection from `CODEX_HOME/config.toml` or its built-in default. An explicit
@@ -101,6 +117,11 @@ Concurrency limits are per service process; extra work waits rather than
 starting unlimited Codex sessions or child processes.
 
 ### Weekly-quota admission (#5607)
+
+These windows are a ChatGPT-plan property: the ledger and admission below
+apply to `via: chatgpt` bindings only. A `via: api` binding has no
+subscription window — its usage-limit failures swap in the API quota notice
+and never latch the weekly ledger (Issue #5338).
 
 The ChatGPT subscription's rolling windows surface as structured rate-limit
 readings on both transports: the `exec` protocol's `token_count` events and

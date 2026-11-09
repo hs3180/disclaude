@@ -26,7 +26,7 @@ const CONFIG_KEYS = new Set([
   '_source',
   '_fromFile',
 ]);
-const BACKENDS = new Set(['claude', 'pi', 'codex', 'dsh']);
+const BACKENDS = new Set(['claude', 'pi', 'codex', 'dsh', 'miniswe']);
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 /** Full Claude model IDs as modelOverrides keys (Issue #5410); bare aliases are rejected below. */
 const CLAUDE_MODEL_ID = /^claude-[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -117,11 +117,28 @@ export function resolveConfiguredAgents(
         errors.push(`${field}.${key} has moved to agents.<name>.claude.${key}; llms contains provider settings only`);
       } else if (key === 'model') {
         errors.push(`${field}.model has been renamed to ${field}.defaultModel; agents can use any model of this provider and defaultModel only sets the default`);
-      } else if (!['defaultModel', 'reasoningEffort', 'maxConcurrentSessions', 'api', 'env'].includes(key)) {
+      } else if (!['via', 'defaultModel', 'reasoningEffort', 'maxConcurrentSessions', 'api', 'env'].includes(key)) {
         errors.push(`${field}.${key} is unsupported`);
       }
     }
     const llm = raw as LlmConfig;
+    if (llm.via !== undefined && !['chatgpt', 'api'].includes(llm.via)) {
+      errors.push(`${field}.via must be chatgpt or api`);
+    }
+    // Issue #5338: the access method is declared, never inferred from a
+    // missing credential. chatgpt = the Codex-managed ChatGPT login, so an
+    // api block contradicts it; api = a compatible API connection, so the
+    // api block is mandatory.
+    if (llm.via === 'chatgpt' && llm.api !== undefined) {
+      errors.push(
+        `${field}.via chatgpt uses the Codex-managed ChatGPT login and subscription; remove ${field}.api or declare via: api`
+      );
+    }
+    if (llm.via === 'api' && llm.api === undefined) {
+      errors.push(
+        `${field}.via api requires ${field}.api with protocol, baseUrl and credential reference; a missing credential is never treated as chatgpt`
+      );
+    }
     if (llm.defaultModel !== undefined && (typeof llm.defaultModel !== 'string' || !llm.defaultModel.trim())) {
       errors.push(`${field}.defaultModel must be a non-empty string when set`);
     }
@@ -211,6 +228,7 @@ export function resolveConfiguredAgents(
       'codexSandbox',
       'codexNetworkAccess',
       'codex',
+      'miniswe',
       'maxConcurrentTasks',
       'enableAgentTeams',
       'autoCompactWindow',
@@ -230,7 +248,7 @@ export function resolveConfiguredAgents(
       errors.push(
         raw.backend === 'deepseek'
           ? `${field}.backend deepseek is unsupported; use backend: dsh`
-          : `${field}.backend must be claude, pi, codex or dsh`
+          : `${field}.backend must be claude, pi, codex, dsh or miniswe`
       );
     }
     if (typeof agent.llm !== 'string' || !Object.hasOwn(llms, agent.llm)) {
@@ -311,6 +329,41 @@ export function resolveConfiguredAgents(
         (!Number.isInteger(agent.codex.weeklyLimitCooldownMs) || (agent.codex.weeklyLimitCooldownMs as number) <= 0)
       ) {
         errors.push(`${field}.codex.weeklyLimitCooldownMs must be a positive integer`);
+      }
+    }
+    if (agent.miniswe !== undefined) {
+      if (!mapping(agent.miniswe as unknown)) {
+        errors.push(`${field}.miniswe must be a mapping`);
+      } else {
+        for (const key of Object.keys(agent.miniswe)) {
+          if (!['binary', 'executionEnvironment', 'timeoutMs'].includes(key)) {
+            errors.push(`${field}.miniswe.${key} is unsupported`);
+          }
+        }
+        if (
+          agent.miniswe.binary !== undefined &&
+          (typeof agent.miniswe.binary !== 'string' || !agent.miniswe.binary.trim())
+        ) {
+          errors.push(`${field}.miniswe.binary must be a non-empty string`);
+        }
+        if (agent.miniswe.executionEnvironment !== undefined) {
+          if (agent.miniswe.executionEnvironment === 'local') {
+            // The only implemented policy: subprocess in the managed workspace.
+          } else {
+            errors.push(
+              `${field}.miniswe.executionEnvironment must be local; docker and SWE-ReX execution environments are out of scope for this adapter (run those as native mini-swe-agent workflows, #5006)`
+            );
+          }
+        }
+        if (
+          agent.miniswe.timeoutMs !== undefined &&
+          (!Number.isInteger(agent.miniswe.timeoutMs) || (agent.miniswe.timeoutMs as number) < 0)
+        ) {
+          errors.push(`${field}.miniswe.timeoutMs must be a non-negative integer`);
+        }
+      }
+      if (agent.backend !== 'miniswe') {
+        errors.push(`${field}.miniswe requires backend: miniswe`);
       }
     }
     if (agent.mode !== undefined) {
@@ -397,14 +450,41 @@ export function resolveConfiguredAgents(
     }
     // reasoningEffort is a provider-level default, not a harness gate
     // (review 2026-11-06): runtimes that cannot apply an effort ignore it.
-    if (agent.backend === 'codex' && llm.api !== undefined) {
+    // Issue #5338: resolve the declared access method. A declared
+    // via: chatgpt binds the Codex-managed ChatGPT login, which only the
+    // codex runtime holds; via: api (declared or implied by an api block)
+    // carries a compatible API connection that codex may bind too — a codex
+    // runtime is NOT rejected for API access, and a missing credential is
+    // never silently read as the chatgpt method.
+    const llmVia = llm.via ?? (llm.api !== undefined ? 'api' : 'chatgpt');
+    if (llm.via === 'chatgpt' && agent.backend !== 'codex') {
       errors.push(
-        `${field}: this native runtime owns its API connection; omit llms.${agent.llm}.api`
+        `${field}: llms.${agent.llm}.via chatgpt requires backend: codex — the ChatGPT login is managed by the Codex CLI`
       );
+    }
+    if (agent.backend === 'codex' && llmVia === 'api') {
+      if (llm.api?.protocol === 'anthropic') {
+        errors.push(
+          `${field}: the codex runtime drives OpenAI-protocol (Responses API) endpoints; llms.${agent.llm}.api.protocol must be openai`
+        );
+      }
+      if (!llm.api?.baseUrl) {
+        errors.push(
+          `llms.${agent.llm}.api.baseUrl is required for API access on the codex runtime`
+        );
+      }
     }
     if (agent.backend === 'dsh' && (!llm.api || !llm.api.baseUrl)) {
       errors.push(
         `llms.${agent.llm}.api with protocol, baseUrl and credential reference is required for DSH`
+      );
+    }
+    // mini-swe-agent resolves its model through LiteLLM from the bound LLM
+    // connection; without an api block it would silently fall back to the
+    // interactive global setup the headless child can never complete.
+    if (agent.backend === 'miniswe' && !llm.api) {
+      errors.push(
+        `llms.${agent.llm}.api with protocol, credential reference and (for custom endpoints) baseUrl is required for mini-swe`
       );
     }
     const protocol = llm.api?.protocol;
@@ -419,6 +499,7 @@ export function resolveConfiguredAgents(
     presets[name] = {
       ...settings,
       agentBackend: backend,
+      llmVia,
       reasoningEffort: llm.reasoningEffort,
       maxConcurrentSessions: llm.maxConcurrentSessions,
       // Claude owns its model names; other runtimes never receive this metadata.
@@ -489,6 +570,18 @@ export function validateResolvedAgent(preset: AgentPreset): string | undefined {
     return `External environment references are missing or empty: ${preset.missingEnvReferences.join(', ')}`;
   }
   if (preset.agentBackend === 'codex') {
+    // ChatGPT access (Issue #5338): the login state lives in the Codex CLI
+    // (auth.json under CODEX_HOME) and surfaces as its own explicit provider
+    // errors — no API credential is involved, so none is required here.
+    if (!preset.apiProtocol) {
+      return undefined;
+    }
+    // API access on the codex runtime keeps the same explicit credential
+    // error as every other runtime; it is never reported as (or silently
+    // degraded to) a ChatGPT login problem.
+    if (!preset.apiKey.trim()) {
+      return `The credential referenced by llms.${preset.llm}.api.apiKey is missing`;
+    }
     return undefined;
   }
   if (!preset.apiProtocol) {

@@ -2,7 +2,7 @@
 
 import type { AgentPreset, AgentPresets } from './types.js';
 
-const VALID_BACKENDS = new Set<AgentPreset['agentBackend']>(['claude', 'pi', 'codex', 'dsh']);
+const VALID_BACKENDS = new Set<AgentPreset['agentBackend']>(['claude', 'pi', 'codex', 'dsh', 'miniswe']);
 
 /**
  * Issue #5255: backends selectable through the orthogonal `/agent backend`
@@ -51,9 +51,18 @@ export function backendLlmCompatibility(
         ? { ok: true }
         : { ok: false, reason: 'the dsh backend requires an llm api with both protocol and baseUrl' };
     case 'codex':
-      return binding.apiProtocol
-        ? { ok: false, reason: 'the codex backend owns its ChatGPT connection and cannot use an llm api binding' }
-        : { ok: true };
+      // #5338: codex may bind an llm api connection (OpenAI-protocol
+      // Responses endpoint); without one it owns its ChatGPT login. Only an
+      // anthropic-protocol binding cannot serve it.
+      return !binding.apiProtocol || binding.apiProtocol === 'openai'
+        ? { ok: true }
+        : { ok: false, reason: 'the codex backend serves llm bindings over an OpenAI-compatible (Responses) endpoint; the bound llm uses the anthropic protocol' };
+    case 'miniswe':
+      // #5006: endpoint, model and credentials live on the bound llm api
+      // connection — the backend cannot run without one.
+      return binding.apiProtocol && binding.apiBaseUrl
+        ? { ok: true }
+        : { ok: false, reason: 'the miniswe backend requires an llm api with both protocol and baseUrl (endpoint/model/credentials live on the bound llm)' };
   }
 }
 
@@ -153,7 +162,7 @@ export function validateAgentPresets(
     }
     const preset = raw as Partial<AgentPreset>;
     if (!VALID_BACKENDS.has(preset.agentBackend as AgentPreset['agentBackend'])) {
-      errors.push(`agents.${name}.agentBackend must be one of: claude, pi, codex, dsh`);
+      errors.push(`agents.${name}.agentBackend must be one of: claude, pi, codex, dsh, miniswe`);
     }
     if (
       typeof preset.model !== 'string' ||
@@ -161,7 +170,12 @@ export function validateAgentPresets(
     ) {
       errors.push(`agents.${name}.model must be a non-empty string`);
     } else if (
-      preset.agentBackend === 'codex' && preset.model.trim() &&
+      preset.agentBackend === 'codex' &&
+      // Issue #5338: the ChatGPT-catalog shape only applies to the
+      // ChatGPT-subscription access method; an API binding serves whatever
+      // models the actual provider validates on the wire.
+      preset.llmVia !== 'api' &&
+      preset.model.trim() &&
       !/^gpt-\d+(?:[.-].+)/i.test(preset.model.trim())
     ) {
       errors.push(`agents.${name}.model must be a Codex/ChatGPT model identifier`);

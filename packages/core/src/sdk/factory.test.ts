@@ -356,4 +356,39 @@ describe('Provider Factory', () => {
       );
     });
   });
+
+  describe('optional mini-swe-agent backend (Issue #5006)', () => {
+    it('registers miniswe as a selectable backend', () => {
+      // Registry membership only; availability depends on the host having the
+      // mini CLI and is covered in providers/miniswe/provider.test.ts.
+      const provider = getProvider('miniswe');
+      expect(provider.name).toBe('miniswe');
+      expect(getAvailableProviders().map(info => info.name)).toContain('miniswe');
+      clearProviderCache('miniswe');
+    });
+
+    it('caches one instance per execution settings and keeps credentials out of the key', () => {
+      const defaults = getProvider('miniswe');
+      expect(getProvider('miniswe')).toBe(defaults);
+
+      // Execution settings create a distinct variant…
+      const custom = getProvider('miniswe', { miniswe: { binary: '/opt/mini', timeoutMs: 90_000 } });
+      expect(custom).not.toBe(defaults);
+      // …and the same settings reuse it.
+      expect(getProvider('miniswe', { miniswe: { binary: '/opt/mini', timeoutMs: 90_000 } })).toBe(custom);
+
+      // Endpoint/credential fields never participate in the cache key: an
+      // LLM credential swap must not fork a provider per key.
+      const withCredentials = getProvider('miniswe', {
+        miniswe: { binary: '/opt/mini', timeoutMs: 90_000 },
+        model: 'openai/gpt-5.4',
+        apiKey: 'sk-secret-cache-key',
+        apiBaseUrl: 'https://litellm.example/v1',
+        apiProtocol: 'openai',
+      } as never);
+      expect(withCredentials).toBe(custom);
+
+      clearProviderCache('miniswe');
+    });
+  });
 });

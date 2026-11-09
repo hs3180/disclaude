@@ -486,7 +486,40 @@ describe('HttpApiServer', () => {
       expect(data.ok).toBe(true);
       expect(data.success).toBe(true);
       expect(data.imageKey).toBe('img_v3_001');
-      expect(mockHandler).toHaveBeenCalledWith('/tmp/img.png');
+      // T-083 R3: chatId stays optional; absent → undefined second arg.
+      expect(mockHandler).toHaveBeenCalledWith('/tmp/img.png', undefined);
+    });
+
+    it('should forward the chat attribution to the handler (T-083 R3)', async () => {
+      const mockHandler = vi.fn().mockResolvedValue({ success: true, imageKey: 'img_v3_002' });
+      server.setUploadImageHandler(mockHandler);
+
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/upload-image',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ filePath: '/tmp/img.png', chatId: 'feishu:work:oc_1' }),
+      });
+
+      expect(statusCode).toBe(200);
+      expect(mockHandler).toHaveBeenCalledWith('/tmp/img.png', 'feishu:work:oc_1');
+    });
+
+    it.each([
+      ['non-string', 42],
+      ['empty', ''],
+    ])('should return 400 when chatId is %s', async (_label, chatId) => {
+      const mockHandler = vi.fn();
+      server.setUploadImageHandler(mockHandler);
+      const { statusCode, body } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/upload-image',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ filePath: '/tmp/img.png', chatId }),
+      });
+      expect(statusCode).toBe(400);
+      expect(JSON.parse(body).message).toContain('chatId');
+      expect(mockHandler).not.toHaveBeenCalled();
     });
 
     it('should return 503 when handler is not configured', async () => {

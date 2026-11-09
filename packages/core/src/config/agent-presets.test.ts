@@ -90,7 +90,7 @@ describe('validateAgentPresets', () => {
     if (!result.ok) {
       expect(result.errors).toEqual(
         expect.arrayContaining([
-          'agents.default.agentBackend must be one of: claude, pi, codex, dsh',
+          'agents.default.agentBackend must be one of: claude, pi, codex, dsh, miniswe',
           'agents.default.model must be a non-empty string',
         ])
       );
@@ -193,18 +193,29 @@ describe('orthogonal dimension switching helpers (Issue #5255)', () => {
       });
     });
 
-    it('keeps codex on its own ChatGPT connection', () => {
+    it('serves codex over an OpenAI-protocol api binding or its own ChatGPT login', () => {
       expect(backendLlmCompatibility('codex', {})).toEqual({ ok: true });
+      // #5338: an llm api binding (OpenAI-protocol Responses endpoint) may serve codex.
+      expect(backendLlmCompatibility('codex', openaiBinding)).toEqual({ ok: true });
       expect(backendLlmCompatibility('codex', anthropicBinding)).toMatchObject({
         ok: false,
-        reason: expect.stringContaining('cannot use an llm api binding'),
+        reason: expect.stringContaining('OpenAI-compatible'),
+      });
+    });
+
+    it('requires a full llm api connection for miniswe', () => {
+      // #5006: endpoint/model/credentials live on the bound llm api.
+      expect(backendLlmCompatibility('miniswe', openaiBinding)).toEqual({ ok: true });
+      expect(backendLlmCompatibility('miniswe', { apiProtocol: 'openai' as const })).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('miniswe'),
       });
     });
   });
 
   it('switchableBackendsFor lists every backend the binding can serve', () => {
-    expect(switchableBackendsFor({ ...anthropicBinding, apiBaseUrl: 'http://127.0.0.1:9' })).toEqual(['claude', 'pi', 'dsh']);
-    expect(switchableBackendsFor(openaiBinding)).toEqual(['pi', 'dsh']);
+    expect(switchableBackendsFor({ ...anthropicBinding, apiBaseUrl: 'http://127.0.0.1:9' })).toEqual(['claude', 'pi', 'dsh', 'miniswe']);
+    expect(switchableBackendsFor(openaiBinding)).toEqual(['pi', 'codex', 'dsh', 'miniswe']);
     // without a baseUrl only the protocol-bound backends remain
     expect(switchableBackendsFor(anthropicBinding)).toEqual(['claude', 'pi']);
     // A codex-style singleton has no api binding to carry along.
