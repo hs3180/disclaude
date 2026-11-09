@@ -943,6 +943,61 @@ describe('Scheduler', () => {
       expect(routedMessage.agentSession?.model).toBe('claude-sonnet-4');
     });
 
+    it('should propagate the named runtime into the isolated execution (Issue #5731)', async () => {
+      const task = createTask({
+        id: 'harness-exec',
+        harness: 'research',
+        model: 'gpt-6-luna',
+      });
+      scheduler.addTask(task);
+      fireJob(scheduler.getActiveJobs());
+
+      await vi.waitFor(() => {
+        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      const routedMessage = getRoutedMessage();
+      expect(routedMessage.agentSession).toMatchObject({
+        harness: 'research',
+        model: 'gpt-6-luna',
+        releaseAfterTurn: true,
+      });
+      expect(routedMessage.agentSession?.id).toMatch(/^execution:/);
+      expect(routedMessage.data).toMatchObject({ taskId: 'harness-exec', harness: 'research' });
+    });
+
+    it('should reject a harness override that would reuse the live chat session', async () => {
+      const task = createTask({ id: 'harness-live', harness: 'research', freshSession: false });
+      scheduler.addTask(task);
+      fireJob(scheduler.getActiveJobs());
+
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('History/model/harness overrides require freshSession:true'),
+        );
+      }, { timeout: 2000 });
+
+      expect(mockRouterAsMock.route).not.toHaveBeenCalled();
+      expect(mockCallbacks.resetAgent).not.toHaveBeenCalled();
+    });
+
+    it('uses a hot-reloaded harness on the next tick without replaying the old task', async () => {
+      scheduler.addTask(createTask({ id: 'hot-harness', harness: 'claude-runtime' }));
+      scheduler.addTask(createTask({ id: 'hot-harness', harness: 'codex-runtime' }));
+      const jobs = scheduler.getActiveJobs();
+      expect(jobs).toHaveLength(1);
+
+      fireJob(jobs);
+      await vi.waitFor(() => {
+        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+      await flushPending();
+
+      expect(getRoutedMessage().agentSession?.harness).toBe('codex-runtime');
+      expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
+    });
+
     it('should send error message when router fails', async () => {
       mockRouterAsMock.route.mockRejectedValueOnce(new Error('Router crashed'));
 
