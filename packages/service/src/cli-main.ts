@@ -33,6 +33,9 @@ import {
   eventBus,
   channelCredentialErrors,
   resolveChannelCredential,
+  resolveFeishuChannelCredential,
+  isChannelDeclaration,
+  resolveChannelDeclarations,
   ChatFailureRegistry,
   GoalStore,
   resolveAgentPreset,
@@ -101,10 +104,17 @@ export function resolveStartupApiToken(explicitToken?: string): string {
 }
 
 /** Publish the bound server's address and matching auth for managed child processes. */
-export function publishChannelApiEnvironment(baseUrl: string, apiToken?: string, env: NodeJS.ProcessEnv = process.env): void {
+export function publishChannelApiEnvironment(
+  baseUrl: string,
+  apiToken?: string,
+  env: NodeJS.ProcessEnv = process.env
+): void {
   env.DISCLAUDE_API_BASE_URL = baseUrl;
-  if (apiToken) { env.DISCLAUDE_API_TOKEN = apiToken; }
-  else { delete env.DISCLAUDE_API_TOKEN; }
+  if (apiToken) {
+    env.DISCLAUDE_API_TOKEN = apiToken;
+  } else {
+    delete env.DISCLAUDE_API_TOKEN;
+  }
 }
 
 export function parseArgs(args: string[]): CliOptions {
@@ -113,8 +123,14 @@ export function parseArgs(args: string[]): CliOptions {
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
 
-    if (['--mode', '--node-type', '--node-id'].some((flag) => arg === flag || arg.startsWith(`${flag  }=`))) {
-      throw new Error(`Removed execution-role option: ${arg}. Use disclaude start and remove obsolete role flags.`);
+    if (
+      ['--mode', '--node-type', '--node-id'].some(
+        (flag) => arg === flag || arg.startsWith(`${flag}=`)
+      )
+    ) {
+      throw new Error(
+        `Removed execution-role option: ${arg}. Use disclaude start and remove obsolete role flags.`
+      );
     }
 
     if (arg === 'start') {
@@ -134,29 +150,66 @@ export function parseArgs(args: string[]): CliOptions {
       options.researchArgs = args.slice(i + 1);
       return options;
     } else if (options.command === 'board-report' && arg === 'write') {
-      options.taskReport = options.taskReport ?? {}; options.taskReport.write = true;
-    } else if (options.command === 'board-report' && options.taskReport?.write && arg === '--inbox') {
+      options.taskReport = options.taskReport ?? {};
+      options.taskReport.write = true;
+    } else if (
+      options.command === 'board-report' &&
+      options.taskReport?.write &&
+      arg === '--inbox'
+    ) {
       const value = args[++i];
-      if (value && !value.startsWith('-')) { options.taskReport.inbox = value; }
-    } else if (options.command === 'board-report' && options.taskReport?.write && arg === '--kind') {
+      if (value && !value.startsWith('-')) {
+        options.taskReport.inbox = value;
+      }
+    } else if (
+      options.command === 'board-report' &&
+      options.taskReport?.write &&
+      arg === '--kind'
+    ) {
       const value = args[++i];
-      if (value === 'artifacts' || value === 'review') { options.taskReport.kind = value; }
+      if (value === 'artifacts' || value === 'review') {
+        options.taskReport.kind = value;
+      }
     } else if (options.command === 'history' && arg === 'query') {
       options.historyQuery = options.historyQuery ?? { chatId: '', format: 'json' };
-    } else if (options.command === 'history' && options.historyQuery !== undefined && arg === '--chat') {
+    } else if (
+      options.command === 'history' &&
+      options.historyQuery !== undefined &&
+      arg === '--chat'
+    ) {
       const value = args[++i];
-      if (value && !value.startsWith('-')) { options.historyQuery.chatId = value; }
-    } else if (options.command === 'history' && options.historyQuery !== undefined && arg === '--days') {
+      if (value && !value.startsWith('-')) {
+        options.historyQuery.chatId = value;
+      }
+    } else if (
+      options.command === 'history' &&
+      options.historyQuery !== undefined &&
+      arg === '--days'
+    ) {
       const value = args[++i];
       const days = value ? Number.parseInt(value, 10) : NaN;
-      if (Number.isInteger(days) && days > 0) { options.historyQuery.days = days; }
-    } else if (options.command === 'history' && options.historyQuery !== undefined && arg === '--limit') {
+      if (Number.isInteger(days) && days > 0) {
+        options.historyQuery.days = days;
+      }
+    } else if (
+      options.command === 'history' &&
+      options.historyQuery !== undefined &&
+      arg === '--limit'
+    ) {
       const value = args[++i];
       const limit = value ? Number.parseInt(value, 10) : NaN;
-      if (Number.isInteger(limit) && limit > 0) { options.historyQuery.limit = limit; }
-    } else if (options.command === 'history' && options.historyQuery !== undefined && arg === '--format') {
+      if (Number.isInteger(limit) && limit > 0) {
+        options.historyQuery.limit = limit;
+      }
+    } else if (
+      options.command === 'history' &&
+      options.historyQuery !== undefined &&
+      arg === '--format'
+    ) {
       const value = args[++i];
-      if (value === 'json' || value === 'text') { options.historyQuery.format = value; }
+      if (value === 'json' || value === 'text') {
+        options.historyQuery.format = value;
+      }
     } else if (arg === '--config' || arg === '-c') {
       const value = args[i + 1];
       if (value && !value.startsWith('-')) {
@@ -266,10 +319,15 @@ export function validateWorkspaceDir(workspaceDir: string): WorkspaceValidationR
  * and the owning host pins identity, settlement and persistence. Payload JSON
  * arrives on stdin so quoting can never corrupt it.
  */
-async function runTaskReportCommand(options: CliOptions, readInput: () => Promise<string> = readStdinPayload): Promise<void> {
+async function runTaskReportCommand(
+  options: CliOptions,
+  readInput: () => Promise<string> = readStdinPayload
+): Promise<void> {
   const report = options.taskReport;
   if (!report?.write || !report.inbox || !report.kind) {
-    console.error('Usage: disclaude board-report write --inbox <absolute-inbox-path> --kind artifacts|review  < payload.json');
+    console.error(
+      'Usage: disclaude board-report write --inbox <absolute-inbox-path> --kind artifacts|review  < payload.json'
+    );
     process.exit(1);
   }
   if (!report.inbox.startsWith('/')) {
@@ -277,18 +335,25 @@ async function runTaskReportCommand(options: CliOptions, readInput: () => Promis
     process.exit(1);
   }
   let payloadText: string;
-  try { payloadText = await readInput(); }
-  catch (error) {
+  try {
+    payloadText = await readInput();
+  } catch (error) {
     console.error(`Error: ${error instanceof Error ? error.message : 'board-report input failed'}`);
     process.exit(1);
   }
   let payload: unknown;
-  try { payload = JSON.parse(payloadText); } catch {
+  try {
+    payload = JSON.parse(payloadText);
+  } catch {
     console.error('Error: board-report payload must be a single JSON object on stdin');
     process.exit(1);
   }
   try {
-    const receipt = await writeTaskReport(report.inbox, report.kind as 'artifacts' | 'review', payload);
+    const receipt = await writeTaskReport(
+      report.inbox,
+      report.kind as 'artifacts' | 'review',
+      payload
+    );
     console.log(JSON.stringify({ ok: true, receipt }));
   } catch (error) {
     console.error(`Error: ${error instanceof Error ? error.message : 'board-report failed'}`);
@@ -297,9 +362,13 @@ async function runTaskReportCommand(options: CliOptions, readInput: () => Promis
 }
 async function readStdinPayload(): Promise<string> {
   const chunks: Buffer[] = [];
-  for await (const chunk of process.stdin) { chunks.push(chunk as Buffer); }
+  for await (const chunk of process.stdin) {
+    chunks.push(chunk as Buffer);
+  }
   const payload = Buffer.concat(chunks).toString('utf8');
-  if (Buffer.byteLength(payload) > 128 * 1024) { throw new Error('board-report payload exceeds the receipt format'); }
+  if (Buffer.byteLength(payload) > 128 * 1024) {
+    throw new Error('board-report payload exceeds the receipt format');
+  }
   return payload;
 }
 
@@ -312,7 +381,9 @@ async function readStdinPayload(): Promise<string> {
  */
 async function runHistoryCommand(options: CliOptions): Promise<void> {
   if (!options.historyQuery) {
-    console.error('Usage: disclaude history query --chat <chatId> [--days N] [--limit N] [--format json|text]');
+    console.error(
+      'Usage: disclaude history query --chat <chatId> [--days N] [--limit N] [--format json|text]'
+    );
     process.exit(1);
   }
   if (options.configPath) {
@@ -328,7 +399,11 @@ async function runHistoryCommand(options: CliOptions): Promise<void> {
     console.error('Error: history query requires --chat <chatId>');
     process.exit(1);
   }
-  const result = await queryChatHistory({ chatId: query.chatId, days: query.days, limit: query.limit });
+  const result = await queryChatHistory({
+    chatId: query.chatId,
+    days: query.days,
+    limit: query.limit,
+  });
   if (query.format === 'text') {
     for (const day of result.days) {
       console.log(`--- ${day.date} ---`);
@@ -338,7 +413,9 @@ async function runHistoryCommand(options: CliOptions): Promise<void> {
         console.log(message.content);
       }
     }
-    if (result.truncatedByLimit) { console.log('_(…older messages truncated by --limit; raise it or read the day files)_'); }
+    if (result.truncatedByLimit) {
+      console.log('_(…older messages truncated by --limit; raise it or read the day files)_');
+    }
     return;
   }
   // Single-line `{"ok":true,...}` on stdout so the unified CLI entry can route
@@ -473,11 +550,22 @@ export async function main(): Promise<void> {
   logger.info({ channels: channelEntries.map((e) => e.type) }, 'Starting disclaude service');
 
   // Create DisclaudeService
-  const appIds = channelEntries.filter(entry => entry.type === 'feishu')
-    .map(entry => String((entry.config as { appId?: string }).appId ?? '')).sort();
-  const callbackNamespace = crypto.createHash('sha256').update(JSON.stringify(appIds)).digest('hex').slice(0, 24);
+  const appIds = channelEntries
+    .filter((entry) => entry.type === 'feishu')
+    .map((entry) => String((entry.config as { appId?: string }).appId ?? ''))
+    .sort();
+  const callbackNamespace = crypto
+    .createHash('sha256')
+    .update(JSON.stringify(appIds))
+    .digest('hex')
+    .slice(0, 24);
   const service = new DisclaudeService({
-    interactiveContextFile: path.join(Config.getWorkspaceDir(), '.disclaude', 'interactive-context', `${callbackNamespace}.json`),
+    interactiveContextFile: path.join(
+      Config.getWorkspaceDir(),
+      '.disclaude',
+      'interactive-context',
+      `${callbackNamespace}.json`
+    ),
   });
 
   // Get ChannelManager from DisclaudeService (Issue #1594)
@@ -498,7 +586,7 @@ export async function main(): Promise<void> {
     logger.error({ err: error }, 'Failed to get agent configuration');
     console.error(
       `Error: 配置校验未通过，服务无法启动。\n${error instanceof Error ? error.message : 'Unknown configuration error'}\n` +
-      '请检查 disclaude.config.yaml 中的 agents / llms / channels 配置及相关环境变量。'
+        '请检查 disclaude.config.yaml 中的 agents / llms / channels 配置及相关环境变量。'
     );
     processLock?.release();
     process.exit(1);
@@ -537,8 +625,13 @@ export async function main(): Promise<void> {
       );
     }
   } catch (error) {
-    logger.fatal({ err: error, journalPath: path.join(workspaceDir, '.disclaude', 'service-turn-recovery.json') },
-      'Cannot safely start with an invalid service turn recovery journal (Issue #5273)');
+    logger.fatal(
+      {
+        err: error,
+        journalPath: path.join(workspaceDir, '.disclaude', 'service-turn-recovery.json'),
+      },
+      'Cannot safely start with an invalid service turn recovery journal (Issue #5273)'
+    );
     processLock?.release();
     process.exit(1);
   }
@@ -565,11 +658,19 @@ export async function main(): Promise<void> {
   const perAppAgent = (chatId: string): string | undefined => {
     const channelId = service.getChannelManager().resolveChannelForChatId(chatId)?.id;
     if (!channelId) { return undefined; }
+    // Named declarations register as `<type>:<name>` channel ids (e.g.
+    // `feishu:personal`); their `agent` default lives under the bare
+    // declaration key in `channels` (#5254).
+    const sep = channelId.indexOf(':');
+    const namedKey = sep > 0 ? channelId.slice(sep + 1) : undefined;
     const exact = configuredChannels[channelId] as { agent?: unknown } | undefined;
+    const named = namedKey !== undefined
+      ? configuredChannels[namedKey] as { agent?: unknown } | undefined
+      : undefined;
     const fallback = channelId === 'wechat' || channelId.startsWith('wechat:')
       ? configuredChannels.wechat as { agent?: unknown } | undefined
       : undefined;
-    const value = exact?.agent ?? fallback?.agent;
+    const value = exact?.agent ?? named?.agent ?? fallback?.agent;
     return typeof value === 'string' && value.trim() ? value : undefined;
   };
   const agentPool = new ChatSessionPool({
@@ -597,22 +698,29 @@ export async function main(): Promise<void> {
   const controlHandlerContext: ControlHandlerContext = {
     agentPool: {
       reset: (chatId: string, skipContext?: boolean) => {
-        backgroundTasks.stopForParent(chatId); agentPool.reset(chatId, skipContext);
+        backgroundTasks.stopForParent(chatId);
+        agentPool.reset(chatId, skipContext);
       },
       resetProjectSessions: (chatId: string) => agentPool.resetProjectSessions(chatId),
-      isProjectBusy: (chatId: string) => agentPool.isProjectBusy(chatId) || backgroundTasks.isBusy(chatId) || (goalExecution?.isBusy(chatId) ?? false),
+      isProjectBusy: (chatId: string) =>
+        agentPool.isProjectBusy(chatId) ||
+        backgroundTasks.isBusy(chatId) ||
+        (goalExecution?.isBusy(chatId) ?? false),
       stop: (chatId: string) => {
-        const childStopped = backgroundTasks.stopForParent(chatId), parentStopped = agentPool.stop(chatId);
+        const childStopped = backgroundTasks.stopForParent(chatId),
+          parentStopped = agentPool.stop(chatId);
         return parentStopped || childStopped;
       },
       // Issue #4587 (part 3): thread-scoped reset/stop for commands typed
       // inside a topic-group thread — the pool's part-2 slots, previously
       // reachable only from the message path.
       resetThread: (chatId, skipContext, threadRootId) => {
-        backgroundTasks.stopForParent(chatId, threadRootId); agentPool.reset(chatId, skipContext, threadRootId);
+        backgroundTasks.stopForParent(chatId, threadRootId);
+        agentPool.reset(chatId, skipContext, threadRootId);
       },
       stopThread: (chatId, threadRootId) => {
-        const childStopped = backgroundTasks.stopForParent(chatId, threadRootId), parentStopped = agentPool.stop(chatId, threadRootId);
+        const childStopped = backgroundTasks.stopForParent(chatId, threadRootId),
+          parentStopped = agentPool.stop(chatId, threadRootId);
         return parentStopped || childStopped;
       },
       listAgentPresets: () => agentPool.listAgentPresets(),
@@ -674,7 +782,12 @@ export async function main(): Promise<void> {
     if (!channel) {
       throw new Error('No channel available for InputMessageRouter callbacks');
     }
-    const descriptor = descriptorMap.get(channel.id.startsWith('wechat:') ? 'wechat' : channel.id);
+    const channelType = channel.id.startsWith('wechat:')
+      ? 'wechat'
+      : channel.id.startsWith('feishu:')
+        ? 'feishu'
+        : channel.id;
+    const descriptor = descriptorMap.get(channelType);
     if (descriptor) {
       return descriptor.createCallbacks(channel, channelSetupContext)(chatId, threadRootId);
     }
@@ -684,24 +797,42 @@ export async function main(): Promise<void> {
   // #5212: the only Goal runtime host. Feishu-only human commands reach it;
   // the model-facing REST control endpoint never receives this capability.
   const goalExecution = new GoalExecutionService({
-    store: channelSetupContext.goalStore, projectManager, logger,
+    store: channelSetupContext.goalStore,
+    projectManager,
+    logger,
     // Goal rounds compose claimed Base tasks with independent native review;
     // children report through the disclaude CLI, not injected tools.
-    createTurnTools: scope => createGoalBoardTurnTools(scope, path.join(channelSetupContext.goalStore.directory, 'tasks')),
-    isCommandAllowed: command => service.getChannelManager().resolveChannelForChatId(command.chatId)?.id === 'feishu' &&
+    createTurnTools: (scope) =>
+      createGoalBoardTurnTools(scope, path.join(channelSetupContext.goalStore.directory, 'tasks')),
+    isCommandAllowed: (command) =>
+      service
+        .getChannelManager()
+        .resolveChannelForChatId(command.chatId)
+        ?.id.startsWith('feishu') === true &&
       (!controlHandlerContext.isCommandAllowed || controlHandlerContext.isCommandAllowed(command)),
-    callbacks: source => routerCallbacksFactory(source.chatId, source.threadRootId),
-    runtimeOptions: source => {
+    callbacks: (source) => routerCallbacksFactory(source.chatId, source.threadRootId),
+    runtimeOptions: (source) => {
       const presets = Config.getAgentPresets();
       const selected = agentPool.getActiveAgentPreset(source.chatId, source.threadRootId);
       const resolved = presets ? resolveAgentPreset(presets, selected?.name) : undefined;
-      if (resolved && !resolved.ok) { throw new Error('Selected Goal runtime is unavailable'); }
+      if (resolved && !resolved.ok) {
+        throw new Error('Selected Goal runtime is unavailable');
+      }
       const preset = resolved?.ok ? structuredClone(resolved.preset) : undefined;
-      const options = { ...(preset ?? Config.getAgentConfig()), ...(preset ? { settings: preset } : {}),
-        turnRecovery, failureRecorder: (failure: import('@disclaude/core').ChatFailureRecord) => failureRegistry.record(failure),
-        messageBuilderOptions: createFeishuMessageBuilderOptions() };
-      const info = getProvider(options.agentBackend, options.settings).getInfo(AgentFactory.resolveConfig(options));
-      if (!info.available) { throw new Error('Selected Goal runtime is unavailable'); }
+      const options = {
+        ...(preset ?? Config.getAgentConfig()),
+        ...(preset ? { settings: preset } : {}),
+        turnRecovery,
+        failureRecorder: (failure: import('@disclaude/core').ChatFailureRecord) =>
+          failureRegistry.record(failure),
+        messageBuilderOptions: createFeishuMessageBuilderOptions(),
+      };
+      const info = getProvider(options.agentBackend, options.settings).getInfo(
+        AgentFactory.resolveConfig(options)
+      );
+      if (!info.available) {
+        throw new Error('Selected Goal runtime is unavailable');
+      }
       return options;
     },
   });
@@ -711,38 +842,77 @@ export async function main(): Promise<void> {
   // Background task ownership for Feishu Codex app-server chats (#5576 redo
   // on the #5574 host module): no injected model face — the entry surface
   // follows the disclaude CLI + built-in skill pattern (#5603/#5611).
-  const taskScopeAllowed = (source: { chatId: string; actorId: string; chatType?: ChatType; threadRootId?: string }): boolean =>
-    service.getChannelManager().resolveChannelForChatId(source.chatId)?.id === 'feishu' &&
-    (!controlHandlerContext.isCommandAllowed || controlHandlerContext.isCommandAllowed({ type: 'steer', ...source,
-      data: { prompt: 'run_agent_task' } }));
-  const taskRuntimeOptions = (input: { chatId: string; threadRootId?: string }): AgentCreateOptions => {
+  const taskScopeAllowed = (source: {
+    chatId: string;
+    actorId: string;
+    chatType?: ChatType;
+    threadRootId?: string;
+  }): boolean =>
+    service.getChannelManager().resolveChannelForChatId(source.chatId)?.id.startsWith('feishu') ===
+      true &&
+    (!controlHandlerContext.isCommandAllowed ||
+      controlHandlerContext.isCommandAllowed({
+        type: 'steer',
+        ...source,
+        data: { prompt: 'run_agent_task' },
+      }));
+  const taskRuntimeOptions = (input: {
+    chatId: string;
+    threadRootId?: string;
+  }): AgentCreateOptions => {
     const presets = Config.getAgentPresets();
     const selected = agentPool.getActiveAgentPreset(input.chatId, input.threadRootId);
     const resolved = presets ? resolveAgentPreset(presets, selected?.name) : undefined;
-    if (resolved && !resolved.ok) { throw new Error('Selected subtask runtime is unavailable'); }
+    if (resolved && !resolved.ok) {
+      throw new Error('Selected subtask runtime is unavailable');
+    }
     const preset = resolved?.ok ? structuredClone(resolved.preset) : undefined;
-    const options = { ...(preset ?? Config.getAgentConfig()), ...(preset ? { settings: preset } : {}),
-      turnRecovery, failureRecorder: (failure: import('@disclaude/core').ChatFailureRecord) => failureRegistry.record(failure),
-      messageBuilderOptions: createFeishuMessageBuilderOptions() };
-    if (!getProvider(options.agentBackend, options.settings).getInfo(AgentFactory.resolveConfig(options)).available) {
+    const options = {
+      ...(preset ?? Config.getAgentConfig()),
+      ...(preset ? { settings: preset } : {}),
+      turnRecovery,
+      failureRecorder: (failure: import('@disclaude/core').ChatFailureRecord) =>
+        failureRegistry.record(failure),
+      messageBuilderOptions: createFeishuMessageBuilderOptions(),
+    };
+    if (
+      !getProvider(options.agentBackend, options.settings).getInfo(
+        AgentFactory.resolveConfig(options)
+      ).available
+    ) {
       throw new Error('Selected subtask runtime is unavailable');
     }
     return options;
   };
-  const taskResults = new TaskResultOutbox(path.join(workspaceDir, '.disclaude', 'tasks', 'results'));
+  const taskResults = new TaskResultOutbox(
+    path.join(workspaceDir, '.disclaude', 'tasks', 'results')
+  );
   const backgroundTasks: BackgroundAgentTasks = new BackgroundAgentTasks({
     outbox: taskResults,
-    authorize: input => {
+    authorize: (input) => {
       const current = projectManager.resolveCwd(input.chatId);
-      if (current.reason === 'bound-missing' || realpathSync(current.boundWorkingDir ?? workspaceDir) !== input.projectRoot ||
-        !taskScopeAllowed({ chatId: input.chatId, actorId: input.senderOpenId, chatType: input.chatType, threadRootId: input.threadRootId })) {
+      if (
+        current.reason === 'bound-missing' ||
+        realpathSync(current.boundWorkingDir ?? workspaceDir) !== input.projectRoot ||
+        !taskScopeAllowed({
+          chatId: input.chatId,
+          actorId: input.senderOpenId,
+          chatType: input.chatType,
+          threadRootId: input.threadRootId,
+        })
+      ) {
         throw new Error('Background task Project or permission is no longer available');
       }
     },
     runtimeOptions: taskRuntimeOptions,
-    callbacks: input => routerCallbacksFactory(input.chatId, input.threadRootId),
-    wakeParent: createTaskParentReporter(report => agentPool.getOrCreateChatAgent(report.chatId,
-      routerCallbacksFactory(report.chatId, report.threadRootId), report.threadRootId)),
+    callbacks: (input) => routerCallbacksFactory(input.chatId, input.threadRootId),
+    wakeParent: createTaskParentReporter((report) =>
+      agentPool.getOrCreateChatAgent(
+        report.chatId,
+        routerCallbacksFactory(report.chatId, report.threadRootId),
+        report.threadRootId
+      )
+    ),
   });
 
   // Create ChannelLifecycleManager (Issue #1594 Phase 3)
@@ -764,10 +934,17 @@ export async function main(): Promise<void> {
   let wechatRuntime: WeChatRegistrationRuntime | undefined;
   for (const { type, config } of channelEntries) {
     if (type === 'wechat') {
-      wechatRuntime = new WeChatRegistrationRuntime(new WeChatRegistry(String(config.stateDir)), lifecycleManager, service, {
-        routeTag: config.routeTag as string | undefined,
-      });
-    } else { await lifecycleManager.createAndWireByType(type, config); }
+      wechatRuntime = new WeChatRegistrationRuntime(
+        new WeChatRegistry(String(config.stateDir)),
+        lifecycleManager,
+        service,
+        {
+          routeTag: config.routeTag as string | undefined,
+        }
+      );
+    } else {
+      await lifecycleManager.createAndWireByType(type, config);
+    }
   }
 
   // Handle graceful shutdown
@@ -842,9 +1019,12 @@ export async function main(): Promise<void> {
 
     // Start all registered channels via ChannelLifecycleManager (Issue #1594 Phase 2)
     await wechatRuntime?.start();
-    try { await lifecycleManager.startAll(); }
-    catch (error) {
-      if (!wechatRuntime) { throw error; }
+    try {
+      await lifecycleManager.startAll();
+    } catch (error) {
+      if (!wechatRuntime) {
+        throw error;
+      }
       logger.warn('No connected channel; WeChat registration remains available');
     }
 
@@ -872,7 +1052,7 @@ export async function main(): Promise<void> {
             lastErrorCode: readiness.lastErrorCode,
             connectionState: feishuStartupChannel.getConnectionHealth().state,
           },
-          'Feishu connection not ready within the startup bound; reporting unavailable and letting background retries finish it (#5519)',
+          'Feishu connection not ready within the startup bound; reporting unavailable and letting background retries finish it (#5519)'
         );
       }
     }
@@ -883,28 +1063,42 @@ export async function main(): Promise<void> {
     await turnRecovery.deliverPendingNotifications(
       async (chatId, content, threadRootId) => {
         const channel = channelManager.resolveChannelForChatId(chatId);
-        if (!channel) { throw new Error('No available channel for interrupted request'); }
-        return await channel.sendMessage({ chatId, type: 'text', text: content, threadId: threadRootId, threadRootId });
+        if (!channel) {
+          throw new Error('No available channel for interrupted request');
+        }
+        return await channel.sendMessage({
+          chatId,
+          type: 'text',
+          text: content,
+          threadId: threadRootId,
+          threadRootId,
+        });
       },
-      { timeoutMs: 3_000 },
+      { timeoutMs: 3_000 }
     );
 
     // Log startup info
     for (const { type, config } of channelEntries) {
-      if (type === 'wechat') { continue; } // Registration is available even with no accounts.
+      if (type === 'wechat') {
+        continue;
+      } // Registration is available even with no accounts.
       const channel = service.getChannel(String(config.id ?? type));
       if (channel?.status !== 'running') {
-        logger.warn({ type, channelId: channel?.id, status: channel?.status }, 'Channel unavailable; other channels continue serving');
+        logger.warn(
+          { type, channelId: channel?.id, status: channel?.status },
+          'Channel unavailable; other channels continue serving'
+        );
         continue;
       }
       // #5519: only a channel with a live connection is reported as
       // available; a still-waiting Feishu channel reports its real state.
-      const connectionHealth = (channel as { getConnectionHealth?: () => { state: string; healthy: boolean } })
-        .getConnectionHealth?.();
+      const connectionHealth = (
+        channel as { getConnectionHealth?: () => { state: string; healthy: boolean } }
+      ).getConnectionHealth?.();
       if (connectionHealth && !connectionHealth.healthy) {
         logger.warn(
           { type, channelId: channel.id, connectionState: connectionHealth.state },
-          'Channel started but its connection is not ready; messages queue until it connects (#5519)',
+          'Channel started but its connection is not ready; messages queue until it connects (#5519)'
         );
         continue;
       }
@@ -923,7 +1117,14 @@ export async function main(): Promise<void> {
       const restConf = restEntry.config as { port: number; host: string };
       console.log(`disclaude service started on http://${restConf.host}:${restConf.port}`);
     } else {
-      console.log(`disclaude service started (${service.getChannels().map(channel => channel.id).join(', ') || 'no channels'})`);
+      console.log(
+        `disclaude service started (${
+          service
+            .getChannels()
+            .map((channel) => channel.id)
+            .join(', ') || 'no channels'
+        })`
+      );
     }
 
     // The internal HTTP API is always enabled. Port 0 is the safe default so
@@ -935,7 +1136,8 @@ export async function main(): Promise<void> {
       // by design, so the IPv4 pin is always
       // correct; mirror it client-side via DISCLAUDE_API_BASE_URL.
       const apiHost = '127.0.0.1';
-      const apiPortReady = options.apiPort === 0 || await isPortAvailable(options.apiPort, apiHost);
+      const apiPortReady =
+        options.apiPort === 0 || (await isPortAvailable(options.apiPort, apiHost));
       if (!apiPortReady) {
         throw new Error(`API port ${options.apiPort} is already in use`);
       }
@@ -946,17 +1148,32 @@ export async function main(): Promise<void> {
       });
       httpApiServer.setInstanceId(service.getInstanceId());
       const registrationRuntime = wechatRuntime;
-      if (registrationRuntime) { httpApiServer.setWeChatRegistrationHealthProvider(() => registrationRuntime.getHealth()); }
+      if (registrationRuntime) {
+        httpApiServer.setWeChatRegistrationHealthProvider(() => registrationRuntime.getHealth());
+      }
       httpApiServer.setBrowserIpcStatusProvider(() => service.getBrowserIpcStatus());
-      httpApiServer.setChannelCapabilitiesProvider(chatId => service.getChannels()
-        .filter(channel => !chatId || channel.ownsChatId(chatId))
-        .map(channel => ({ id: channel.id, name: channel.name, status: channel.status, healthy: channel.isHealthy(), capabilities: channel.getCapabilities() })));
+      httpApiServer.setChannelCapabilitiesProvider((chatId) =>
+        service
+          .getChannels()
+          .filter((channel) => !chatId || channel.ownsChatId(chatId))
+          .map((channel) => ({
+            id: channel.id,
+            name: channel.name,
+            status: channel.status,
+            healthy: channel.isHealthy(),
+            capabilities: channel.getCapabilities(),
+          }))
+      );
       const feishuChannel = channelManager.get('feishu') as
-        | { getDeliveryHealth?: () => import('./health-types.js').DeliveryHealth;
-            getConnectionHealth?: () => { state: string; healthy: boolean } }
+        | {
+            getDeliveryHealth?: () => import('./health-types.js').DeliveryHealth;
+            getConnectionHealth?: () => { state: string; healthy: boolean };
+          }
         | undefined;
       if (feishuChannel?.getConnectionHealth) {
-        httpApiServer.setFeishuConnectionHealthProvider(() => feishuChannel.getConnectionHealth?.() ?? { state: 'stopped', healthy: false });
+        httpApiServer.setFeishuConnectionHealthProvider(
+          () => feishuChannel.getConnectionHealth?.() ?? { state: 'stopped', healthy: false }
+        );
       }
       httpApiServer.setDeliveryHealthProvider(
         () =>
@@ -971,7 +1188,11 @@ export async function main(): Promise<void> {
       // Issue #3857 Phase 2: Wire push handler to InputMessageRouter
       const router = service.getInputMessageRouter();
       if (router) {
-        const routeSignal = async (prefix: string, chatId: string, message: string): Promise<void> => {
+        const routeSignal = async (
+          prefix: string,
+          chatId: string,
+          message: string
+        ): Promise<void> => {
           const systemMessage: SystemMessage = {
             id: `${prefix}-${crypto.randomUUID()}`,
             source: 'system',
@@ -988,8 +1209,11 @@ export async function main(): Promise<void> {
         // #5411: a consumed private input resumes the waiting task by itself,
         // through the same signal routing as /api/push. The payload carries
         // only ids/outcome — never the private value.
-        (feishuChannel as { setPrivateWorkflowNotifier?: (notify: (chatId: string, message: string) => Promise<void>) => void } | undefined)
-          ?.setPrivateWorkflowNotifier?.((chatId, message) => routeSignal('private-input', chatId, message));
+        // T-083 R5 (#5254): install on EVERY channel exposing the hook — see
+        // installPrivateWorkflowNotifiers below.
+        installPrivateWorkflowNotifiers(channelManager.getAll(), (chatId, message) =>
+          routeSignal('private-input', chatId, message)
+        );
       }
 
       // Issue #4279: wire REST /api/upload-file to the channel's uploadFile
@@ -1006,10 +1230,12 @@ export async function main(): Promise<void> {
 
       // Issue #4279: wire REST /api/send-card to the channel's sendCard
       // capability (REST parity with the REST API method).
-      httpApiServer.setPrivateWorkflowHandler(async request => {
+      httpApiServer.setPrivateWorkflowHandler(async (request) => {
         const { FeishuChannel } = await import('./channels/feishu-channel.js');
         const channel = service.getChannelManager().resolveChannelForChatId(request.chatId);
-        if (!(channel instanceof FeishuChannel)) {throw new Error('Private workflows require Feishu');}
+        if (!(channel instanceof FeishuChannel)) {
+          throw new Error('Private workflows require Feishu');
+        }
         return channel.requestPrivateWorkflow(request);
       });
 
@@ -1029,7 +1255,7 @@ export async function main(): Promise<void> {
 
       // Issue #5603: wire REST GET /api/history/query to the shared read-only
       // history backend (same module as `disclaude history query`).
-      httpApiServer.setHistoryQueryHandler(options => queryChatHistory(options));
+      httpApiServer.setHistoryQueryHandler((options) => queryChatHistory(options));
 
       // T-089 rework (#5197, review 6677596913): wire the on-demand research
       // doc comment watch session. Constructing the host is inert — no monitor
@@ -1044,7 +1270,9 @@ export async function main(): Promise<void> {
 
       // Issue #4279: wire REST /api/upload-image to the channel's uploadImage
       // capability (REST parity with the REST API method).
-      httpApiServer.setUploadImageHandler((filePath) => service.uploadImage(filePath));
+      // T-083 R3 (#5254): forward the optional chat attribution so the upload
+      // dispatches to the OWNING channel's credentials.
+      httpApiServer.setUploadImageHandler((filePath, chatId) => service.uploadImage(filePath, chatId));
 
       // Issue #4281: wire REST /api/mark-chat-responded to the channel's
       // markChatResponded capability (temp-chat lifecycle; REST parity with
@@ -1056,9 +1284,7 @@ export async function main(): Promise<void> {
       // Issue #5504: wire REST /api/self-sent/:messageId to the shared
       // message-logger self-sent registry so session-side tools can suppress
       // echoes of their own user-identity sends.
-      httpApiServer.setSelfSentRegistrar((messageId) =>
-        messageLogger.registerSelfSent(messageId)
-      );
+      httpApiServer.setSelfSentRegistrar((messageId) => messageLogger.registerSelfSent(messageId));
 
       await httpApiServer.start();
       const address = httpApiServer.getAddress();
@@ -1202,13 +1428,16 @@ interface ResolvedChannelConfig {
  * Resolve channel configurations from the loaded config.
  *
  * Handles the current mixed config structure where:
+ * - Named channel declarations live under `channels.<name>` with a `type`
+ *   marker (`type: feishu` is the first supported type, #5254 rework)
  * - REST config lives under `channels.rest`
  * - Feishu config lives under top-level `feishu.appId/appSecret`
  *
- * LIMITATION: This function has hard-coded knowledge of 'rest' and 'feishu'
- * types due to the current mixed config structure. Adding a new config-driven
- * channel type requires updating this function. A future config unification
- * (all channels under `channels.<type>`) would eliminate this limitation.
+ * LIMITATION: Legacy type sections still require per-type knowledge here.
+ * Named declarations flow through the shared declaration layer
+ * (`@disclaude/core` `resolveChannelDeclarations`) so future types — and a
+ * future dynamic (non-YAML) declaration source — plug in without changing
+ * this function's shape.
  *
  * WeChat uses credentials saved by `disclaude wechat login`, never a YAML token.
  *
@@ -1225,7 +1454,9 @@ export function resolveChannelConfigs(
 ): ResolvedChannelConfig[] {
   const entries: ResolvedChannelConfig[] = [];
   const errors = channelCredentialErrors(rawConfig);
-  if (errors.length) {throw new Error(errors.join('; '));}
+  if (errors.length) {
+    throw new Error(errors.join('; '));
+  }
 
   // REST channel: configured under channels.rest
   const restChannelConfig = rawConfig.channels?.rest as
@@ -1236,55 +1467,126 @@ export function resolveChannelConfigs(
         authToken?: string;
       }
     | undefined;
-  if (rawConfig.channels?.rest?.enabled !== false && restChannelConfig?.port && restChannelConfig?.host && restChannelConfig?.fileStorageDir) {
+  if (
+    rawConfig.channels?.rest?.enabled !== false &&
+    restChannelConfig?.port &&
+    restChannelConfig?.host &&
+    restChannelConfig?.fileStorageDir
+  ) {
     entries.push({
       type: 'rest',
       config: {
         port: restChannelConfig.port,
         host: restChannelConfig.host,
         fileStorageDir: restChannelConfig.fileStorageDir,
-        ...(restChannelConfig.authToken !== undefined ? { authToken: resolveChannelCredential(rawConfig, 'rest', 'authToken') } : {}),
+        ...(restChannelConfig.authToken !== undefined
+          ? { authToken: resolveChannelCredential(rawConfig, 'rest', 'authToken') }
+          : {}),
       },
     });
   }
 
-  // Feishu channel: configured under channels.feishu
-  const feishuEnabled = rawConfig.channels?.feishu?.enabled !== false;
-  const feishuAppId = feishuEnabled ? config.FEISHU_APP_ID : '';
-  const feishuAppSecret = feishuEnabled ? config.FEISHU_APP_SECRET : '';
-  if (feishuEnabled && rawConfig.channels?.feishu) {
-    if (!feishuAppId) {throw new Error('channels.feishu.appId is required');}
-    if (!feishuAppSecret) {throw new Error('channels.feishu.appSecret is required; use an external $VARIABLE reference');}
+  // Named channel declarations (`channels.<name>: { type: … }`). Feishu is
+  // the first type instantiable as several named channels; every other type
+  // fails explicitly so a typo'd type never silently drops a channel.
+  const declarations = resolveChannelDeclarations(rawConfig);
+  const unsupported = declarations.filter((declaration) => declaration.type !== 'feishu');
+  const [unsupportedDeclaration] = unsupported;
+  if (unsupportedDeclaration) {
+    throw new Error(
+      `channels.${unsupportedDeclaration.name}: type "${unsupportedDeclaration.type}" cannot be declared as a named channel yet; only feishu supports named channel declarations`
+    );
   }
-  if (rawConfig.channels?.feishu?.enabled !== false && feishuAppId && feishuAppSecret) {
-    entries.push({
-      type: 'feishu',
-      // Issue #4400 / #4208: plumb streamingCard through to FeishuChannelConfig
-      // so getCapabilities().supportsStreaming reflects feishu.streamingCard.
-      config: {
-        appId: feishuAppId,
-        appSecret: feishuAppSecret,
-        streamingCard: config.FEISHU_STREAMING_CARD,
-      },
-    });
+
+  // Feishu channel: each named declaration gets an independent channel ID
+  // and credentials. The legacy single-app shape deliberately keeps its
+  // original id and bare chat IDs.
+  const feishuEnabled = rawConfig.channels?.feishu?.enabled !== false;
+  const feishuDeclarations = declarations.filter(
+    (declaration) => declaration.type === 'feishu' && declaration.config.enabled !== false
+  );
+  if (feishuEnabled && feishuDeclarations.length) {
+    const seenAppIds = new Map<string, string>();
+    for (const { name, config: declaration } of feishuDeclarations) {
+      const appId = resolveFeishuChannelCredential(rawConfig, name, 'appId');
+      const previous = seenAppIds.get(appId);
+      if (previous) {
+        throw new Error(`channels.${name}.appId duplicates channel ${previous}`);
+      }
+      seenAppIds.set(appId, name);
+      entries.push({
+        type: 'feishu',
+        config: {
+          id: `feishu:${name}`,
+          channelName: name,
+          appId,
+          appSecret: resolveFeishuChannelCredential(rawConfig, name, 'appSecret'),
+          streamingCard:
+            typeof declaration.streamingCard === 'boolean'
+              ? declaration.streamingCard
+              : config.FEISHU_STREAMING_CARD,
+        },
+      });
+    }
+  } else {
+    const feishuAppId = feishuEnabled ? config.FEISHU_APP_ID : '';
+    const feishuAppSecret = feishuEnabled ? config.FEISHU_APP_SECRET : '';
+    if (feishuEnabled && rawConfig.channels?.feishu) {
+      if (!feishuAppId) {
+        throw new Error('channels.feishu.appId is required');
+      }
+      if (!feishuAppSecret) {
+        throw new Error(
+          'channels.feishu.appSecret is required; use an external $VARIABLE reference'
+        );
+      }
+    }
+    if (feishuEnabled && feishuAppId && feishuAppSecret) {
+      entries.push({
+        type: 'feishu',
+        config: {
+          appId: feishuAppId,
+          appSecret: feishuAppSecret,
+          streamingCard: config.FEISHU_STREAMING_CARD,
+        },
+      });
+    }
   }
 
   const wechat = rawConfig.channels?.wechat;
   if (wechat && wechat.enabled !== false) {
-    if (wechat.enabled !== undefined && typeof wechat.enabled !== 'boolean') { throw new Error('channels.wechat.enabled must be boolean'); }
-    const unknown = Object.keys(wechat).filter(key => !['enabled', 'stateDir', 'routeTag'].includes(key));
-    if (unknown.length) { throw new Error(`Unsupported channels.wechat fields: ${unknown.join(', ')}; save credentials with disclaude wechat login`); }
+    if (wechat.enabled !== undefined && typeof wechat.enabled !== 'boolean') {
+      throw new Error('channels.wechat.enabled must be boolean');
+    }
+    const unknown = Object.keys(wechat).filter(
+      (key) => !['enabled', 'stateDir', 'routeTag'].includes(key)
+    );
+    if (unknown.length) {
+      throw new Error(
+        `Unsupported channels.wechat fields: ${unknown.join(', ')}; save credentials with disclaude wechat login`
+      );
+    }
     const stateDir = wechat.stateDir ?? DEFAULT_WECHAT_STATE_DIR;
-    if (typeof stateDir !== 'string' || !path.isAbsolute(stateDir)) { throw new Error('channels.wechat.stateDir must be an absolute path'); }
-    if (wechat.routeTag !== undefined && (typeof wechat.routeTag !== 'string' || /[\r\n]/.test(wechat.routeTag))) { throw new Error('channels.wechat.routeTag must be a single-line string'); }
-    entries.push({ type: 'wechat', config: { stateDir, ...(wechat.routeTag ? { routeTag: wechat.routeTag } : {}) } });
+    if (typeof stateDir !== 'string' || !path.isAbsolute(stateDir)) {
+      throw new Error('channels.wechat.stateDir must be an absolute path');
+    }
+    if (
+      wechat.routeTag !== undefined &&
+      (typeof wechat.routeTag !== 'string' || /[\r\n]/.test(wechat.routeTag))
+    ) {
+      throw new Error('channels.wechat.routeTag must be a single-line string');
+    }
+    entries.push({
+      type: 'wechat',
+      config: { stateDir, ...(wechat.routeTag ? { routeTag: wechat.routeTag } : {}) },
+    });
   }
 
-  // Warn on unrecognized channel config keys (Issue #1594 review P2)
+  // Warn on unrecognized channel config keys (Issue #1594 review P2).
+  // Named declarations (any key with a `type` marker) are a recognized kind.
   const knownChannelKeys = new Set(['rest', 'feishu', 'wechat']);
-  const channelKeys = Object.keys(rawConfig.channels || {});
-  for (const key of channelKeys) {
-    if (!knownChannelKeys.has(key)) {
+  for (const [key, entry] of Object.entries(rawConfig.channels ?? {})) {
+    if (!knownChannelKeys.has(key) && !isChannelDeclaration(entry)) {
       logger.warn(
         { channelKey: key },
         `Unrecognized channel config key "channels.${key}" — this channel type is not supported`
@@ -1293,4 +1595,31 @@ export function resolveChannelConfigs(
   }
 
   return entries;
+}
+
+/**
+ * T-083 R5 (#5254): install the #5411 private-input wake notifier on every
+ * channel exposing the hook.
+ *
+ * `channelManager.get('feishu')` yields only the legacy single-app instance,
+ * so with named multi-app Feishu declarations the waiting sessions of every
+ * named channel would never be resumed. Each FeishuChannel re-prefixes the
+ * bare chat id handed to the notifier with its own route (see
+ * FeishuChannel.setPrivateWorkflowNotifier), so the signal lands in the right
+ * named conversation; channels without the hook (REST, WeChat) are skipped.
+ * Exported for direct testing.
+ */
+export function installPrivateWorkflowNotifiers(
+  channels: ReadonlyArray<object>,
+  route: (chatId: string, message: string) => Promise<void>
+): void {
+  for (const channel of channels) {
+    // Call through the object so the method keeps its receiver.
+    const hook = channel as {
+      setPrivateWorkflowNotifier?: (
+        notify: (chatId: string, message: string) => Promise<void>
+      ) => void;
+    };
+    hook.setPrivateWorkflowNotifier?.((chatId, message) => route(chatId, message));
+  }
 }

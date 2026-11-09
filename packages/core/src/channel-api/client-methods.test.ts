@@ -138,6 +138,23 @@ describe('client-methods', () => {
       const result = await uploadImage(client, '/tmp/img.png');
 
       expect(result).toEqual({ success: true, imageKey: 'img_1' });
+      expect(client.request).toHaveBeenCalledWith('uploadImage', {
+        filePath: '/tmp/img.png',
+        chatId: undefined,
+      });
+    });
+
+    it('should carry the chat attribution in the payload (T-083 R3)', async () => {
+      const client = createMockClient({ uploadImage: { success: true, imageKey: 'img_2' } });
+      const { uploadImage } = await import('./client-methods.js');
+
+      const result = await uploadImage(client, '/tmp/img.png', 'feishu:work:oc_1');
+
+      expect(result).toEqual({ success: true, imageKey: 'img_2' });
+      expect(client.request).toHaveBeenCalledWith('uploadImage', {
+        filePath: '/tmp/img.png',
+        chatId: 'feishu:work:oc_1',
+      });
     });
   });
 
