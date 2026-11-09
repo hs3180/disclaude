@@ -313,6 +313,11 @@ export class DisclaudeService extends EventEmitter {
       await this.startSchedulerSafely();
     }
 
+    // T-089 rework (#5197, review 6677596913): research doc comment watching is
+    // NOT auto-started. It exists only as an on-demand watch session started via
+    // `disclaude research watch start` (REST /api/research/watch/* wired in
+    // cli-main.ts); when nobody is watching there is no monitor and no timer.
+
     this.running = true;
     this.emit('started');
     logger.info({ instanceId: this.instanceId }, 'DisclaudeService started');
