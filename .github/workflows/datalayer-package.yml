@@ -48,7 +48,10 @@ on:
 jobs:
   package:
     name: Jupyter patch CLI (Node ${{ matrix.node }}, Python ${{ matrix.python }})
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest has rolled to 26.04, whose actions/setup-python
+    # toolcache no longer provides Python 3.9 (needed by the Node18/Py3.9
+    # compatibility leg). ubuntu-24.04 keeps that support matrix intact.
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         include:
