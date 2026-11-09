@@ -46,7 +46,9 @@ vi.mock('@disclaude/core', async (importOriginal) => {
     // Preset tests supply their own maps; legacy pool tests need no presets.
     // Developer config must not change the factory arguments or reset routing.
     Config: class extends actual.Config {
-      static getAgentPresets() { return undefined; }
+      static getAgentPresets() {
+        return undefined;
+      }
     },
   };
 });
@@ -54,31 +56,56 @@ vi.mock('@disclaude/core', async (importOriginal) => {
 // Track mock agent instances for assertions
 // Issue #4620: mock now carries turnStartedAtMs (0 = not set; tests that
 // exercise the observation-based fallback leave it 0/undefined).
-const mockAgents: Map<string, { dispose: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; steer: ReturnType<typeof vi.fn>; updateCallbacks: ReturnType<typeof vi.fn>; interruptForServiceRestart: ReturnType<typeof vi.fn>; taskComplete?: Promise<void>; isBusy: boolean; turnStartedAtMs?: number; lastActivityAt?: number; lastActivityType?: string; hasPendingWork?: boolean; pendingWorkContext?: { runId?: string; sourceMessageId?: string; traceId?: string; threadRootId?: string } }> = new Map();
+const mockAgents: Map<
+  string,
+  {
+    dispose: ReturnType<typeof vi.fn>;
+    stop: ReturnType<typeof vi.fn>;
+    steer: ReturnType<typeof vi.fn>;
+    updateCallbacks: ReturnType<typeof vi.fn>;
+    interruptForServiceRestart: ReturnType<typeof vi.fn>;
+    taskComplete?: Promise<void>;
+    isBusy: boolean;
+    turnStartedAtMs?: number;
+    lastActivityAt?: number;
+    lastActivityType?: string;
+    hasPendingWork?: boolean;
+    pendingWorkContext?: {
+      runId?: string;
+      sourceMessageId?: string;
+      traceId?: string;
+      threadRootId?: string;
+    };
+  }
+> = new Map();
 
 // Mock AgentFactory
 vi.mock('./agents/factory.js', () => ({
   AgentFactory: {
     resolveConfig: vi.fn((options: { model: string; apiProtocol?: 'anthropic' | 'openai' }) => ({
-      apiKey: 'test-key', model: options.model, apiProtocol: options.apiProtocol ?? 'anthropic',
+      apiKey: 'test-key',
+      model: options.model,
+      apiProtocol: options.apiProtocol ?? 'anthropic',
     })),
-    createChatAgent: vi.fn((_name: string, chatId: string, _callbacks: unknown, _options?: unknown) => {
-      const agent = {
-        dispose: vi.fn(),
-        reset: vi.fn(),
-        stop: vi.fn().mockReturnValue(true),
-        steer: vi.fn().mockResolvedValue({ ok: false, error: 'unsupported' }),
-        updateCallbacks: vi.fn().mockReturnValue(true),
-        interruptForServiceRestart: vi.fn().mockResolvedValue(undefined),
-        beginServiceShutdown: vi.fn(),
-        taskComplete: undefined as Promise<void> | undefined,
-        isBusy: false,
-        hasPendingWork: false,
-        turnStartedAtMs: 0,
-      };
-      mockAgents.set(chatId, agent);
-      return agent;
-    }),
+    createChatAgent: vi.fn(
+      (_name: string, chatId: string, _callbacks: unknown, _options?: unknown) => {
+        const agent = {
+          dispose: vi.fn(),
+          reset: vi.fn(),
+          stop: vi.fn().mockReturnValue(true),
+          steer: vi.fn().mockResolvedValue({ ok: false, error: 'unsupported' }),
+          updateCallbacks: vi.fn().mockReturnValue(true),
+          interruptForServiceRestart: vi.fn().mockResolvedValue(undefined),
+          beginServiceShutdown: vi.fn(),
+          taskComplete: undefined as Promise<void> | undefined,
+          isBusy: false,
+          hasPendingWork: false,
+          turnStartedAtMs: 0,
+        };
+        mockAgents.set(chatId, agent);
+        return agent;
+      }
+    ),
   },
 }));
 
@@ -96,69 +123,154 @@ const createMockCallbacks = () => ({
 
 describe('ChatSessionPool', () => {
   it('forwards host query hooks with the original chat identity across topic sessions', () => {
-    const configureQueryOptions = vi.fn((options: AgentQueryOptions, chatId: string) => ({ ...options, systemPrompt: `host:${chatId}` }));
+    const configureQueryOptions = vi.fn((options: AgentQueryOptions, chatId: string) => ({
+      ...options,
+      systemPrompt: `host:${chatId}`,
+    }));
     const pool = new ChatSessionPool({ configureQueryOptions });
     try {
       pool.getOrCreateChatAgent('hook-chat', createMockCallbacks(), 'hook-topic');
-      const options = vi.mocked(AgentFactory.createChatAgent).mock.calls.at(-1)![3] as AgentCreateOptions;
+      const options = vi
+        .mocked(AgentFactory.createChatAgent)
+        .mock.calls.at(-1)![3] as AgentCreateOptions;
       const original: AgentQueryOptions = { cwd: '/fixture/project', settingSources: ['project'] };
-      expect(options.configureQueryOptions?.(original)).toEqual({ ...original, systemPrompt: 'host:hook-chat' });
+      expect(options.configureQueryOptions?.(original)).toEqual({
+        ...original,
+        systemPrompt: 'host:hook-chat',
+      });
       expect(configureQueryOptions).toHaveBeenCalledExactlyOnceWith(original, 'hook-chat');
-    } finally { pool.disposeAll(); }
+    } finally {
+      pool.disposeAll();
+    }
   });
-  it.each(['resolver', 'provider'] as const)('pins isolated execution to its original directory (%s)', mode => {
-    const root = mkdtempSync(join(tmpdir(), 'isolated-directory-'));
-    const first = join(root, 'first'), second = join(root, 'second');
-    mkdirSync(first); mkdirSync(second);
-    let active = first;
-    const cwdProvider = () => active;
-    const pool = new ChatSessionPool({ cwdProvider, ...(mode === 'resolver' ? {
-      cwdResolver: () => ({ effectiveCwd: active, boundWorkingDir: active, reason: 'bound' as const }),
-    } : {}) });
-    try {
-      const callbacks = createMockCallbacks();
-      pool.getOrCreateChatAgent('directory-chat', callbacks);
-      const userOptions = vi.mocked(AgentFactory.createChatAgent).mock.calls.at(-1)![3] as AgentCreateOptions;
-      pool.getOrCreateChatAgent('directory-chat', callbacks, undefined, { id: 'execution:fixed', releaseAfterTurn: true });
-      const taskOptions = vi.mocked(AgentFactory.createChatAgent).mock.calls.at(-1)![3] as AgentCreateOptions;
-      active = second;
-      expect(userOptions.cwdProvider?.('directory-chat')).toBe(second);
-      expect(taskOptions.cwdProvider?.('directory-chat')).toBe(first);
-      expect(taskOptions.cwdResolver?.('directory-chat')).toEqual({ effectiveCwd: first, boundWorkingDir: first, reason: 'bound' });
-      rmSync(first, { recursive: true });
-      expect(taskOptions.cwdResolver?.('directory-chat')).toEqual({ effectiveCwd: first, boundWorkingDir: first, reason: 'bound-missing' });
+  it.each(['resolver', 'provider'] as const)(
+    'pins isolated execution to its original directory (%s)',
+    (mode) => {
+      const root = mkdtempSync(join(tmpdir(), 'isolated-directory-'));
+      const first = join(root, 'first'),
+        second = join(root, 'second');
       mkdirSync(first);
-      expect(taskOptions.cwdResolver?.('directory-chat')?.reason).toBe('bound');
-    } finally { pool.disposeAll(); rmSync(root, { recursive: true, force: true }); }
-  });
-
+      mkdirSync(second);
+      let active = first;
+      const cwdProvider = () => active;
+      const pool = new ChatSessionPool({
+        cwdProvider,
+        ...(mode === 'resolver'
+          ? {
+              cwdResolver: () => ({
+                effectiveCwd: active,
+                boundWorkingDir: active,
+                reason: 'bound' as const,
+              }),
+            }
+          : {}),
+      });
+      try {
+        const callbacks = createMockCallbacks();
+        pool.getOrCreateChatAgent('directory-chat', callbacks);
+        const userOptions = vi
+          .mocked(AgentFactory.createChatAgent)
+          .mock.calls.at(-1)![3] as AgentCreateOptions;
+        pool.getOrCreateChatAgent('directory-chat', callbacks, undefined, {
+          id: 'execution:fixed',
+          releaseAfterTurn: true,
+        });
+        const taskOptions = vi
+          .mocked(AgentFactory.createChatAgent)
+          .mock.calls.at(-1)![3] as AgentCreateOptions;
+        active = second;
+        expect(userOptions.cwdProvider?.('directory-chat')).toBe(second);
+        expect(taskOptions.cwdProvider?.('directory-chat')).toBe(first);
+        expect(taskOptions.cwdResolver?.('directory-chat')).toEqual({
+          effectiveCwd: first,
+          boundWorkingDir: first,
+          reason: 'bound',
+        });
+        rmSync(first, { recursive: true });
+        expect(taskOptions.cwdResolver?.('directory-chat')).toEqual({
+          effectiveCwd: first,
+          boundWorkingDir: first,
+          reason: 'bound-missing',
+        });
+        mkdirSync(first);
+        expect(taskOptions.cwdResolver?.('directory-chat')?.reason).toBe('bound');
+      } finally {
+        pool.disposeAll();
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  );
 
   it('does not pin a workspace fallback when the original binding is already missing', () => {
     const root = mkdtempSync(join(tmpdir(), 'isolated-missing-'));
     const missing = join(root, 'missing');
-    const pool = new ChatSessionPool({ cwdResolver: () => ({
-      effectiveCwd: root, boundWorkingDir: missing, reason: 'bound-missing',
-    }) });
+    const pool = new ChatSessionPool({
+      cwdResolver: () => ({
+        effectiveCwd: root,
+        boundWorkingDir: missing,
+        reason: 'bound-missing',
+      }),
+    });
     try {
-      pool.getOrCreateChatAgent('missing-chat', createMockCallbacks(), undefined, { id: 'execution:missing' });
-      const options = vi.mocked(AgentFactory.createChatAgent).mock.calls.at(-1)![3] as AgentCreateOptions;
+      pool.getOrCreateChatAgent('missing-chat', createMockCallbacks(), undefined, {
+        id: 'execution:missing',
+      });
+      const options = vi
+        .mocked(AgentFactory.createChatAgent)
+        .mock.calls.at(-1)![3] as AgentCreateOptions;
       expect(options.cwdProvider?.('missing-chat')).toBe(missing);
-      expect(options.cwdResolver?.('missing-chat')).toEqual({ effectiveCwd: missing, boundWorkingDir: missing, reason: 'bound-missing' });
-    } finally { pool.disposeAll(); rmSync(root, { recursive: true, force: true }); }
+      expect(options.cwdResolver?.('missing-chat')).toEqual({
+        effectiveCwd: missing,
+        boundWorkingDir: missing,
+        reason: 'bound-missing',
+      });
+    } finally {
+      pool.disposeAll();
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('isolates repeated scheduled ticks and preserves the user agent and delivery chat (#4812)', () => {
     const pool = new ChatSessionPool();
     const callbacks = createMockCallbacks();
     const user = pool.getOrCreateChatAgent('chat-1', callbacks);
-    const a = pool.getOrCreateChatAgent('chat-1', callbacks, undefined, { id: 'execution:tick-a', releaseAfterTurn: true, skipHistory: false, model: 'task-model' });
-    const b = pool.getOrCreateChatAgent('chat-1', callbacks, undefined, { id: 'execution:tick-b', releaseAfterTurn: true, skipHistory: true });
+    const a = pool.getOrCreateChatAgent('chat-1', callbacks, undefined, {
+      id: 'execution:tick-a',
+      releaseAfterTurn: true,
+      skipHistory: false,
+      model: 'task-model',
+    });
+    const b = pool.getOrCreateChatAgent('chat-1', callbacks, undefined, {
+      id: 'execution:tick-b',
+      releaseAfterTurn: true,
+      skipHistory: true,
+    });
     expect(a).not.toBe(b);
     expect(a).not.toBe(user);
     expect(pool.get('chat-1')).toBe(user);
-    expect(AgentFactory.createChatAgent).toHaveBeenCalledWith('pilot', 'chat-1', callbacks, expect.objectContaining({ sdkSessionKey: 'chat-1::execution:tick-a', skipHistory: false, model: 'task-model' }));
-    expect(AgentFactory.createChatAgent).toHaveBeenCalledWith('pilot', 'chat-1', callbacks, expect.objectContaining({ sdkSessionKey: 'chat-1::execution:tick-b', skipHistory: true }));
-    expect(() => pool.getOrCreateChatAgent('chat-1', callbacks, undefined, { id: 'execution:tick-a', releaseAfterTurn: true, skipHistory: false })).toThrow('already owns');
+    expect(AgentFactory.createChatAgent).toHaveBeenCalledWith(
+      'pilot',
+      'chat-1',
+      callbacks,
+      expect.objectContaining({
+        sdkSessionKey: 'chat-1::execution:tick-a',
+        skipHistory: false,
+        model: 'task-model',
+      })
+    );
+    expect(AgentFactory.createChatAgent).toHaveBeenCalledWith(
+      'pilot',
+      'chat-1',
+      callbacks,
+      expect.objectContaining({ sdkSessionKey: 'chat-1::execution:tick-b', skipHistory: true })
+    );
+    expect(() =>
+      pool.getOrCreateChatAgent('chat-1', callbacks, undefined, {
+        id: 'execution:tick-a',
+        releaseAfterTurn: true,
+        skipHistory: false,
+      })
+    ).toThrow('already owns');
     pool.releaseChatAgent('chat-1', 'execution:tick-b', b);
     expect(b.reset).toHaveBeenCalledOnce();
     expect(b.dispose).toHaveBeenCalledOnce();
@@ -172,18 +284,36 @@ describe('ChatSessionPool', () => {
   });
 
   it('applies temporary model/history overrides through the same preset-aware factory', () => {
-    const pool = new ChatSessionPool({ agentPresets: {
-      default: {apiKey: 'test-key', llm: 'test',  agentBackend: 'codex', model: 'gpt-5.6' },
-    } });
+    const pool = new ChatSessionPool({
+      agentPresets: {
+        default: { apiKey: 'test-key', llm: 'test', agentBackend: 'codex', model: 'gpt-5.6' },
+      },
+    });
     const callbacks = createMockCallbacks();
     const user = pool.getOrCreateChatAgent('chat-1', callbacks);
     const task = pool.getOrCreateChatAgent('chat-1', callbacks, undefined, {
-      id: 'execution:model-override', model: 'gpt-5.6-mini', skipHistory: true, releaseAfterTurn: true,
+      id: 'execution:model-override',
+      model: 'gpt-5.6-mini',
+      skipHistory: true,
+      releaseAfterTurn: true,
     });
-    expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith('pilot', 'chat-1', callbacks, expect.objectContaining({apiKey: 'test-key', llm: 'test',
-      agentBackend: 'codex', model: 'gpt-5.6-mini', skipHistory: true, sdkSessionKey: 'chat-1::execution:model-override',
-    }));
-    expect(pool.getActiveAgentPreset('chat-1')).toMatchObject({ name: 'default', model: 'gpt-5.6' });
+    expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith(
+      'pilot',
+      'chat-1',
+      callbacks,
+      expect.objectContaining({
+        apiKey: 'test-key',
+        llm: 'test',
+        agentBackend: 'codex',
+        model: 'gpt-5.6-mini',
+        skipHistory: true,
+        sdkSessionKey: 'chat-1::execution:model-override',
+      })
+    );
+    expect(pool.getActiveAgentPreset('chat-1')).toMatchObject({
+      name: 'default',
+      model: 'gpt-5.6',
+    });
     pool.releaseChatAgent('chat-1', 'execution:model-override', task);
     expect(pool.get('chat-1')).toBe(user);
     expect(user.dispose).not.toHaveBeenCalled();
@@ -192,7 +322,9 @@ describe('ChatSessionPool', () => {
 
   it('rejects an empty temporary scope before creating an agent', () => {
     const pool = new ChatSessionPool();
-    expect(() => pool.getOrCreateChatAgent('chat-1', createMockCallbacks(), undefined, { id: '' })).toThrow('nonempty');
+    expect(() =>
+      pool.getOrCreateChatAgent('chat-1', createMockCallbacks(), undefined, { id: '' })
+    ).toThrow('nonempty');
     pool.disposeAll();
   });
   beforeEach(() => {
@@ -206,8 +338,18 @@ describe('ChatSessionPool', () => {
 
   describe('named runtime presets', () => {
     const presets = {
-      default: {apiKey: 'test-key', llm: 'test',  agentBackend: 'claude' as const, model: 'claude-sonnet' },
-      fast: {apiKey: 'test-key', llm: 'test',  agentBackend: 'claude' as const, model: 'claude-haiku' },
+      default: {
+        apiKey: 'test-key',
+        llm: 'test',
+        agentBackend: 'claude' as const,
+        model: 'claude-sonnet',
+      },
+      fast: {
+        apiKey: 'test-key',
+        llm: 'test',
+        agentBackend: 'claude' as const,
+        model: 'claude-haiku',
+      },
     };
 
     it('passes the resolved target configuration into the backend preflight', () => {
@@ -216,27 +358,99 @@ describe('ChatSessionPool', () => {
       try {
         expect(pool.switchAgentPreset('chat-selected', 'fast')).toMatchObject({ ok: true });
         expect(validatePresetBackend).toHaveBeenCalledExactlyOnceWith('claude', {
-          apiKey: 'test-key', model: 'claude-haiku', apiProtocol: 'anthropic',
+          apiKey: 'test-key',
+          model: 'claude-haiku',
+          apiProtocol: 'anthropic',
         });
-      } finally { pool.disposeAll(); }
+      } finally {
+        pool.disposeAll();
+      }
     });
 
     it('passes the default preset through the real pool-to-factory creation path', () => {
-      const pool = new ChatSessionPool({ agentPresets: presets, validatePresetBackend: () => ({ available: true }) });
+      const pool = new ChatSessionPool({
+        agentPresets: presets,
+        validatePresetBackend: () => ({ available: true }),
+      });
       const callbacks = createMockCallbacks();
       pool.getOrCreateChatAgent('chat-default', callbacks);
 
       expect(AgentFactory.createChatAgent).toHaveBeenCalledWith(
-        'pilot', 'chat-default', callbacks,
-        expect.objectContaining({apiKey: 'test-key', llm: 'test',  agentBackend: 'claude', model: 'claude-sonnet' })
+        'pilot',
+        'chat-default',
+        callbacks,
+        expect.objectContaining({
+          apiKey: 'test-key',
+          llm: 'test',
+          agentBackend: 'claude',
+          model: 'claude-sonnet',
+        })
       );
       expect(pool.getActiveAgentPreset('chat-default')).toEqual({
-        name: 'default', agentBackend: 'claude', model: 'claude-sonnet',
+        name: 'default',
+        agentBackend: 'claude',
+        model: 'claude-sonnet',
       });
     });
 
+    it('resolves per-channel defaults with /agent use taking precedence, across restart', () => {
+      // Mirrors the wired per-app resolver: named declarations register as
+      // `feishu:<name>` channel ids whose `agent` default lives under the
+      // bare declaration key in `channels` (#5254) — one resolution path.
+      const channelDefaults: Record<string, string> = { personal: 'fast', work: 'default' };
+      const defaultFor = (chatId: string): string | undefined => {
+        const channel = /^feishu:([^:]+):/.exec(chatId)?.[1];
+        return channel ? channelDefaults[channel] : undefined;
+      };
+      const callbacks = createMockCallbacks();
+      const first = new ChatSessionPool({
+        agentPresets: presets,
+        defaultAgentPresetForChat: defaultFor,
+        validatePresetBackend: () => ({ available: true }),
+      });
+      try {
+        first.getOrCreateChatAgent('feishu:personal:oc_same', callbacks);
+        first.getOrCreateChatAgent('feishu:work:oc_same', callbacks);
+        expect(AgentFactory.createChatAgent).toHaveBeenNthCalledWith(
+          1,
+          'pilot',
+          'feishu:personal:oc_same',
+          callbacks,
+          expect.objectContaining({ model: 'claude-haiku' })
+        );
+        expect(AgentFactory.createChatAgent).toHaveBeenNthCalledWith(
+          2,
+          'pilot',
+          'feishu:work:oc_same',
+          callbacks,
+          expect.objectContaining({ model: 'claude-sonnet' })
+        );
+        expect(first.switchAgentPreset('feishu:work:oc_same', 'fast')).toMatchObject({ ok: true });
+        expect(first.getActiveAgentPreset('feishu:work:oc_same')?.name).toBe('fast');
+      } finally {
+        first.disposeAll();
+      }
+
+      // A restarted process keeps the configured app default; the in-memory
+      // /agent use selection is intentionally not persisted.
+      const second = new ChatSessionPool({
+        agentPresets: presets,
+        defaultAgentPresetForChat: defaultFor,
+        validatePresetBackend: () => ({ available: true }),
+      });
+      try {
+        second.getOrCreateChatAgent('feishu:work:oc_same', callbacks);
+        expect(second.getActiveAgentPreset('feishu:work:oc_same')?.name).toBe('default');
+      } finally {
+        second.disposeAll();
+      }
+    });
+
     it('isolates selections by chat and atomically replaces only the selected chat', () => {
-      const pool = new ChatSessionPool({ agentPresets: presets, validatePresetBackend: () => ({ available: true }) });
+      const pool = new ChatSessionPool({
+        agentPresets: presets,
+        validatePresetBackend: () => ({ available: true }),
+      });
       const callbacksA = createMockCallbacks();
       const callbacksB = createMockCallbacks();
       const oldA = pool.getOrCreateChatAgent('chat-a', callbacksA);
@@ -248,13 +462,18 @@ describe('ChatSessionPool', () => {
       expect(pool.getActiveAgentPreset('chat-a')?.name).toBe('fast');
       expect(pool.getActiveAgentPreset('chat-b')?.name).toBe('default');
       expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith(
-        'pilot', 'chat-a', callbacksA,
+        'pilot',
+        'chat-a',
+        callbacksA,
         expect.objectContaining({ model: 'claude-haiku', skipHistory: true })
       );
     });
 
     it('switches one topic thread with its composite native session key', () => {
-      const pool = new ChatSessionPool({ agentPresets: presets, validatePresetBackend: () => ({ available: true }) });
+      const pool = new ChatSessionPool({
+        agentPresets: presets,
+        validatePresetBackend: () => ({ available: true }),
+      });
       const callbacks = createMockCallbacks();
       const oldA = pool.getOrCreateChatAgent('chat-topic', callbacks, 'thread-a');
       const oldB = pool.getOrCreateChatAgent('chat-topic', callbacks, 'thread-b');
@@ -262,20 +481,32 @@ describe('ChatSessionPool', () => {
       expect(oldA.dispose).toHaveBeenCalledOnce();
       expect(oldB.dispose).not.toHaveBeenCalled();
       expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith(
-        'pilot', 'chat-topic', callbacks,
+        'pilot',
+        'chat-topic',
+        callbacks,
         expect.objectContaining({ model: 'claude-haiku', sdkSessionKey: 'chat-topic::thread-a' })
       );
     });
 
     it('keeps the accepted delivery callbacks after a duplicate temporary session is rejected', () => {
-      const pool = new ChatSessionPool({ agentPresets: presets, validatePresetBackend: () => ({ available: true }) });
+      const pool = new ChatSessionPool({
+        agentPresets: presets,
+        validatePresetBackend: () => ({ available: true }),
+      });
       const accepted = createMockCallbacks();
       const rejected = createMockCallbacks();
       const scope = 'execution:research-a';
-      const original = pool.getOrCreateChatAgent('chat-project', accepted, undefined, { id: scope, releaseAfterTurn: true });
+      const original = pool.getOrCreateChatAgent('chat-project', accepted, undefined, {
+        id: scope,
+        releaseAfterTurn: true,
+      });
       try {
-        expect(() => pool.getOrCreateChatAgent('chat-project', rejected, undefined, { id: scope, releaseAfterTurn: true }))
-          .toThrow('already owns');
+        expect(() =>
+          pool.getOrCreateChatAgent('chat-project', rejected, undefined, {
+            id: scope,
+            releaseAfterTurn: true,
+          })
+        ).toThrow('already owns');
         expect(original.updateCallbacks).not.toHaveBeenCalled();
         expect(pool.switchAgentPreset('chat-project', 'fast', scope)).toMatchObject({ ok: true });
         const lastCall = vi.mocked(AgentFactory.createChatAgent).mock.calls.at(-1);
@@ -286,15 +517,21 @@ describe('ChatSessionPool', () => {
     });
 
     it('rejects a busy switch and preserves the old agent and selection', () => {
-      const pool = new ChatSessionPool({ agentPresets: presets, validatePresetBackend: () => ({ available: true }) });
+      const pool = new ChatSessionPool({
+        agentPresets: presets,
+        validatePresetBackend: () => ({ available: true }),
+      });
       const old = pool.getOrCreateChatAgent('chat-busy', createMockCallbacks());
       const mutableOld = mockAgents.get('chat-busy');
-      if (!mutableOld) { throw new Error('expected mock agent'); }
+      if (!mutableOld) {
+        throw new Error('expected mock agent');
+      }
       mutableOld.isBusy = true;
 
       expect(pool.switchAgentPreset('chat-busy', 'fast')).toEqual({
         ok: false,
-        error: 'The current chat is busy; wait for the response or use /stop before switching presets',
+        error:
+          'The current chat is busy; wait for the response or use /stop before switching presets',
       });
       expect(old.dispose).not.toHaveBeenCalled();
       expect(pool.get('chat-busy')).toBe(old);
@@ -316,17 +553,28 @@ describe('ChatSessionPool', () => {
     });
 
     it('contains a failed backend factory/probe and retains the old session', () => {
-      const pool = new ChatSessionPool({ agentPresets: presets, validatePresetBackend: () => {throw new Error('token=private-backend-detail');} });
+      const pool = new ChatSessionPool({
+        agentPresets: presets,
+        validatePresetBackend: () => {
+          throw new Error('token=private-backend-detail');
+        },
+      });
       const old = pool.getOrCreateChatAgent('chat-probe-failed', createMockCallbacks());
       const result = pool.switchAgentPreset('chat-probe-failed', 'fast');
-      expect(result).toMatchObject({ ok: false, error: expect.stringContaining('current session is unchanged') });
+      expect(result).toMatchObject({
+        ok: false,
+        error: expect.stringContaining('current session is unchanged'),
+      });
       expect(JSON.stringify(result)).not.toContain('private-backend-detail');
       expect(pool.getOrCreateChatAgent('chat-probe-failed', createMockCallbacks())).toBe(old);
       expect(old.dispose).not.toHaveBeenCalled();
     });
 
     it('preserves the old agent when candidate construction fails', () => {
-      const pool = new ChatSessionPool({ agentPresets: presets, validatePresetBackend: () => ({ available: true }) });
+      const pool = new ChatSessionPool({
+        agentPresets: presets,
+        validatePresetBackend: () => ({ available: true }),
+      });
       const old = pool.getOrCreateChatAgent('chat-fail', createMockCallbacks());
       vi.mocked(AgentFactory.createChatAgent).mockImplementationOnce(() => {
         throw new Error('candidate rejected');
@@ -646,12 +894,13 @@ describe('ChatSessionPool', () => {
 
       expect(agent).toBeDefined();
       expect(AgentFactory.createChatAgent).toHaveBeenCalledOnce();
-      expect(AgentFactory.createChatAgent).toHaveBeenCalledWith(
-        'pilot',
-        'chat-1',
-        callbacks,
-        { messageBuilderOptions: undefined, cwdProvider: undefined, cwdResolver: undefined, skipHistory: false, sdkSessionKey: 'chat-1' },
-      );
+      expect(AgentFactory.createChatAgent).toHaveBeenCalledWith('pilot', 'chat-1', callbacks, {
+        messageBuilderOptions: undefined,
+        cwdProvider: undefined,
+        cwdResolver: undefined,
+        skipHistory: false,
+        sdkSessionKey: 'chat-1',
+      });
     });
 
     it('should return the same agent for the same chatId', () => {
@@ -683,12 +932,13 @@ describe('ChatSessionPool', () => {
 
       pool.getOrCreateChatAgent('chat-opts', callbacks);
 
-      expect(AgentFactory.createChatAgent).toHaveBeenCalledWith(
-        'pilot',
-        'chat-opts',
-        callbacks,
-        { messageBuilderOptions, cwdProvider: undefined, cwdResolver: undefined, skipHistory: false, sdkSessionKey: 'chat-opts' },
-      );
+      expect(AgentFactory.createChatAgent).toHaveBeenCalledWith('pilot', 'chat-opts', callbacks, {
+        messageBuilderOptions,
+        cwdProvider: undefined,
+        cwdResolver: undefined,
+        skipHistory: false,
+        sdkSessionKey: 'chat-opts',
+      });
     });
 
     it('should pass cwdProvider to factory when provided', () => {
@@ -698,12 +948,13 @@ describe('ChatSessionPool', () => {
 
       pool.getOrCreateChatAgent('chat-cwd', callbacks);
 
-      expect(AgentFactory.createChatAgent).toHaveBeenCalledWith(
-        'pilot',
-        'chat-cwd',
-        callbacks,
-        { messageBuilderOptions: undefined, cwdProvider, cwdResolver: undefined, skipHistory: false, sdkSessionKey: 'chat-cwd' },
-      );
+      expect(AgentFactory.createChatAgent).toHaveBeenCalledWith('pilot', 'chat-cwd', callbacks, {
+        messageBuilderOptions: undefined,
+        cwdProvider,
+        cwdResolver: undefined,
+        skipHistory: false,
+        sdkSessionKey: 'chat-cwd',
+      });
     });
 
     it('should pass both options when both are provided', () => {
@@ -714,12 +965,13 @@ describe('ChatSessionPool', () => {
 
       pool.getOrCreateChatAgent('chat-both', callbacks);
 
-      expect(AgentFactory.createChatAgent).toHaveBeenCalledWith(
-        'pilot',
-        'chat-both',
-        callbacks,
-        { messageBuilderOptions, cwdProvider, cwdResolver: undefined, skipHistory: false, sdkSessionKey: 'chat-both' },
-      );
+      expect(AgentFactory.createChatAgent).toHaveBeenCalledWith('pilot', 'chat-both', callbacks, {
+        messageBuilderOptions,
+        cwdProvider,
+        cwdResolver: undefined,
+        skipHistory: false,
+        sdkSessionKey: 'chat-both',
+      });
     });
 
     // Issue #4448 (direction #1): the structured resolver travels with
@@ -741,7 +993,13 @@ describe('ChatSessionPool', () => {
         'pilot',
         'chat-resolver',
         callbacks,
-        { messageBuilderOptions: undefined, cwdProvider, cwdResolver, skipHistory: false, sdkSessionKey: 'chat-resolver' },
+        {
+          messageBuilderOptions: undefined,
+          cwdProvider,
+          cwdResolver,
+          skipHistory: false,
+          sdkSessionKey: 'chat-resolver',
+        }
       );
     });
 
@@ -812,30 +1070,43 @@ describe('ChatSessionPool', () => {
       try {
         pool.getOrCreateChatAgent('project-chat', callbacks);
         pool.getOrCreateChatAgent('project-chat', callbacks, 'old-topic');
-        expect(pool.evictIdleAgents(Date.now() + 100)).toEqual(['project-chat', 'project-chat::old-topic']);
+        expect(pool.evictIdleAgents(Date.now() + 100)).toEqual([
+          'project-chat',
+          'project-chat::old-topic',
+        ]);
         pool.getOrCreateChatAgent('project-chat', callbacks, 'live-topic');
         const other = pool.getOrCreateChatAgent('other-chat', callbacks, 'other-topic');
-        const task = pool.getOrCreateChatAgent('project-chat', callbacks, undefined, { id: 'execution:pinned' });
+        const task = pool.getOrCreateChatAgent('project-chat', callbacks, undefined, {
+          id: 'execution:pinned',
+        });
 
         pool.resetProjectSessions('project-chat');
 
-        expect(forgetProviderSession.mock.calls.map(call => call[0]).sort()).toEqual([
-          'project-chat', 'project-chat::live-topic', 'project-chat::old-topic',
+        expect(forgetProviderSession.mock.calls.map((call) => call[0]).sort()).toEqual([
+          'project-chat',
+          'project-chat::live-topic',
+          'project-chat::old-topic',
         ]);
         expect(pool.get('project-chat', 'live-topic')).toBeUndefined();
         expect(pool.get('other-chat', 'other-topic')).toBe(other);
         expect(pool.get('project-chat', 'execution:pinned')).toBe(task);
         expect(other.dispose).not.toHaveBeenCalled();
         expect(task.dispose).not.toHaveBeenCalled();
-      } finally { pool.disposeAll(); }
+      } finally {
+        pool.disposeAll();
+      }
     });
 
     it('guards busy or pending work across persistent topics while excluding isolated tasks', () => {
       const pool = new ChatSessionPool();
       const callbacks = createMockCallbacks();
       try {
-        const topic = pool.getOrCreateChatAgent('project-chat', callbacks, 'topic') as unknown as { isBusy: boolean };
-        const task = pool.getOrCreateChatAgent('project-chat', callbacks, undefined, { id: 'execution:pinned' }) as unknown as { isBusy: boolean };
+        const topic = pool.getOrCreateChatAgent('project-chat', callbacks, 'topic') as unknown as {
+          isBusy: boolean;
+        };
+        const task = pool.getOrCreateChatAgent('project-chat', callbacks, undefined, {
+          id: 'execution:pinned',
+        }) as unknown as { isBusy: boolean };
         task.isBusy = true;
         expect(pool.isProjectBusy('project-chat')).toBe(false);
         topic.isBusy = true;
@@ -844,7 +1115,9 @@ describe('ChatSessionPool', () => {
         topic.isBusy = false;
         Object.defineProperty(topic, 'hasPendingWork', { value: true });
         expect(pool.isProjectBusy('project-chat')).toBe(true);
-      } finally { pool.disposeAll(); }
+      } finally {
+        pool.disposeAll();
+      }
     });
   });
 
@@ -896,12 +1169,12 @@ describe('ChatSessionPool', () => {
       pool.reset('chat-skip', true);
 
       pool.getOrCreateChatAgent('chat-skip', callbacks);
-      expect(AgentFactory.createChatAgent).toHaveBeenCalledWith(
-        'pilot',
-        'chat-skip',
-        callbacks,
-        { messageBuilderOptions: undefined, cwdProvider: undefined, skipHistory: true, sdkSessionKey: 'chat-skip' },
-      );
+      expect(AgentFactory.createChatAgent).toHaveBeenCalledWith('pilot', 'chat-skip', callbacks, {
+        messageBuilderOptions: undefined,
+        cwdProvider: undefined,
+        skipHistory: true,
+        sdkSessionKey: 'chat-skip',
+      });
     });
 
     it('should clear a stale skip-history flag on reset(chatId, false) so the next agent reloads history (#4206 nit)', () => {
@@ -916,12 +1189,13 @@ describe('ChatSessionPool', () => {
       pool.reset('chat-stale', false);
 
       pool.getOrCreateChatAgent('chat-stale', callbacks);
-      expect(AgentFactory.createChatAgent).toHaveBeenCalledWith(
-        'pilot',
-        'chat-stale',
-        callbacks,
-        { messageBuilderOptions: undefined, cwdProvider: undefined, cwdResolver: undefined, skipHistory: false, sdkSessionKey: 'chat-stale' },
-      );
+      expect(AgentFactory.createChatAgent).toHaveBeenCalledWith('pilot', 'chat-stale', callbacks, {
+        messageBuilderOptions: undefined,
+        cwdProvider: undefined,
+        cwdResolver: undefined,
+        skipHistory: false,
+        sdkSessionKey: 'chat-stale',
+      });
     });
 
     it('forgets provider-side session state on reset — keyed by the PLAIN chatId (#4644)', () => {
@@ -1019,9 +1293,14 @@ describe('ChatSessionPool', () => {
 
       const agent = pool.getOrCreateChatAgent('chat', createMockCallbacks());
       const mutable = mockAgents.get('chat');
-      if (!mutable) { throw new Error('expected mock agent'); }
+      if (!mutable) {
+        throw new Error('expected mock agent');
+      }
       mutable.isBusy = true;
-      mutable.steer.mockResolvedValue({ ok: false, error: 'Immediate steer unsupported; instruction was not queued.' });
+      mutable.steer.mockResolvedValue({
+        ok: false,
+        error: 'Immediate steer unsupported; instruction was not queued.',
+      });
       await expect(pool.steer('chat', 'change')).resolves.toEqual({
         ok: false,
         error: 'Immediate steer unsupported; instruction was not queued.',
@@ -1035,10 +1314,16 @@ describe('ChatSessionPool', () => {
       const agent = mockAgents.get('chat')!;
       agent.isBusy = true;
       let acknowledge!: (value: { ok: true; turnId: string }) => void;
-      agent.steer.mockReturnValue(new Promise((resolve) => { acknowledge = resolve; }));
+      agent.steer.mockReturnValue(
+        new Promise((resolve) => {
+          acknowledge = resolve;
+        })
+      );
       const result = pool.steer('chat', 'change');
       let settled = false;
-      void result.then(() => { settled = true; });
+      void result.then(() => {
+        settled = true;
+      });
       await Promise.resolve();
       expect(settled).toBe(false);
       acknowledge({ ok: true, turnId: 'turn-2' });
@@ -1116,7 +1401,9 @@ describe('ChatSessionPool', () => {
       pool.getOrCreateChatAgent('drained-chat', createMockCallbacks());
       const agent = mockAgents.get('drained-chat')!;
       agent.hasPendingWork = true;
-      setTimeout(() => { agent.hasPendingWork = false; }, 5);
+      setTimeout(() => {
+        agent.hasPendingWork = false;
+      }, 5);
 
       await pool.shutdownForServiceRestart({ drainTimeoutMs: 100, noticeTimeoutMs: 1 });
 
@@ -1190,25 +1477,28 @@ describe('ChatSessionPool', () => {
   });
 
   describe('pending work protection', () => {
-    it.each(['busy', 'pending'] as const)('retains silent %s work across long idle sweeps, then reclaims it after completion', state => {
-      const pool = new ChatSessionPool({ idleTimeoutMs: 1000 });
-      pool.getOrCreateChatAgent('owned-chat', createMockCallbacks(), 'owned-root');
-      const agent = mockAgents.get('owned-chat')!;
-      const started = Date.now();
-      agent.isBusy = state === 'busy';
-      agent.hasPendingWork = state === 'pending';
-      agent.lastActivityAt = started;
-      for (const minutes of [31, 96, 180]) {
-        expect(pool.evictIdleAgents(started + minutes * 60_000)).toEqual([]);
-        expect(pool.get('owned-chat', 'owned-root')).toBe(agent);
+    it.each(['busy', 'pending'] as const)(
+      'retains silent %s work across long idle sweeps, then reclaims it after completion',
+      (state) => {
+        const pool = new ChatSessionPool({ idleTimeoutMs: 1000 });
+        pool.getOrCreateChatAgent('owned-chat', createMockCallbacks(), 'owned-root');
+        const agent = mockAgents.get('owned-chat')!;
+        const started = Date.now();
+        agent.isBusy = state === 'busy';
+        agent.hasPendingWork = state === 'pending';
+        agent.lastActivityAt = started;
+        for (const minutes of [31, 96, 180]) {
+          expect(pool.evictIdleAgents(started + minutes * 60_000)).toEqual([]);
+          expect(pool.get('owned-chat', 'owned-root')).toBe(agent);
+        }
+        expect(agent.stop).not.toHaveBeenCalled();
+        expect(agent.dispose).not.toHaveBeenCalled();
+        agent.isBusy = false;
+        agent.hasPendingWork = false;
+        expect(pool.evictIdleAgents(started + 181 * 60_000)).toEqual(['owned-chat::owned-root']);
+        expect(agent.dispose).toHaveBeenCalledOnce();
       }
-      expect(agent.stop).not.toHaveBeenCalled();
-      expect(agent.dispose).not.toHaveBeenCalled();
-      agent.isBusy = false;
-      agent.hasPendingWork = false;
-      expect(pool.evictIdleAgents(started + 181 * 60_000)).toEqual(['owned-chat::owned-root']);
-      expect(agent.dispose).toHaveBeenCalledOnce();
-    });
+    );
   });
 
   describe('pool stats / leak diagnostics (Issue #4256)', () => {
@@ -1270,7 +1560,7 @@ describe('ChatSessionPool', () => {
         vi.advanceTimersByTime(1000);
         expect(mockLogger.info).toHaveBeenCalledWith(
           expect.objectContaining({ reason: 'idle-sweep' }),
-          'Agent pool snapshot (Issue #4256)',
+          'Agent pool snapshot (Issue #4256)'
         );
         pool.stopIdleSweep();
       } finally {
@@ -1290,7 +1580,7 @@ describe('ChatSessionPool', () => {
         [Record<string, unknown>, string]
       >;
       const peakSnapshots = calls.filter(
-        ([data, msg]) => msg === 'Agent pool snapshot (Issue #4256)' && data?.reason === 'peak',
+        ([data, msg]) => msg === 'Agent pool snapshot (Issue #4256)' && data?.reason === 'peak'
       );
       expect(peakSnapshots).toHaveLength(2);
       expect(peakSnapshots[0][0]?.active).toBe(1);
@@ -1341,12 +1631,13 @@ describe('ChatSessionPool', () => {
       // The factory receives the plain chatId — never the composite key — so
       // the agent's boundChatId guard (#644), HistoryManager, and callbacks
       // keep addressing the chat, not the thread.
-      expect(AgentFactory.createChatAgent).toHaveBeenCalledWith(
-        'pilot',
-        'oc_topic',
-        callbacks,
-        { messageBuilderOptions: undefined, cwdProvider: undefined, cwdResolver: undefined, skipHistory: false, sdkSessionKey: 'oc_topic::om_threadA' },
-      );
+      expect(AgentFactory.createChatAgent).toHaveBeenCalledWith('pilot', 'oc_topic', callbacks, {
+        messageBuilderOptions: undefined,
+        cwdProvider: undefined,
+        cwdResolver: undefined,
+        skipHistory: false,
+        sdkSessionKey: 'oc_topic::om_threadA',
+      });
       // And it is still retrievable only via the thread key...
       expect(pool.get('oc_topic', 'om_threadA')).toBeDefined();
       expect(pool.get('oc_topic')).toBeUndefined();
@@ -1412,7 +1703,7 @@ describe('ChatSessionPool', () => {
         'pilot',
         'oc_topic',
         callbacks,
-        expect.objectContaining({ skipHistory: true }),
+        expect.objectContaining({ skipHistory: true })
       );
     });
 

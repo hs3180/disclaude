@@ -113,6 +113,18 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Harness backend availability diagnostic (#5168)
+# ---------------------------------------------------------------------------
+# One informational line about which build-time backends (DISCLAUDE_BACKENDS)
+# are actually usable in this container — the image installs everything at
+# build time; nothing here installs or needs the network. Best-effort only:
+# a missing script/manifest (older image) or a failed check never blocks
+# startup. Deeper acceptance: node /app/scripts/install-backends.mjs --verify
+if [ -f /app/scripts/install-backends.mjs ] && [ -f /app/.backends-manifest.json ]; then
+  node /app/scripts/install-backends.mjs --diagnose --root /app 2>/dev/null || true
+fi
+
+# ---------------------------------------------------------------------------
 # Launch the application
 # ---------------------------------------------------------------------------
 # Run under tini as PID 1 for proper signal handling / zombie reaping.
