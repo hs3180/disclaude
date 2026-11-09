@@ -9,6 +9,7 @@
  
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { writeFileSync, unlinkSync } from 'node:fs';
 import { WeChatChannel } from './wechat-channel.js';
 import { WeChatApiError } from './api-client.js';
 
@@ -51,6 +52,21 @@ vi.mock('./auth.js', () => ({
     isAuthenticating = vi.fn().mockReturnValue(false);
     abort = vi.fn();
   }),
+}));
+
+// Partial core mock (Issue #5719): real classes stay, but the module-level
+// channel logger becomes a spy so attachment-delivery ledger rows are
+// assertable (same pattern as message-listener.test.ts).
+const mockLogger = vi.hoisted(() => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  trace: vi.fn(),
+}));
+vi.mock('@disclaude/core', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@disclaude/core')>()),
+  createLogger: vi.fn(() => mockLogger),
 }));
 
 // Mock the message listener module
@@ -432,5 +448,102 @@ describe('WeChatChannel', () => {
 
       expect(mockUploadMedia).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('attachment delivery ledger (Issue #5719 / T-102)', () => {
+  beforeEach(() => {
+    // Outside describe('WeChatChannel'), so ledger rows must be cleared here.
+    vi.clearAllMocks();
+    mockHasToken.mockReturnValue(true);
+  });
+  const ledgerRows = (level: 'info' | 'warn') =>
+    mockLogger[level].mock.calls.map(([record]: any[]) => record)
+      .filter((record: any) => record?.event === 'attachment_delivery');
+  const writeTmp = (name: string, data: string) => {
+    const file = `/tmp/wechat-t102-${name}`;
+    writeFileSync(file, Buffer.from(data));
+    return file;
+  };
+
+  it('accounts upload and platform send separately on success — generation ≠ delivery, phone receipt never claimed', async () => {
+    const channel = readyChannel();
+    const mockSendVideo = vi.fn().mockResolvedValue('vid-msg-1');
+    (channel as any).client = {
+      uploadMedia: vi.fn().mockResolvedValue({
+        media: { encrypt_query_param: 'SECRET-CDN-KEY' }, size: 13, encryptedSize: 16,
+      }),
+      sendVideo: mockSendVideo,
+      hasToken: mockHasToken,
+    };
+    const tmpFile = writeTmp('ok.mp4', 'fake-mp4-data');
+    try {
+      await (channel as any).doSendMessage({ chatId: 'user-123', type: 'file', filePath: tmpFile });
+      const rows = ledgerRows('info');
+      expect(rows.some((r: any) => r.stage === 'attempt')).toBe(true);
+      expect(rows.some((r: any) => r.stage === 'upload_result' && r.outcome === 'uploaded')).toBe(true);
+      expect(rows.some((r: any) => r.stage === 'send_result' && r.outcome === 'sent' && r.messageId === 'vid-msg-1')).toBe(true);
+      // 脱敏 (#5719 验收⑤): every ledger row is peer-hashed, never carries
+      // the raw peer id or CDN key material, and marks the phone-receipt
+      // boundary a server log cannot cross.
+      for (const row of [...rows, ...ledgerRows('warn')]) {
+        expect(row.peerHash).toMatch(/^[0-9a-f]{12}$/);
+        expect(row.phoneReceipt).toBe('unverifiable_server_side');
+        const serialized = JSON.stringify(row);
+        expect(serialized).not.toContain('user-123');
+        expect(serialized).not.toContain('SECRET-CDN-KEY');
+      }
+    } finally {
+      unlinkSync(tmpFile);
+    }
+  });
+
+  it('records a CDN upload failure as upload_result/failed and rethrows — a generated artifact is not a delivered one', async () => {
+    const channel = readyChannel();
+    const mockSendVideo = vi.fn();
+    (channel as any).client = {
+      uploadMedia: vi.fn().mockRejectedValue(new Error('stage=upload, reason=timeout')),
+      sendVideo: mockSendVideo,
+      hasToken: mockHasToken,
+    };
+    const tmpFile = writeTmp('fail-upload.mp4', 'fake-mp4-data');
+    try {
+      await expect((channel as any).doSendMessage({
+        chatId: 'user-123', type: 'file', filePath: tmpFile,
+      })).rejects.toThrow('stage=upload');
+      // The platform send was never attempted.
+      expect(mockSendVideo).not.toHaveBeenCalled();
+      const failed = ledgerRows('warn').filter((r: any) => r.outcome === 'failed');
+      expect(failed).toHaveLength(1);
+      expect(failed[0].stage).toBe('upload_result');
+      expect(failed[0].errorClass).toBe('Error');
+    } finally {
+      unlinkSync(tmpFile);
+    }
+  });
+
+  it('records a platform send failure after a good upload as send_result/failed and rethrows', async () => {
+    const channel = readyChannel();
+    (channel as any).client = {
+      uploadMedia: vi.fn().mockResolvedValue({
+        media: { encrypt_query_param: 'cdn-ref' }, size: 13, encryptedSize: 16,
+      }),
+      sendVideo: vi.fn().mockRejectedValue(new Error('stage=send, reason=timeout')),
+      hasToken: mockHasToken,
+    };
+    const tmpFile = writeTmp('fail-send.mp4', 'fake-mp4-data');
+    try {
+      await expect((channel as any).doSendMessage({
+        chatId: 'user-123', type: 'file', filePath: tmpFile,
+      })).rejects.toThrow('stage=send');
+      // The upload stage succeeded and is accounted as such — the failure is
+      // isolated to the platform send, not conflated with the upload.
+      expect(ledgerRows('info').some((r: any) => r.stage === 'upload_result' && r.outcome === 'uploaded')).toBe(true);
+      const failed = ledgerRows('warn').filter((r: any) => r.outcome === 'failed');
+      expect(failed).toHaveLength(1);
+      expect(failed[0].stage).toBe('send_result');
+    } finally {
+      unlinkSync(tmpFile);
+    }
   });
 });
