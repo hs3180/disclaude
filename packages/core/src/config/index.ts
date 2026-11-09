@@ -446,6 +446,7 @@ export class Config {
       credentialEnvKeys: preset.credentialEnvKeys,
       llm: preset.llm,
       reasoningEffort: preset.reasoningEffort,
+      llmVia: preset.llmVia,
       maxConcurrentSessions: preset.maxConcurrentSessions,
       settings: preset,
     };

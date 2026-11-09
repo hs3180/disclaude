@@ -71,7 +71,7 @@ There is **no single-prompt CLI mode** (`--prompt`/`feishu` subcommands were rem
 | launchd plist | `~/Library/LaunchAgents/com.disclaude.service.plist`, label `com.disclaude.service` |
 | launchd logs | `~/Library/Logs/disclaude/{disclaude-combined.log, launchd-stdout.log, launchd-stderr.log}` (not `/tmp`) |
 | Local workspace | `./workspace`; Docker mounts host `./workspace` → container `/data/workspace` |
-| In-container user | `disclaude` (uid 1001); passwordless sudo limited to `apt-get` (audited to `/data/logs/sudo.log`). Base image pre-installs cmake, gcc/g++/make, python3-dev, gh, codex, lark CLI |
+| In-container user | `disclaude` (uid 1001); passwordless sudo limited to `apt-get` (audited to `/data/logs/sudo.log`). Base image pre-installs cmake, gcc/g++/make, python3-dev, gh, lark CLI; harness backends (claude sdk, pi runtime, codex/dsh CLIs) are baked at build time per `DISCLAUDE_BACKENDS` (#5168, see docs/docker-compose-deployment.md) |
 | Log rotation | Pino JSON (`packages/core/src/utils/logger.ts`). `logging.rotate` (env `LOG_ROTATE`) off by default; pino-roll writes `disclaude-combined.<n>.log` + `current.log` symlink. Docker sets `LOG_ROTATE=true`. `initLogger()` is **async** — await it |
 
 Restart policy: only restart when the user asks. Prefer `pnpm run launchd:restart` (macOS) / `docker compose up -d --build` (Docker), after tests+lint+type-check pass.
@@ -132,7 +132,7 @@ env: { MY_VAR: "value" }
 
 ### Codex backend (`agentBackend: codex`, #4627)
 
-Disclaude drives the **Codex CLI** (`codex exec`), authenticated via the **ChatGPT-subscription OAuth session** — not an API key. Consequently `provider` and `glm.*` are ignored (loader warns), and model IDs must be available to the signed-in Codex account. Disclaude does not select a fixed default model. Configure an explicit model with `agent.codex.model`; per-chat, per-turn, preset, or `CODEX_MODEL` selections can override it. Explicit identifiers are passed unchanged to Codex, which validates availability; when unset, Codex keeps its own model selection. Concrete model recommendations belong only in `disclaude.config.example.yaml`. Requires the `codex` binary + one-time `codex login`. Deep doc: `docs/codex-backend.md`.
+Disclaude drives the **Codex CLI** (`codex exec`), authenticated via the **ChatGPT-subscription OAuth session** — not an API key. Consequently `provider` and `glm.*` are ignored (loader warns), and model IDs must be available to the signed-in Codex account. The bound `llms.<name>.via` declares the LLM access method (#5338): `chatgpt` (default without an `api` block) = that login + subscription quota, errors tell you to `codex login`; `api` = a compatible OpenAI-protocol (Responses) endpoint injected as a namespaced upstream `model_providers` entry — runs without a ChatGPT login, 401/quota errors name the API credential. Either method may bind the same codex runtime; mixed deployments are valid. Disclaude does not select a fixed default model. Configure an explicit model with `agent.codex.model`; per-chat, per-turn, preset, or `CODEX_MODEL` selections can override it. Explicit identifiers are passed unchanged to Codex, which validates availability; when unset, Codex keeps its own model selection. Concrete model recommendations belong only in `disclaude.config.example.yaml`. Requires the `codex` binary + one-time `codex login`. Deep doc: `docs/codex-backend.md`.
 
 Sandbox mapping (`permissionMode` → `codex exec` `sandbox_mode`, see `packages/core/src/sdk/providers/codex/sandbox-policy.ts`):
 

@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { manageDiagnosticsPlugin } from '../../../skills/diagnostics-plugin.js';
@@ -142,21 +142,98 @@ async function* oneInput() {
 }
 
 describe('DeepSeekHarnessProvider (Issue #4741)', () => {
-  it('exposes diagnostics instructions only after explicit Project installation', async () => {
+  it('sends no skills manifest and fails fast only after explicit Project installation (#5717)', async () => {
     const fixture = await sdkFixture();
     const provider = new DeepSeekHarnessProvider({ binary: fixture.binary, dshHome: fixture.dir, mode: 'minimal' });
+    const readRequests = () =>
+      readFile(join(fixture.dir, 'requests.jsonl'), 'utf8')
+        .then((body) => body.trim().split('\n').map((line) => JSON.parse(line)));
     try {
       const options = { settingSources: [], cwd: fixture.dir, systemPrompt: 'Original context' };
       await collect(provider.queryStream(oneInput(), options).iterator);
-      let requests = (await readFile(join(fixture.dir, 'requests.jsonl'), 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+      let requests = await readRequests();
+      // The captured harness input is the bare operator prompt: no fabricated
+      // manifest reaches initialize/open/prompt frames in any form.
       expect(requests.find((request) => request.method === 'initialize').params.systemPrompt).toBe('Original context');
+      for (const request of requests) {
+        expect(JSON.stringify(request)).not.toContain('Disclaude skills');
+        expect(JSON.stringify(request)).not.toContain('SKILL.md');
+      }
       manageDiagnosticsPlugin('install', fixture.dir, resolve('.'));
-      await collect(provider.queryStream(oneInput(), options).iterator);
-      requests = (await readFile(join(fixture.dir, 'requests.jsonl'), 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
-      const prompt = requests.filter((request) => request.method === 'initialize').at(-1).params.systemPrompt;
-      expect(prompt).toContain('Original context');
-      expect(prompt).toContain('[diagnose-logs](.disclaude/plugins/diagnostics/skills/diagnose-logs/SKILL.md)');
+      // An explicit installation DSH cannot deliver natively fails fast with
+      // the remedy, before any model turn — the wire log must not grow.
+      expect(() => provider.queryStream(oneInput(), options)).toThrow(
+        /DSH \(DeepSeek Harness\) cannot natively load Disclaude-managed skills:.*no native skill registration\/discovery API.*plugins remove diagnostics.*No prompt manifest was injected and no model turn was submitted\./s
+      );
+      requests = await readRequests();
+      expect(requests.filter((request) => request.method === 'initialize')).toHaveLength(1);
       manageDiagnosticsPlugin('remove', fixture.dir, resolve('.'));
+      await collect(provider.queryStream(oneInput(), options).iterator);
+      requests = await readRequests();
+      const prompt = requests.filter((request) => request.method === 'initialize').at(-1).params.systemPrompt;
+      expect(prompt).toBe('Original context');
+      expect(prompt).not.toContain('diagnose-logs');
+    } finally {
+      await provider.shutdown();
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
+  });
+  it('resolves the undeliverable-skill gate from projectRoot, not the execution cwd', async () => {
+    const fixture = await sdkFixture();
+    const provider = new DeepSeekHarnessProvider({ binary: fixture.binary, dshHome: fixture.dir, mode: 'minimal' });
+    const project = join(fixture.dir, 'project-with-plugin');
+    const elsewhere = join(fixture.dir, 'elsewhere');
+    await mkdir(project, { recursive: true });
+    await mkdir(elsewhere, { recursive: true });
+    try {
+      manageDiagnosticsPlugin('install', project, resolve('.'));
+      // Installed under projectRoot while the query executes elsewhere: the
+      // explicit installation is undeliverable and fails fast.
+      expect(() =>
+        provider.queryStream(oneInput(), { settingSources: [], cwd: elsewhere, projectRoot: project, systemPrompt: 'Original context' })
+      ).toThrow('cannot natively load Disclaude-managed skills');
+      // The plugin sits under the cwd's tree, but projectRoot is clean: the
+      // gate follows projectRoot (the previous manifest resolution root) and
+      // the query proceeds with the bare operator prompt.
+      await collect(
+        provider.queryStream(oneInput(), { settingSources: [], cwd: project, projectRoot: elsewhere, systemPrompt: 'Original context' }).iterator
+      );
+      const requests = (await readFile(join(fixture.dir, 'requests.jsonl'), 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+      expect(requests.filter((request) => request.method === 'initialize').at(-1).params.systemPrompt).toBe('Original context');
+      expect(JSON.stringify(requests)).not.toContain('Disclaude skills');
+    } finally {
+      await provider.shutdown();
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
+  });
+  it('isolates project switches and concurrent queries per Project root', async () => {
+    const fixture = await sdkFixture();
+    const provider = new DeepSeekHarnessProvider({ binary: fixture.binary, dshHome: fixture.dir, mode: 'minimal' });
+    const dirty = join(fixture.dir, 'dirty-project');
+    const clean = join(fixture.dir, 'clean-project');
+    await mkdir(dirty, { recursive: true });
+    await mkdir(clean, { recursive: true });
+    try {
+      manageDiagnosticsPlugin('install', dirty, resolve('.'));
+      // A clean query is in flight when the dirty project's query arrives:
+      // only the dirty query fails; the in-flight clean prompt stays bare.
+      const cleanOptions = { settingSources: [], cwd: clean, projectRoot: clean, systemPrompt: 'Original context', sessionKey: 'clean-chat' };
+      const flight = collect(provider.queryStream(oneInput(), cleanOptions).iterator);
+      expect(() =>
+        provider.queryStream(oneInput(), { settingSources: [], cwd: dirty, projectRoot: dirty, systemPrompt: 'Original context', sessionKey: 'dirty-chat' })
+      ).toThrow('cannot natively load Disclaude-managed skills');
+      await flight;
+      // Project switch on the same provider: clean still runs after dirty
+      // failed, and dirty still fails after clean ran — no sticky state.
+      await collect(provider.queryStream(oneInput(), { ...cleanOptions, sessionKey: 'clean-chat-2' }).iterator);
+      expect(() =>
+        provider.queryStream(oneInput(), { settingSources: [], cwd: dirty, projectRoot: dirty, systemPrompt: 'Original context', sessionKey: 'dirty-chat-2' })
+      ).toThrow('cannot natively load Disclaude-managed skills');
+      const requests = (await readFile(join(fixture.dir, 'requests.jsonl'), 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+      const prompts = requests.filter((request) => request.method === 'initialize').map((request) => request.params.systemPrompt);
+      expect(prompts).toEqual(['Original context', 'Original context']);
+      expect(JSON.stringify(requests)).not.toContain('Disclaude skills');
+      expect(JSON.stringify(requests)).not.toContain('SKILL.md');
     } finally {
       await provider.shutdown();
       await rm(fixture.dir, { recursive: true, force: true });

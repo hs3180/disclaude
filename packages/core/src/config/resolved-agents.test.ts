@@ -38,6 +38,10 @@ const selectedDshLlm = (protocol: 'openai' | 'anthropic', apiKeyRef = '$DSH_KEY'
   defaultModel: 'glm-5.3',
   api: { protocol, baseUrl: 'https://selected.example/v1', apiKey: apiKeyRef },
 });
+const miniSweLlm = (): LlmConfig => ({
+  defaultModel: 'openai/gpt-5.4',
+  api: { protocol: 'openai', baseUrl: 'https://litellm.example/v1', apiKey: '$MINISWE_KEY' },
+});
 const nonDshLlmBinding = (backend: string) => (backend === 'codex' ? 'daily' : 'proxy');
 const kimiTierOverrides = { 'claude-opus-5': 'kimi-k3', 'claude-sonnet-4-5': 'kimi-k3-flash' };
 const tierEnv = (opus: string, sonnet = opus, haiku = opus) => ({
@@ -579,6 +583,108 @@ describe('named runtime and LLM configuration', () => {
     expect(result.errors.join('\n')).toContain('aliases are not auto-resolved');
   });
 
+  // --------------------------------------------------------------------------
+  // mini-swe-agent optional backend (Issue #5006)
+  // --------------------------------------------------------------------------
+
+  it('resolves a mini-swe agent from its bound LLM connection', () => {
+    vi.stubEnv('MINISWE_KEY', 'mini-test-key');
+    const config = configuration();
+    config.agents!.mini = {
+      backend: 'miniswe',
+      llm: 'mini-openai',
+      miniswe: { binary: 'mini', executionEnvironment: 'local', timeoutMs: 90_000 },
+    };
+    config.llms!['mini-openai'] = miniSweLlm();
+    const result = resolveConfiguredAgents(config);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.presets.mini).toMatchObject({
+      agentBackend: 'miniswe',
+      model: 'openai/gpt-5.4',
+      apiProtocol: 'openai',
+      apiBaseUrl: 'https://litellm.example/v1',
+      apiKey: 'mini-test-key',
+      miniswe: { binary: 'mini', executionEnvironment: 'local', timeoutMs: 90_000 },
+    });
+    expect(validateResolvedAgent(result.presets.mini)).toBeUndefined();
+  });
+
+  it('requires the bound LLM api connection for mini-swe (no interactive fallback)', () => {
+    const config = configuration();
+    config.llms!.bare = { defaultModel: 'openai/gpt-5.4' };
+    config.agents!.mini = { backend: 'miniswe', llm: 'bare' };
+    expect(resolveConfiguredAgents(config)).toEqual({
+      ok: false,
+      errors: [
+        'llms.bare.api with protocol, credential reference and (for custom endpoints) baseUrl is required for mini-swe',
+      ],
+    });
+  });
+
+  it('flags a missing mini-swe credential at selection time without blocking resolve', () => {
+    vi.stubEnv('MINISWE_KEY', '');
+    const config = configuration();
+    config.agents!.mini = { backend: 'miniswe', llm: 'mini-openai' };
+    config.llms!['mini-openai'] = miniSweLlm();
+    const result = resolveConfiguredAgents(config);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(validateResolvedAgent(result.presets.mini)).toMatch(/credential referenced by llms\.mini-openai\.api\.apiKey is missing/);
+    }
+  });
+
+  it('rejects non-local execution environments with the out-of-scope message', () => {
+    const config = configuration();
+    config.agents!.mini = {
+      backend: 'miniswe',
+      llm: 'proxy',
+      miniswe: { executionEnvironment: 'docker' as never },
+    };
+    expect(resolveConfiguredAgents(config)).toEqual({
+      ok: false,
+      errors: [
+        'agents.mini.miniswe.executionEnvironment must be local; docker and SWE-ReX execution environments are out of scope for this adapter (run those as native mini-swe-agent workflows, #5006)',
+      ],
+    });
+  });
+
+  it.each([
+    (c: DisclaudeConfig) => {
+      c.agents!.mini = { backend: 'miniswe', llm: 'proxy', miniswe: { image: 'swe' } as never };
+    },
+    (c: DisclaudeConfig) => {
+      c.agents!.mini = { backend: 'miniswe', llm: 'proxy', miniswe: { binary: '  ' } };
+    },
+    (c: DisclaudeConfig) => {
+      c.agents!.mini = { backend: 'miniswe', llm: 'proxy', miniswe: { timeoutMs: -1 } };
+    },
+    (c: DisclaudeConfig) => {
+      c.agents!.mini = { backend: 'miniswe', llm: 'proxy', miniswe: { timeoutMs: 1.5 } };
+    },
+  ])('rejects malformed miniswe execution settings', (mutate) => {
+    const config = configuration();
+    mutate(config);
+    const result = resolveConfiguredAgents(config);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.errors.length).toBe(1);
+    expect(result.errors.join('\n')).toMatch(/agents\.mini\.miniswe\./);
+  });
+
+  it('rejects a miniswe block on a non-miniswe backend', () => {
+    const config = configuration();
+    config.agents!.assistant.miniswe = { timeoutMs: 5_000 };
+    expect(resolveConfiguredAgents(config)).toEqual({
+      ok: false,
+      errors: ['agents.assistant.miniswe requires backend: miniswe'],
+    });
+  });
+
   describe('shared bindings across harnesses (Issue #5679)', () => {
     it('serves one wire model to Claude and DSH from a single binding', () => {
       const config = configuration();
@@ -884,6 +990,194 @@ describe('named runtime and LLM configuration', () => {
         return;
       }
       expect(result.presets.assistant.reasoningEffort).toBe('high');
+    });
+  });
+
+  describe('LLM access methods (Issue #5338)', () => {
+    it('declares via: chatgpt and resolves it onto the codex preset', () => {
+      const config = configuration();
+      config.llms!.daily.via = 'chatgpt';
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        return;
+      }
+      expect(result.presets.daily).toMatchObject({ agentBackend: 'codex', llmVia: 'chatgpt', apiKey: '' });
+    });
+
+    it('rejects declaring chatgpt together with an api block', () => {
+      const config = configuration();
+      config.llms!.daily.via = 'chatgpt';
+      config.llms!.daily.api = { protocol: 'openai', baseUrl: 'https://api.example/v1', apiKey: '$API_KEY' };
+      expect(resolveConfiguredAgents(config)).toEqual({
+        ok: false,
+        errors: [
+          'llms.daily.via chatgpt uses the Codex-managed ChatGPT login and subscription; remove llms.daily.api or declare via: api',
+        ],
+      });
+    });
+
+    it.each(['claude', 'pi'] as const)(
+      'rejects via: chatgpt bound to the %s runtime',
+      (backend) => {
+        const config = configuration();
+        config.agents!.misbound = { backend, llm: 'sub' };
+        config.llms!.sub = { via: 'chatgpt', defaultModel: 'gpt-6-luna' };
+        expect(resolveConfiguredAgents(config)).toEqual({
+          ok: false,
+          errors: [
+            'agents.misbound: llms.sub.via chatgpt requires backend: codex — the ChatGPT login is managed by the Codex CLI',
+          ],
+        });
+      }
+    );
+
+    it('rejects via: chatgpt on dsh alongside its missing-connection error', () => {
+      const config = configuration();
+      config.agents!.misbound = { backend: 'dsh', llm: 'sub' };
+      config.llms!.sub = { via: 'chatgpt', defaultModel: 'gpt-6-luna' };
+      expect(resolveConfiguredAgents(config)).toMatchObject({
+        ok: false,
+        errors: expect.arrayContaining([
+          'agents.misbound: llms.sub.via chatgpt requires backend: codex — the ChatGPT login is managed by the Codex CLI',
+          'llms.sub.api with protocol, baseUrl and credential reference is required for DSH',
+        ]),
+      });
+    });
+
+    it('rejects via: api without an api block — a missing credential is never chatgpt', () => {
+      const config = configuration();
+      config.agents!.apionly = { backend: 'codex', llm: 'apionly' };
+      config.llms!.apionly = { via: 'api', defaultModel: 'glm-5.3' };
+      expect(resolveConfiguredAgents(config)).toEqual({
+        ok: false,
+        errors: [
+          'llms.apionly.via api requires llms.apionly.api with protocol, baseUrl and credential reference; a missing credential is never treated as chatgpt',
+        ],
+      });
+    });
+
+    it('binds the codex runtime to a compatible API LLM instead of rejecting it', () => {
+      vi.stubEnv('API_KEY', 'api-secret');
+      const config = configuration();
+      config.agents!.apicodex = { backend: 'codex', llm: 'gateway' };
+      config.llms!.gateway = {
+        defaultModel: 'glm-5.3',
+        api: { protocol: 'openai', baseUrl: 'https://api.example/v1', apiKey: '$API_KEY' },
+      };
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        return;
+      }
+      expect(result.presets.apicodex).toMatchObject({
+        agentBackend: 'codex',
+        llmVia: 'api',
+        apiProtocol: 'openai',
+        apiBaseUrl: 'https://api.example/v1',
+        apiKey: 'api-secret',
+        model: 'glm-5.3',
+      });
+      expect(validateResolvedAgent(result.presets.apicodex)).toBeUndefined();
+    });
+
+    it('requires the openai protocol and an endpoint for codex API access', () => {
+      const anthropic = configuration();
+      anthropic.agents!.apicodex = { backend: 'codex', llm: 'gateway' };
+      anthropic.llms!.gateway = {
+        defaultModel: 'glm-5.3',
+        api: { protocol: 'anthropic', baseUrl: 'https://api.example', apiKey: '$API_KEY' },
+      };
+      expect(resolveConfiguredAgents(anthropic)).toMatchObject({
+        ok: false,
+        errors: [
+          'agents.apicodex: the codex runtime drives OpenAI-protocol (Responses API) endpoints; llms.gateway.api.protocol must be openai',
+        ],
+      });
+
+      const addressless = configuration();
+      addressless.agents!.apicodex = { backend: 'codex', llm: 'gateway' };
+      addressless.llms!.gateway = {
+        defaultModel: 'glm-5.3',
+        api: { protocol: 'openai', apiKey: '$API_KEY' },
+      };
+      expect(resolveConfiguredAgents(addressless)).toMatchObject({
+        ok: false,
+        errors: ['llms.gateway.api.baseUrl is required for API access on the codex runtime'],
+      });
+    });
+
+    it('serves a mixed deployment: chatgpt and API codex agents coexist with API Claude', () => {
+      vi.stubEnv('API_KEY', 'api-secret');
+      vi.stubEnv('PROXY_KEY', 'proxy-secret');
+      const config = configuration();
+      config.llms!.daily.via = 'chatgpt';
+      config.agents!.apicodex = { backend: 'codex', llm: 'gateway' };
+      config.llms!.gateway = {
+        defaultModel: 'glm-5.3',
+        api: { protocol: 'openai', baseUrl: 'https://api.example/v1', apiKey: '$API_KEY' },
+      };
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        return;
+      }
+      expect(result.presets.daily.llmVia).toBe('chatgpt');
+      expect(result.presets.apicodex.llmVia).toBe('api');
+      expect(result.presets.assistant.llmVia).toBe('api');
+      expect(resolveAgentPreset(result.presets)).toMatchObject({ ok: true, name: 'daily' });
+    });
+
+    it('reports a missing API credential on codex as a credential error, never a login error', () => {
+      vi.stubEnv('API_KEY', '');
+      const config = configuration();
+      config.agents!.apicodex = { backend: 'codex', llm: 'gateway' };
+      config.llms!.gateway = {
+        defaultModel: 'glm-5.3',
+        api: { protocol: 'openai', baseUrl: 'https://api.example/v1', apiKey: '$API_KEY' },
+      };
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        return;
+      }
+      const error = validateResolvedAgent(result.presets.apicodex);
+      expect(error).toContain('llms.gateway.api.apiKey is missing');
+      expect(error).not.toMatch(/codex login|chatgpt|chatGpt/i);
+    });
+
+    it('accepts third-party model identifiers on codex API bindings', () => {
+      vi.stubEnv('API_KEY', 'api-secret');
+      const config = configuration();
+      config.agents!.apicodex = { backend: 'codex', llm: 'gateway' };
+      config.llms!.gateway = {
+        defaultModel: 'kimi-k3',
+        api: { protocol: 'openai', baseUrl: 'https://api.example/v1', apiKey: '$API_KEY' },
+      };
+      expect(resolveConfiguredAgents(config).ok).toBe(true);
+    });
+
+    it('keeps the api block as the implicit api declaration (upgrade scenario)', () => {
+      const config = configuration();
+      // No via key anywhere: api blocks resolve to api access, the api-less
+      // codex binding keeps the ChatGPT login — pre-#5338 configs resolve
+      // unchanged, now with the access method named on the preset.
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        return;
+      }
+      expect(result.presets.daily.llmVia).toBe('chatgpt');
+      expect(result.presets.assistant.llmVia).toBe('api');
+    });
+
+    it.each(['subscription', 'API', 'chat', true, 42])('rejects a malformed via value (%j)', (via) => {
+      const config = configuration();
+      config.llms!.daily.via = via as never;
+      expect(resolveConfiguredAgents(config)).toMatchObject({
+        ok: false,
+        errors: ['llms.daily.via must be chatgpt or api'],
+      });
     });
   });
 });

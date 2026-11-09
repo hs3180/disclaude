@@ -85,6 +85,12 @@ export interface CodexExecRunOptions {
   fullAccess?: boolean;
   /** Workspace-write network override; read-only retains Codex's native policy. */
   networkAccess?: boolean;
+  /**
+   * Extra `-c key=value` config overrides (Issue #5338): the model-provider
+   * entry injected when the bound LLM uses API access instead of the Codex
+   * CLI's ChatGPT login.
+   */
+  configArgs?: readonly string[];
   /** Environment for the child (merged over the provider env). */
   env?: Record<string, string | undefined>;
   /** Per-call timeout override (ms); zero disables the runner wall-clock timeout. */
@@ -187,6 +193,7 @@ export class CodexExecRunner {
           '--json',
           '--skip-git-repo-check',
           ...CODEX_BROWSER_DISABLE_ARGS,
+          ...(options.configArgs ?? []),
           ...(options.fullAccess ? ['--dangerously-bypass-approvals-and-sandbox'] : []),
           ...(options.model ? ['-m', options.model] : []),
           ...(options.reasoningEffort ? ['-c', `model_reasoning_effort="${options.reasoningEffort}"`] : []),
@@ -201,6 +208,7 @@ export class CodexExecRunner {
           '--json',
           '--skip-git-repo-check',
           ...CODEX_BROWSER_DISABLE_ARGS,
+          ...(options.configArgs ?? []),
           ...(options.fullAccess ? ['--dangerously-bypass-approvals-and-sandbox'] : []),
           ...(options.model ? ['-m', options.model] : []),
           ...(options.reasoningEffort ? ['-c', `model_reasoning_effort="${options.reasoningEffort}"`] : []),

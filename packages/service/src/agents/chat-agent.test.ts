@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -968,7 +968,7 @@ describe('ChatAgent (service)', () => {
         expect(push).not.toHaveBeenCalled();
         expect((agent as any).pendingTurnMessageIds).toEqual([]);
         expect((agent as any).lastTurnMessage.messageId).toBe('owner-A');
-        expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('后端已确认接收');
+        expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('已交给当前运行的回合');
         let finished = false;
         const completion = agent.turnCompleteFor('follow-B')!.then(() => { finished = true; });
         await Promise.resolve();
@@ -977,6 +977,156 @@ describe('ChatAgent (service)', () => {
         await completion;
         expect(finished).toBe(true);
       } finally { dispose(agent); }
+    });
+
+    it('Issue #5713: interjection confirmation carries the shared busy context and real queue depth', async () => {
+      const { agent, callbacks, push } = owned();
+      try {
+        (agent as any).activeTurnTriggerLine = '原始回合任务摘要';
+        (agent as any).turnStartedAtMsPrivate = Date.now() - 2 * 60_000;
+        (agent as any).pendingTurnMessageIds = ['queued-1'];
+        await agent.processMessage(input());
+        const receipt = callbacks.sendMessage.mock.calls[0]?.[1] as string;
+        expect(receipt).toContain('已交给当前运行的回合');
+        expect(receipt).toContain('\n（当前回合「原始回合任务摘要」已运行 2 分钟，前方还有 1 条排队）');
+        // The steered supplement merged into the running turn is not a queue row.
+        expect((agent as any).pendingTurnMessageIds).toEqual(['queued-1']);
+        expect(push).not.toHaveBeenCalled();
+      } finally { dispose(agent); }
+    });
+
+    it('Issue #5713: steered attachments are named in the confirmation receipt', async () => {
+      const { agent, callbacks } = owned();
+      const shot = { id: 'att-5713', fileName: 'shot.png', source: 'user' as const,
+        localPath: '/tmp/shot_5713.png', createdAt: 1 };
+      try {
+        await agent.processMessage({ chatId: 'owned-steer', payload: 'follow-att', messageId: 'follow-att',
+          threadRootId: 'root-B', attachments: [shot] });
+        const receipt = callbacks.sendMessage.mock.calls[0]?.[1] as string;
+        expect(receipt).toContain('已交给当前运行的回合');
+        expect(receipt).toContain('（含 1 个附件，将随这条输入一起处理）');
+      } finally { dispose(agent); }
+    });
+
+    it('Issue #5713 (review 6723047312): streaming and interjection render one unified supplement hint from a single source', async () => {
+      const interjection = owned();        // codex native steer
+      const streaming = owned('claude');   // claude streaming input
+      try {
+        for (const { agent } of [interjection, streaming]) {
+          (agent as any).activeTurnTriggerLine = '同一个运行任务';
+          (agent as any).turnStartedAtMsPrivate = Date.now() - 90_000;
+        }
+        await interjection.agent.processMessage(input());
+        await streaming.agent.processMessage(input());
+        const steerReceipt = interjection.callbacks.sendMessage.mock.calls[0]?.[1] as string;
+        const streamReceipt = streaming.callbacks.sendMessage.mock.calls[0]?.[1] as string;
+        // The unified supplement line is the ONLY receipt source: both paths
+        // produce the identical receipt — no per-harness status wording.
+        expect(steerReceipt).toBe(streamReceipt);
+        expect(steerReceipt).toContain('已交给当前运行的回合');
+        expect(steerReceipt).not.toContain('已送入当前会话的输入流');
+        expect(steerReceipt).not.toContain('后端已确认接收');
+        // One display contract: both carry the same #5394 context block.
+        expect(steerReceipt).toContain('\n（当前回合「同一个运行任务」已运行 1 分钟）');
+      } finally { dispose(interjection.agent); dispose(streaming.agent); }
+    });
+
+    it('Issue #5713 review ⑥: no per-harness busy/interrupt hint strings remain in the host', () => {
+      const source = readFileSync(new URL('./chat-agent.ts', import.meta.url), 'utf8');
+      // Retired per-harness hint lines must not come back anywhere.
+      expect(source).not.toContain('已送入当前会话的输入流');
+      expect(source).not.toContain('后端已确认接收');
+      // The unified supplement hint lives in exactly one construction point.
+      expect(source.match(/已交给当前运行的回合/g)).toHaveLength(1);
+    });
+
+    it('Issue #5713 review ⑥ (round 2): a backend run-capacity wait marker renders through the unified busy-input receipt', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_user_chat',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        apiProtocol: 'anthropic',
+      });
+      // The provider reports the governor wait as structured, content-free
+      // facts (#5713 round 2) — no wording is composed harness-side.
+      async function* queueWaitIterator() {
+        yield {
+          parsed: {
+            type: 'status',
+            content: '',
+            metadata: { queueWait: { running: 2, capacity: 2, queued: 3 } },
+          },
+        };
+        yield { parsed: { type: 'text', content: '清单整理完成。' } };
+        yield { parsed: { type: 'result', content: 'Done' } };
+      }
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: queueWaitIterator(),
+      });
+      try {
+        void agent.processMessage({
+          chatId: 'oc_user_chat',
+          payload: '整理仓库里的依赖清单',
+          messageId: 'msg_queue_wait_1',
+        });
+        await vi.waitFor(
+          () => {
+            expect(
+              (agent as any).logger.info.mock.calls.some(
+                (c: any[]) => c[1] === 'Result received, turn complete'
+              )
+            ).toBe(true);
+          },
+          { timeout: 1000, interval: 20 }
+        );
+        const receipts = localCallbacks.sendMessage.mock.calls
+          .filter((call: any[]) => call[0] === 'oc_user_chat')
+          .map((call: any[]) => call[1] as string)
+          .filter(text => text.includes('已接收并排队'));
+        // Exactly one receipt, built by the same unified builder as every other
+        // busy-input notice: admission line + the marker's real queue depth.
+        expect(receipts).toHaveLength(1);
+        expect(receipts[0]).toContain('⏳ 这条消息已接收并排队；模型会话容量释放后会自动处理，无需重新发送。');
+        expect(receipts[0]).toContain('前方还有 3 条排队');
+        // The retired harness-side governor wording must not resurface.
+        expect(receipts[0]).not.toContain('并发已满');
+        expect(receipts[0]).not.toContain('排队等候');
+      } finally { dispose(agent); }
+    });
+
+    it('Issue #5713 review ⑥ (round 2): harness modules keep no local busy/interrupt receipt construction', () => {
+      // The unified service layer (buildBusyInputReceipt in chat-agent.ts)
+      // is the only implementation path for busy-input/interjection notice
+      // text. Provider/harness sources may report structured facts
+      // (metadata.queueWait) but must not construct receipt wording — scan
+      // every non-test source under the provider modules for residue.
+      const providersRoot = new URL('../../../../packages/core/src/sdk/providers/', import.meta.url);
+      const fragments = [
+        '已接收并排队',       // unified queued-capacity line
+        '已交给当前运行的回合', // unified supplement line
+        '将在当前回合结束后处理', // unified queued-turn line
+        '前方还有',           // unified queue-depth context
+        '并发已满',           // retired codex governor notice
+        '排队等候',           // retired codex governor notice
+        '前面还有',           // retired codex governor queue-depth wording
+        '已送入当前会话的输入流', // retired per-harness streaming hint
+        '后端已确认接收',      // retired per-harness steer hint
+      ];
+      const scanned: string[] = [];
+      for (const entry of readdirSync(providersRoot, { recursive: true, encoding: 'utf8' })) {
+        if (!entry.endsWith('.ts') || entry.includes('.test.')) { continue; }
+        const source = readFileSync(new URL(entry, providersRoot), 'utf8');
+        scanned.push(entry);
+        for (const fragment of fragments) {
+          expect(source, `${entry} must not construct busy-receipt wording (${fragment})`).not.toContain(fragment);
+        }
+      }
+      // The scan must actually cover the harness modules — it fails loudly
+      // if the provider tree moves, instead of passing on an empty set.
+      expect(scanned.length).toBeGreaterThan(30);
     });
 
     it('Issue #5434: suppresses a replayed attachment-only input the running turn already consumed', async () => {
@@ -1246,7 +1396,7 @@ describe('ChatAgent (service)', () => {
         await admission;
         expect(push).not.toHaveBeenCalled();
         await expect(agent.turnCompleteFor('follow-B')).rejects.toThrow(/reset|supersed/i);
-        expect(callbacks.sendMessage.mock.calls.some(call => String(call[1]).includes('后端已确认接收'))).toBe(false);
+        expect(callbacks.sendMessage.mock.calls.some(call => String(call[1]).includes('已交给当前运行的回合'))).toBe(false);
       } finally { dispose(agent); }
     });
 
@@ -1288,7 +1438,7 @@ describe('ChatAgent (service)', () => {
       try {
         await agent.processMessage(input());
         expect(push).toHaveBeenCalledTimes(1);
-        expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('输入流');
+        expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('已交给当前运行的回合');
         expect(callbacks.sendMessage.mock.calls[0]?.[1]).not.toContain('已排队');
         await expect(agent.steer('instruction')).resolves.toMatchObject({ ok: false, error: expect.stringContaining('normal message') });
       } finally { dispose(agent); }
@@ -1319,7 +1469,7 @@ describe('ChatAgent (service)', () => {
         const guidance = await agent.steer('instruction');
         expect(guidance.ok).toBe(false);
         if (inputDelivery === 'streaming') {
-          expect(notice).toContain('输入流');
+          expect(notice).toContain('已交给当前运行的回合');
           expect(notice).not.toContain('已排队');
           expect(guidance).toMatchObject({ error: expect.stringContaining('normal message') });
         } else {
@@ -1560,7 +1710,7 @@ describe('ChatAgent (service)', () => {
         await agent.processMessage({ chatId: 'receipt-chat', payload: 'supplement', messageId: 'follow-B' });
         expect(steer).toHaveBeenCalledExactlyOnceWith('supplement');
         expect(callbacks.sendMessage.mock.calls[0]?.[2]).toBe('topic-A');
-        expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('后端已确认接收');
+        expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('已交给当前运行的回合');
       } finally { dispose(agent); }
     });
 
@@ -7621,7 +7771,7 @@ describe('Issue #5394: busy queue notice context', () => {
   const input = (messageId: string, payload = `payload-${messageId}`) =>
     ({ chatId: 'ctx-chat', payload, messageId, threadRootId: 'thread-root' });
   const queueNotices = (callbacks: ReturnType<typeof createMockCallbacks>) =>
-    callbacks.sendMessage.mock.calls.map(([, text]) => text as string).filter(t => t?.includes('输入流') || t?.includes('排队'));
+    callbacks.sendMessage.mock.calls.map(([, text]) => text as string).filter(t => t?.includes('已交给当前运行的回合') || t?.includes('排队'));
 
   it('describes the running turn, its elapsed time and the queue depth ahead', async () => {
     const { agent, callbacks } = queueAgent();
@@ -7739,6 +7889,73 @@ describe('Issue #5409: connectivity-class provider failures', () => {
         const warns = (agent as any).logger.warn.mock.calls.map(([...args]: unknown[]) => args.join(' '));
         expect(warns.some((w: string) => w.includes('scheduling one-shot'))).toBe(true);
       });
+    } finally { agent.dispose(); }
+  });
+});
+
+describe('Issue #4914: contextual agent-config hint on model-class failures', () => {
+  const MODEL_FAILURE = 'Error code: 404 - The model `gpt-5.6-luna` does not exist or you do not have access to it.';
+  function failureAgent(
+    chatId: string,
+    terminationDetail: string,
+    suggestAgentConfig?: (chatId: string, failureText: string) => string | undefined
+  ) {
+    const callbacks = { ...createMockCallbacks(), ...(suggestAgentConfig ? { suggestAgentConfig } : {}) };
+    const agent = new ChatAgent({ chatId, callbacks, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
+    (agent as any).isAgentTeamsEnabled = () => false;
+    (agent as any).createQueryStream = vi.fn(() => ({
+      handle: { close: vi.fn(), cancel: vi.fn() },
+      iterator: (async function* () {
+        yield { parsed: { type: 'result', content: '✅ Complete', terminatedReason: 'turn_failed', terminationDetail }, raw: {} };
+      })(),
+    }));
+    return { agent, callbacks };
+  }
+
+  it('appends the config entry to a provider-turn failure when the channel offers the hint', async () => {
+    const suggest = vi.fn(() => '💡 如需换一个模型：发送 /agent config 打开配置卡片，在受限选项中选择。');
+    const { agent, callbacks } = failureAgent('oc_model_gone', MODEL_FAILURE, suggest);
+    try {
+      void agent.processMessage({ chatId: 'oc_model_gone', payload: 'continue the batch', messageId: 'om_mg_1' });
+      await vi.waitFor(() => {
+        expect(callbacks.sendMessage.mock.calls.some((call: unknown[]) => String(call[1]).includes('执行失败'))).toBe(true);
+      });
+      // The hint rides INSIDE the failure notice (no separate message), and
+      // classification policy stayed in the channel wiring: the agent loop
+      // only forwarded the failure text.
+      expect(suggest).toHaveBeenCalledWith('oc_model_gone', MODEL_FAILURE);
+      const failureNotice = callbacks.sendMessage.mock.calls
+        .map((call: unknown[]) => String(call[1]))
+        .find(t => t.includes('执行失败'))!;
+      expect(failureNotice).toContain('/agent config');
+      // The pre-existing generic advice is still there.
+      expect(failureNotice).toContain('核对已执行的操作');
+    } finally { agent.dispose(); }
+  });
+
+  it('keeps unrelated failures free of the hint even when the channel offers it', async () => {
+    const suggest = vi.fn(() => undefined);
+    const { agent, callbacks } = failureAgent('oc_overloaded', 'upstream request failed: overloaded_error (529)', suggest);
+    try {
+      void agent.processMessage({ chatId: 'oc_overloaded', payload: 'do work', messageId: 'om_ov_1' });
+      await vi.waitFor(() => {
+        expect(callbacks.sendMessage.mock.calls.some((call: unknown[]) => String(call[1]).includes('执行失败'))).toBe(true);
+      });
+      expect(suggest).toHaveBeenCalledWith('oc_overloaded', 'upstream request failed: overloaded_error (529)');
+      const sent = callbacks.sendMessage.mock.calls.map((call: unknown[]) => String(call[1]));
+      expect(sent.some(t => t.includes('/agent config'))).toBe(false);
+    } finally { agent.dispose(); }
+  });
+
+  it('leaves failure notices unchanged for channels without the hint callback', async () => {
+    const { agent, callbacks } = failureAgent('oc_no_card', MODEL_FAILURE);
+    try {
+      void agent.processMessage({ chatId: 'oc_no_card', payload: 'continue', messageId: 'om_nc_1' });
+      await vi.waitFor(() => {
+        expect(callbacks.sendMessage.mock.calls.some((call: unknown[]) => String(call[1]).includes('执行失败'))).toBe(true);
+      });
+      const sent = callbacks.sendMessage.mock.calls.map((call: unknown[]) => String(call[1]));
+      expect(sent.some(t => t.includes('/agent config'))).toBe(false);
     } finally { agent.dispose(); }
   });
 });
