@@ -10,24 +10,18 @@ import path from 'path';
 import { existsSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { createLogger } from '../utils/logger.js';
-import {
-  loadConfigFile,
-  getConfigFromFile,
-  validateConfig,
-  getPreloadedConfig,
-} from './loader.js';
-import type {
-  DisclaudeConfig,
-  AgentPresets,
-  DebugConfig,
-  SessionTimeoutConfig,
-} from './types.js';
+import { loadConfigFile, getConfigFromFile, validateConfig, getPreloadedConfig } from './loader.js';
+import type { DisclaudeConfig, AgentPresets, DebugConfig, SessionTimeoutConfig } from './types.js';
 import { resolveAgentPreset } from './agent-presets.js';
 import { resolveConfiguredAgents, validateResolvedAgent } from './resolved-agents.js';
 import { resolveCodexModelSetting, resolveCodexReasoningEffort } from './codex-settings.js';
 import { channelCredentialErrors, resolveChannelCredential } from './channel-credentials.js';
 import { secretConfigurationErrors } from './secret-references.js';
-import { type BaseAgentConfig, type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
+import {
+  type BaseAgentConfig,
+  type AgentRuntimeContext,
+  setRuntimeContext,
+} from '../agents/types.js';
 
 // Re-export sub-modules
 export * from './types.js';
@@ -37,6 +31,7 @@ export * from './runtime-profiles.js';
 export { isCodexReasoningEffort } from './codex-settings.js';
 export * from './resolved-agents.js';
 export * from './channel-credentials.js';
+export * from './channel-declarations.js';
 export * from './github-feedback.js';
 
 export { loadRuntimeEnv, setRuntimeEnv, deleteRuntimeEnv } from './runtime-env.js';
@@ -50,7 +45,9 @@ const fileConfigOnly = getConfigFromFile(fileConfig);
 channelCredentialErrors(fileConfigOnly);
 const resolvedAgents = resolveConfiguredAgents(fileConfigOnly);
 const agentPresets = resolvedAgents.ok ? resolvedAgents.presets : {};
-const defaultSelection = Object.keys(agentPresets).length ? resolveAgentPreset(agentPresets) : undefined;
+const defaultSelection = Object.keys(agentPresets).length
+  ? resolveAgentPreset(agentPresets)
+  : undefined;
 const defaultAgent = defaultSelection?.ok ? defaultSelection.preset : undefined;
 const configLoaded = fileConfig._fromFile;
 
@@ -73,7 +70,9 @@ const configLoaded = fileConfig._fromFile;
 export function applyGlobalEnv(): void {
   const source = getPreloadedConfig() ?? fileConfigOnly;
   const errors = [...channelCredentialErrors(source), ...secretConfigurationErrors(source)];
-  if (errors.length) {throw new Error(errors.join('; '));}
+  if (errors.length) {
+    throw new Error(errors.join('; '));
+  }
   // Prefer preloaded config (set via --config CLI flag) over the default
   // config loaded at module import time. This ensures applyGlobalEnv()
   // reads from the correct config file when --config is used.
@@ -192,8 +191,12 @@ export class Config {
   }
 
   // Feishu/Lark configuration (from config file)
-  static get FEISHU_APP_ID(): string {return resolveChannelCredential(fileConfigOnly, 'feishu', 'appId');}
-  static get FEISHU_APP_SECRET(): string {return resolveChannelCredential(fileConfigOnly, 'feishu', 'appSecret');}
+  static get FEISHU_APP_ID(): string {
+    return resolveChannelCredential(fileConfigOnly, 'feishu', 'appId');
+  }
+  static get FEISHU_APP_SECRET(): string {
+    return resolveChannelCredential(fileConfigOnly, 'feishu', 'appSecret');
+  }
   static readonly FEISHU_CLI_CHAT_ID = fileConfigOnly.channels?.feishu?.cliChatId || '';
   // Issue #4400 / #4208: gray-rollout flag for native streaming replies.
   // Plumbed through to FeishuChannelConfig.streamingCard in resolveChannelConfigs.
@@ -226,12 +229,14 @@ export class Config {
   static readonly CODEX_MODEL = this.CODEX_MODEL_SETTING.value ?? '';
   static readonly CODEX_MODEL_SOURCE = this.CODEX_MODEL_SETTING.source;
   private static readonly CODEX_REASONING_EFFORT_SETTING = resolveCodexReasoningEffort({
-    environment: process.env.CODEX_REASONING_EFFORT?.trim() || fileConfigOnly.env?.CODEX_REASONING_EFFORT,
+    environment:
+      process.env.CODEX_REASONING_EFFORT?.trim() || fileConfigOnly.env?.CODEX_REASONING_EFFORT,
     configured: defaultAgent?.reasoningEffort,
   });
   static readonly CODEX_REASONING_EFFORT = this.CODEX_REASONING_EFFORT_SETTING.value;
   static readonly CODEX_REASONING_EFFORT_SOURCE = this.CODEX_REASONING_EFFORT_SETTING.source;
-  static readonly CLAUDE_MODEL = this.AGENT_BACKEND === 'codex' ? this.CODEX_MODEL : defaultAgent?.model ?? '';
+  static readonly CLAUDE_MODEL =
+    this.AGENT_BACKEND === 'codex' ? this.CODEX_MODEL : (defaultAgent?.model ?? '');
   static readonly CODEX_SANDBOX = defaultAgent?.codexSandbox;
   static readonly FULL_ACCESS = defaultAgent?.fullAccess;
   static readonly CODEX_NETWORK_ACCESS = defaultAgent?.codexNetworkAccess;
@@ -241,9 +246,9 @@ export class Config {
   /** #5607 weekly-quota admission settings (observe-only unless set to enforce). */
   static readonly CODEX_WEEKLY_QUOTA = defaultAgent?.codex
     ? {
-      weeklyQuotaAdmission: defaultAgent.codex.weeklyQuotaAdmission,
-      weeklyLimitCooldownMs: defaultAgent.codex.weeklyLimitCooldownMs,
-    }
+        weeklyQuotaAdmission: defaultAgent.codex.weeklyQuotaAdmission,
+        weeklyLimitCooldownMs: defaultAgent.codex.weeklyLimitCooldownMs,
+      }
     : undefined;
 
   // Logging configuration
@@ -297,17 +302,23 @@ export class Config {
       // resources at the release root. Do not depend on the caller's cwd.
       let ancestor = moduleDir;
       while (path.dirname(ancestor) !== ancestor) {
-        if (existsSync(path.join(ancestor, 'release-source.json')) &&
-            existsSync(path.join(ancestor, dirName))) {
+        if (
+          existsSync(path.join(ancestor, 'release-source.json')) &&
+          existsSync(path.join(ancestor, dirName))
+        ) {
           return path.join(ancestor, dirName);
         }
         // Both npm's bundled core and a source checkout keep shared resources
         // at the enclosing disclaude package, independent of execution cwd.
-        if (existsSync(path.join(ancestor, 'bin', 'disclaude.js')) &&
-            existsSync(path.join(ancestor, dirName))) {
+        if (
+          existsSync(path.join(ancestor, 'bin', 'disclaude.js')) &&
+          existsSync(path.join(ancestor, dirName))
+        ) {
           try {
             const manifest = JSON.parse(readFileSync(path.join(ancestor, 'package.json'), 'utf8'));
-            if (manifest.name === 'disclaude') {return path.join(ancestor, dirName);}
+            if (manifest.name === 'disclaude') {
+              return path.join(ancestor, dirName);
+            }
           } catch {
             // An unrelated or malformed ancestor is not an installation root.
           }
@@ -341,12 +352,19 @@ export class Config {
   /** Resolved presets shared by the session pool, preflight and construction. */
   static getAgentPresets(): AgentPresets | undefined {
     const resolved = resolveConfiguredAgents(this.getRawConfig());
-    if (!resolved.ok) { throw new Error(resolved.errors.join('\n')); }
-    if (!Object.keys(resolved.presets).length) { return undefined; }
+    if (!resolved.ok) {
+      throw new Error(resolved.errors.join('\n'));
+    }
+    if (!Object.keys(resolved.presets).length) {
+      return undefined;
+    }
     const selected = resolveAgentPreset(resolved.presets);
     if (selected.ok && selected.preset.agentBackend === 'codex') {
-      resolved.presets[selected.name] = { ...selected.preset, model: this.CODEX_MODEL,
-        reasoningEffort: this.CODEX_REASONING_EFFORT };
+      resolved.presets[selected.name] = {
+        ...selected.preset,
+        model: this.CODEX_MODEL,
+        reasoningEffort: this.CODEX_REASONING_EFFORT,
+      };
     }
     return resolved.presets;
   }
@@ -407,18 +425,30 @@ export class Config {
 
   /** Get the validated default runtime and its bound LLM connection. */
   static getAgentConfig(): BaseAgentConfig {
-    if (!resolvedAgents.ok) { throw new Error(resolvedAgents.errors.join('\n')); }
+    if (!resolvedAgents.ok) {
+      throw new Error(resolvedAgents.errors.join('\n'));
+    }
     const selected = resolveAgentPreset(this.getAgentPresets() ?? {});
-    if (!selected.ok) { throw new Error(selected.error); }
+    if (!selected.ok) {
+      throw new Error(selected.error);
+    }
     const error = validateResolvedAgent(selected.preset);
-    if (error) { throw new Error(error); }
-    const {preset} = selected;
+    if (error) {
+      throw new Error(error);
+    }
+    const { preset } = selected;
     return {
-      apiKey: preset.apiKey, model: preset.model,
-      apiProtocol: preset.apiProtocol, apiBaseUrl: preset.apiBaseUrl,
-      agentBackend: preset.agentBackend, permissionMode: preset.permissionMode,
-      env: preset.env, credentialEnvKeys: preset.credentialEnvKeys,
-      llm: preset.llm, reasoningEffort: preset.reasoningEffort,
+      apiKey: preset.apiKey,
+      model: preset.model,
+      apiProtocol: preset.apiProtocol,
+      apiBaseUrl: preset.apiBaseUrl,
+      agentBackend: preset.agentBackend,
+      permissionMode: preset.permissionMode,
+      env: preset.env,
+      credentialEnvKeys: preset.credentialEnvKeys,
+      llm: preset.llm,
+      reasoningEffort: preset.reasoningEffort,
+      llmVia: preset.llmVia,
       maxConcurrentSessions: preset.maxConcurrentSessions,
       settings: preset,
     };
@@ -555,7 +585,6 @@ export class Config {
   static getSdkTimeoutMs(): number {
     return defaultAgent?.sdkTimeoutMs ?? 300_000;
   }
-
 }
 
 // ============================================================================

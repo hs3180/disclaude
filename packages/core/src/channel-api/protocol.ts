@@ -51,6 +51,12 @@ export interface ChannelApiRequestPayloads {
   };
   uploadImage: {
     filePath: string;
+    /**
+     * Conversation/channel attribution (T-083 R3, #5254): with named
+     * multi-app Feishu channels the owning channel's credentials serve the
+     * upload. Omitted → legacy single-app behavior.
+     */
+    chatId?: string;
   };
   sendInteractive: {
     chatId: string;

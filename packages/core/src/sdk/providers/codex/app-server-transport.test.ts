@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -232,6 +232,21 @@ while read line; do :; done`);
           '--enable', 'default_mode_request_user_input',
           '-c', 'tools.experimental_request_user_input={enabled=true}',
         ] : []),
+      ]);
+    } finally { await transport.close(); }
+  });
+  it('forwards configArgs to the app-server child (Issue #5338 api access)', async () => {
+    const binary = fixture(`printf '%s\\n' "$@" > "$(dirname "$0")/args"
+while read line; do :; done`);
+    const transport = new CodexAppServerTransport({
+      binary,
+      configArgs: ['-c', 'model_provider="disclaude_api"', '-c', 'model_providers.disclaude_api.wire_api="responses"'],
+    });
+    try {
+      await vi.waitFor(() => expect(existsSync(join(dirname(binary), 'args'))).toBe(true));
+      expect(readFileSync(join(dirname(binary), 'args'), 'utf8').trim().split('\n')).toEqual([
+        'app-server', '--stdio', '--disable', 'browser_use', '--disable', 'browser_use_external', '--disable', 'browser_use_full_cdp_access',
+        '-c', 'model_provider="disclaude_api"', '-c', 'model_providers.disclaude_api.wire_api="responses"',
       ]);
     } finally { await transport.close(); }
   });

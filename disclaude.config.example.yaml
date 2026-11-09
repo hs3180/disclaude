@@ -6,8 +6,10 @@
 #                   (claude:), Codex governance (codex:), DSH composition.
 # /agent use <name> starts a new session in the current chat.
 agents:
-  # Codex runtime: the CLI's own ChatGPT login is the connection, so the llms
-  # entry it references carries no api block (config rejects one for codex).
+  # Codex runtime. Its llms entry picks an access method (via, see llms
+  # below): via: chatgpt = the CLI's own ChatGPT login and subscription
+  # quota (no api block); via: api = a compatible API LLM the runtime drives
+  # with OpenAI Responses wire calls. Same runtime, either access method.
   daily:
     backend: codex # required: claude | pi | codex | dsh
     llm: daily # required: names an entry under llms below
@@ -56,6 +58,17 @@ agents:
       # rejected (an explicit env entry still overrides a computed default).
       # env:
       #   ANTHROPIC_SMALL_FAST_MODEL: your-small-model
+  # Optional mini-swe-agent runtime (Issue #5006): headless `mini` subprocess
+  # with LiteLLM/OpenAI-compatible model backends. Requires the mini-swe-agent
+  # CLI on PATH (`pipx install mini-swe-agent`); without it the backend
+  # reports a clear unavailable error. Execution is local-subprocess only.
+  # miniswe:
+  #   backend: miniswe
+  #   llm: miniswe-openai
+  #   miniswe:
+  #     binary: mini # default; the packaged mini-swe-agent alias is probed too
+  #     executionEnvironment: local # the only supported policy; docker/SWE-ReX are out of scope
+  #     timeoutMs: 0 # per-run wall-clock timeout; 0 disables (default)
 
   # Second runtime on the SAME provider: DSH sends llms.shared-gateway.defaultModel
   # verbatim, so changing the deployment default model means editing that one
@@ -80,14 +93,42 @@ agents:
 # each bound runtime's native selection. maxConcurrentSessions is the shared
 # live-session budget of the provider.
 llms:
-  # Native Codex (defaultModel is also optional here — omitted = Codex's own
-  # selection); an api block is rejected because the CLI owns its connection.
+  # Access methods of a named LLM (Issue #5338): `via` declares HOW the LLM
+  # is reached — never inferred from a missing credential.
+  #   via: chatgpt — the Codex CLI's managed ChatGPT login (one-time
+  #     `codex login`) and its subscription quota. No api block (declaring
+  #     both is rejected); only backend: codex can bind it. Missing/expired
+  #     login and subscription limits surface as that method's explicit
+  #     errors ("run codex login", 5h/weekly window notices).
+  #   via: api — a compatible API connection (the api block: protocol,
+  #     baseUrl, credential reference). Any runtime speaking the protocol
+  #     can bind it, codex included (codex requires protocol: openai and a
+  #     baseUrl; it drives the endpoint with OpenAI Responses wire calls and
+  #     the actual provider validates model availability). 401/quota errors
+  #     name the API credential, never "codex login".
+  #   Omitted via: the api block's presence decides (api block = api access;
+  #   none = the ChatGPT login on a codex runtime) — pre-#5338 configs keep
+  #   resolving exactly as before.
+  # Native Codex below is the chatgpt method; defaultModel is also optional
+  # here (omitted = Codex's own model selection).
   daily:
+    via: chatgpt # optional on this shape, but explicit is self-documenting
     defaultModel: gpt-6-luna
     # Optional provider-level default, unrelated to the harness — runtimes
     # that cannot apply an effort ignore it (currently codex and dsh do).
     reasoningEffort: max
     maxConcurrentSessions: 3 # shared by every agent bound to this provider
+  # The codex runtime on a compatible API LLM (via: api): third-party model
+  # ids are allowed — the actual provider validates them, not disclaude's
+  # ChatGPT catalog check. Uncomment and bind e.g. backend: codex + llm:
+  # codex-gateway above to mix subscription and API codex agents.
+  # codex-gateway:
+  #   via: api
+  #   defaultModel: glm-5.3
+  #   api:
+  #     protocol: openai # codex API access requires openai (Responses API)
+  #     baseUrl: https://your-openai-compatible-api.example/v1
+  #     apiKey: $CODEX_GATEWAY_API_KEY
   # Provider shared by the Claude and DSH agents above (#5679): Anthropic
   # protocol (Claude requires it), explicit gateway URL (DSH requires
   # baseUrl), default wire model that every bound backend sends unchanged.
@@ -104,6 +145,14 @@ llms:
   #     protocol: openai
   #     baseUrl: https://your-openai-compatible-api.example/v1
   #     apiKey: $GLM_API_KEY
+  # mini-swe-agent provider (Issue #5006): LiteLLM-style provider-prefixed
+  # model as the provider default; any model the endpoint serves also works.
+  # miniswe-openai:
+  #   defaultModel: openai/gpt-5.4
+  #   api:
+  #     protocol: openai
+  #     baseUrl: https://your-litellm-or-openai-compatible-api.example/v1
+  #     apiKey: $MINISWE_API_KEY
   #
   # Cross-boundary guard: a provider shared by Claude AND another backend must
   # NOT use a bare Claude alias as its defaultModel. Claude resolves "sonnet"
@@ -128,6 +177,24 @@ channels:
     appSecret: $FEISHU_APP_SECRET
     streamingCard: false
     # agent: assistant
+  # Multiple Feishu channels in one instance (#5254): declare each channel
+  # under its own name with `type: feishu` instead of the single feishu section
+  # above. Each channel keeps its own tenant token and lark-cli credentials and
+  # routes chats under a stable `feishu:<name>:` identity. `agent` is an
+  # optional named `agents` preset used as that channel's default (an explicit
+  # /agent use still wins). Shared settings in the feishu section above
+  # (streamingCard, deduplication) still apply to declarations; a declaration
+  # may override streamingCard.
+  # personal:
+  #   type: feishu
+  #   appId: $FEISHU_PERSONAL_APP_ID
+  #   appSecret: $FEISHU_PERSONAL_APP_SECRET
+  #   agent: assistant
+  # work:
+  #   type: feishu
+  #   appId: $FEISHU_WORK_APP_ID
+  #   appSecret: $FEISHU_WORK_APP_SECRET
+  #   agent: daily
   rest:
     enabled: false
     host: 127.0.0.1

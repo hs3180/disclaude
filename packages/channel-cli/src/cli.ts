@@ -342,7 +342,9 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
       result = await withLogsRedirected(() => mod.send_file({ filePath: filePath as string, chatId, parentMessageId }));
     } else if (command === 'send_card') {
       const transformed = mod.transformCardTables(card as Record<string, unknown>);
-      const resolved = await mod.resolveCardImages(transformed);
+      // T-083 R3 (#5254): pass the target chat so image uploads carry the
+      // channel attribution instead of borrowing an arbitrary app's credentials.
+      const resolved = await mod.resolveCardImages(transformed, undefined, chatId);
       result = await withLogsRedirected(() => mod.send_card({ card: resolved.card, chatId, parentMessageId }));
     } else if (command === 'request_private_input') {
       result = await withLogsRedirected(() => mod.request_private_input({ chatId, actorId: arg(args, 'actor') as string,
