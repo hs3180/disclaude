@@ -62,8 +62,11 @@ async function preflightRuntime(runtime, fetchImpl = fetch) {
 export function positioningPost({
   topic,
   ledgerRule = '本群台账只记录本群决策与交付，原群历史不重复搬运。',
-}) {
-  return `【群定位声明】讨论：${topic}\n- 本群管什么：只讨论「${topic}」及该话题的决策与交付。\n- 原群/原 thread 保留什么：原有其他话题与历史上下文，不再承接本话题讨论。\n- 执行流水去处：本话题的进度、执行流水与交付只发到本群。\n- 台账规则：${ledgerRule}`;
+}, runtimeProfile) {
+  const runtimeLine = runtimeProfile
+    ? `\n- 运行时：本群由 **${runtimeProfile.name ?? runtimeProfile.agentBackend}**（${runtimeProfile.agentBackend}${runtimeProfile.model ? ` / ${runtimeProfile.model}` : ''}${runtimeProfile.thinking ? ` / thinking: ${runtimeProfile.thinking}` : ''}）服务，首回合即生效；会话内可用 /agent use 临时切换。`
+    : '';
+  return `【群定位声明】讨论：${topic}\n- 本群管什么：只讨论「${topic}」及该话题的决策与交付。\n- 原群/原 thread 保留什么：原有其他话题与历史上下文，不再承接本话题讨论。\n- 执行流水去处：本话题的进度、执行流水与交付只发到本群。\n- 台账规则：${ledgerRule}${runtimeLine}`;
 }
 
 export function migrationCard({ topic, chatId, ownerOpenId }) {
@@ -123,7 +126,7 @@ export async function createDiscussion(input, run = execute) {
   );
   const chatId = requiredId(created?.chat_id ?? created?.chatId, 'oc_', 'new_chat_id');
 
-  const firstPost = positioningPost(input);
+  const firstPost = positioningPost(input, profile);
   const sent = dataOf(
     await invoke(
       ['im', '+messages-send', '--chat-id', chatId, '--text', firstPost, ...sendOptions],

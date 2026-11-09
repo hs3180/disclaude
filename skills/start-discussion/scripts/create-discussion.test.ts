@@ -93,4 +93,57 @@ describe('atomic discussion handoff', () => {
       hostile.topic
     );
   });
+
+  it('aborts before any lark-cli call when the runtime preflight rejects the declaration (#4913)', async () => {
+    const run = mockChain();
+    const previousBase = process.env.DISCLAUDE_API_BASE_URL;
+    process.env.DISCLAUDE_API_BASE_URL = 'http://127.0.0.1:9';
+    try {
+      const fetchImpl = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 422,
+        json: async () => ({ ok: false, message: 'unknown harness: grok' }),
+      });
+      await expect(
+        createDiscussion({ ...input, runtime: { harness: 'grok', model: 'x' }, fetchImpl }, run)
+      ).rejects.toThrow('runtime_rejected:unknown harness: grok');
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(run).not.toHaveBeenCalled();
+    } finally {
+      if (previousBase === undefined) { delete process.env.DISCLAUDE_API_BASE_URL; }
+      else { process.env.DISCLAUDE_API_BASE_URL = previousBase; }
+    }
+  });
+
+  it('adds the runtime line to the pinned positioning post and echoes the profile (#4913)', async () => {
+    const run = mockChain();
+    const previousBase = process.env.DISCLAUDE_API_BASE_URL;
+    process.env.DISCLAUDE_API_BASE_URL = 'http://127.0.0.1:9';
+    try {
+      const fetchImpl = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          ok: true,
+          profile: { name: 'researcher', agentBackend: 'codex', model: 'gpt-5.2-codex', thinking: 'high' },
+        }),
+      });
+      await expect(
+        createDiscussion({ ...input, runtime: { preset: 'researcher' }, fetchImpl }, run)
+      ).resolves.toMatchObject({
+        chatId: 'oc_new',
+        runtime: { name: 'researcher', agentBackend: 'codex', model: 'gpt-5.2-codex', thinking: 'high' },
+      });
+      const firstPost = run.mock.calls[1][1][run.mock.calls[1][1].indexOf('--text') + 1];
+      expect(firstPost).toContain('researcher');
+      expect(firstPost).toContain('codex / gpt-5.2-codex / thinking: high');
+      expect(firstPost).toContain('/agent use');
+    } finally {
+      if (previousBase === undefined) { delete process.env.DISCLAUDE_API_BASE_URL; }
+      else { process.env.DISCLAUDE_API_BASE_URL = previousBase; }
+    }
+  });
+
+  it('omits the runtime line when no runtime was declared (legacy shape unchanged)', () => {
+    expect(positioningPost(input)).not.toContain('运行时');
+  });
 });

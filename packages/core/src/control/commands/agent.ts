@@ -3,8 +3,20 @@ import type { CommandHandler, ControlHandlerContext } from '../types.js';
 
 type AgentCommand = ControlCommand<'agent'>;
 
-function formatPreset(preset: { name: string; agentBackend: string; model: string }): string {
-  return `**${preset.name}** — ${preset.agentBackend} / ${preset.model}`;
+function formatPreset(preset: {
+  name: string;
+  agentBackend: string;
+  model: string;
+  thinking?: string;
+  origin?: 'creation' | 'command';
+}): string {
+  // Thinking (#4913) and origin are optional; show them only when they apply so
+  // legacy responses without the fields render identically.
+  const extras = [
+    preset.thinking ? `thinking: ${preset.thinking}` : '',
+    preset.origin ? `source: ${preset.origin === 'creation' ? 'group creation binding' : '/agent use'}` : '',
+  ].filter(Boolean).join(', ');
+  return `**${preset.name}** — ${preset.agentBackend} / ${preset.model}${extras ? ` (${extras})` : ''}`;
 }
 
 export const handleAgent: CommandHandler<'agent'> = (

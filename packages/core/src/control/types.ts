@@ -78,7 +78,7 @@ export interface ControlHandlerContext {
     stopThread?(chatId: string, threadRootId: string): boolean;
     listAgentPresets?(): Array<{ name: string; agentBackend: string; model: string }>;
     getActiveAgentPreset?(chatId: string, threadRootId?: string):
-      { name: string; agentBackend: string; model: string } | undefined;
+      { name: string; agentBackend: string; model: string; thinking?: string; origin?: 'creation' | 'command' } | undefined;
     /**
      * Switch the session's preset and durably save the choice for the chat
      * (#5476). `actorId` records who switched in the persisted selection.

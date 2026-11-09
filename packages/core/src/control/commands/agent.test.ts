@@ -83,4 +83,26 @@ describe('/agent', () => {
     expect(result.message).toContain('per-app default');
     expect(result.message).toContain('global default');
   });
+
+  it('shows thinking and origin on /agent current when the active profile carries them (#4913)', async () => {
+    const result = await handleAgent(
+      { type: 'agent', chatId: 'a', data: { subcommand: 'current' } },
+      context({
+        getActiveAgentPreset: () => ({
+          name: 'researcher', agentBackend: 'codex', model: 'gpt-5.2-codex',
+          thinking: 'high', origin: 'creation',
+        }),
+      })
+    );
+    expect(result.success).toBe(true);
+    expect(result.message).toContain('thinking: high');
+    expect(result.message).toContain('source: group creation binding');
+  });
+
+  it('renders identically when thinking/origin are absent (legacy presets)', async () => {
+    const result = await handleAgent({ type: 'agent', chatId: 'a', data: { subcommand: 'current' } }, context());
+    expect(result.success).toBe(true);
+    expect(result.message).not.toContain('thinking:');
+    expect(result.message).not.toContain('source:');
+  });
 });
