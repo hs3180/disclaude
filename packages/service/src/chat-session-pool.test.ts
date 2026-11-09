@@ -1260,6 +1260,42 @@ describe('ChatSessionPool orthogonal dimension switches (Issue #5255)', () => {
     } finally { pool.disposeAll(); }
   });
 
+  it('composes a dimension override onto the chat\'s saved /agent use choice and clears it on the next use (#5255 × #5476)', () => {
+    // The saved store mimics AgentSelectionStore's read surface only.
+    const saved = new Map<string, { presetName: string; updatedAt: string; actorId: string }>();
+    const selections = {
+      get: (chatId: string) => saved.get(chatId),
+      set: (chatId: string, presetName: string, actorId: string) => {
+        saved.set(chatId, { presetName, updatedAt: new Date().toISOString(), actorId });
+      },
+    };
+    const pool = new ChatSessionPool({
+      agentPresets: mixedPresets,
+      validatePresetBackend: okBackend,
+      agentSelections: selections as never,
+    });
+    const callbacks = createMockCallbacks();
+    pool.getOrCreateChatAgent('chat-saved', callbacks);
+    try {
+      // A saved `fast` (pi / glm-flash) choice is the base for a NEW session
+      // of the same chat, and the backend override composes onto it.
+      expect(pool.switchAgentPreset('chat-saved', 'fast', undefined, 'ou_op')).toMatchObject({ ok: true });
+      expect(saved.get('chat-saved')?.presetName).toBe('fast');
+      expect(pool.switchAgentModel('chat-saved', 'glm-5.3')).toMatchObject({
+        ok: true,
+        active: { name: 'fast', agentBackend: 'pi', model: 'glm-5.3', modelOverride: 'glm-5.3' },
+      });
+      // `use` sets both dimensions at once: the model override is superseded.
+      expect(pool.switchAgentPreset('chat-saved', 'default')).toMatchObject({
+        ok: true,
+        active: { name: 'default', agentBackend: 'claude', model: 'claude-sonnet' },
+      });
+      expect(pool.getActiveAgentPreset('chat-saved')).toEqual({
+        name: 'default', agentBackend: 'claude', model: 'claude-sonnet',
+      });
+    } finally { pool.disposeAll(); }
+  });
+
   it('stacks a model switch on top of a backend override', () => {
     const pool = new ChatSessionPool({ agentPresets: mixedPresets, validatePresetBackend: okBackend });
     const callbacks = createMockCallbacks();

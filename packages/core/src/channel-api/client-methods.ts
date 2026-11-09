@@ -128,6 +128,12 @@ export async function uploadFile(
   fileSize?: number;
   /** Platform message_id of the delivered file message (Issue #5630). */
   messageId?: string;
+  /** Actual delivery position: 'thread-reply' (under the requested parent) or 'chat-root' (Issue #5722). */
+  deliveryPosition?: 'thread-reply' | 'chat-root';
+  /** Parent message id the file was replied under; present iff deliveryPosition === 'thread-reply' (Issue #5722). */
+  threadId?: string;
+  /** Thread root when known: for a chat-root send the delivered message itself is the root (Issue #5722). */
+  rootId?: string;
   /** Present (true) when the attempt timed out with an unknown delivery outcome. */
   outcomeUnknown?: boolean;
   /** Echoed back on an ambiguous timeout so the caller can retry safely. */

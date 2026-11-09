@@ -93,13 +93,19 @@ export interface ControlHandlerContext {
     listAgentPresets?(): Array<{ name: string; agentBackend: string; model: string }>;
     getActiveAgentPreset?(chatId: string, threadRootId?: string):
       { name: string; agentBackend: string; model: string; backendOverride?: string; modelOverride?: string } | undefined;
-    switchAgentPreset?(chatId: string, presetName: string, threadRootId?: string):
+    /**
+     * Switch the session's preset and durably save the choice for the chat
+     * (#5476). `actorId` records who switched in the persisted selection.
+     * The switch supersedes any orthogonal dimension override (Issue #5255).
+     */
+    switchAgentPreset?(chatId: string, presetName: string, threadRootId?: string, actorId?: string):
       AgentDimensionSwitchResult;
     /**
      * Issue #5255: switch only the backend dimension of this session's agent,
      * keeping the current model. Same new-native-session semantics as
-     * switchAgentPreset. On an incompatible target the failure carries the
-     * dimension's selectable `options` instead of hard-failing silently.
+     * switchAgentPreset. Session-scoped: not persisted, cleared by the next
+     * `/agent use`, and lost on service restart. On an incompatible target
+     * the failure carries the dimension's selectable `options`.
      */
     switchAgentBackend?(chatId: string, backend: string, threadRootId?: string):
       AgentDimensionSwitchResult;

@@ -52,7 +52,9 @@ export const handleAgent: CommandHandler<'agent'> = (
     if (!name) {
       return { success: false, message: 'Usage: `/agent use <preset>`' };
     }
-    const result = api.switchAgentPreset(command.chatId, name, command.threadRootId);
+    // The switch also saves the choice for the chat, so the same preset is
+    // reused by this chat's next messages and after service restarts (#5476).
+    const result = api.switchAgentPreset(command.chatId, name, command.threadRootId, command.actorId);
     if (!result.ok) {
       const canList = !context.isCommandAllowed || context.isCommandAllowed({
         ...command, data: { subcommand: 'list' },
@@ -64,7 +66,7 @@ export const handleAgent: CommandHandler<'agent'> = (
     }
     return {
       success: true,
-      message: `✅ Active agent: ${formatPreset(result.active)}\n\n${SESSION_BOUNDARY_NOTE}`,
+      message: `✅ Active agent: ${formatPreset(result.active)}\n\nA new native session will be used; context is not migrated across presets. The choice is saved for this chat and survives service restarts.`,
     };
   }
 
@@ -112,7 +114,7 @@ export const handleAgent: CommandHandler<'agent'> = (
   return active
     ? {
         success: true,
-        message: `🤖 Active agent: ${formatPreset(active)}${formatOverrides(active)}\n\nBackend and model can be switched independently with \`/agent backend <name>\` and \`/agent model <id>\`.\n\nSelection scope: this chat/session; persistence: until service restart.`,
+        message: `🤖 Active agent: ${formatPreset(active)}${formatOverrides(active)}\n\nBackend and model can be switched independently with \`/agent backend <name>\` and \`/agent model <id>\`.\n\nSelection precedence: this session's switches (/agent use, backend, model) > the chat's saved /agent use choice > per-app default > global default. Dimension switches last until the next /agent use or service restart.`,
       }
     : { success: false, message: 'No agent selection is available on this node (no `agents:` map and no resolvable default agent).' };
 };
