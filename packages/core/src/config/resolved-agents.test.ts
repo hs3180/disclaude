@@ -565,7 +565,7 @@ describe('named runtime and LLM configuration', () => {
     expect(result.errors.length).toBe(1);
     expect(result.errors.join('\n')).toMatch(/behavesAs|modelOverrides/);
   });
-  it('defers a bare alias to runtime catalog resolution instead of compiling it (Issue #5422)', () => {
+  it('compiles a bare alias as the modelOverrides key for runtime catalog resolution (Issue #5422)', () => {
     const config = configuration();
     config.agents!.assistant.claude = { ...config.agents!.assistant.claude, behavesAs: 'opus' };
     const result = resolveConfiguredAgents(config);
@@ -573,10 +573,10 @@ describe('named runtime and LLM configuration', () => {
     if (!result.ok) {
       return;
     }
-    expect(result.presets.assistant.behavesAsAlias).toBe('opus');
-    expect(result.presets.assistant.modelOverrides).toBeUndefined();
+    expect(result.presets.assistant.modelOverrides).toEqual({ opus: 'glm-5.3' });
+    expect((result.presets.assistant as unknown as Record<string, unknown>).behavesAsAlias).toBeUndefined();
   });
-  it('normalizes a mixed-case bare alias to the catalog lookup form', () => {
+  it('keeps a mixed-case bare alias trimmed in the map key; the provider normalizes at lookup', () => {
     const config = configuration();
     config.agents!.assistant.claude = { ...config.agents!.assistant.claude, behavesAs: ' Opus ' };
     const result = resolveConfiguredAgents(config);
@@ -584,7 +584,7 @@ describe('named runtime and LLM configuration', () => {
     if (!result.ok) {
       return;
     }
-    expect(result.presets.assistant.behavesAsAlias).toBe('opus');
+    expect(result.presets.assistant.modelOverrides).toEqual({ Opus: 'glm-5.3' });
   });
 
   describe('shared bindings across harnesses (Issue #5679)', () => {

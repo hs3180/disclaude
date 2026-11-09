@@ -11,6 +11,7 @@ import type { AgentInputContext } from '../../user-input.js';
 import type { ClaudeQueryOptions } from './provider.js';
 import { createClaudeToolServer, claudeToolNames, CLAUDE_HOST_SERVER } from './tool-adapter.js';
 import { createAskUserQuestionPermission } from './ask-user-question.js';
+import { splitModelOverrides } from './model-alias.js';
 import * as path from 'node:path';
 import { Config } from '../../../config/index.js';
 import { installedDiagnosticsPlugin } from '../../../skills/diagnostics-plugin.js';
@@ -140,10 +141,15 @@ export function adaptOptions(
 
   // Issue #5410: gateway model IDs ride Claude Code's modelOverrides so the
   // pinned catalog entry's window and capability defaults apply to them.
-  if (options.modelOverrides) {
+  // Issue #5422: bare alias keys (from a `behavesAs` alias) have no catalog
+  // entry yet — keep them out of the settings file; the provider resolves
+  // them against the booted session and merges the full-ID map before the
+  // first input.
+  const { static: staticModelOverrides } = splitModelOverrides(options.modelOverrides);
+  if (Object.keys(staticModelOverrides).length) {
     sdkOptions.settings = {
       ...(sdkOptions.settings as object | undefined),
-      modelOverrides: options.modelOverrides,
+      modelOverrides: staticModelOverrides,
     };
   }
 

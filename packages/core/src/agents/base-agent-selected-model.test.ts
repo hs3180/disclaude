@@ -157,33 +157,19 @@ describe('Claude modelOverrides identity (Issue #5410)', () => {
 });
 
 describe('Claude behavesAs bare alias (Issue #5422)', () => {
-  async function aliasOptions(behavesAsAlias?: string, agentBackend: 'claude' | 'dsh' = 'claude') {
-    const { BaseAgent } = await import('./base-agent.js');
-    class AliasAgent extends BaseAgent {
-      protected getAgentName() { return 'AliasAgent'; }
-      options() { return this.createSdkOptions(); }
-    }
-    return new AliasAgent({
-      apiKey: 'selected-key',
-      apiProtocol: 'anthropic',
-      model: 'kimi-k3',
-      llm: 'gateway',
-      behavesAsAlias,
-      agentBackend,
-    }).options();
-  }
-  it('threads the alias and its LLM identity to native queries without compiling modelOverrides', async () => {
-    const options = await aliasOptions('opus');
-    expect(options.behavesAsAlias).toBe('opus');
-    expect(options.llm).toBe('gateway');
-    expect(options.modelOverrides).toBeUndefined();
+  // The generic agent layer is alias-agnostic: a bare `behavesAs` alias
+  // compiled by config rides modelOverrides as the key itself, so the
+  // standard passthrough and startup floor cover it — resolution against the
+  // running catalog is Claude-provider-owned.
+  it('passes an alias-keyed map to native queries unchanged, without alias-specific options', async () => {
+    const options = await selectedOptions('kimi-k3', undefined, undefined, { opus: 'kimi-k3' });
+    expect(options.modelOverrides).toEqual({ opus: 'kimi-k3' });
+    // The generic query options carry no alias concept of their own.
+    const raw = options as unknown as Record<string, unknown>;
+    expect(raw.behavesAsAlias).toBeUndefined();
+    expect(raw.llm).toBeUndefined();
   });
-  it('drops the alias for non-Claude runtimes', async () => {
-    const options = await aliasOptions('opus', 'dsh');
-    expect(options.behavesAsAlias).toBeUndefined();
-    expect(options.llm).toBeUndefined();
-  });
-  it('fails agent startup when the bundled Claude Code predates the resolution APIs', async () => {
+  it('fails agent startup when the bundled Claude Code predates modelOverrides with an alias key', async () => {
     vi.doMock('../sdk/providers/claude/version.js', async (importOriginal) => ({
       ...(await importOriginal<Record<string, unknown>>()),
       bundledClaudeCodeVersion: () => '2.1.199',
@@ -197,9 +183,9 @@ describe('Claude behavesAs bare alias (Issue #5422)', () => {
       apiProtocol: 'anthropic',
       model: 'kimi-k3',
       llm: 'gateway',
-      behavesAsAlias: 'opus',
+      modelOverrides: { opus: 'kimi-k3' },
       agentBackend: 'claude',
-    })).toThrow(/behavesAs alias resolution requires Claude Code >= 2\.1\.200/);
+    })).toThrow(/requires Claude Code >= 2\.1\.200/);
   });
 });
 

@@ -284,13 +284,6 @@ export interface BaseAgentConfig {
   maxConcurrentSessions?: number;
   /** Resolved Claude Code modelOverrides map (Issues #5410, #5679); compiled for every preset sharing the binding, applied by Claude runtimes only. */
   modelOverrides?: Record<string, string>;
-  /**
-   * Bare `behavesAs` alias (Issue #5422): the Claude provider resolves it
-   * against the booted session's model catalog (alias → resolvedModel full ID)
-   * and merges the resulting modelOverrides before the first input; cached
-   * per LLM for the process lifetime.
-   */
-  behavesAsAlias?: string;
   /** API wire format of the selected LLM. */
   apiProtocol?: ApiProtocol;
   env?: Record<string, string>;

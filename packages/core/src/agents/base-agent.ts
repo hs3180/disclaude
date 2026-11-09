@@ -144,7 +144,6 @@ export abstract class BaseAgent implements Disposable {
   private readonly selectedConfig: BaseAgentConfig;
   readonly agentBackend?: BaseAgentConfig['agentBackend'];
   readonly modelOverrides?: Record<string, string>;
-  readonly behavesAsAlias?: string;
 
   protected readonly logger: Logger;
   protected initialized = false;
@@ -199,25 +198,6 @@ export abstract class BaseAgent implements Disposable {
           `Claude Code treats ${providerModel} as ${claudeModel} (${windowTokens === 1_000_000 ? '1M' : '200k'} context window)`
         );
       }
-    }
-
-    // Issue #5422: a bare behavesAs alias rides the same modelOverrides
-    // mechanism, but its full catalog ID is only knowable from the booted
-    // session, so the Claude provider resolves it at first use. Gate on the
-    // same floor; the context window is logged per session after resolution.
-    if (config.behavesAsAlias && (this.agentBackend ?? 'claude') === 'claude') {
-      this.behavesAsAlias = config.behavesAsAlias;
-      const bundled = bundledClaudeCodeVersion();
-      if (bundled && lacksModelOverrides(bundled)) {
-        throw new AppError(
-          `behavesAs alias resolution requires Claude Code >= 2.1.200, but the bundled Claude Code is v${bundled}; upgrade @anthropic-ai/claude-agent-sdk or pin a full model ID in the agent's claude.behavesAs`,
-          ErrorCategory.CONFIGURATION
-        );
-      }
-      this.logger.info(
-        { event: 'claude_behaves_as_alias', alias: this.behavesAsAlias, providerModel: this.model },
-        `behavesAs alias "${this.behavesAsAlias}" resolves against the running Claude catalog when the first session boots`
-      );
     }
   }
 
@@ -310,12 +290,6 @@ export abstract class BaseAgent implements Disposable {
     }
     if (this.modelOverrides && (this.agentBackend ?? 'claude') === 'claude') {
       options.modelOverrides = this.modelOverrides;
-    }
-    if (this.behavesAsAlias && (this.agentBackend ?? 'claude') === 'claude') {
-      options.behavesAsAlias = this.behavesAsAlias;
-      if (this.selectedConfig.llm) {
-        options.llm = this.selectedConfig.llm;
-      }
     }
 
     // SDK 0.3.177+: Agent Teams is enabled via teammateMode Settings field,

@@ -393,24 +393,11 @@ export interface AgentQueryOptions {
    * provider ID. Claude Code applies the key's catalog entry — context window,
    * capabilities, effort defaults — to the provider ID while sending the
    * provider ID on the wire. Injected via the per-query private settings file;
-   * requires Claude Code ≥ 2.1.200.
+   * requires Claude Code ≥ 2.1.200. A bare alias key (Issue #5422) has no
+   * catalog entry at spawn time; the Claude provider resolves it against the
+   * booted session's model catalog before the first input.
    */
   modelOverrides?: Record<string, string>;
-  /**
-   * Bare `behavesAs` alias (Issue #5422): the Claude provider resolves it
-   * against the booted session's `supportedModels()` catalog (alias value →
-   * `resolvedModel` full ID) and merges `modelOverrides: { resolved: model }`
-   * through `applyFlagSettings` before the first input is forwarded. An
-   * unknown alias surfaces as an explicit error naming the catalog's
-   * available aliases instead of a silent fallback. Resolutions are cached
-   * per `llm` for the process lifetime.
-   */
-  behavesAsAlias?: string;
-  /**
-   * Named LLM binding identity from the resolved agent preset; scopes
-   * per-LLM caches such as the behavesAs alias resolution (Issue #5422).
-   */
-  llm?: string;
   /**
    * Enable partial (stream_event) messages (Issue #3706 GLM stall).
    * When true, the SDK yields stream_event messages (content_block_delta,

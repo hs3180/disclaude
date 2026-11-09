@@ -30,7 +30,7 @@ import { withDiscoveredCompaction } from './compaction.js';
 import { buildClaudeDisallowedTools } from './disallowed-tools.js';
 import { privateSdkSettings } from './private-settings.js';
 import { apiErrorEvidence, ClaudeTranscriptErrors, type ApiErrorEvidence } from './api-error-evidence.js';
-import { assumedContextWindow, resolveClaudeModelAlias } from './model-alias.js';
+import { aliasScopeKey, assumedContextWindow, resolveClaudeModelAlias, splitModelOverrides } from './model-alias.js';
 
 const logger = createLogger('ClaudeSDKProvider');
 
@@ -369,14 +369,18 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
       });
       return settlement;
     };
+    // Issue #5422: bare alias keys in modelOverrides (a `behavesAs` alias
+    // compiled by config) have no catalog entry at spawn time — the provider
+    // owns their resolution against the booted session.
+    const { aliases: aliasOverrides } = splitModelOverrides(options.modelOverrides);
     let inputCount = 0;
     async function* adaptInputStream(): AsyncGenerator<SDKUserMessage> {
       while (!nativeProcess.closed) {
         // Issue #5422: the first pull gates on alias resolution so the
         // session already carries the compiled modelOverrides when — and
         // only when — the first input actually flows.
-        if (inputCount === 0 && options.behavesAsAlias) {
-          await resolveBehavesAsAlias();
+        if (inputCount === 0 && aliasOverrides.length) {
+          await resolveAliasOverrides();
           if (aliasFailure !== undefined || nativeProcess.closed) { return; }
         }
         const { value, done } = await input.next();
@@ -402,37 +406,40 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
       throw preventAutomaticReplay(error, 'whole-query-replay-disabled');
     }
 
-    // Issue #5422: a bare behavesAs alias resolves against the booted
-    // session's catalog (alias value → resolvedModel full ID) and the
-    // compiled modelOverrides merge into the session through the flag
-    // settings layer before the first input is forwarded. The resolution is
-    // cached per LLM for the process lifetime; the merge runs per session.
-    // Failures degrade to an explicit error — never a crash, never a silent
-    // fallback to an unmapped model.
+    // Issue #5422: bare alias keys resolve against the booted session's
+    // catalog (alias value → resolvedModel full ID) and the resulting
+    // modelOverrides merge into the session through the flag settings layer
+    // before the first input is forwarded. The resolution is cached for the
+    // process lifetime, keyed by the session env scope (per LLM binding);
+    // the merge runs per session. Failures degrade to an explicit error —
+    // never a crash, never a silent fallback to an unmapped model.
     let aliasFailure: string | undefined;
     let aliasResolution: Promise<void> | undefined;
-    const resolveBehavesAsAlias = (): Promise<void> =>
+    const resolveAliasOverrides = (): Promise<void> =>
       (aliasResolution ??= (async () => {
-        const alias = options.behavesAsAlias;
-        if (!alias) { return; }
+        if (!aliasOverrides.length) { return; }
         try {
-          const resolved = await resolveClaudeModelAlias(alias, options.llm, queryResult);
-          const providerModel = options.model ?? '';
-          await queryResult.applyFlagSettings({ modelOverrides: { [resolved]: providerModel } });
-          const windowTokens = assumedContextWindow(resolved);
-          logger.info(
-            {
-              event: 'claude_behaves_as_alias_resolved',
-              alias,
-              resolvedModel: resolved,
-              providerModel,
-              assumedContextWindow: windowTokens,
-            },
-            `behavesAs "${alias}" resolved to ${resolved}; Claude Code treats ${providerModel} as ${resolved} (${windowTokens === 1_000_000 ? '1M' : '200k'} context window)`
-          );
+          const scope = aliasScopeKey(options.env);
+          const resolved: Record<string, string> = {};
+          for (const { alias, providerModel } of aliasOverrides) {
+            const fullId = await resolveClaudeModelAlias(alias, scope, queryResult);
+            resolved[fullId] = providerModel;
+            const windowTokens = assumedContextWindow(fullId);
+            logger.info(
+              {
+                event: 'claude_behaves_as_alias_resolved',
+                alias,
+                resolvedModel: fullId,
+                providerModel,
+                assumedContextWindow: windowTokens,
+              },
+              `behavesAs "${alias}" resolved to ${fullId}; Claude Code treats ${providerModel} as ${fullId} (${windowTokens === 1_000_000 ? '1M' : '200k'} context window)`
+            );
+          }
+          await queryResult.applyFlagSettings({ modelOverrides: resolved });
         } catch (error) {
           aliasFailure = error instanceof Error ? error.message : String(error);
-          logger.error({ alias, err: error }, 'behavesAs alias resolution failed; no input will be forwarded');
+          logger.error({ aliases: aliasOverrides.map((entry) => entry.alias), err: error }, 'behavesAs alias resolution failed; no input will be forwarded');
         }
       })());
 
@@ -483,8 +490,8 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         // The input gate already refused to forward anything; report the
         // explicit failure (with the catalog's available aliases) and end
         // the turn without crashing the session machinery.
-        if (options.behavesAsAlias) {
-          await resolveBehavesAsAlias();
+        if (aliasOverrides.length) {
+          await resolveAliasOverrides();
           if (cancelled) { return; }
           if (aliasFailure !== undefined) {
             messageCount++;

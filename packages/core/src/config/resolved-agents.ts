@@ -428,16 +428,14 @@ export function resolveConfiguredAgents(
       reasoningEffort: llm.reasoningEffort,
       maxConcurrentSessions: llm.maxConcurrentSessions,
       // Claude owns its model names; other runtimes never receive this metadata.
-      // Issue #5422: a bare alias cannot be compiled here — its catalog ID is
-      // only knowable from the booted Claude session — so it travels as
-      // behavesAsAlias and the Claude runtime resolves and merges it per LLM.
+      // Issue #5422: a bare alias cannot be pinned here — its catalog ID is
+      // only knowable from the booted Claude session — so it rides the
+      // modelOverrides map as the key itself and the Claude provider
+      // resolves it against the session catalog before the first input.
       modelOverrides: backend === 'claude'
-        ? behavesAs && defaultModel && CLAUDE_MODEL_ID.test(behavesAs)
+        ? behavesAs && defaultModel
           ? { [behavesAs]: defaultModel }
           : agent.claude?.modelOverrides
-        : undefined,
-      behavesAsAlias: backend === 'claude' && behavesAs && BARE_CLAUDE_ALIAS.test(behavesAs)
-        ? behavesAs.toLowerCase()
         : undefined,
       model: defaultModel,
       apiKey: keyEnv ? (process.env[keyEnv] ?? '') : '',
