@@ -149,6 +149,19 @@ describe('parseArgs', () => {
     expect(result.configPath).toBeUndefined();
   });
 
+  it('should parse the research command and hand the rest to the watch subcommand (T-089 rework, #5197)', () => {
+    const result = parseArgs(['research', 'watch', 'start', '--interval', '300']);
+    expect(result.command).toBe('research');
+    expect(result.researchArgs).toEqual(['watch', 'start', '--interval', '300']);
+  });
+
+  it('should keep an explicit --config given before the research command', () => {
+    const result = parseArgs(['--config', '/etc/disclaude.yaml', 'research', 'watch', 'status']);
+    expect(result.command).toBe('research');
+    expect(result.configPath).toBe('/etc/disclaude.yaml');
+    expect(result.researchArgs).toEqual(['watch', 'status']);
+  });
+
   it('should parse --api-port flag with value (Issue #3857)', () => {
     const result = parseArgs(['start', '--api-port', '19200']);
     expect(result.command).toBe('start');

@@ -272,6 +272,58 @@ describe('send_file', () => {
     });
   });
 
+  describe('delivery position echo (#5722)', () => {
+    it('topic-group in-topic reply (with --parent): success message marks the thread reply', async () => {
+      mockChannelApiClient.uploadFile.mockResolvedValue({
+        success: true, fileKey: '', fileType: 'pdf', fileName: 'doc.pdf', fileSize: 2048,
+        messageId: 'om_reply_1', deliveryPosition: 'thread-reply', threadId: 'om_topic_root',
+      });
+      const result = await send_file({ filePath: '/test/doc.pdf', chatId: 'oc_topic_group', parentMessageId: 'om_topic_root' });
+      expect(result.success).toBe(true);
+      expect(result.message).toBe('✅ File sent: doc.pdf (0.00 MB) — thread reply to om_topic_root (messageId om_reply_1)');
+      expect(result.deliveryPosition).toBe('thread-reply');
+      expect(result.parentMessageId).toBe('om_topic_root');
+      expect(result.messageId).toBe('om_reply_1');
+      // No warning: the file provably landed inside the requested topic.
+      expect(result.message).not.toContain('⚠️');
+    });
+
+    it('topic group without --parent: success message marks chat root and warns about the NEW topic', async () => {
+      mockChannelApiClient.uploadFile.mockResolvedValue({
+        success: true, fileKey: '', fileType: 'pdf', fileName: 'doc.pdf', fileSize: 2048,
+        messageId: 'om_new_topic_root', deliveryPosition: 'chat-root', rootId: 'om_new_topic_root',
+      });
+      const result = await send_file({ filePath: '/test/doc.pdf', chatId: 'oc_topic_group' });
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('— chat root (messageId om_new_topic_root)');
+      expect(result.message).toContain('⚠️ Sent without --parent');
+      expect(result.message).toContain('NEW topic');
+      expect(result.deliveryPosition).toBe('chat-root');
+    });
+
+    it('non-topic chat without --parent: same chat-root echo (the CLI cannot distinguish chat types offline)', async () => {
+      mockChannelApiClient.uploadFile.mockResolvedValue({
+        success: true, fileKey: '', fileType: 'pdf', fileName: 'doc.pdf', fileSize: 2048,
+        messageId: 'om_p2p_1', deliveryPosition: 'chat-root', rootId: 'om_p2p_1',
+      });
+      const result = await send_file({ filePath: '/test/doc.pdf', chatId: 'ou_peer' });
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('— chat root (messageId om_p2p_1)');
+      expect(result.deliveryPosition).toBe('chat-root');
+    });
+
+    it('derives the position from --parent when an older service reports no deliveryPosition', async () => {
+      mockChannelApiClient.uploadFile.mockResolvedValue({
+        success: true, fileKey: '', fileType: 'pdf', fileName: 'doc.pdf', fileSize: 2048,
+        messageId: 'om_reply_2',
+      });
+      const result = await send_file({ filePath: '/test/doc.pdf', chatId: 'oc_test', parentMessageId: 'om_parent_2' });
+      expect(result.success).toBe(true);
+      expect(result.message).toBe('✅ File sent: doc.pdf (0.00 MB) — thread reply to om_parent_2 (messageId om_reply_2)');
+      expect(result.deliveryPosition).toBe('thread-reply');
+    });
+  });
+
   describe('platform error edge cases', () => {
     it('should not extract platform code when err.code is a string', async () => {
       const error = new Error('API Error') as Error & { code: string };

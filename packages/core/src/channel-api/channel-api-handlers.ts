@@ -15,7 +15,7 @@ export interface ChannelApiHandlers {
     card: FeishuCard,
     threadId?: string,
     description?: string
-  ) => Promise<void>;
+  ) => Promise<string | void>;
   uploadFile: (
     chatId: string,
     filePath: string,
@@ -27,6 +27,23 @@ export interface ChannelApiHandlers {
     fileSize: number;
     /** Platform message_id of the delivered file message, when confirmed (Issue #5630). */
     messageId?: string;
+    /**
+     * Actual delivery position (Issue #5722): 'thread-reply' — delivered under
+     * the requested parent; 'chat-root' — delivered as a new chat-level message
+     * (in Feishu topic groups a parent-less send starts a NEW topic outside the
+     * current one). Derived from the send request; channels that ignore
+     * threadId still report the requested position.
+     */
+    deliveryPosition?: 'thread-reply' | 'chat-root';
+    /** Parent message id the file was replied under; present iff deliveryPosition === 'thread-reply' (Issue #5722). */
+    threadId?: string;
+    /**
+     * Thread root of the delivered file message when known (Issue #5722): for a
+     * chat-root send the delivered message itself is the root (Feishu topic
+     * groups: the new topic's root). Omitted for thread replies — their root is
+     * not separately reported here.
+     */
+    rootId?: string;
   }>;
   /** Issue #2951: Upload image and return Feishu image_key for card embedding */
   uploadImage?: (
