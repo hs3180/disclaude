@@ -11,6 +11,16 @@ export interface SendMessageResult {
   success: boolean;
   message: string;
   error?: string;
+  /**
+   * Delivery position echoed in the success message (Issue #5722):
+   * 'thread-reply' — delivered under the requested --parent; 'chat-root' —
+   * new chat-level message (in topic groups a NEW topic).
+   */
+  deliveryPosition?: 'thread-reply' | 'chat-root';
+  /** Parent message id the delivery replied under ('thread-reply' only, Issue #5722). */
+  parentMessageId?: string;
+  /** Platform message_id of the delivered message, when confirmed (Issue #5722). */
+  messageId?: string;
 }
 
 /**
@@ -29,6 +39,14 @@ export interface SendFileResult {
   troubleshooterUrl?: string;
   /** Platform message_id of the delivered file message, when confirmed (Issue #5630). */
   messageId?: string;
+  /**
+   * Delivery position echoed in the success message (Issue #5722):
+   * 'thread-reply' — delivered under the requested --parent; 'chat-root' —
+   * new chat-level message (in topic groups a NEW topic outside the current one).
+   */
+  deliveryPosition?: 'thread-reply' | 'chat-root';
+  /** Parent message id the file was replied under ('thread-reply' only, Issue #5722). */
+  parentMessageId?: string;
   /** True when the attempt timed out with an unknown delivery outcome (Issue #5630). */
   outcomeUnknown?: boolean;
   /** Retry-dedup key; reuse it when retrying an outcomeUnknown attempt (Issue #5630). */
