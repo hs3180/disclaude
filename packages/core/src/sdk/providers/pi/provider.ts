@@ -18,8 +18,17 @@ import { createLogger } from '../../../utils/logger.js';
 import { adaptPiEvent, type PiAgentEvent } from './event-adapter.js';
 import { adaptPiTools } from './tool-adapter.js';
 import { adaptPiOptions } from './options-adapter.js';
-import { diagnosticsPluginManifest } from '../../../skills/diagnostics-plugin.js';
-import { loadPiRuntime, toPiUserMessage, type PiAgentOptions } from './pi-runtime.js';
+import { installedDiagnosticsPlugin } from '../../../skills/diagnostics-plugin.js';
+import {
+  undeliverableSkillSourceError,
+  type NativeSkillChannel,
+} from '../../../skills/native-skill-channel.js';
+import {
+  loadPiRuntime,
+  toPiUserMessage,
+  type PiAgentOptions,
+  type PiRuntime,
+} from './pi-runtime.js';
 
 const logger = createLogger('PiAgentProvider');
 
@@ -28,6 +37,74 @@ const logger = createLogger('PiAgentProvider');
 // the two backends read identically in chat and in logs.
 const STALL_TERMINATE_NOTICE =
   '⚠️ 上游模型响应超时（疑似 stall），已自动取消本次响应。请稍后重试。';
+
+/**
+ * Pi HAS a native skills channel — verified 2026-11-07 against the published
+ * @earendil-works/pi-agent-core@0.83.0 (the production-verified version,
+ * docs/pi-backend.md): the package index exports `loadSkills` (recursive
+ * SKILL.md discovery with per-file diagnostics) and `formatSkillsForSystemPrompt`
+ * (the agentskills.io-spec system prompt block), and the `/node` subentry
+ * exports `NodeExecutionEnv`. Pi's consumption contract is application
+ * composition — the `Skill` doc directs applications to render the block with
+ * `formatSkillsForSystemPrompt`, and `AgentHarnessOptions.systemPrompt` is a
+ * resources(skills)-aware callback of exactly that shape. So unlike DSH
+ * (#5717), Pi registers the installed plugin root through that native channel
+ * and does NOT consume the shared fail-fast gate; this channel description is
+ * used only when the installed runtime predates the verified API surface.
+ */
+const PI_SKILL_CHANNEL: NativeSkillChannel = {
+  harness: 'Pi (@earendil-works/pi-agent-core)',
+  evidence:
+    "the installed runtime does not export pi's native skills API " +
+    '(loadSkills + formatSkillsForSystemPrompt + the /node NodeExecutionEnv, ' +
+    'verified present in 0.83.0; the probe runs only when a skill source is installed)',
+  remedy:
+    'Upgrade @earendil-works/pi-agent-core to >=0.83.0 (see docs/pi-backend.md), ' +
+    'or run plugins remove diagnostics for Pi-only projects.',
+};
+
+/**
+ * Resolve the native skills system-prompt block for the explicitly installed
+ * diagnostics plugin (Issue #5718).
+ *
+ * - No installation → '' — the explicit-install boundary is unchanged and no
+ *   capability probe or discovery runs at all.
+ * - Installation present → pi's OWN `loadSkills` discovers the plugin root and
+ *   pi's OWN `formatSkillsForSystemPrompt` renders the spec block. Nothing
+ *   Disclaude-authored enters any prompt layer; the removed path fabricated a
+ *   `Disclaude skills:` markdown listing instead.
+ * - The installed runtime predates the channel, or registration yields no
+ *   skills / any diagnostics → actionable error with evidence and remedy.
+ *   Never a silent fallback to manifest injection.
+ */
+async function resolvePiNativeSkillsBlock(
+  runtime: PiRuntime,
+  pluginRoot: string | undefined
+): Promise<string> {
+  if (!pluginRoot) {
+    return '';
+  }
+  if (!runtime.skills || !runtime.ExecutionEnv) {
+    throw undeliverableSkillSourceError(PI_SKILL_CHANNEL);
+  }
+  const env = new runtime.ExecutionEnv({ cwd: pluginRoot });
+  try {
+    const { skills, diagnostics } = await runtime.skills.loadSkills(env, [pluginRoot]);
+    if (skills.length === 0 || diagnostics.length > 0) {
+      const detail = diagnostics
+        .map((diagnostic) => `${diagnostic.code} at ${diagnostic.path} (${diagnostic.message})`)
+        .join('; ');
+      const summary = `${skills.length} skill(s) loaded, ${diagnostics.length} diagnostic(s)${detail ? `: ${detail}` : ''}`;
+      throw new Error(
+        `Pi native skill registration failed for the installed diagnostics plugin: ${summary}. ` +
+          'No prompt manifest was injected and no model turn was submitted.'
+      );
+    }
+    return runtime.skills.formatSkillsForSystemPrompt(skills);
+  } finally {
+    await env.cleanup().catch(() => undefined);
+  }
+}
 
 /**
  * Stream-function injection seam for `queryStream` (Issue #4386 part 3).
@@ -62,9 +139,15 @@ export class PiAgentProvider implements IAgentSDKProvider {
         const protocol = target.apiProtocol ?? 'anthropic';
         const keyName = protocol === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY';
         const urlName = protocol === 'openai' ? 'OPENAI_BASE_URL' : 'ANTHROPIC_BASE_URL';
-        resolvePiModel({ settingSources: [], model: target.model, apiProtocol: protocol,
-          env: { [keyName]: target.apiKey, [urlName]: target.apiBaseUrl } });
-      } catch { configurationError = 'check the selected LLM API credential, model and endpoint'; }
+        resolvePiModel({
+          settingSources: [],
+          model: target.model,
+          apiProtocol: protocol,
+          env: { [keyName]: target.apiKey, [urlName]: target.apiBaseUrl },
+        });
+      } catch {
+        configurationError = 'check the selected LLM API credential, model and endpoint';
+      }
     }
     const available = !configurationError && this.validateConfig();
     const info: ProviderInfo = {
@@ -73,7 +156,8 @@ export class PiAgentProvider implements IAgentSDKProvider {
       available,
     };
     if (!available) {
-      info.unavailableReason = configurationError ?? 'pi-agent-core package not installed or not configured';
+      info.unavailableReason =
+        configurationError ?? 'pi-agent-core package not installed or not configured';
     }
     return info;
   }
@@ -88,17 +172,16 @@ export class PiAgentProvider implements IAgentSDKProvider {
    */
   streamFn: PiStreamFn | null = null;
 
-  queryStream(
-    input: AsyncGenerator<UserInput>,
-    options: AgentQueryOptions,
-  ): StreamQueryResult {
+  queryStream(input: AsyncGenerator<UserInput>, options: AgentQueryOptions): StreamQueryResult {
     assertToolOptions(options);
     if (this.disposed) {
       throw new Error('Provider has been disposed');
     }
 
     const tools = adaptPiTools(options.tools);
-    if (!this.streamFn) {resolvePiModel(options);}
+    if (!this.streamFn) {
+      resolvePiModel(options);
+    }
 
     // Abort plumbing: pi's Agent.abort() cancels the active run; the handle's
     // cancel() maps onto it (spike §4 — AbortController pass-through applies
@@ -124,7 +207,8 @@ export class PiAgentProvider implements IAgentSDKProvider {
 
     const { streamFn } = this;
     const adaptIterator = async function* (this: void): AsyncGenerator<AgentMessage> {
-      const { Agent } = await loadPiRuntime();
+      const runtime = await loadPiRuntime();
+      const { Agent } = runtime;
       const production = streamFn ? null : await loadPiProduction(options);
 
       // Event bridge: pi AgentEvent → disclaude AgentMessage. The listener is
@@ -186,7 +270,8 @@ export class PiAgentProvider implements IAgentSDKProvider {
       // drive it deterministically. Between-turn idle (runActive === false,
       // the input generator parked) is excluded: the watchdog only covers
       // in-flight runs, mirroring #3706's message_start→message_stop arming.
-      const { timeoutMs: STALL_TIMEOUT_MS, graceMs: STALL_FORCE_CLOSE_GRACE_MS } = readStallPolicy();
+      const { timeoutMs: STALL_TIMEOUT_MS, graceMs: STALL_FORCE_CLOSE_GRACE_MS } =
+        readStallPolicy();
       // Grace after abort() before force-closing the consumer loop, in case
       // abort() alone cannot settle a run parked on a never-resolving
       // streamFn promise (#3706 review — same rationale as force-close there).
@@ -256,7 +341,7 @@ export class PiAgentProvider implements IAgentSDKProvider {
         logger.error(
           { stallTimeoutMs: STALL_TIMEOUT_MS },
           `pi stall: no agent events for ${STALL_TIMEOUT_MS}ms during an active run; ` +
-            'aborting the agent (Issue #4386, cf. #3706)',
+            'aborting the agent (Issue #4386, cf. #3706)'
         );
         // Same escalation order as #3706: abort first; if the run still does
         // not settle (a hung streamFn promise never resolves, so runInput's
@@ -280,8 +365,16 @@ export class PiAgentProvider implements IAgentSDKProvider {
       const inputIterator = input[Symbol.asyncIterator]();
 
       const executionRoot = options.cwd ?? process.cwd();
-      const diagnostics = diagnosticsPluginManifest(options.projectRoot ?? executionRoot, executionRoot);
-      const adaptedOptions = adaptPiOptions(options, diagnostics);
+      // Issue #5718: no Disclaude-authored skills manifest is concatenated
+      // here anymore. The explicitly installed diagnostics plugin is delivered
+      // through pi's own native channel — `loadSkills` discovery of the
+      // installed plugin root + `formatSkillsForSystemPrompt`, composed into
+      // the Agent's system prompt exactly as pi's AgentHarness resources
+      // contract prescribes. A missing installation changes nothing; one the
+      // installed runtime cannot deliver natively fails fast (no model turn).
+      const pluginRoot = installedDiagnosticsPlugin(options.projectRoot ?? executionRoot);
+      const nativeSkillsBlock = await resolvePiNativeSkillsBlock(runtime, pluginRoot);
+      const adaptedOptions = adaptPiOptions(options);
       const inherited = new Set((production?.tools ?? []).map((tool) => tool.name));
       for (const tool of tools) {
         if (inherited.has(tool.name)) {
@@ -292,7 +385,9 @@ export class PiAgentProvider implements IAgentSDKProvider {
         streamFn: (streamFn ?? production?.streamFn) as PiAgentOptions['streamFn'],
         initialState: {
           ...(production ? { model: production.model } : {}),
-          systemPrompt: adaptedOptions.systemPrompt ?? '',
+          systemPrompt: [adaptedOptions.systemPrompt, nativeSkillsBlock]
+            .filter(Boolean)
+            .join('\n\n'),
           tools: [...(production?.tools ?? []), ...tools],
         },
       } satisfies PiAgentOptions);
@@ -410,11 +505,19 @@ export class PiAgentProvider implements IAgentSDKProvider {
             continue;
           }
           // Native pi deltas are transport fragments; deliver complete messages.
-          if (production && event.type === 'message_update' && event.assistantMessageEvent.type === 'text_delta') {
+          if (
+            production &&
+            event.type === 'message_update' &&
+            event.assistantMessageEvent.type === 'text_delta'
+          ) {
             pendingText += event.assistantMessageEvent.delta;
             continue;
           }
-          if (production && (event.type === 'message_end' || event.type === 'agent_end') && pendingText) {
+          if (
+            production &&
+            (event.type === 'message_end' || event.type === 'agent_end') &&
+            pendingText
+          ) {
             yield { type: 'text', role: 'assistant', content: pendingText };
             pendingText = '';
           }
