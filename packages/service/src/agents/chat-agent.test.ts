@@ -7893,6 +7893,73 @@ describe('Issue #5409: connectivity-class provider failures', () => {
   });
 });
 
+describe('Issue #4914: contextual agent-config hint on model-class failures', () => {
+  const MODEL_FAILURE = 'Error code: 404 - The model `gpt-5.6-luna` does not exist or you do not have access to it.';
+  function failureAgent(
+    chatId: string,
+    terminationDetail: string,
+    suggestAgentConfig?: (chatId: string, failureText: string) => string | undefined
+  ) {
+    const callbacks = { ...createMockCallbacks(), ...(suggestAgentConfig ? { suggestAgentConfig } : {}) };
+    const agent = new ChatAgent({ chatId, callbacks, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
+    (agent as any).isAgentTeamsEnabled = () => false;
+    (agent as any).createQueryStream = vi.fn(() => ({
+      handle: { close: vi.fn(), cancel: vi.fn() },
+      iterator: (async function* () {
+        yield { parsed: { type: 'result', content: '✅ Complete', terminatedReason: 'turn_failed', terminationDetail }, raw: {} };
+      })(),
+    }));
+    return { agent, callbacks };
+  }
+
+  it('appends the config entry to a provider-turn failure when the channel offers the hint', async () => {
+    const suggest = vi.fn(() => '💡 如需换一个模型：发送 /agent config 打开配置卡片，在受限选项中选择。');
+    const { agent, callbacks } = failureAgent('oc_model_gone', MODEL_FAILURE, suggest);
+    try {
+      void agent.processMessage({ chatId: 'oc_model_gone', payload: 'continue the batch', messageId: 'om_mg_1' });
+      await vi.waitFor(() => {
+        expect(callbacks.sendMessage.mock.calls.some((call: unknown[]) => String(call[1]).includes('执行失败'))).toBe(true);
+      });
+      // The hint rides INSIDE the failure notice (no separate message), and
+      // classification policy stayed in the channel wiring: the agent loop
+      // only forwarded the failure text.
+      expect(suggest).toHaveBeenCalledWith('oc_model_gone', MODEL_FAILURE);
+      const failureNotice = callbacks.sendMessage.mock.calls
+        .map((call: unknown[]) => String(call[1]))
+        .find(t => t.includes('执行失败'))!;
+      expect(failureNotice).toContain('/agent config');
+      // The pre-existing generic advice is still there.
+      expect(failureNotice).toContain('核对已执行的操作');
+    } finally { agent.dispose(); }
+  });
+
+  it('keeps unrelated failures free of the hint even when the channel offers it', async () => {
+    const suggest = vi.fn(() => undefined);
+    const { agent, callbacks } = failureAgent('oc_overloaded', 'upstream request failed: overloaded_error (529)', suggest);
+    try {
+      void agent.processMessage({ chatId: 'oc_overloaded', payload: 'do work', messageId: 'om_ov_1' });
+      await vi.waitFor(() => {
+        expect(callbacks.sendMessage.mock.calls.some((call: unknown[]) => String(call[1]).includes('执行失败'))).toBe(true);
+      });
+      expect(suggest).toHaveBeenCalledWith('oc_overloaded', 'upstream request failed: overloaded_error (529)');
+      const sent = callbacks.sendMessage.mock.calls.map((call: unknown[]) => String(call[1]));
+      expect(sent.some(t => t.includes('/agent config'))).toBe(false);
+    } finally { agent.dispose(); }
+  });
+
+  it('leaves failure notices unchanged for channels without the hint callback', async () => {
+    const { agent, callbacks } = failureAgent('oc_no_card', MODEL_FAILURE);
+    try {
+      void agent.processMessage({ chatId: 'oc_no_card', payload: 'continue', messageId: 'om_nc_1' });
+      await vi.waitFor(() => {
+        expect(callbacks.sendMessage.mock.calls.some((call: unknown[]) => String(call[1]).includes('执行失败'))).toBe(true);
+      });
+      const sent = callbacks.sendMessage.mock.calls.map((call: unknown[]) => String(call[1]));
+      expect(sent.some(t => t.includes('/agent config'))).toBe(false);
+    } finally { agent.dispose(); }
+  });
+});
+
 describe('Issue #5399: streaming busy-input admission budget', () => {
   const MAX = 50;
 

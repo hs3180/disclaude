@@ -96,6 +96,27 @@ describe('handleHelp', () => {
     expect(buildWelcomeMessage('feishu')).toContain('完整命令列表');
   });
 
+  it('appends the one-line config entry to the welcome only when a real choice exists (#4914)', () => {
+    const withChoice = buildWelcomeMessage('feishu', { agentConfigCard: true });
+    expect(withChoice).toContain('/agent config');
+    expect(withChoice).toContain('模型预设');
+    // One appended line, task examples and /help pointer stay intact.
+    expect(withChoice.match(/「[^」]+」/g)).toHaveLength(3);
+    expect(withChoice.endsWith('切换。')).toBe(true);
+    // Default (no choice / no card) stays exactly as before.
+    expect(buildWelcomeMessage('feishu')).not.toContain('/agent config');
+    expect(buildWelcomeMessage('wechat')).not.toContain('/agent config');
+  });
+
+  it('recommends the config card ahead of the command path in help tips when the channel has one', async () => {
+    const withCard = await handleHelp(mockCommand, { ...mockContext, agentConfigUi: { openConfigCard: vi.fn() } });
+    expect(withCard.message).toContain('`/agent config`');
+    expect((withCard.message ?? '').indexOf('`/agent config`')).toBeLessThan((withCard.message ?? '').indexOf('`/agent use <name>`'));
+    const withoutCard = await handleHelp(mockCommand, mockContext);
+    expect(withoutCard.message).not.toContain('/agent config');
+    expect(withoutCard.message).toContain('`/agent use <name>`');
+  });
+
   it('should return consistent result regardless of command data', async () => {
     const cmd1: ControlCommand = { type: 'help', chatId: 'test-chat' };
     const cmd2: ControlCommand = { type: 'help', chatId: 'test-chat', data: { extra: true } };
