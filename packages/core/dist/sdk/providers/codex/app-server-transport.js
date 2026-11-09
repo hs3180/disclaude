@@ -56,6 +56,7 @@ export class CodexAppServerTransport {
             sessionKey: options.sessionKey, runId: randomUUID(), ...options.correlation,
         }));
         this.child = spawn(options.binary ?? 'codex', ['app-server', '--stdio', ...CODEX_BROWSER_DISABLE_ARGS,
+            ...(options.configArgs ?? []),
             ...(options.onUserInput ? [
                 '--enable', 'default_mode_request_user_input',
                 // The feature flag alone exposes the protocol surface. Codex 0.155

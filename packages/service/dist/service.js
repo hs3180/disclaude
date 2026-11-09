@@ -204,7 +204,18 @@ export class DisclaudeService extends EventEmitter {
         }
         try {
             setDefaultProvider(agentBackend);
-            const backendInfo = getProvider(agentBackend).getInfo();
+            // Issue #5338: the availability probe must see the bound LLM access
+            // method — a codex runtime on llms.<name>.via api carries its own
+            // credential and is healthy without a ChatGPT login. The probe never
+            // becomes its own failure point: a config that cannot re-resolve here
+            // reports its errors from config loading itself.
+            let backendInfo;
+            try {
+                backendInfo = getProvider(agentBackend).getInfo(Config.getAgentConfig());
+            }
+            catch {
+                backendInfo = getProvider(agentBackend).getInfo();
+            }
             if (!backendInfo.available) {
                 throw new Error(`Agent backend "${agentBackend}" is unavailable: ` +
                     `${backendInfo.unavailableReason ?? 'environment check failed'}`);

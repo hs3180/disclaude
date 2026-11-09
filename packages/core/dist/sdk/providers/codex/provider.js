@@ -168,6 +168,49 @@ const WRITER_CONFLICT_NOTICE = '🔒 Codex 会话正被另一个写入方占用�
  * message and resumes the stashed thread).
  */
 const USAGE_LIMIT_NOTICE = '📊 Codex 用量已达上限（ChatGPT 订阅的 5 小时/周滚动窗口限额）。无需重启——窗口重置后直接重发消息即可自动恢复，当前对话上下文会保留。';
+/**
+ * Issue #5338 / T-097: the two LLM access methods of the codex runtime.
+ * `chatgpt` = the Codex CLI's own ChatGPT login + subscription quota (no API
+ * key); `api` = a compatible API connection injected as an upstream Codex
+ * `model_providers` entry. Failure surfaces stay method-specific — a missing
+ * or rejected API credential is never reported as a ChatGPT login problem,
+ * and vice versa.
+ */
+const LOGIN_MISSING_ERROR = 'CodexAgentProvider: llms.<name> uses via: chatgpt (the Codex-managed ChatGPT login), but no login was found — run `codex login` (Sign in with ChatGPT) on the machine running disclaude and resend; set CODEX_HOME if it is installed elsewhere. This binding has no API credential to fall back to.';
+/** API-access counterpart of the 401 notice: a provider credential problem. */
+const API_CREDENTIAL_NOTICE = '🔴 API 凭据被拒绝（401 / 未授权）——本接入方式使用 llms.<name>.api 的兼容 API 连接。请检查该 apiKey 引用的环境变量是否持有有效凭据、对应账号是否可用，然后重发消息（当前消息未被处理）。这与 Codex ChatGPT 登录无关，无需执行 codex login。';
+/** API-access counterpart of the usage-limit degrade (quota lives at the provider, not the ChatGPT plan). */
+const API_QUOTA_NOTICE = '📊 API 用量/额度受限（llms.<name>.api 指向的服务商限额）。无需重启——额度恢复后直接重发消息即可继续，当前对话上下文会保留。';
+/**
+ * Upstream Codex config keys the API access method drives (Issue #5338). The
+ * `disclaude_api` id is namespaced so it cannot be confused with the CLI's
+ * built-in provider ids or user config: disclaude's own config surface stays
+ * `llms.<name>.via/api` and never reuses the upstream `model_provider` name.
+ */
+const CODEX_MODEL_PROVIDER_ID = 'disclaude_api';
+/** Child-env variable the injected provider reads its credential from. */
+const CODEX_API_KEY_ENV = 'DISCLAUDE_CODEX_API_KEY';
+/**
+ * Build the `-c key=value` overrides that point the Codex CLI at the bound
+ * compatible API provider instead of the ChatGPT backend. Values are TOML —
+ * strings stay quoted so URLs keep their shape.
+ */
+export function codexModelProviderArgs(api) {
+    return [
+        '-c',
+        `model_provider="${CODEX_MODEL_PROVIDER_ID}"`,
+        '-c',
+        `model_providers.${CODEX_MODEL_PROVIDER_ID}.name="disclaude llms api binding"`,
+        '-c',
+        `model_providers.${CODEX_MODEL_PROVIDER_ID}.base_url="${api.baseUrl ?? ''}"`,
+        '-c',
+        `model_providers.${CODEX_MODEL_PROVIDER_ID}.env_key="${CODEX_API_KEY_ENV}"`,
+        // The codex runtime speaks the OpenAI Responses wire API on API access;
+        // config validation already rejects anthropic-protocol bindings.
+        '-c',
+        `model_providers.${CODEX_MODEL_PROVIDER_ID}.wire_api="responses"`,
+    ];
+}
 /** Actionable binary-missing error (thrown synchronously by queryStream). */
 const BINARY_MISSING = (pathValue) => `CodexAgentProvider: codex CLI binary not found on PATH "${pathValue}" — install it first: ` +
     '`npm install -g @openai/codex`, then complete `codex login` (Sign in with ChatGPT).';
@@ -267,7 +310,7 @@ export class CodexAgentProvider {
     // --------------------------------------------------------------------------
     // Provider information
     // --------------------------------------------------------------------------
-    getInfo() {
+    getInfo(config) {
         if (this.disposed) {
             return {
                 name: this.name,
@@ -280,8 +323,11 @@ export class CodexAgentProvider {
         if (!this.findCodexBinary()) {
             problems.push('codex CLI binary not found on PATH — install it first: `npm install -g @openai/codex` (https://developers.openai.com/codex/cli)');
         }
-        if (!this.hasAuth()) {
-            problems.push('Codex auth missing (OAuth not completed) — run `codex login` (Sign in with ChatGPT); set CODEX_HOME if it is installed elsewhere');
+        // Issue #5338: auth.json is only the credential of the chatgpt access
+        // method. An API binding (llms.<name>.via: api) carries its own
+        // credential and must not be reported broken for a missing ChatGPT login.
+        if (config?.llmVia !== 'api' && !this.hasAuth()) {
+            problems.push('Codex ChatGPT login missing (OAuth not completed) — llms.<name>.via chatgpt needs it: run `codex login` (Sign in with ChatGPT); set CODEX_HOME if it is installed elsewhere. A via: api binding carries its own credential and needs no login');
         }
         const info = {
             name: this.name,
@@ -377,6 +423,34 @@ export class CodexAgentProvider {
         if (!binary) {
             throw new Error(BINARY_MISSING(this.env.PATH ?? ''));
         }
+        // ── LLM access method (Issue #5338 / T-097) ─────────────────────────
+        // `via: chatgpt` authenticates through the Codex CLI's own ChatGPT login
+        // (auth.json under CODEX_HOME); `via: api` injects the bound compatible
+        // API connection as an upstream model_providers entry instead. The two
+        // planes never mix: an explicit chatgpt binding fails fast on a missing
+        // login, an API binding fails fast on a missing endpoint/credential —
+        // neither silently degrades into the other. Absent codexRuntime (direct
+        // SDK callers, pre-binding tests) keeps the legacy ChatGPT-only shape.
+        const runtimeVia = options.codexRuntime?.llmVia;
+        if (runtimeVia === 'api' && !options.codexRuntime?.api) {
+            throw new Error('CodexAgentProvider: llms.<name>.via api declares API access, but no compatible API connection reached the runtime — llms.<name>.api with protocol, baseUrl and credential reference is required; the binding is never silently served by the ChatGPT login');
+        }
+        const accessApi = runtimeVia === 'api'
+            ? options.codexRuntime?.api
+            : undefined;
+        const accessVia = accessApi ? 'api' : 'chatgpt';
+        if (runtimeVia === 'chatgpt' && !this.hasAuth()) {
+            throw new Error(LOGIN_MISSING_ERROR);
+        }
+        if (accessApi) {
+            if (!accessApi.baseUrl || !accessApi.baseUrl.trim()) {
+                throw new Error('CodexAgentProvider: API access on the codex runtime requires llms.<name>.api.baseUrl (the upstream Codex model provider needs an endpoint); no ChatGPT fallback applies');
+            }
+            if (!accessApi.apiKey?.trim()) {
+                throw new Error('CodexAgentProvider: the credential referenced by llms.<name>.api.apiKey is missing or empty — set it in the service environment; API access never falls back to the ChatGPT login');
+            }
+        }
+        const modelProviderConfigArgs = accessApi ? codexModelProviderArgs(accessApi) : [];
         const queryModel = options.model?.trim();
         const queryEnvironmentModel = options.env?.CODEX_MODEL?.trim();
         const providerEnvironmentModel = this.env.CODEX_MODEL?.trim();
@@ -437,7 +511,7 @@ export class CodexAgentProvider {
                 : 'Codex full-access was requested but the sandbox policy remains enforced');
         }
         if ((native ? native.transport ?? 'exec' : this.transportMode) === 'app-server') {
-            return this.queryAppServer(input, options, sandboxDecision.sandbox, binary, codexModel, requestedEffort);
+            return this.queryAppServer(input, options, sandboxDecision.sandbox, binary, codexModel, requestedEffort, accessVia, accessApi);
         }
         // Native skill discovery (#5520, following #5546): codex exec has NO
         // mechanism to register Disclaude-managed skill directories. Native extra
@@ -854,8 +928,10 @@ export class CodexAgentProvider {
                 // progress against the weekly window's time progress (reset-time
                 // progress); observe mode records without blocking.
                 if (resumeTarget === undefined) {
-                    const admission = weeklyQuotaSink.checkFreshSession();
-                    if (admission.decision === 'block') {
+                    // Issue #5338: the weekly windows are a ChatGPT-plan property; an
+                    // API binding has no subscription window to protect.
+                    const admission = accessVia === 'chatgpt' ? weeklyQuotaSink.checkFreshSession() : undefined;
+                    if (admission?.decision === 'block') {
                         logger.warn({ sessionKey, ...correlation, reason: admission.reason }, 'codex fresh session blocked (weekly-quota admission, #5607)');
                         pushSynthetic({ type: 'error', role: 'assistant', content: `⛔️ ${admission.reason}` });
                         pushSynthetic({ type: 'result', content: '', role: 'assistant' });
@@ -916,7 +992,15 @@ export class CodexAgentProvider {
                         cwd: options.cwd,
                         model: codexModel,
                         reasoningEffort: requestedEffort,
-                        env: { ...providerEnv, ...options.env },
+                        // Issue #5338: API access drives an upstream model_providers
+                        // entry (config args + child-env credential); chatgpt access
+                        // passes nothing and keeps the CLI's own login.
+                        configArgs: modelProviderConfigArgs,
+                        env: {
+                            ...providerEnv,
+                            ...options.env,
+                            ...(accessApi ? { [CODEX_API_KEY_ENV]: accessApi.apiKey } : {}),
+                        },
                         stderr: options.stderr,
                     }, enqueue);
                     currentRun = handle;
@@ -1016,10 +1100,12 @@ export class CodexAgentProvider {
                         }
                         if (authFailed) {
                             // Most actionable diagnosis wins: exit-code noise around a 401
-                            // would bury the one thing the user can actually do.
+                            // would bury the one thing the user can actually do. The notice
+                            // names the failing access method (Issue #5338): the ChatGPT
+                            // login vs the API credential are separate planes.
                             pushSynthetic({
                                 type: 'error',
-                                content: REAUTH_NOTICE,
+                                content: accessVia === 'api' ? API_CREDENTIAL_NOTICE : REAUTH_NOTICE,
                                 role: 'assistant',
                             });
                         }
@@ -1036,12 +1122,15 @@ export class CodexAgentProvider {
                             // #5607: calibrate the weekly-quota ledger from the REAL limit
                             // hit — parse the reset hint into a deadline that gates new
                             // sessions until the window resets (estimate-independent).
-                            weeklyQuotaSink.recordLimitHit(`${runFailureText}\n${result.stderrTail}`);
+                            // ChatGPT-plan windows only (Issue #5338).
+                            if (accessVia === 'chatgpt') {
+                                weeklyQuotaSink.recordLimitHit(`${runFailureText}\n${result.stderrTail}`);
+                            }
                             pushSynthetic({
                                 type: 'error',
                                 content: resetHint
-                                    ? `${USAGE_LIMIT_NOTICE}\n上游提示: ${resetHint}`
-                                    : USAGE_LIMIT_NOTICE,
+                                    ? `${accessVia === 'api' ? API_QUOTA_NOTICE : USAGE_LIMIT_NOTICE}\n上游提示: ${resetHint}`
+                                    : accessVia === 'api' ? API_QUOTA_NOTICE : USAGE_LIMIT_NOTICE,
                                 role: 'assistant',
                             });
                         }
@@ -1275,7 +1364,7 @@ export class CodexAgentProvider {
             iterator: adaptIterator(),
         };
     }
-    queryAppServer(input, options, sandbox, binary, codexModel, reasoningEffort) {
+    queryAppServer(input, options, sandbox, binary, codexModel, reasoningEffort, accessVia = 'chatgpt', accessApi) {
         const sessionGovernor = this.sessionGovernor(options);
         const dynamicToolRegistry = createCodexDynamicToolRegistry(options.tools);
         const dynamicToolSignature = dynamicToolRegistry.signature;
@@ -1640,12 +1729,17 @@ export class CodexAgentProvider {
                         const failureText = event.turn?.error?.message ?? '';
                         const nativeCode = event.turn?.error?.codexErrorInfo;
                         if (failed && (nativeCode === 'usageLimitExceeded' || isCodexUsageLimit(failureText))) {
-                            this.weeklyQuota.recordLimitHit(failureText);
+                            // ChatGPT-plan windows calibrate the ledger; API quota is a
+                            // provider property and only swaps the notice (Issue #5338).
+                            if (accessVia === 'chatgpt') {
+                                this.weeklyQuota.recordLimitHit(failureText);
+                            }
                             const resetHint = /try again (?:at|in) [^.\n]+/i.exec(failureText)?.[0];
+                            const limitNotice = accessVia === 'api' ? API_QUOTA_NOTICE : USAGE_LIMIT_NOTICE;
                             push({
                                 type: 'error',
                                 role: 'assistant',
-                                content: resetHint ? `${USAGE_LIMIT_NOTICE}\n上游提示: ${resetHint}` : USAGE_LIMIT_NOTICE,
+                                content: resetHint ? `${limitNotice}\n上游提示: ${resetHint}` : limitNotice,
                             });
                         }
                         push({
@@ -1748,8 +1842,10 @@ export class CodexAgentProvider {
                         // compares upstream-observed quota usage progress against the
                         // weekly window's time progress; observe mode never blocks.
                         if (!threadId) {
-                            const admission = this.weeklyQuota.checkFreshSession();
-                            if (admission.decision === 'block') {
+                            // Issue #5338: ChatGPT-plan weekly windows only; an API binding
+                            // has no subscription window to protect.
+                            const admission = accessVia === 'chatgpt' ? this.weeklyQuota.checkFreshSession() : undefined;
+                            if (admission?.decision === 'block') {
                                 logger.warn({ sessionKey, ...next.value.correlation, reason: admission.reason }, 'codex fresh session blocked (weekly-quota admission, #5607)');
                                 push({ type: 'error', role: 'assistant', content: `⛔️ ${admission.reason}` });
                                 push({ type: 'result', role: 'assistant', content: '' });
@@ -1885,7 +1981,7 @@ export class CodexAgentProvider {
                                     }
                                 }
                                 await options.onAsyncUserInputAnswer(request, text, context);
-                            }, options.env, codexNativeSkillRoots(options.projectRoot ?? options.cwd, this.builtinRoot));
+                            }, options.env, codexNativeSkillRoots(options.projectRoot ?? options.cwd, this.builtinRoot), accessApi);
                             const requestedThreadId = threadId;
                             rpcStage = 'ensure-thread';
                             threadId = await lifecycle.ensureThread(sessionKey, {
@@ -2207,12 +2303,16 @@ export class CodexAgentProvider {
             iterator,
         };
     }
-    createAppServerLifecycle(binary, sessionKey, correlation, onUserInput, onDynamicToolCall, asyncInputs, onAsyncAnswer, environment, extraSkillRoots) {
+    createAppServerLifecycle(binary, sessionKey, correlation, onUserInput, onDynamicToolCall, asyncInputs, onAsyncAnswer, environment, extraSkillRoots, accessApi) {
         const lifecycle = new CodexAppServerLifecycle({
             binary,
             sessionKey,
             correlation,
             extraSkillRoots,
+            // Issue #5338: API access injects the model provider entry (config
+            // args) and carries its credential in the child environment.
+            ...(accessApi ? { configArgs: codexModelProviderArgs(accessApi) } : {}),
+            ...(accessApi ? { env: { ...(environment ?? this.env), [CODEX_API_KEY_ENV]: accessApi.apiKey } } : {}),
             ...(this.appServerRequestTimeoutMs ? { requestTimeoutMs: this.appServerRequestTimeoutMs } : {}),
             onUserInput,
             onDynamicToolCall,

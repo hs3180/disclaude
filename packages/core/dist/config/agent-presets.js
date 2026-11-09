@@ -36,7 +36,12 @@ export function validateAgentPresets(agents, options = {}) {
             (!options.allowUnconfiguredModel && !preset.model.trim())) {
             errors.push(`agents.${name}.model must be a non-empty string`);
         }
-        else if (preset.agentBackend === 'codex' && preset.model.trim() &&
+        else if (preset.agentBackend === 'codex' &&
+            // Issue #5338: the ChatGPT-catalog shape only applies to the
+            // ChatGPT-subscription access method; an API binding serves whatever
+            // models the actual provider validates on the wire.
+            preset.llmVia !== 'api' &&
+            preset.model.trim() &&
             !/^gpt-\d+(?:[.-].+)/i.test(preset.model.trim())) {
             errors.push(`agents.${name}.model must be a Codex/ChatGPT model identifier`);
         }

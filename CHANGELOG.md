@@ -7,7 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.25] - 2026-11-09
+
+### Added
+
+- Declare the LLM access method with `llms.<name>.via` (`chatgpt` | `api`):
+  `chatgpt` (the default when an LLM has no `api` block) uses the
+  Codex-managed ChatGPT login and subscription quota with the existing
+  login/reauth/weekly-quota diagnostics and is only available to the codex
+  backend; the explicit `api` method binds the same codex runtime to an
+  OpenAI-protocol (Responses) endpoint injected as a namespaced upstream
+  `model_providers` entry whose credentials travel only through the child
+  process environment. The two paths never silently fall back to one
+  another — `via: api` without an `api` block, `via: chatgpt` alongside an
+  `api` block, non-codex backends bound to `chatgpt`, and mixed or
+  unsupported protocol combinations fail at configuration time with
+  actionable errors. Entries that omit `via` keep their previous meaning
+  and legacy `api`-block configurations keep resolving exactly as before;
+  service startup probes now receive the resolved agent configuration and
+  no longer misreport under an API-bound access method (#5338; #5724).
+
 ## [0.6.24] - 2026-11-09
+
 
 ### Added
 
