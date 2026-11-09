@@ -4,8 +4,19 @@ import { getAvailableCommands } from './index.js';
 
 const WELCOME_EXAMPLES = ['总结这份文件的重点', '把这段话改得更简洁', '帮我列一份周末旅行计划'];
 
+/** First-contact welcome copy; stays task-focused by default. */
+export interface WelcomeMessageOptions {
+  /**
+   * #4914 contextual discovery: append one config-entry line. Only callers
+   * that actually offer a real model choice (multiple configured presets +
+   * a native config card) pass true — otherwise the welcome stays silent
+   * rather than advertising a no-op picker.
+   */
+  agentConfigCard?: boolean;
+}
+
 /** Automatic guidance stays task-focused; explicit /help owns the advanced command view. */
-export function buildWelcomeMessage(channel: 'feishu' | 'wechat'): string {
+export function buildWelcomeMessage(channel: 'feishu' | 'wechat', options?: WelcomeMessageOptions): string {
   const help = channel === 'wechat'
     ? '发送 /help 可查看全部功能。'
     : '想进一步了解用法或查看完整命令列表，请发送 /help。';
@@ -14,6 +25,9 @@ export function buildWelcomeMessage(channel: 'feishu' | 'wechat'): string {
     '可以直接照抄发给我：',
     ...WELCOME_EXAMPLES.map(example => `「${example}」`),
     help,
+    ...(options?.agentConfigCard
+      ? ['已配置多个模型预设：发送 /agent config 可打开配置卡片，按 harness / model / thinking 切换。']
+      : []),
   ].join('\n');
 }
 
@@ -31,7 +45,14 @@ export function buildHelpMessage(command: ControlCommand, context: ControlHandle
   const tips = [scope];
   if (capabilities?.supportsFile) { tips.push('可发送附件并附上任务说明；读取和处理取决于当前模型及飞书权限。'); }
   if (capabilities?.supportsThread && command.chatType === 'group') { tips.push('话题群请在目标话题中提问；在话题内使用 `/help`，帮助会留在该话题。'); }
-  if (available.has('agent')) { tips.push('用 `/agent list` 查看 backend/model 预设，`/agent use <name>` 切换并开始新会话；切换按聊天保存，服务重启后仍生效。'); }
+  if (available.has('agent')) {
+    // #4914: recommend by scenario — the card is the zero-recall path (no
+    // preset names or model IDs to remember), commands stay as the alternative.
+    // #5702: switches (card or command) save per chat and survive restarts.
+    tips.push(context.agentConfigUi
+      ? '用 `/agent config` 打开配置卡片，在受限选项中查看并切换 harness / model / thinking；也可用 `/agent list` + `/agent use <name>`。切换按聊天保存，服务重启后仍生效。'
+      : '用 `/agent list` 查看 backend/model 预设，`/agent use <name>` 切换并开始新会话；切换按聊天保存，服务重启后仍生效。');
+  }
   if (context.guidance && available.has('help')) { tips.push('自动指引每个聊天至多 5 分钟一次；`/help off` 关闭，`/help on` 恢复（重启后恢复默认）。'); }
 
   if (brief) {
