@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.26] - 2026-11-09
+
+### Added
+
+- Configure the chat agent from Feishu with a native interactive card
+  (#4914; #5707). Authorized users run `/agent config` to open a card that
+  shows the current named preset (or the legacy unset state) and switches
+  harness, model, and thinking through constrained `select_static` menus
+  drawn only from configured presets — no free-text model IDs; a single
+  option auto-skips and multi-preset combinations add a disambiguation
+  step. Selecting does not change anything until the explicit confirm,
+  which reuses the same catalog and `switchAgentPreset` service as the
+  text commands; the confirmed switch starts a fresh native session and
+  keeps the choice across service restarts, matching `/agent use`
+  semantics. Cards are bound to the requesting actor, chat, and message,
+  re-check command authorization on every callback, expire after 10
+  minutes, and treat duplicate applies or replays after completion as
+  idempotent no-ops; channels without card support keep the existing
+  `/agent list` / `/agent use <name>` text path, and preset queries now
+  expose an optional `reasoningEffort` so the card never invents a
+  thinking tier.
+- Run an individual prompt schedule on a borrowed agent runtime: schedule
+  frontmatter accepts an optional `harness` field naming a configured
+  `agents:` preset (#5731; #5732). The override applies only to that
+  isolated `freshSession` execution — the chat binding and global default
+  are never modified — and the `model` companion is validated by the
+  borrowed runtime's own rules. Unknown names, invalid models for that
+  backend, missing credentials, or unavailable backends fail that tick
+  with an explicit error instead of silently falling back; `harness` on a
+  `command` schedule is rejected at parse time, and the field survives
+  hot-reload rewrites with changes taking effect from the next tick.
+
 ## [0.6.25] - 2026-11-09
 
 ### Added

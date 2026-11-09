@@ -7,6 +7,7 @@ export { AppError, ErrorCategory, ErrorSeverity, } from './error-handler.js';
 export { browserAgentEnv, resolveBrowserRuntimePath } from './browser-env.js';
 export { sanitizeDiagnosticText } from './diagnostic-text.js';
 export { isEgressConnectivityFailure } from './egress-failure.js';
+export { isModelSwitchFailure } from './model-config-failure.js';
 export { classifyError, isRetryable, isTransient, getSeverity, createUserMessage, enrichError, logError, handleError, formatError, tagErrorCategory, getErrorCategoryTag, } from './error-handler.js';
 export { computeBackoffDelay, retry, retryAsyncIterable, withRetry, } from './retry.js';
 // SDK Utilities (Issue #1040)

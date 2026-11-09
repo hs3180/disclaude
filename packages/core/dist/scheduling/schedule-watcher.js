@@ -66,6 +66,7 @@ function parseScheduleFrontmatter(content) {
             case 'model':
             case 'timezone':
             case 'command':
+            case 'harness':
                 // The old line parser exposed every scalar as text. Keep that behavior
                 // for supported string fields while letting YAML remove valid comments.
                 frontmatter[key] = value === null ? '' : String(value);
@@ -280,6 +281,13 @@ export class ScheduleFileScanner {
             }
             const prompt = content.slice(contentStart).trim();
             const command = frontmatter['command'];
+            const harness = frontmatter['harness'];
+            if (harness !== undefined && !harness.trim()) {
+                throw new ScheduleFileParseError('invalid-harness', 'harness must be a non-empty named agent runtime.');
+            }
+            if (harness && command) {
+                throw new ScheduleFileParseError('invalid-harness', 'harness applies only to prompt schedules; remove it from command schedules.');
+            }
             if ((!prompt && !command) || (prompt && command)) {
                 throw new ScheduleFileParseError('prompt-command-conflict', 'Define exactly one of a prompt body or the command field.');
             }
@@ -294,6 +302,11 @@ export class ScheduleFileScanner {
                 ?? frontmatter['clearContext'] === true;
             if ((!freshSession && skipHistory) || (frontmatter['clearContext'] === true && (!freshSession || !skipHistory))) {
                 throw new ScheduleFileParseError('invalid-context-options', 'skipHistory or clearContext:true requires freshSession:true and consistent context options.');
+            }
+            // Issue #5731: borrowing another runtime is safe only in the isolated
+            // execution session; it must never mutate a live chat conversation.
+            if (harness && !freshSession) {
+                throw new ScheduleFileParseError('invalid-harness', 'harness requires freshSession:true so the selected runtime stays isolated from the live chat.');
             }
             for (const key of ['cooldownPeriod', 'timeoutMs']) {
                 const value = frontmatter[key];
@@ -322,6 +335,7 @@ export class ScheduleFileScanner {
                 lastExecutedAt: frontmatter['lastExecutedAt'],
                 timezone: frontmatter['timezone'],
                 model: frontmatter['model'],
+                harness,
                 sourceFile: filePath,
                 fileMtime: stats.mtime,
             };
@@ -331,6 +345,9 @@ export class ScheduleFileScanner {
             }
             else if (task.model) {
                 logger.info({ taskId: task.id, name: task.name, model: task.model }, 'Schedule task will use model override');
+            }
+            if (task.harness) {
+                logger.info({ taskId: task.id, name: task.name, harness: task.harness }, 'Schedule task will use named runtime override');
             }
             // Issue #3860: Validate timezone against IANA database
             if (task.timezone) {
@@ -420,6 +437,9 @@ export class ScheduleFileScanner {
         }
         if (task.model) {
             frontmatter.push(`model: ${JSON.stringify(task.model)}`);
+        }
+        if (task.harness) {
+            frontmatter.push(`harness: ${JSON.stringify(task.harness)}`);
         }
         if (task.command) {
             frontmatter.push(`command: ${JSON.stringify(task.command)}`);

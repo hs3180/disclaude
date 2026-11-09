@@ -96,6 +96,8 @@ export function createChannelCallbacksFactory(channel, logger, options) {
         getChatHistory: options?.getChatHistory,
         // Issue #3996: Wire getChatLogFilePaths so agent knows where log files are
         getChatLogFilePaths: options?.getChatLogFilePaths,
+        // #4914 (T-088): contextual /agent config hint on model-class failures.
+        ...(options?.suggestAgentConfig ? { suggestAgentConfig: options.suggestAgentConfig } : {}),
         // Issue #3530: Wire getCapabilities so message construction can correctly
         // include/exclude channel operations based on actual channel support.
         // These capabilities scope channel CLI guidance; API handlers enforce

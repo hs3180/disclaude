@@ -260,6 +260,10 @@ export class FeishuChannel extends BaseChannel {
     requestIssueReport(record, target) {
         return this.feishuMessageHandler.requestIssueReport(record, target);
     }
+    /** #4914: send the native agent config card (harness/model/thinking). */
+    requestAgentConfigCard(target) {
+        return this.feishuMessageHandler.requestAgentConfigCard(target);
+    }
     constructor(config = {}) {
         super(config, 'feishu', 'Feishu');
         // Preserve explicitly supplied empty strings so callers/tests can model
@@ -314,6 +318,8 @@ export class FeishuChannel extends BaseChannel {
             // Issue #5400: descriptor setup injects the GitHub client after this
             // constructor returns; read it at callback time like the resolvers above.
             issueClient: () => config.issueReportingClient,
+            // #4914: same deferred-injection pattern for the config-card ports.
+            agentConfigAccess: () => config.agentConfigAccess,
         });
         logger.info({ id: this.id }, 'FeishuChannel created');
     }

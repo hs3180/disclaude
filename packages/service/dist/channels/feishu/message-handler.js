@@ -21,6 +21,7 @@ import { FeishuPrivateInput } from './private-input.js';
 import { FeishuAgentInput } from './agent-input.js';
 import { FeishuTaskQuestionCards } from './task-question-cards.js';
 import { FeishuIssueReport } from './issue-report.js';
+import { FeishuAgentConfigCards } from './agent-config-cards.js';
 import { FeishuPrivateWorkflows } from './private-workflows.js';
 import { tryHandleSlashCommand, tryHandleGuidance } from './command-router.js';
 import { extractOpenId, parsePostContent, parseShareChatContent, extractSenderName, } from './content-parser.js';
@@ -135,7 +136,10 @@ export class MessageHandler {
     taskQuestionCards;
     taskQuestionHost;
     issueReport;
+    agentConfigCards;
     issueClient;
+    /** #4914: preset catalog + selection ports for the native config card. */
+    agentConfigAccess;
     welcomeService;
     setWelcomeService(service) {
         this.welcomeService = service;
@@ -183,6 +187,13 @@ export class MessageHandler {
         }
         return this.issueReport.start(record, target);
     }
+    /** #4914: send the /agent config card for the requesting actor. */
+    requestAgentConfigCard(target) {
+        if (!this.agentConfigCards) {
+            return Promise.resolve({ ok: false, error: 'Feishu agent config cards are unavailable' });
+        }
+        return this.agentConfigCards.open(target);
+    }
     privateWorkflows;
     requestPrivateWorkflow(request) {
         return this.privateWorkflows.request(request);
@@ -208,6 +219,7 @@ export class MessageHandler {
         this.toRoutedChatId = options.routedChatId ?? ((chatId) => chatId);
         this.toRoutedMessageId = options.routedMessageId ?? ((messageId) => messageId);
         this.issueClient = options.issueClient;
+        this.agentConfigAccess = options.agentConfigAccess;
         if (options.privateInput) {
             this.privateInput = new FeishuPrivateInput(options.privateInput, options.callbacks.sendMessage, this.updatePrivateCard);
         }
@@ -239,6 +251,8 @@ export class MessageHandler {
         }
         this.issueReport?.close();
         this.issueReport = new FeishuIssueReport(client, this.issueClient ?? (() => undefined));
+        this.agentConfigCards?.close();
+        this.agentConfigCards = new FeishuAgentConfigCards(client, this.agentConfigAccess ?? (() => undefined));
         this.controlHandler = this.getHasControlHandler();
         logger.debug({ controlHandler: this.controlHandler }, 'MessageHandler initialized');
     }
@@ -1528,6 +1542,13 @@ export class MessageHandler {
                 ?.submit(rawData)
                 .catch(() => logger.warn('Issue report callback could not be handled'));
             return;
+        }
+        // #4914: /agent config cards are presenter-only workflows over the same
+        // preset selection service; they never enter the agent turn path. Must be
+        // matched before the private-input form fallback (form_value payloads).
+        if (FeishuAgentConfigCards.isCallback(rawData)) {
+            void this.agentConfigCards?.submit(rawData).catch(() => logger.warn('Agent config card callback could not be handled'));
+            return { toast: { type: 'info', content: '已收到操作，配置卡片将更新；若长时间未更新请重新发起 /agent config。' } };
         }
         if (FeishuPrivateInput.isPrivateCallback(rawData)) {
             const action = rawData.action;

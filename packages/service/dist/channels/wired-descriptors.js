@@ -11,7 +11,7 @@
  *
  * @module channels/wired-descriptors
  */
-import { createInboundAttachment, createControlHandler, buildWelcomeMessage, Config, GitHubIssueClient, resolveGitHubIssueTarget, } from "../../../core/dist/index.js";
+import { createInboundAttachment, createControlHandler, buildWelcomeMessage, Config, GitHubIssueClient, isModelSwitchFailure, resolveGitHubIssueTarget, } from "../../../core/dist/index.js";
 import { persistentFileStorageProvider } from './rest/file-storage.js';
 import { RestChannel } from './rest-channel.js';
 import { FeishuChannel } from './feishu-channel.js';
@@ -135,6 +135,20 @@ export const FEISHU_WIRED_DESCRIPTOR = {
         getChatHistory: (chatId) => messageLogger.getChatHistory(chatId),
         // Issue #3996: Wire getChatLogFilePaths so agent knows where log files are
         getChatLogFilePaths: (chatId) => messageLogger.getChatLogFilePaths(chatId),
+        // #4914 (T-088): when a terminal failure names the selected model as
+        // the problem (not found / no access / at capacity — see
+        // isModelSwitchFailure), append a one-line pointer at the native
+        // config card — but only if switching is real: two or more configured
+        // presets behind the same selection service as /agent use.
+        suggestAgentConfig: (_chatId, failureText) => {
+            if (!isModelSwitchFailure(failureText)) {
+                return undefined;
+            }
+            const presets = context.controlHandlerContext.agentPool?.listAgentPresets?.() ?? [];
+            return presets.length >= 2
+                ? '💡 如需换一个模型：发送 /agent config 打开配置卡片，在受限选项中选择。'
+                : undefined;
+        },
     }),
     createMessageHandler: (channel, context) => createDefaultMessageHandler(channel, context, {
         channelName: 'Feishu channel',
@@ -175,17 +189,22 @@ export const FEISHU_WIRED_DESCRIPTOR = {
             triggerMode: triggerModeAdapter,
             getHelpCapabilities: () => feishuChannel.getCapabilities(),
         };
+        // #4914 (T-088): the preset catalog + chat-level selection ports, shared
+        // by the welcome line below, the contextual failure hint in
+        // createCallbacks above, and the native config card wiring further down.
+        const agentPoolPorts = context.controlHandlerContext.agentPool;
         const generateWelcomeMessage = (chatId, chatType) => {
-            const command = {
-                type: 'help',
-                chatId,
-                chatType,
-                ...(chatId.startsWith('ou_') ? { actorId: chatId } : {}),
-            };
+            const command = { type: 'help', chatId, chatType, ...(chatId.startsWith('ou_') ? { actorId: chatId } : {}) };
             if (helpContext.isCommandAllowed && !helpContext.isCommandAllowed(command)) {
                 return undefined;
             }
-            return buildWelcomeMessage('feishu');
+            // First contact is the one moment a proactive config note is welcome —
+            // mention the card only when a real choice exists (two or more named
+            // presets); otherwise the welcome stays task-focused.
+            const presets = agentPoolPorts?.listAgentPresets?.() ?? [];
+            return buildWelcomeMessage('feishu', {
+                agentConfigCard: presets.length >= 2 && !!helpContext.agentConfigUi,
+            });
         };
         const welcomeService = new WelcomeService({
             generateWelcomeMessage,
@@ -210,6 +229,24 @@ export const FEISHU_WIRED_DESCRIPTOR = {
         helpContext.issueReporting = {
             sendConfirmation: (record, target) => feishuChannel.requestIssueReport(record, target),
         };
+        // #4914 (T-088): wire the native agent config card to the SAME preset
+        // catalog and chat-level selection service the /agent command uses;
+        // Feishu is only the presenter. Callbacks re-check the host access
+        // policy at click time, so a policy change takes effect immediately.
+        if (agentPoolPorts?.listAgentPresets && agentPoolPorts.getActiveAgentPreset && agentPoolPorts.switchAgentPreset) {
+            config.agentConfigAccess = {
+                listPresets: () => agentPoolPorts.listAgentPresets?.() ?? [],
+                getActivePreset: (chatId, threadRootId) => agentPoolPorts.getActiveAgentPreset?.(chatId, threadRootId),
+                switchAgentPreset: (chatId, presetName, threadRootId, actorId) => agentPoolPorts.switchAgentPreset?.(chatId, presetName, threadRootId, actorId)
+                    ?? { ok: false, error: 'Agent preset switching is no longer available on this node' },
+                ...(context.controlHandlerContext.isCommandAllowed
+                    ? { isCommandAllowed: context.controlHandlerContext.isCommandAllowed }
+                    : {}),
+            };
+            helpContext.agentConfigUi = {
+                openConfigCard: target => feishuChannel.requestAgentConfigCard(target),
+            };
+        }
         feishuChannel.onControl(createControlHandler(helpContext));
         // 3. Register REST API handlers for channel CLI requests
         // Base handlers reuse the same channel.sendMessage pattern as ChatAgentCallbacks

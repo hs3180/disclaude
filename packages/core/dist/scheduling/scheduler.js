@@ -728,8 +728,8 @@ ${task.prompt ?? ''}`;
             }
             const freshSession = task.freshSession ?? (task.clearContext === false ? false : true);
             const skipHistory = task.skipHistory ?? task.clearContext === true;
-            if (!freshSession && (skipHistory || task.model)) {
-                throw new Error('History/model overrides require freshSession:true');
+            if (!freshSession && (skipHistory || task.model || task.harness)) {
+                throw new Error('History/model/harness overrides require freshSession:true');
             }
             if ((!freshSession && skipHistory) || (task.clearContext === true && (!freshSession || !skipHistory))) {
                 throw new Error('Conflicting schedule context options: skipHistory/clearContext:true require freshSession:true');
@@ -750,11 +750,12 @@ ${task.prompt ?? ''}`;
                     chatId: task.chatId,
                     trigger: 'scheduled',
                     taskName: task.name,
-                    ...(freshSession ? { agentSession: { id: `execution:${randomUUID()}`, skipHistory, model: task.model, releaseAfterTurn: true } } : {}),
+                    ...(freshSession ? { agentSession: { id: `execution:${randomUUID()}`, skipHistory, model: task.model, harness: task.harness, releaseAfterTurn: true } } : {}),
                     data: {
                         taskId: task.id,
                         createdBy: task.createdBy,
                         model: task.model,
+                        harness: task.harness,
                     },
                     createdAt: new Date().toISOString(),
                     // Issue #4648: await the agent turn's REAL outcome. The

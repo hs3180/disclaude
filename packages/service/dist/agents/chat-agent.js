@@ -2128,7 +2128,7 @@ export class ChatAgent extends BaseAgent {
             // iteration error, which is already handled inside processIterator), the user
             // currently sees complete silence. Send a fallback notification.
             for (const failure of failures) {
-                const delivered = await this.deliverUserVisible(chatId, `❌ 处理消息时发生严重错误，会话已中断。请先核对已执行的操作，再发送 /reset 重置会话。\n${this.formatFailureDiagnostic(failure)}`, failure.threadRootId === 'none' ? undefined : failure.threadRootId);
+                const delivered = await this.deliverUserVisible(chatId, `❌ 处理消息时发生严重错误，会话已中断。请先核对已执行的操作，再发送 /reset 重置会话。${this.agentConfigHint(chatId, detail)}\n${this.formatFailureDiagnostic(failure)}`, failure.threadRootId === 'none' ? undefined : failure.threadRootId);
                 this.logger.error({ ...failure, event: 'agent_turn', state: 'failed', user_visible: delivered }, 'Agent loop terminal failure');
             }
         });
@@ -2463,6 +2463,25 @@ export class ChatAgent extends BaseAgent {
             `Chat ID: ${failure.chatId}；Thread: ${failure.threadRootId}\nUTC: ${failure.timestamp}；Backend: ${failure.backend ?? failure.provider}；分类: ${failure.failureClass}\n` +
             `错误: ${failure.detail}\n日志: ${failure.logPath}（或服务 stderr），按诊断 ID 检索。`;
         return appendFailureReportLink(diagnostic, failure, SERVICE_VERSION, this.callbacks.getCapabilities?.(this.boundChatId)?.supportsMarkdown === true);
+    }
+    /**
+     * #4914 (T-088): one-line pointer at the native config card, appended to a
+     * terminal failure notice when the failure names the selected model as the
+     * problem AND the channel offers a real preset choice. All gating policy
+     * (failure classification, preset count, card availability) lives in the
+     * channel wiring (`suggestAgentConfig`); unclassified failures and channels
+     * without the card produce no line, so unrelated errors stay untouched.
+     * Best-effort by contract: a broken hint must never make error handling
+     * itself fail.
+     */
+    agentConfigHint(chatId, failureText) {
+        try {
+            const hint = this.callbacks.suggestAgentConfig?.(chatId, failureText);
+            return hint ? `\n${hint}` : '';
+        }
+        catch {
+            return '';
+        }
     }
     /**
      * Process the SDK iterator for this chatId.
@@ -2803,7 +2822,9 @@ export class ChatAgent extends BaseAgent {
                 const sideEffects = startupCategory ? '' : formatSideEffectReceipt();
                 const guidance = startupCategory ? '请检查配置、权限和运行环境，修复后发送 /reset。' :
                     '请先核对已经执行的操作，再决定是否重新提交或发送消息继续；系统没有自动重放工具。';
-                const notice = `${prefix}${sideEffects}\n${guidance}\n${this.formatFailureDiagnostic(failure)}`;
+                // #4914 (T-088): a startup/stream failure naming the selected model
+                // (not found / no access) adds the native config entry inline.
+                const notice = `${prefix}${sideEffects}\n${guidance}${this.agentConfigHint(chatId, error.message)}\n${this.formatFailureDiagnostic(failure)}`;
                 const delivered = await this.deliverUserVisible(chatId, notice, anchor ?? undefined);
                 this.logger.warn({ ...failure, event: 'agent_turn',
                     state: startupCategory ? 'failed' : 'interrupted',
@@ -3233,8 +3254,10 @@ export class ChatAgent extends BaseAgent {
                         const delivered = await this.deliverUserVisible(chatId, 
                         // Issue #5654: the non-output-limit failure branches carry the
                         // side-effect receipt (the output-limit branch already itemizes
-                        // its tool activity above).
-                        `${outputLimitReceipt}${outputLimit ? '' : formatSideEffectReceipt()}\n${this.formatFailureDiagnostic(failure)}`, resolveReplyThreadRoot());
+                        // its tool activity above). #4914: a model-class failure adds
+                        // the native config entry inline — the moment the user actually
+                        // wants to switch models.
+                        `${outputLimitReceipt}${outputLimit ? '' : formatSideEffectReceipt()}${this.agentConfigHint(chatId, failureDetail)}\n${this.formatFailureDiagnostic(failure)}`, resolveReplyThreadRoot());
                         this.logger.error({ ...failure, event: 'agent_turn_failure', user_visible: delivered,
                             ...(inputDeliveryFailure ? { interactionStatus: 'delivery_failed', nativeCompleted: inputDeliveryFailure.nativeCompleted } : {}),
                         }, 'Provider turn failed');
@@ -3611,6 +3634,12 @@ export class ChatAgent extends BaseAgent {
                             const noticeLines = [
                                 '❌ 本轮被上游 API 错误（overloaded_error / 5xx）中断，未正常完成，请稍后重试。',
                             ];
+                            // #4914 (T-088): a stderr tail naming the model (not found / no
+                            // access / at capacity) adds the native config entry inline.
+                            const configHint = this.agentConfigHint(chatId, stderrTail).trim();
+                            if (configHint) {
+                                noticeLines.push(configHint);
+                            }
                             if (requestId) {
                                 noticeLines.push(`upstream request_id: ${requestId}`);
                             }
