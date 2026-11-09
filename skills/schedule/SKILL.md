@@ -156,7 +156,8 @@ Schedule content prompt here
 | `enabled` | No | `true` | Whether schedule is active |
 | `chatId` | Yes | - | Chat ID for execution context |
 | `createdAt` | No | - | Creation timestamp |
-| `model` | No | - | Optional deployment-supported model or alias; current user instructions and deployment configuration decide the selection |
+| `model` | No | - | Per-execution model override (prompt schedules, fresh session). With `harness` it is validated under that selected runtime's rules; on its own it follows the runtime resolved for the chat (`/agent use` session choice > saved chat choice > per-app default > global default) — e.g. a Codex runtime requires a GPT identifier, and an invalid pair fails that tick explicitly instead of silently using the runtime's own model. Never changes the chat's binding or defaults. |
+| `harness` | No | - | Prompt-only named runtime from the service's `agents:` map (for example `research` or `native`). Each isolated execution borrows that runtime; the chat's `/agent use` selection and the global default stay unchanged. `model` is validated under the selected runtime's rules, and an unknown/unavailable runtime fails that tick explicitly without fallback. Requires `freshSession: true` (the default). |
 | `timezone` | No | `Asia/Shanghai` | IANA timezone for cron scheduling (e.g., `"UTC"`, `"America/New_York"`). Validated against the IANA database (Issue #3860). |
 | `timeoutMs` | No | `7200000` (2 h) | For prompt schedules, max wait for the agent turn: not a kill switch, and the turn may continue in the background (#3894/#4648/#4649). For direct `command` schedules, this is a hard process-group timeout: the scheduler sends TERM and escalates to KILL after a bounded grace. |
 | `cooldownPeriod` | No | - | Cooldown in ms; prevents re-execution for this duration after a run completes (Issue #869). |
@@ -169,8 +170,16 @@ Migration examples (0.5.0): omit all three fields for fresh session + history;
 use `freshSession: true` and `skipHistory: true` for a blank session; retain
 `freshSession: false` only when live conversation reuse is explicitly required.
 Existing `clearContext: true` remains blank but leaves the user's live agent intact.
-Conflicting/non-boolean options are rejected. Per-task model overrides require
-fresh sessions; they are never silently applied to a running user session. On a
+Conflicting/non-boolean options are rejected. Per-task model and harness
+overrides require fresh sessions; they are never silently applied to a running
+user session. A harness override resolves only a configured `agents:<name>`
+entry (use `/agent list` or the service configuration to see available names),
+and the effective harness+model pair is preflighted before the isolated agent
+is created. Unknown names, invalid models for that backend, missing
+credentials, or unavailable binaries/logins fail the scheduled tick with an
+explicit diagnostic rather than falling back to the chat/default runtime. Hot
+edits take effect on the next tick after the file reload; skipped or failed
+ticks are never backfilled. On a
 wait timeout, a turn may continue; its execution ownership remains until that
 turn settles, and isolated-session cleanup disposes only its own agent/provider.
 
@@ -231,6 +240,7 @@ enabled: false
 - `name`: Schedule name
 - `enabled`: Enable/disable
 - `model`: Model selection
+- `harness`: Per-execution named runtime (prompt schedules only; requires a fresh session)
 - `timezone`: Cron timezone (IANA)
 - `timeoutMs`: Turn-wait timeout (ms; default 2 h — set higher for long-running tasks)
 - `cooldownPeriod`: Post-run cooldown (ms)
@@ -563,4 +573,4 @@ createdAt: 2026-03-06T00:00:00.000Z
 - [ ] 能发送到话题群
 ```
 
-Scheduled prompts use the ordinary Agent pool and message processing path. A fresh execution supplies a scoped session with the selected model/history options; its slot is released only after the actual turn settles. There is no separate scheduler Agent type or pool.
+Scheduled prompts use the ordinary Agent pool and message processing path. A fresh execution supplies a scoped session with the selected model/history options; its slot is released only after the actual turn settles. There is no separate scheduler Agent type or pool. A schedule's optional `harness` resolves another configured named runtime for that scoped slot only, and its optional `model` override is checked under the runtime that run actually uses; the chat binding and global default remain as they were.

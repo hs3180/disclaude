@@ -30,6 +30,12 @@ export interface AgentSessionOptions {
   id: string;
   skipHistory?: boolean;
   model?: string;
+  /**
+   * Named runtime (`agents:<name>`) used only for this scoped execution.
+   * Issue #5731: an isolated schedule execution may borrow another harness
+   * without changing the chat's persistent preset selection or the global default.
+   */
+  harness?: string;
   /** Release this pool slot after the actual message turn settles. */
   releaseAfterTurn?: boolean;
 }

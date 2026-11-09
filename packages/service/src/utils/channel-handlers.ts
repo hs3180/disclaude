@@ -74,6 +74,13 @@ export interface ChannelCallbacksOptions {
    * @see Issue #3996 - Agent needs to know log file paths to read beyond context window
    */
   getChatLogFilePaths?: (chatId: string) => Promise<string[]>;
+
+  /**
+   * #4914 (T-088): contextual agent-config hint wired by channels that have a
+   * native config card and a real preset choice. Passed through verbatim to
+   * {@link ChatAgentCallbacks.suggestAgentConfig}.
+   */
+  suggestAgentConfig?: ChatAgentCallbacks['suggestAgentConfig'];
 }
 
 /**
@@ -171,6 +178,8 @@ export function createChannelCallbacksFactory(
     getChatHistory: options?.getChatHistory,
     // Issue #3996: Wire getChatLogFilePaths so agent knows where log files are
     getChatLogFilePaths: options?.getChatLogFilePaths,
+    // #4914 (T-088): contextual /agent config hint on model-class failures.
+    ...(options?.suggestAgentConfig ? { suggestAgentConfig: options.suggestAgentConfig } : {}),
     // Issue #3530: Wire getCapabilities so message construction can correctly
     // include/exclude channel operations based on actual channel support.
     // These capabilities scope channel CLI guidance; API handlers enforce

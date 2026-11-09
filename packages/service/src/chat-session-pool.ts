@@ -33,6 +33,8 @@ import {
   switchableBackendsFor,
   isValidModelForBackend,
   SWITCHABLE_BACKENDS,
+  validateAgentPresets,
+  validateResolvedAgent,
 } from '@disclaude/core';
 import { statSync } from 'node:fs';
 import { AgentFactory } from './agents/factory.js';
@@ -171,6 +173,8 @@ export interface ActiveAgentPreset {
   backendOverride?: AgentPreset['agentBackend'];
   /** Issue #5255: model diverging from the selected preset. */
   modelOverride?: string;
+  /** Thinking/reasoning effort when the preset's LLM pins one (#4914 card display). */
+  reasoningEffort?: AgentPreset['reasoningEffort'];
 }
 
 export type AgentPresetSwitchResult =
@@ -274,6 +278,7 @@ export class ChatSessionPool {
       name,
       agentBackend: preset.agentBackend,
       model: preset.model,
+      ...(preset.reasoningEffort ? { reasoningEffort: preset.reasoningEffort } : {}),
     }));
   }
 
@@ -340,7 +345,13 @@ export class ChatSessionPool {
     };
     if (base.preset) {
       const effective = composeSessionPreset(base.preset, override);
-      return { name: base.name, agentBackend: effective.agentBackend, model: effective.model, ...overrideFields };
+      return {
+        name: base.name,
+        agentBackend: effective.agentBackend,
+        model: effective.model,
+        ...(effective.reasoningEffort ? { reasoningEffort: effective.reasoningEffort } : {}),
+        ...overrideFields,
+      };
     }
     const agentBackend = override?.backendOverride ?? base.singleton?.agentBackend;
     const model = override?.modelOverride ?? base.singleton?.model;
@@ -599,6 +610,7 @@ export class ChatSessionPool {
         name: resolved.name,
         agentBackend: resolved.preset.agentBackend,
         model: resolved.preset.model,
+        ...(resolved.preset.reasoningEffort ? { reasoningEffort: resolved.preset.reasoningEffort } : {}),
       },
       sessionBoundary: 'new-session',
     };
@@ -708,6 +720,101 @@ export class ChatSessionPool {
     if (!result.ok) { return result; }
     this.setSessionOverride(sessionKey, nextOverride);
     return { ok: true, active, sessionBoundary: 'new-session' };
+  }
+
+  /**
+   * Issue #5731: resolve the runtime for a scoped execution. An explicit
+   * `harness` names an `agents:` preset and is validated/preflighted with the
+   * effective model before any pool state changes. It never reads or writes
+   * the chat's persistent preset selection; without it, the #5476 resolution
+   * chain (session switch > the chat's saved `/agent use` choice > per-app
+   * default > global default, plus its legacy Config fallback) decides the
+   * runtime exactly as before, and a model-only override is validated under
+   * that resolved runtime's own rules.
+   */
+  private resolveSessionPreset(session: AgentSessionOptions | undefined, chatId: string, sessionKey: string): AgentPreset | undefined {
+    const harness = session?.harness?.trim();
+    if (!harness) {
+      if (session?.harness !== undefined) {
+        throw new Error('Scheduled harness must be a non-empty named agent runtime');
+      }
+      const selected = this.resolvePreset(chatId, sessionKey);
+      if (!selected?.ok) {
+        // Preset-less and failed default resolution retain the legacy Config
+        // fallback. That is deliberate for unspecified harnesses only.
+        return undefined;
+      }
+      const modelOverride = session?.model?.trim();
+      if (!modelOverride) {
+        // A whitespace model-only override stays ignored, as the schedule
+        // watcher documents; the resolved preset runs with its own model.
+        return selected.preset;
+      }
+      // #5731 (model extension): the per-run model override follows the
+      // RESOLVED runtime's rules (e.g. Codex requires a GPT identifier),
+      // never the borrowed/other backend's, and fails loudly instead of
+      // silently running the chat's default model.
+      const effective: AgentPreset = { ...selected.preset, model: modelOverride };
+      this.validateScheduledPreset(selected.name, effective, 'Invalid scheduled model override for agent preset');
+      return effective;
+    }
+
+    if (!this.presets) {
+      throw new Error(`Unknown scheduled harness "${harness}": no named agent presets are configured (add an agents: map)`);
+    }
+    const resolved = resolveAgentPreset(this.presets, harness);
+    if (!resolved.ok) {
+      throw new Error(`Unknown scheduled harness "${harness}": ${resolved.error}`);
+    }
+
+    const modelOverride = session?.model?.trim();
+    if (session?.model !== undefined && !modelOverride) {
+      throw new Error(`Scheduled harness "${resolved.name}" requires a non-empty model override`);
+    }
+    const preset: AgentPreset = modelOverride === undefined
+      ? resolved.preset
+      : { ...resolved.preset, model: modelOverride };
+
+    // Validate the effective harness+model pair under the selected backend's
+    // rules (not the chat binding's): notably Codex requires a GPT identifier.
+    this.validateScheduledPreset(resolved.name, preset, 'Invalid scheduled harness');
+    const credentialError = validateResolvedAgent(preset);
+    if (credentialError) {
+      throw new Error(`Invalid scheduled harness "${resolved.name}": ${credentialError}`);
+    }
+
+    let info: { available: boolean; unavailableReason?: string };
+    try {
+      const config = AgentFactory.resolveConfig({ ...preset, settings: preset });
+      info = this.options.validatePresetBackend
+        ? this.options.validatePresetBackend(preset.agentBackend, config)
+        : getProvider(preset.agentBackend, preset).getInfo(config);
+    } catch (error) {
+      logger.error(
+        { err: error, harness: resolved.name, agentBackend: preset.agentBackend },
+        'Scheduled harness preflight failed',
+      );
+      throw new Error(
+        `Could not validate scheduled harness "${resolved.name}". Check backend configuration and availability; no execution state was changed.`,
+      );
+    }
+    if (!info.available) {
+      throw new Error(`Scheduled harness "${resolved.name}" is unavailable: ${info.unavailableReason ?? 'backend unavailable'}`);
+    }
+    return preset;
+  }
+
+  /**
+   * Validate a per-execution preset under the named runtime's own model rules
+   * (#5731): the pair must satisfy the backend the run will actually use
+   * (notably Codex requires a GPT identifier), instead of silently adopting
+   * the model of the chat's binding or the global default.
+   */
+  private validateScheduledPreset(name: string, preset: AgentPreset, label: string): void {
+    const validation = validateAgentPresets({ [name]: preset }, { allowUnconfiguredModel: true });
+    if (!validation.ok) {
+      throw new Error(`${label} "${name}": ${validation.errors.join('; ')}`);
+    }
   }
 
   private createAgent(
@@ -850,24 +957,37 @@ export class ChatSessionPool {
     }
     if (!agent) {
       const skipHistory = session?.skipHistory ?? this.skipHistoryChatIds.has(sessionKey);
-      // Issue #5255: compose the session's orthogonal overrides onto the
-      // chat's resolved base selection (session switch > saved choice > per-app
-      // default > global, #5476; or the singleton default when no agents: map
-      // exists) at creation, so a rebuilt agent — after reset or idle eviction
-      // — keeps the same dimensions.
-      const override = this.agentOverrideBySession.get(sessionKey);
+      // Scoped scheduled executions (#5731: an explicit per-run `harness` or
+      // `model`) resolve their runtime without reading the chat's interactive
+      // dimension overrides. Interactive sessions instead compose the
+      // session's orthogonal overrides onto the chat's resolved base
+      // selection (session switch > saved choice > per-app default > global,
+      // #5476; or the singleton default when no agents: map exists) at
+      // creation, so a rebuilt agent — after reset or idle eviction — keeps
+      // the same dimensions (#5255).
+      const scoped = session?.harness !== undefined || session?.model !== undefined;
       let preset: AgentPreset | undefined;
-      if (this.presets) {
-        const base = this.sessionBase(chatId, sessionKey);
-        if (base.ok && base.preset) {
-          preset = composeSessionPreset(base.preset, override);
+      let modelArg: string | undefined;
+      if (scoped) {
+        preset = this.resolveSessionPreset(session, chatId, sessionKey);
+        // A resolved execution preset already carries its validated model
+        // override; pass the model through only on the legacy Config fallback.
+        modelArg = preset ? undefined : session?.model?.trim() || undefined;
+      } else {
+        const override = this.agentOverrideBySession.get(sessionKey);
+        if (this.presets) {
+          const base = this.sessionBase(chatId, sessionKey);
+          if (base.ok && base.preset) {
+            preset = composeSessionPreset(base.preset, override);
+          }
+        } else if (override?.backendOverride) {
+          // No agents: map — carry the singleton default's llm binding onto the
+          // overridden backend. If even the singleton cannot be resolved, leave
+          // the preset unset: construction surfaces the same configuration error.
+          const base = this.sessionBase(chatId, sessionKey);
+          if (base.ok) { preset = this.singletonPreset(override.backendOverride, base); }
         }
-      } else if (override?.backendOverride) {
-        // No agents: map — carry the singleton default's llm binding onto the
-        // overridden backend. If even the singleton cannot be resolved, leave
-        // the preset unset: construction surfaces the same configuration error.
-        const base = this.sessionBase(chatId, sessionKey);
-        if (base.ok) { preset = this.singletonPreset(override.backendOverride, base); }
+        modelArg = override?.modelOverride;
       }
       agent = this.createAgent(
         chatId,
@@ -875,7 +995,7 @@ export class ChatSessionPool {
         preset,
         skipHistory,
         sessionKey,
-        session?.model ?? override?.modelOverride,
+        modelArg,
         session !== undefined
       );
       this.agents.set(sessionKey, agent);

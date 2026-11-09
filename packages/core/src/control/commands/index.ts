@@ -27,7 +27,7 @@ export const commandRegistry: CommandDefinition[] = [
   { type: 'trigger', handler: handleTrigger as CommandDefinition['handler'], description: '切换触发模式', usage: '/trigger [mention|always|auto]',
     isAvailable: (c, command) => !!c.triggerMode && command.chatType !== 'p2p' },
   { type: 'project', handler: handleProject as CommandDefinition['handler'], description: '项目管理命令', usage: '/project [use|reset|info]', isAvailable: c => !!c.projectManager },
-  { type: 'agent', handler: handleAgent as CommandDefinition['handler'], description: '查看或切换 backend/model 预设', usage: '/agent [current|list|use <name>|backend <name>|model <id>]',
+  { type: 'agent', handler: handleAgent as CommandDefinition['handler'], description: '查看或切换 backend/model 预设', usage: '/agent [current|list|use <preset>|backend <name>|model <id>|config]',
     // Issue #5255: with the orthogonal dimension switches wired, /agent is
     // useful even before any `agents:` map exists — the singleton default
     // provides the initial value for backend/model switches.
