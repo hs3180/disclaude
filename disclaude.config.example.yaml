@@ -6,8 +6,10 @@
 #                   (claude:), Codex governance (codex:), DSH composition.
 # /agent use <name> starts a new session in the current chat.
 agents:
-  # Codex runtime: the CLI's own ChatGPT login is the connection, so the llms
-  # entry it references carries no api block (config rejects one for codex).
+  # Codex runtime. Its llms entry picks an access method (via, see llms
+  # below): via: chatgpt = the CLI's own ChatGPT login and subscription
+  # quota (no api block); via: api = a compatible API LLM the runtime drives
+  # with OpenAI Responses wire calls. Same runtime, either access method.
   daily:
     backend: codex # required: claude | pi | codex | dsh
     llm: daily # required: names an entry under llms below
@@ -91,14 +93,42 @@ agents:
 # each bound runtime's native selection. maxConcurrentSessions is the shared
 # live-session budget of the provider.
 llms:
-  # Native Codex (defaultModel is also optional here — omitted = Codex's own
-  # selection); an api block is rejected because the CLI owns its connection.
+  # Access methods of a named LLM (Issue #5338): `via` declares HOW the LLM
+  # is reached — never inferred from a missing credential.
+  #   via: chatgpt — the Codex CLI's managed ChatGPT login (one-time
+  #     `codex login`) and its subscription quota. No api block (declaring
+  #     both is rejected); only backend: codex can bind it. Missing/expired
+  #     login and subscription limits surface as that method's explicit
+  #     errors ("run codex login", 5h/weekly window notices).
+  #   via: api — a compatible API connection (the api block: protocol,
+  #     baseUrl, credential reference). Any runtime speaking the protocol
+  #     can bind it, codex included (codex requires protocol: openai and a
+  #     baseUrl; it drives the endpoint with OpenAI Responses wire calls and
+  #     the actual provider validates model availability). 401/quota errors
+  #     name the API credential, never "codex login".
+  #   Omitted via: the api block's presence decides (api block = api access;
+  #   none = the ChatGPT login on a codex runtime) — pre-#5338 configs keep
+  #   resolving exactly as before.
+  # Native Codex below is the chatgpt method; defaultModel is also optional
+  # here (omitted = Codex's own model selection).
   daily:
+    via: chatgpt # optional on this shape, but explicit is self-documenting
     defaultModel: gpt-6-luna
     # Optional provider-level default, unrelated to the harness — runtimes
     # that cannot apply an effort ignore it (currently codex and dsh do).
     reasoningEffort: max
     maxConcurrentSessions: 3 # shared by every agent bound to this provider
+  # The codex runtime on a compatible API LLM (via: api): third-party model
+  # ids are allowed — the actual provider validates them, not disclaude's
+  # ChatGPT catalog check. Uncomment and bind e.g. backend: codex + llm:
+  # codex-gateway above to mix subscription and API codex agents.
+  # codex-gateway:
+  #   via: api
+  #   defaultModel: glm-5.3
+  #   api:
+  #     protocol: openai # codex API access requires openai (Responses API)
+  #     baseUrl: https://your-openai-compatible-api.example/v1
+  #     apiKey: $CODEX_GATEWAY_API_KEY
   # Provider shared by the Claude and DSH agents above (#5679): Anthropic
   # protocol (Claude requires it), explicit gateway URL (DSH requires
   # baseUrl), default wire model that every bound backend sends unchanged.

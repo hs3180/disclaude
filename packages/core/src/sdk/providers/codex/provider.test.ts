@@ -21,7 +21,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { CodexAgentProvider, type CodexQuotaStats } from './provider.js';
+import { CodexAgentProvider, codexModelProviderArgs, type CodexQuotaStats } from './provider.js';
 import type { AgentMessage, AgentQueryOptions, UserInput } from '../../types.js';
 
 /** Temp fixtures: a bin dir with a fake executable `codex`, and a CODEX_HOME. */
@@ -1730,7 +1730,195 @@ fi
     const texts = (messages as Array<{ type: string; content: string }>).filter((m) => m.type === 'text').map((m) => m.content);
     expect(texts).toEqual(['first turn', 'resumed turn']);
   }, 20_000);
-});async function waitFor(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
+});
+
+describe('CodexAgentProvider LLM access methods (Issue #5338)', () => {
+  let fixtures: Fixtures;
+
+  afterEach(() => {
+    fixtures?.cleanup();
+  });
+
+  const RECORDER = `
+n=$(cat "$CODEX_HOME/count" 2>/dev/null || echo 0)
+n=$((n+1)); echo "$n" > "$CODEX_HOME/count"
+echo "$*" > "$CODEX_HOME/argv-$n"
+env | grep -c '^DISCLAUDE_CODEX_API_KEY=' > "$CODEX_HOME/envapi-$n" || true
+`;
+
+  const makeProvider = (fx: Fixtures) =>
+    new CodexAgentProvider({
+      env: {
+        PATH: `${fx.binDir}:${process.env.PATH ?? ''}`,
+        CODEX_HOME: fx.codexHome,
+        CODEX_REASONING_EFFORT: '',
+      },
+      model: '',
+      builtinsDir: fx.builtinsDir,
+    });
+
+  const argvOf = (fx: Fixtures, invocation: number): string =>
+    readFileSync(join(fx.codexHome, `argv-${invocation}`), 'utf-8').trim();
+
+  const HAPPY_TURN = `cat <<'JSONL'
+{"type":"thread.started","thread_id":"t-api"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"turn ok"}}
+{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":2}}
+JSONL
+`;
+
+  // The codexRuntime binding base-agent.ts builds for llms.<name>.via api.
+  const apiRuntime = (overrides: Record<string, unknown> = {}) => ({
+    llmVia: 'api',
+    api: {
+      protocol: 'openai',
+      baseUrl: 'https://api.example/v1',
+      apiKey: 'sk-test',
+      ...overrides,
+    },
+  });
+
+  // ── config-args builder ────────────────────────────────────────────────
+
+  it('builds a namespaced upstream model-provider entry with the Responses wire API', () => {
+    expect(codexModelProviderArgs({ protocol: 'openai', baseUrl: 'https://api.example/v1' })).toEqual([
+      '-c', 'model_provider="disclaude_api"',
+      '-c', 'model_providers.disclaude_api.name="disclaude llms api binding"',
+      '-c', 'model_providers.disclaude_api.base_url="https://api.example/v1"',
+      '-c', 'model_providers.disclaude_api.env_key="DISCLAUDE_CODEX_API_KEY"',
+      '-c', 'model_providers.disclaude_api.wire_api="responses"',
+    ]);
+  });
+
+  // ── chatgpt access: the login is the credential ────────────────────────
+
+  it('fails fast on an explicit chatgpt binding without a login', () => {
+    fixtures = makeFixtures({ withBinary: true, withAuth: false });
+    expect(() =>
+      makeProvider(fixtures).queryStream(null as never, {
+        settingSources: [],
+        codexRuntime: { llmVia: 'chatgpt' },
+      })
+    ).toThrow(/via: chatgpt.*codex login[\s\S]*no API credential to fall back/s);
+    expect(existsSync(join(fixtures.codexHome, 'argv-1'))).toBe(false);
+  });
+
+  it('keeps an explicit chatgpt binding on the plain ChatGPT backend', async () => {
+    fixtures = makeFixtures({ withBinary: true, withAuth: true, body: RECORDER + HAPPY_TURN });
+    await drainStream(makeProvider(fixtures), ['hi'], {
+      codexRuntime: { llmVia: 'chatgpt' },
+    });
+    expect(argvOf(fixtures, 1)).not.toMatch(/model_provider/);
+  }, 15_000);
+
+  // ── api access: the connection is the credential ───────────────────────
+
+  it('never silently serves a declared api binding through the ChatGPT login', () => {
+    fixtures = makeFixtures({ withBinary: true, withAuth: true });
+    expect(() =>
+      makeProvider(fixtures).queryStream(null as never, {
+        settingSources: [],
+        codexRuntime: { llmVia: 'api' },
+      })
+    ).toThrow(/via api declares API access[\s\S]*never silently served/s);
+    expect(existsSync(join(fixtures.codexHome, 'argv-1'))).toBe(false);
+  });
+
+  it('runs an api binding without any ChatGPT login and injects the provider entry + credential', async () => {
+    fixtures = makeFixtures({ withBinary: true, withAuth: false, body: RECORDER + HAPPY_TURN });
+    await drainStream(makeProvider(fixtures), ['hi'], {
+      codexRuntime: apiRuntime() as AgentQueryOptions['codexRuntime'],
+    });
+    const argv = argvOf(fixtures, 1);
+    expect(argv).toContain('model_provider="disclaude_api"');
+    expect(argv).toContain('model_providers.disclaude_api.base_url="https://api.example/v1"');
+    expect(argv).toContain('model_providers.disclaude_api.wire_api="responses"');
+    expect(argv).not.toMatch(/model_provider="openai"/); // namespaced, not the CLI's own ids
+    expect(readFileSync(join(fixtures.codexHome, 'envapi-1'), 'utf-8').trim()).toBe('1');
+  }, 15_000);
+
+  it('fails fast on an api binding with a missing endpoint or credential', () => {
+    fixtures = makeFixtures({ withBinary: true, withAuth: true });
+    expect(() =>
+      makeProvider(fixtures).queryStream(null as never, {
+        settingSources: [],
+        codexRuntime: apiRuntime({ baseUrl: undefined }) as AgentQueryOptions['codexRuntime'],
+      })
+    ).toThrow(/requires llms\.<name>\.api\.baseUrl/);
+    expect(() =>
+      makeProvider(fixtures).queryStream(null as never, {
+        settingSources: [],
+        codexRuntime: apiRuntime({ apiKey: '  ' }) as AgentQueryOptions['codexRuntime'],
+      })
+    ).toThrow(/credential referenced by llms\.<name>\.api\.apiKey is missing or empty/);
+  });
+
+  // ── error surfaces stay per-plane ──────────────────────────────────────
+
+  it('reports a 401 on the api plane as an API credential problem, not a login problem', async () => {
+    fixtures = makeFixtures({
+      withBinary: true,
+      withAuth: false,
+      body: `${RECORDER}echo "HTTP error: 401 Unauthorized" >&2
+exit 1`,
+    });
+    const { messages } = await drainStream(makeProvider(fixtures), ['hi'], {
+      codexRuntime: apiRuntime() as AgentQueryOptions['codexRuntime'],
+    });
+    const error = (messages as Array<{ type: string; content: string }>).find((m) => m.type === 'error');
+    expect(error?.content).toMatch(/API 凭据被拒绝/);
+    expect(error?.content).toMatch(/llms\.<name>\.api/);
+    expect(error?.content).toMatch(/无需执行 codex login/); // explicitly NOT a login problem
+  }, 15_000);
+
+  it('keeps usage-limit failures of an api binding off the ChatGPT weekly-window ledger', async () => {
+    const limitBody = `${RECORDER}echo "You've hit your usage limit" >&2
+exit 1`;
+    fixtures = makeFixtures({ withBinary: true, withAuth: false, body: limitBody });
+    const provider = makeProvider(fixtures);
+    const runtime = apiRuntime() as AgentQueryOptions['codexRuntime'];
+    const first = await drainStream(provider, ['first'], { codexRuntime: runtime });
+    const notice = (first.messages as Array<{ type: string; content: string }>)
+      .find((m) => m.type === 'error')?.content ?? '';
+    expect(notice).toMatch(/API 用量\/额度受限/);
+    expect(notice).not.toMatch(/ChatGPT 订阅/);
+    // A real limit hit latches the ledger ONLY on the chatgpt plane; the api
+    // plane must still start a fresh session immediately.
+    const second = await drainStream(provider, ['second'], { codexRuntime: runtime });
+    expect(argvOf(fixtures, 2)).toContain('exec'); // the run actually started
+    expect((second.messages as Array<{ type: string; content: string }>).some((m) => m.type === 'error' && /额度已用尽/.test(m.content))).toBe(false);
+  }, 20_000);
+
+  it('gates fresh sessions after a usage-limit hit on the chatgpt plane (control)', async () => {
+    const limitBody = `${RECORDER}echo "You've hit your usage limit" >&2
+exit 1`;
+    fixtures = makeFixtures({ withBinary: true, withAuth: true, body: limitBody });
+    const provider = makeProvider(fixtures);
+    const first = await drainStream(provider, ['first'], { codexRuntime: { llmVia: 'chatgpt' } });
+    expect((first.messages as Array<{ type: string; content: string }>)
+      .some((m) => m.type === 'error' && /ChatGPT 订阅的 5 小时\/周滚动窗口/.test(m.content))).toBe(true);
+    const second = await drainStream(provider, ['second'], { codexRuntime: { llmVia: 'chatgpt' } });
+    expect((second.messages as Array<{ type: string; content: string }>)
+      .some((m) => m.type === 'error' && /额度已用尽/.test(m.content))).toBe(true);
+    expect(existsSync(join(fixtures.codexHome, 'argv-2'))).toBe(false); // gated before spawn
+  }, 20_000);
+
+  // ── availability probe sees the plane ──────────────────────────────────
+
+  it('getInfo: an api binding is healthy without a login; a chatgpt binding names its plane', () => {
+    fixtures = makeFixtures({ withBinary: true, withAuth: false });
+    const provider = makeProvider(fixtures);
+    const apiInfo = provider.getInfo({ apiKey: '', model: '', llmVia: 'api' });
+    expect(apiInfo.available).toBe(true);
+    expect(apiInfo.unavailableReason).toBeUndefined();
+    const chatgptInfo = provider.getInfo({ apiKey: '', model: '', llmVia: 'chatgpt' });
+    expect(chatgptInfo.available).toBe(false);
+    expect(chatgptInfo.unavailableReason).toMatch(/via chatgpt needs it: run `codex login`/);
+  });
+});
+
+async function waitFor(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (predicate()) {

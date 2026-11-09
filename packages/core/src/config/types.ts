@@ -165,8 +165,33 @@ export interface AgentConfig {
 /** Supported LLM wire formats, independent of model vendor. */
 export type ApiProtocol = 'anthropic' | 'openai';
 
+/**
+ * How a named LLM is accessed (Issue #5338 / T-097).
+ *
+ * - `'chatgpt'` — the Codex-managed ChatGPT login (one-time interactive
+ *   `codex login`) and its subscription quota. No API key or endpoint; the
+ *   `api` block must be absent. Only the `codex` runtime can use it, because
+ *   only the Codex CLI holds that login state.
+ * - `'api'` — a compatible API connection described by the `api` block
+ *   (protocol, endpoint, credential reference). Any runtime that speaks the
+ *   configured protocol can bind it, `codex` included.
+ *
+ * This is a disclaude configuration key on `llms.<name>`; it intentionally
+ * shares no name with the upstream Codex CLI `model_provider` /
+ * `model_providers.<id>` config surface (see docs/agent-configuration.md).
+ */
+export type LlmAccessVia = 'chatgpt' | 'api';
+
 /** An LLM provider connection with an optional default model. */
 export interface LlmConfig {
+  /**
+   * Access method declaration (Issue #5338). `'chatgpt'` forbids the `api`
+   * block and requires the binding runtime to be `codex`; `'api'` requires
+   * the `api` block. When omitted, the presence of the `api` block decides
+   * (`api` block → api access; none → the Codex ChatGPT login for a `codex`
+   * runtime). A missing credential is never inferred as `chatgpt`.
+   */
+  via?: LlmAccessVia;
   /**
    * Default model for this provider. Agents bound to the provider can use
    * ANY model it serves; this key only pins the default used when nothing
@@ -202,6 +227,12 @@ export interface AgentDefinition extends Omit<AgentConfig, 'agentBackend'> {
 /** Internal resolved preset shared by validation and agent construction. */
 export interface AgentPreset extends AgentConfig {
   agentBackend: NonNullable<AgentConfig['agentBackend']>;
+  /**
+   * Resolved access method of the bound llms entry (Issue #5338). Always set
+   * by resolveConfiguredAgents; hand-built presets may omit it and default
+   * to the legacy chatgpt-only shape.
+   */
+  llmVia?: LlmAccessVia;
   model: string;
   apiKey: string;
   apiProtocol?: ApiProtocol;
