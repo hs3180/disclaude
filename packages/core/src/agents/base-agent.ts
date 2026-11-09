@@ -170,7 +170,7 @@ export abstract class BaseAgent implements Disposable {
     // an explicit per-agent override. Build options for the resolved backend.
     this.agentBackend =
       config.agentBackend ??
-      (['claude', 'codex', 'pi', 'dsh'].includes(this.sdkProvider.name)
+      (['claude', 'codex', 'pi', 'dsh', 'miniswe'].includes(this.sdkProvider.name)
         ? (this.sdkProvider.name as BaseAgentConfig['agentBackend'])
         : undefined);
 
@@ -275,6 +275,13 @@ export abstract class BaseAgent implements Disposable {
       options.codexRuntime = {
         sandbox: settings.codexSandbox, fullAccess: settings.fullAccess,
         networkAccess: settings.codexNetworkAccess, transport: settings.codex?.transport,
+        // Issue #5338: the access method and (for API access) the connection
+        // ride the runtime binding; the Codex provider turns them into either
+        // the ChatGPT login checks or an upstream model_providers entry.
+        llmVia: this.selectedConfig.llmVia,
+        ...(this.selectedConfig.llmVia === 'api' && this.apiProtocol
+          ? { api: { protocol: this.apiProtocol, baseUrl: this.apiBaseUrl, apiKey: this.apiKey } }
+          : {}),
       };
     }
     options.apiProtocol = this.apiProtocol;

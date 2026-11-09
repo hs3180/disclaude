@@ -82,4 +82,11 @@ export interface ScheduledTask {
    * Issue #1338: Smart model selection per task scenario.
    */
   model?: string;
+  /**
+   * Optional named runtime (`agents:<name>`) for this prompt execution only.
+   * Issue #5731: the selected harness is validated with any `model` override
+   * under that harness's rules. It never changes the chat's selected preset
+   * or the global default runtime, and requires the isolated fresh session.
+   */
+  harness?: string;
 }

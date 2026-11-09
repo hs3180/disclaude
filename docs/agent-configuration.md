@@ -37,13 +37,36 @@ are removed from child environments before only the selected key is projected.
 Do not put literal API keys in YAML; supply them through the service's environment
 or a restricted environment file in launchd, systemd or Docker.
 
+`llms.<name>.via` declares the access method (Issue #5338) and is never
+inferred from a missing credential. `via: chatgpt` uses the Codex CLI's
+managed ChatGPT login (one-time `codex login`) and its subscription quota —
+no `api` block, and only `backend: codex` may bind it; a missing login or a
+subscription limit surfaces as that method's own explicit error ("run
+`codex login`", 5-hour/weekly window notices). `via: api` uses the `api`
+block's protocol, endpoint and credential; any runtime speaking the protocol
+can bind it, `codex` included — the codex runtime requires `protocol: openai`
+plus a `baseUrl` (it drives the endpoint with OpenAI Responses wire calls)
+and leaves model availability to the actual provider, so third-party model
+ids are accepted there. Rejected combinations say so explicitly:
+`via: chatgpt` with an `api` block, `via: api` without one, and `via: chatgpt`
+on a non-codex backend. Omitting `via` keeps the pre-#5338 shape: an `api`
+block means API access, none means the ChatGPT login on a codex runtime.
+This is a disclaude configuration key; it shares no name with the upstream
+Codex CLI `model_provider` / `model_providers.<id>` config surface the
+runtime injects internally for API access. The same service may mix both:
+a `via: chatgpt` codex agent and one or more `via: api` agents (codex or
+other runtimes) resolve side by side.
+
 Every named agent binds an LLM. Agents bound to a provider can use ANY model
 it serves; `llms.<name>.defaultModel` only sets that provider's default — the
 model a runtime falls back to when nothing more specific selects one. Set it
 to pin one deployment default for every runtime bound to the provider, omit it
 to keep each runtime's native selection (a set-but-blank value is rejected).
-This includes native Codex: bind `backend: codex` to a named LLM with no `api`
-block. `ANTHROPIC_MODEL` and `OPENAI_MODEL` do not fill missing models.
+This includes native Codex: bind `backend: codex` to a named LLM and pick an
+access method with `llms.<name>.via` — `via: chatgpt` (or no `api` block)
+rides the Codex CLI's own ChatGPT login and subscription quota, `via: api`
+binds a compatible API connection (below). `ANTHROPIC_MODEL` and
+`OPENAI_MODEL` do not fill missing models.
 `CODEX_MODEL` explicitly overrides the default Codex binding only after the
 configured model passes validation; it does not supply a missing model. Named
 non-default bindings remain independent. Put `reasoningEffort` alongside
@@ -61,6 +84,26 @@ the resolved credential in that patch. Different endpoints, protocols, models an
 credentials use separate providers. An existing API adapter receives the selected
 route instead of loading a duplicate adapter.
 See [DSH runtime modes](dsh-backend.md) for minimal mode and native provider routes.
+
+mini-swe-agent (`backend: miniswe`, Issue #5006) drives the open-source headless
+`mini` CLI as one subprocess per turn with LiteLLM/OpenAI-compatible model
+backends. It requires the mini-swe-agent CLI on PATH (`pipx install
+mini-swe-agent`); without it the backend reports a clear unavailable error and
+startup preflight fails. The bound LLM must declare `llms.<name>.api` (protocol,
+credential reference, and `baseUrl` for custom endpoints); the credential
+reaches the child only through the managed environment, and chat/log text is
+scrubbed against registered secret values. Use a LiteLLM-style
+provider-prefixed `model` (for example `openai/gpt-5.4`). The optional
+`agents.<name>.miniswe` block carries execution settings only: `binary`
+(default `mini`, the `mini-swe-agent` alias is probed), `executionEnvironment`
+(only `local` subprocess execution in the managed workspace is implemented —
+docker and SWE-ReX environments are explicitly out of scope and rejected at
+validation) and `timeoutMs` (per-run wall-clock timeout, 0 disables). The CLI
+has no session resume: multi-turn chats replay a bounded transcript of prior
+final answers as prompt context, and `/reset` starts the next turn fresh.
+`permissionMode: default` (ask) is rejected — the local environment executes
+without an approval axis. Real mini-swe-agent execution is unverified in this
+repository; the bridge is tested against fake executables.
 
 Set `llms.<name>.maxConcurrentSessions` to a positive integer to cap live host
 sessions using that LLM across all agents and backends in this service process.
@@ -177,7 +220,13 @@ Use one `default: true` marker (or the reserved name `default`); without a marke
 the first declaration is the default. `/agent use <name>` validates the selected
 connection before replacing the current chat's session. Failed preflight preserves
 the existing session. No credentials are required for dormant API bindings when
-the default runtime is native.
+the default runtime is native. A prompt schedule may also set `harness: <name>`
+and/or `model: <id>` (Issue #5731): the named harness is resolved, and the
+effective harness+model pair is validated under that harness's own rules and
+preflighted for one isolated execution only — never changing `/agent use`'s
+chat binding or the configured default. A model-only override is validated
+under the runtime resolved for the chat by the precedence below. See the
+`schedule` skill for the schedule-file contract.
 
 Selection precedence for each incoming session is `/agent use <preset>`
 (explicit, current session) > the chat's saved `/agent use` choice > the

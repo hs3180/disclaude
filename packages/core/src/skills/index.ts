@@ -7,3 +7,5 @@ export type {
   SkillDiagnostic,
   SkillsRegistryResolution,
 } from './skills-registry.js';
+export { assertNoUndeliverableSkillSources, undeliverableSkillSourceError } from './native-skill-channel.js';
+export type { NativeSkillChannel } from './native-skill-channel.js';

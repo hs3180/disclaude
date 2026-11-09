@@ -6,7 +6,7 @@
 
 import type { ControlCommand, ControlResponse, ControlCommandType, ChannelCapabilities } from '../types/channel.js';
 import type { Logger } from '../utils/logger.js';
-import type { TriggerMode } from '../config/types.js';
+import type { TriggerMode, CodexReasoningEffort } from '../config/types.js';
 import type { ProjectManager } from '../project/project-manager.js';
 import type { ChatFailureRecord } from '../feedback/failure-registry.js';
 import type { GoalStore, GoalRecord } from '../goals/goal-store.js';
@@ -76,15 +76,15 @@ export interface ControlHandlerContext {
      * as `resetThread`.
      */
     stopThread?(chatId: string, threadRootId: string): boolean;
-    listAgentPresets?(): Array<{ name: string; agentBackend: string; model: string }>;
+    listAgentPresets?(): Array<{ name: string; agentBackend: string; model: string; reasoningEffort?: CodexReasoningEffort }>;
     getActiveAgentPreset?(chatId: string, threadRootId?: string):
-      { name: string; agentBackend: string; model: string } | undefined;
+      { name: string; agentBackend: string; model: string; reasoningEffort?: CodexReasoningEffort } | undefined;
     /**
      * Switch the session's preset and durably save the choice for the chat
      * (#5476). `actorId` records who switched in the persisted selection.
      */
     switchAgentPreset?(chatId: string, presetName: string, threadRootId?: string, actorId?: string):
-      | { ok: true; active: { name: string; agentBackend: string; model: string }; sessionBoundary: 'new-session' }
+      | { ok: true; active: { name: string; agentBackend: string; model: string; reasoningEffort?: CodexReasoningEffort }; sessionBoundary: 'new-session' }
       | { ok: false; error: string };
     steer?(chatId: string, prompt: string, threadRootId?: string):
       Promise<{ ok: true; message: string } | { ok: false; error: string }>;
@@ -137,6 +137,19 @@ export interface ControlHandlerContext {
       record: ChatFailureRecord,
       target: { chatId: string; threadRootId?: string; actorId?: string }
     ): Promise<{ ok: true } | { ok: false; error: string }>;
+  };
+
+  /**
+   * Issue #4914: channel hook that opens a native configuration card for the
+   * chat's agent profile (harness/model/thinking). The card only presents the
+   * same preset catalog and chat-level selection service the /agent command
+   * and control API use — the channel is just the presenter. Absent →
+   * `/agent config` answers with text-only guidance; `/agent list`/`use`
+   * keep working unchanged on every channel.
+   */
+  agentConfigUi?: {
+    openConfigCard(target: { chatId: string; threadRootId?: string; actorId?: string }):
+      Promise<{ ok: true } | { ok: false; error: string }>;
   };
 
   /** 日志记录器 */

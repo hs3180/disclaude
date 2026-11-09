@@ -471,6 +471,25 @@ describe('AgentPoolMessageHandler', () => {
           handler.handleSystemMessage('chat-1', 'system payload', 'msg-sys-1'),
         ).resolves.toBeUndefined();
       });
+
+      it('keeps an explicit scheduled-harness failure diagnosable to the waiting caller (#5731)', async () => {
+        options.agentPool.releaseChatAgent = vi.fn();
+        vi.mocked(options.agentPool.getOrCreateChatAgent).mockImplementation(() => {
+          throw new Error('Unknown scheduled harness "missing-runtime": Unknown agent preset: missing-runtime');
+        });
+
+        await expect(
+          handler.handleSystemMessage('chat-1', 'run with harness', 'tick-harness', {
+            waitForCompletion: true,
+            agentSession: { id: 'execution:harness', harness: 'missing-runtime', releaseAfterTurn: true },
+          }),
+        ).rejects.toThrow('Unknown scheduled harness "missing-runtime"');
+        expect(options.callbacksFactory('chat-1').sendMessage).toHaveBeenCalledWith(
+          'chat-1',
+          expect.stringContaining('Agent 创建失败'),
+          'tick-harness',
+        );
+      });
     });
   });
 });

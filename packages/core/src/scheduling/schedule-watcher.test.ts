@@ -420,6 +420,42 @@ describe('ScheduleFileScanner', () => {
       expect(task!.model).toBe('claude-sonnet-4-20250514');
     });
 
+    it('should parse the per-execution named runtime with its model override (Issue #5731)', async () => {
+      mockReadFile.mockResolvedValue(makeScheduleContent({
+        harness: 'research',
+        model: 'gpt-6-luna',
+      }));
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/named-harness/SCHEDULE.md`);
+
+      expect(task?.harness).toBe('research');
+      expect(task?.model).toBe('gpt-6-luna');
+      expect(task?.freshSession).toBe(true);
+    });
+
+    it.each([
+      ['empty harness', { harness: '' }, 'harness must be a non-empty named agent runtime.'],
+      ['command schedule', { harness: 'research', command: 'node scripts/refresh.js' }, 'harness applies only to prompt schedules'],
+      ['live-chat reuse', { harness: 'research', freshSession: 'false' }, 'harness requires freshSession:true'],
+    ])('rejects an invalid harness configuration: %s', async (_case, overrides, message) => {
+      const onDiagnostic = vi.fn();
+      scanner = new ScheduleFileScanner({ schedulesDir: MOCK_DIR, onDiagnostic });
+      const fields = overrides as Record<string, string>;
+      mockReadFile.mockResolvedValue(fields.command
+        ? makeScheduleContent({ harness: fields.harness, command: fields.command }).replace('Execute the daily report task.', '')
+        : makeScheduleContent(fields));
+
+      await expect(scanner.parseFile(`${MOCK_DIR}/invalid-harness/SCHEDULE.md`)).resolves.toBeNull();
+
+      expect(onDiagnostic).toHaveBeenCalledWith(expect.objectContaining({
+        action: 'report',
+        code: 'invalid-harness',
+        severity: 'error',
+        chatId: 'oc_test123',
+        message: expect.stringContaining(message),
+      }));
+    });
+
     it('should default model to undefined when not specified', async () => {
       mockReadFile.mockResolvedValue(makeScheduleContent());
 
@@ -742,6 +778,25 @@ describe('ScheduleFileScanner', () => {
       expect(writtenContent).toContain('model: "claude-sonnet-4-20250514"');
     });
 
+    it('should write the harness field for prompt schedules (Issue #5731)', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-research',
+        name: 'Research Task',
+        cron: '0 */2 * * *',
+        prompt: 'Research task prompt',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-03-01',
+        harness: 'research',
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).toContain('harness: "research"');
+      expect(writtenContent).not.toContain('command:');
+    });
+
     it('should not write model field when undefined', async () => {
       const task: ScheduledTask = {
         id: 'schedule-default',
@@ -757,6 +812,7 @@ describe('ScheduleFileScanner', () => {
 
       const writtenContent = mockWriteFile.mock.calls[0][1] as string;
       expect(writtenContent).not.toContain('model:');
+      expect(writtenContent).not.toContain('harness:');
     });
 
     it('should handle task IDs without schedule- prefix', async () => {
@@ -1224,7 +1280,7 @@ describe('ScheduleFileWatcher', () => {
     });
 
     it('should handle file change event', async () => {
-      mockReadFile.mockResolvedValue(makeScheduleContent({ name: 'Updated Task' }));
+      mockReadFile.mockResolvedValue(makeScheduleContent({ name: 'Updated Task', harness: 'research' }));
 
       eventCallback('change', 'daily-report/SCHEDULE.md');
       vi.advanceTimersByTime(20);
@@ -1232,6 +1288,7 @@ describe('ScheduleFileWatcher', () => {
 
       expect(onFileChanged).toHaveBeenCalledTimes(1);
       expect(onFileChanged.mock.calls[0][0].name).toBe('Updated Task');
+      expect(onFileChanged.mock.calls[0][0].harness).toBe('research');
     });
 
     it('should not call onFileChanged when changed file fails to parse', async () => {

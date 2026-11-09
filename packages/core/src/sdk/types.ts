@@ -179,6 +179,16 @@ export interface AgentMessageMetadata {
    * the turn as a provider failure.
    */
   inputDeliveryFailure?: { nativeCompleted: boolean; reason?: string };
+  /**
+   * Issue #5713 (review round 2): a provider's run-capacity wait, reported as
+   * structured facts on a content-free `type: 'status'` message. Harness
+   * modules never compose user-facing busy/queue receipt wording — the
+   * unified busy-input receipt in the service layer (ChatAgent's
+   * buildBusyInputReceipt) is the single construction point and renders the
+   * wait from these facts. `queued` counts runs already waiting ahead of the
+   * input about to join (its own row is not included).
+   */
+  queueWait?: { running: number; capacity: number; queued: number };
   /** Machine-owned evidence is preferred to the legacy stderr signature. */
   upstreamApiErrorSource?: 'stream' | 'transcript' | 'stderr';
   upstreamApiErrorStatus?: number;
@@ -344,6 +354,19 @@ export interface AgentQueryOptions {
     fullAccess?: boolean;
     networkAccess?: boolean;
     transport?: 'exec' | 'app-server';
+    /** Access method of the bound LLM (Issue #5338); default chatgpt. */
+    llmVia?: import('../config/types.js').LlmAccessVia;
+    /**
+     * Compatible API connection when llmVia is 'api' (Issue #5338): the
+     * provider injects it as an upstream Codex `model_providers` entry
+     * (Responses wire API) instead of the ChatGPT login.
+     */
+    api?: {
+      protocol: import('../config/types.js').ApiProtocol;
+      baseUrl?: string;
+      /** Resolved credential value, injected into the child environment. */
+      apiKey: string;
+    };
   };
   /** Native adapter-owned reasoning selection; each provider validates its supported levels. */
   reasoningEffort?: string;
