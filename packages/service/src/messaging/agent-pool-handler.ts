@@ -43,12 +43,16 @@ export class AgentPoolMessageHandler implements IAgentMessageHandler {
       return Promise.reject(new Error('Temporary agent session cleanup is not wired'));
     }
     this.log.info({ chatId, messageId, waitForCompletion }, `Handling ${context} via agent pool`);
-    const agent = this.getAgentSafely(chatId, messageId, context, threadRootId, agentSession);
-    if (!agent) {
+    const agentOrCreationFailure = this.getAgentSafely(chatId, messageId, context, threadRootId, agentSession);
+    if (agentOrCreationFailure instanceof Error) {
+      // Keep the pool's explicit creation reason (e.g. an unknown scheduled
+      // harness, Issue #5731) on the countable waitForCompletion failure while
+      // preserving the fire-and-forget contract for non-waiting callers.
       return waitForCompletion
-        ? Promise.reject(new Error('ChatAgent creation failed — system message not processed'))
+        ? Promise.reject(new Error(`ChatAgent creation failed — ${agentOrCreationFailure.message}`))
         : Promise.resolve();
     }
+    const agent = agentOrCreationFailure;
     const completion = this.processTurn(agent, params, waitForCompletion);
     if (waitForCompletion) {
       return completion.catch(err => {
@@ -92,7 +96,7 @@ export class AgentPoolMessageHandler implements IAgentMessageHandler {
     }
   }
 
-  private getAgentSafely(chatId: string, messageId: string, context: string, threadRootId?: string, session?: AgentSessionOptions): ChatAgent | null {
+  private getAgentSafely(chatId: string, messageId: string, context: string, threadRootId?: string, session?: AgentSessionOptions): ChatAgent | Error {
     const callbacks = threadRootId ? this.callbacksFactory(chatId, threadRootId) : this.callbacksFactory(chatId);
     try {
       return session
@@ -101,7 +105,7 @@ export class AgentPoolMessageHandler implements IAgentMessageHandler {
     } catch (err) {
       this.log.error({ err, chatId, messageId }, `Failed to create/get ChatAgent for ${context}`);
       void callbacks.sendMessage(chatId, AGENT_CREATION_FAILED_MESSAGE, messageId).catch(() => {});
-      return null;
+      return err instanceof Error ? err : new Error(String(err));
     }
   }
 }

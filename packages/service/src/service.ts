@@ -280,7 +280,17 @@ export class DisclaudeService extends EventEmitter {
 
     try {
       setDefaultProvider(agentBackend);
-      const backendInfo = getProvider(agentBackend).getInfo();
+      // Issue #5338: the availability probe must see the bound LLM access
+      // method — a codex runtime on llms.<name>.via api carries its own
+      // credential and is healthy without a ChatGPT login. The probe never
+      // becomes its own failure point: a config that cannot re-resolve here
+      // reports its errors from config loading itself.
+      let backendInfo;
+      try {
+        backendInfo = getProvider(agentBackend).getInfo(Config.getAgentConfig());
+      } catch {
+        backendInfo = getProvider(agentBackend).getInfo();
+      }
       if (!backendInfo.available) {
         throw new Error(
           `Agent backend "${agentBackend}" is unavailable: ` +
@@ -534,15 +544,26 @@ export class DisclaudeService extends EventEmitter {
 
   /**
    * Upload a local image and return a Feishu image_key (for card embedding) —
-   * delegates to the channel's uploadImage capability. Channel-agnostic (no
-   * chatId). REST parity with the REST API uploadImage method (Issue #4279).
+   * delegates to the channel's uploadImage capability. REST parity with the
+   * REST API uploadImage method (Issue #4279).
+   *
+   * T-083 R3 (#5254): optional `chatId` carries the conversation/channel
+   * attribution. When present, the OWNING channel's handlers (and therefore
+   * its app credentials) serve the upload — with named multi-app Feishu
+   * channels this is required, because no single "first" app is the right
+   * one. When omitted, the legacy single-app Feishu container keeps serving
+   * exactly as before.
    *
    * @returns { success: boolean; imageKey?: string }
    */
-  async uploadImage(filePath: string): Promise<{ success: boolean; imageKey?: string }> {
-    const h = this.resolveApiHandlers();
+  async uploadImage(filePath: string, chatId?: string): Promise<{ success: boolean; imageKey?: string }> {
+    const h = this.resolveApiHandlers(chatId);
     if (!h?.uploadImage) {
-      throw new Error('uploadImage not supported by this channel');
+      throw new Error(
+        chatId
+          ? `uploadImage is not supported by the channel owning ${chatId}; pass the channel-scoped chat ID (e.g. feishu:<name>:oc_…)`
+          : 'uploadImage not supported by this channel'
+      );
     }
     const result = await h.uploadImage(filePath);
     return { success: true, ...result };

@@ -104,8 +104,52 @@ export interface PiBeforeToolCallResult {
 /** Structural mirror of pi's `AgentOptions.beforeToolCall` signature. */
 export type PiBeforeToolCallHook = (
   context: PiBeforeToolCallContext,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ) => Promise<PiBeforeToolCallResult | undefined>;
+
+/**
+ * Structural mirror of pi's native `Skill` (0.83.0 `dist/harness/types.d.ts`:
+ * agentskills.io-shaped). Only the fields the provider consumes through
+ * `formatSkillsForSystemPrompt` are mirrored; pi owns the wording and the XML
+ * schema of the rendered block.
+ */
+export interface PiNativeSkill {
+  name: string;
+  description: string;
+  content: string;
+  /** Absolute path; pi surfaces it as the model-visible skill location. */
+  filePath: string;
+  disableModelInvocation?: boolean;
+}
+
+/** Structural mirror of pi's `SkillDiagnostic` (currently warnings only). */
+export interface PiSkillLoadDiagnostic {
+  type: 'warning';
+  code: string;
+  message: string;
+  path: string;
+}
+
+/**
+ * Structural mirror of pi's native skills channel — `loadSkills`
+ * (`dist/harness/skills.ts`, recursive SKILL.md discovery) and
+ * `formatSkillsForSystemPrompt` (`dist/harness/system-prompt.ts`, the
+ * spec-compatible system prompt block pi tells applications to compose;
+ * `AgentHarnessOptions.systemPrompt` is a resources-aware callback of the
+ * same shape). Verified present in @earendil-works/pi-agent-core@0.83.0.
+ */
+export interface PiNativeSkillsChannel {
+  loadSkills(
+    env: unknown,
+    dirs: string | string[]
+  ): Promise<{ skills: PiNativeSkill[]; diagnostics: PiSkillLoadDiagnostic[] }>;
+  formatSkillsForSystemPrompt(skills: PiNativeSkill[]): string;
+}
+
+/** The slice of pi's `NodeExecutionEnv` (`/node` subentry) the channel needs. */
+export interface PiExecutionEnv {
+  cleanup(): Promise<void>;
+}
 
 /** Type of the `Agent` constructor as exported by pi-agent-core. */
 type PiAgentConstructor = new (options: PiAgentOptions) => PiAgent;
@@ -113,6 +157,18 @@ type PiAgentConstructor = new (options: PiAgentOptions) => PiAgent;
 /** The (cached) slice of pi-agent-core's module surface this provider uses. */
 export interface PiRuntime {
   Agent: PiAgentConstructor;
+  /**
+   * pi's native skills channel, when the installed runtime exposes it
+   * (verified in 0.83.0). Absent on older runtimes — the provider then fails
+   * explicitly when an installed skill source cannot be delivered natively.
+   */
+  skills?: PiNativeSkillsChannel;
+  /**
+   * `NodeExecutionEnv` from the optional `/node` subentry (the node
+   * `ExecutionEnv` implementation `loadSkills` consumes). Absent when the
+   * installed runtime predates the subentry.
+   */
+  ExecutionEnv?: new (options: { cwd: string }) => PiExecutionEnv;
 }
 
 /** The pi-agent-core module specifier (version pinned per #4384 §6). */
@@ -126,12 +182,21 @@ let runtimePromise: Promise<PiRuntime> | null = null;
  * stamps it at enqueue time. Content blocks beyond plain text (images) are
  * stringified defensively — the MVP maps text turns (see event-adapter scope).
  */
-export function toPiUserMessage(content: string): { role: 'user'; content: string; timestamp: number } {
+export function toPiUserMessage(content: string): {
+  role: 'user';
+  content: string;
+  timestamp: number;
+} {
   return { role: 'user', content, timestamp: Date.now() };
 }
 
 /**
- * Dynamically import pi-agent-core and extract the `Agent` constructor.
+ * Dynamically import pi-agent-core and extract the runtime slice: the `Agent`
+ * constructor plus, when the installed version exports them, pi's native
+ * skills channel (`loadSkills` + `formatSkillsForSystemPrompt`) and the
+ * `/node` subentry's `NodeExecutionEnv` (verified in 0.83.0; pre-0.83.0
+ * runtimes simply leave them absent and the provider's capability probe
+ * reports the gap explicitly).
  *
  * The import result is cached (success AND failure): validateConfig() may
  * probe repeatedly, but the actual module load should happen at most once per
@@ -142,24 +207,48 @@ export function toPiUserMessage(content: string): { role: 'user'; content: strin
 export function loadPiRuntime(): Promise<PiRuntime> {
   if (!runtimePromise) {
     runtimePromise = (async () => {
+      let mod: Record<string, unknown>;
       try {
-        const mod = (await import(PI_SPECIFIER)) as { Agent?: unknown };
+        mod = (await import(PI_SPECIFIER)) as Record<string, unknown>;
         if (typeof mod.Agent !== 'function') {
           throw new Error(`${PI_SPECIFIER} did not export an Agent constructor`);
         }
-        return { Agent: mod.Agent as PiAgentConstructor };
       } catch (err) {
         // Re-wrap so callers always get a clear message, never a raw
         // ERR_MODULE_NOT_FOUND with a specifier stack they must decode.
         const message =
-          err instanceof Error && err.message.includes(PI_SPECIFIER)
-            ? err.message
-            : String(err);
+          err instanceof Error && err.message.includes(PI_SPECIFIER) ? err.message : String(err);
         throw new Error(
           `PiAgentProvider: ${PI_SPECIFIER} is not installed or failed to load (${message}). ` +
-            'Install it as a dependency of the host to use the pi backend (see docs/pi-backend.md).',
+            'Install it as a dependency of the host to use the pi backend (see docs/pi-backend.md).'
         );
       }
+      const runtime: PiRuntime = { Agent: mod.Agent as PiAgentConstructor };
+      // Native skills channel: extracted only when the installed runtime
+      // exports the whole surface — a partial surface stays absent so the
+      // provider's capability probe fails explicitly, never half-works.
+      if (
+        typeof mod.loadSkills === 'function' &&
+        typeof mod.formatSkillsForSystemPrompt === 'function'
+      ) {
+        runtime.skills = {
+          loadSkills: mod.loadSkills as PiNativeSkillsChannel['loadSkills'],
+          formatSkillsForSystemPrompt:
+            mod.formatSkillsForSystemPrompt as PiNativeSkillsChannel['formatSkillsForSystemPrompt'],
+        };
+      }
+      try {
+        const node = (await import(`${PI_SPECIFIER}/node`)) as {
+          NodeExecutionEnv?: unknown;
+        };
+        if (typeof node.NodeExecutionEnv === 'function') {
+          runtime.ExecutionEnv = node.NodeExecutionEnv as PiRuntime['ExecutionEnv'];
+        }
+      } catch {
+        // Optional `/node` subentry: absent on runtimes that predate it or do
+        // not export it; the capability probe handles the gap explicitly.
+      }
+      return runtime;
     })();
   }
   return runtimePromise;

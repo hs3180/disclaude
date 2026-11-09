@@ -192,6 +192,23 @@ describe('resolveCardImages', () => {
     expect(mockChannelApiClient.uploadImage).toHaveBeenCalledTimes(1);
   });
 
+  it('should carry the chat attribution into the upload request (T-083 R3)', async () => {
+    const imgPath = createTestImage('attributed.png');
+    mockChannelApiClient.uploadImage.mockResolvedValue({
+      success: true,
+      imageKey: 'img_v3_attr',
+    });
+
+    const card = { elements: [{ tag: 'img', img_key: imgPath }] };
+
+    await resolveCardImages(card, undefined, 'feishu:work:oc_1');
+    expect(mockChannelApiClient.uploadImage).toHaveBeenCalledWith(imgPath, 'feishu:work:oc_1');
+
+    mockChannelApiClient.uploadImage.mockClear();
+    await resolveCardImages(card);
+    expect(mockChannelApiClient.uploadImage).toHaveBeenCalledWith(imgPath, undefined);
+  });
+
   it('should handle upload failure gracefully', async () => {
     const imgPath = createTestImage('missing.png');
     mockChannelApiClient.uploadImage.mockResolvedValue({

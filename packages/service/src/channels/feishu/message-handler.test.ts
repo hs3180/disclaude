@@ -269,6 +269,50 @@ describe('MessageHandler', () => {
       expect(mockState.interactionHandleAction).not.toHaveBeenCalled();
       handler.clearClient();
     });
+    it('routes agent-config card callbacks to the config card service without an agent turn (#4914)', async () => {
+      const switchAgentPreset = vi.fn().mockReturnValue({
+        ok: true, active: { name: 'solo', agentBackend: 'pi', model: 'm1' }, sessionBoundary: 'new-session' as const,
+      });
+      const { handler } = createHandler({
+        agentConfigAccess: () => ({
+          listPresets: () => [{ name: 'solo', agentBackend: 'pi', model: 'm1' }],
+          getActivePreset: () => ({ name: 'solo', agentBackend: 'pi', model: 'm1' }),
+          switchAgentPreset,
+        }),
+      });
+      const create = vi.fn((req: { data?: { receive_id?: string; content?: string } }) => Promise.resolve({
+        code: 0, data: { message_id: 'config-card', chat_id: req.data?.receive_id },
+      }));
+      const patch = vi.fn().mockResolvedValue({ code: 0 });
+      handler.initialize({ im: { message: { create, patch } } } as unknown as import('@larksuiteoapi/node-sdk').Client);
+
+      const opened = await handler.requestAgentConfigCard({ chatId: 'chat_001', actorId: 'user_001' });
+      expect(opened).toEqual({ ok: true });
+      expect(create).toHaveBeenCalledOnce();
+      const [, token] = /agent-config:([0-9a-f-]{36})/.exec(String(create.mock.calls[0]![0].data?.content))!;
+
+      // A bystander's click is consumed silently; the owner's cancel resolves the card.
+      const bystander = await handler.handleCardAction(cardActionEvent({
+        context: { open_message_id: 'config-card', open_chat_id: 'chat_001' },
+        action: { name: `agent-config:${token}`, tag: 'button', value: { op: 'cancel' } },
+        operator: { open_id: 'user_999' },
+      }));
+      expect(bystander).toEqual({ toast: { type: 'info', content: '已收到操作，配置卡片将更新；若长时间未更新请重新发起 /agent config。' } });
+      expect(patch).not.toHaveBeenCalled();
+
+      await handler.handleCardAction(cardActionEvent({
+        context: { open_message_id: 'config-card', open_chat_id: 'chat_001' },
+        action: { name: `agent-config:${token}`, tag: 'button', value: { op: 'cancel' } },
+      }));
+      await vi.waitFor(() => expect(patch).toHaveBeenCalledOnce());
+      expect(String(patch.mock.calls[0][0].data.content)).toContain('已取消');
+      expect(switchAgentPreset).not.toHaveBeenCalled();
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+      expect(mockState.sendMessage).not.toHaveBeenCalled();
+      expect(mockState.logCardInteraction).not.toHaveBeenCalled();
+      expect(mockState.interactionHandleAction).not.toHaveBeenCalled();
+      handler.clearClient();
+    });
     it('keeps a secret input callback out of ordinary message logging and action routing', async () => {
       const { handler } = createHandler();
       const secret = 'message-handler-private-secret';

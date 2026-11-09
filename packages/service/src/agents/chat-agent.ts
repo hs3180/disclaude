@@ -1201,6 +1201,40 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   }
 
   /**
+   * Issue #5713 (review 6723047312): the one display contract every
+   * busy-input receipt follows — the unified supplement hint is the ONLY
+   * receipt source: an accurate admission line (queued behind session
+   * capacity, supplement handed to the running turn, or queued behind the
+   * running turn) + the attachment receipt + the #5394 running-turn context
+   * block. Per-harness status lines are deliberately gone: Claude streaming
+   * input and Codex steer both render the same supplement line from this
+   * single builder, and no harness/adapter keeps a private hint string — a
+   * backend that gains native interjection support joins this same shape
+   * instead of adding its own wording. Backend run-capacity waits are part
+   * of the same contract: providers surface `metadata.queueWait` facts on a
+   * content-free status and this builder renders them as the
+   * queued-capacity receipt. `queuedAhead` must already exclude
+   * this input: an FIFO row passes depth-1 (its row was just pushed), while
+   * a steered input never enters the FIFO and passes the depth as-is — a
+   * supplement merged into the running turn never counts as its own queue
+   * row either way.
+   */
+  private buildBusyInputReceipt(
+    status: 'queued-capacity' | 'supplement' | 'queued-turn',
+    queuedAhead: number,
+    attachments?: UserMessageParams['attachments'],
+  ): string {
+    const statusLine = status === 'queued-capacity'
+      ? '⏳ 这条消息已接收并排队；模型会话容量释放后会自动处理，无需重新发送。'
+      : status === 'supplement'
+      ? '💬 这条补充信息已交给当前运行的回合，结果将随原回合一起交付；正在运行的工具会继续执行。'
+      : '⏳ 这条消息已排队，将在当前回合结束后处理。';
+    const attachmentReceipt = attachments?.length
+      ? `（含 ${attachments.length} 个附件，将随这条输入一起处理）` : '';
+    return statusLine + attachmentReceipt + this.describeBusyQueue(queuedAhead);
+  }
+
+  /**
    * Process a message with the AI agent.
    *
    * Returns after input admission, without waiting for the task to finish.
@@ -1641,22 +1675,19 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         }
       }
       if (this.queryHandle?.capacityQueued || busyBeforePush) {
-        // Issue #5394: say what the waiter actually wants to know — the
-        // running turn's summary, its elapsed time and the queue depth ahead
-        // (this input's row was just pushed, so it is excluded from the count).
-        const busyContext = this.describeBusyQueue(Math.max(0, this.pendingTurnMessageIds.length - 1));
-        // Issue #5470 remaining item ③ (T-039): file-class inputs get an
-        // explicit receipt that they are held with the queued input, so the
-        // sender knows the files were not silently dropped.
-        const attachmentReceipt = attachments?.length
-          ? `（含 ${attachments.length} 个附件，将随这条输入一起处理）` : '';
+        // Issue #5394/#5713: the shared busy-input receipt — admission line +
+        // attachment receipt + the running turn's summary, elapsed time and
+        // the queue depth ahead (this input's row was just pushed, so it is
+        // excluded from the count). A streaming supplement (Claude) renders
+        // the same unified supplement line as a steered one (Codex) — no
+        // per-harness hint here.
         void this.callbacks.sendMessage(
           chatId,
-          (this.queryHandle?.capacityQueued
-            ? '⏳ 这条消息已接收并排队；模型会话容量释放后会自动处理，无需重新发送。'
-            : this.queryHandle?.inputDelivery === 'streaming'
-            ? '💬 已送入当前会话的输入流；模型可在执行中接收补充信息，正在运行的工具会继续执行。'
-            : '⏳ 这条消息已排队，将在当前回合结束后处理。') + attachmentReceipt + busyContext,
+          this.buildBusyInputReceipt(
+            this.queryHandle?.capacityQueued ? 'queued-capacity'
+              : this.queryHandle?.inputDelivery === 'streaming' ? 'supplement' : 'queued-turn',
+            Math.max(0, this.pendingTurnMessageIds.length - 1),
+            attachments),
           threadRootId
         ).catch((error) => {
           this.logger.warn(
@@ -1936,7 +1967,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     });
     this.logger.info({ chatId: params.chatId, messageId: params.messageId, sourceMessageId,
       nativeTurnId: acknowledgement.turnId, generation }, 'Busy input acknowledged for its original turn');
-    void notify('🎯 后端已确认接收这条补充信息，结果随原回合交付；正在运行的工具会继续执行。');
+    // Issue #5713 (review 6723047312): the interjection confirmation is a
+    // busy-input receipt from the same single source as every other
+    // supplement — the unified supplement line plus the shared running-turn
+    // summary, elapsed time and queue depth; no harness-private confirmation
+    // wording. The FIFO depth is passed as-is: this input was steered into
+    // the running turn and never queued, so it must not count as its own
+    // queue row.
+    void notify(this.buildBusyInputReceipt('supplement',
+      this.pendingTurnMessageIds.length, params.attachments));
     return true;
   }
 
@@ -2253,7 +2292,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // currently sees complete silence. Send a fallback notification.
       for (const failure of failures) {
         const delivered = await this.deliverUserVisible(chatId,
-          `❌ 处理消息时发生严重错误，会话已中断。请先核对已执行的操作，再发送 /reset 重置会话。\n${this.formatFailureDiagnostic(failure)}`,
+          `❌ 处理消息时发生严重错误，会话已中断。请先核对已执行的操作，再发送 /reset 重置会话。${this.agentConfigHint(chatId, detail)}\n${this.formatFailureDiagnostic(failure)}`,
           failure.threadRootId === 'none' ? undefined : failure.threadRootId);
         this.logger.error({ ...failure, event: 'agent_turn', state: 'failed', user_visible: delivered }, 'Agent loop terminal failure');
       }
@@ -2627,6 +2666,25 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   }
 
   /**
+   * #4914 (T-088): one-line pointer at the native config card, appended to a
+   * terminal failure notice when the failure names the selected model as the
+   * problem AND the channel offers a real preset choice. All gating policy
+   * (failure classification, preset count, card availability) lives in the
+   * channel wiring (`suggestAgentConfig`); unclassified failures and channels
+   * without the card produce no line, so unrelated errors stay untouched.
+   * Best-effort by contract: a broken hint must never make error handling
+   * itself fail.
+   */
+  private agentConfigHint(chatId: string, failureText: string): string {
+    try {
+      const hint = this.callbacks.suggestAgentConfig?.(chatId, failureText);
+      return hint ? `\n${hint}` : '';
+    } catch {
+      return '';
+    }
+  }
+
+  /**
    * Process the SDK iterator for this chatId.
    *
    * IMPORTANT: This method preserves conversation context by NOT clearing the session
@@ -2966,7 +3024,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         const sideEffects = startupCategory ? '' : formatSideEffectReceipt();
         const guidance = startupCategory ? '请检查配置、权限和运行环境，修复后发送 /reset。' :
           '请先核对已经执行的操作，再决定是否重新提交或发送消息继续；系统没有自动重放工具。';
-        const notice = `${prefix}${sideEffects}\n${guidance}\n${this.formatFailureDiagnostic(failure)}`;
+        // #4914 (T-088): a startup/stream failure naming the selected model
+        // (not found / no access) adds the native config entry inline.
+        const notice = `${prefix}${sideEffects}\n${guidance}${this.agentConfigHint(chatId, error.message)}\n${this.formatFailureDiagnostic(failure)}`;
         const delivered = await this.deliverUserVisible(chatId, notice, anchor ?? undefined);
         this.logger.warn({ ...failure, event: 'agent_turn',
           state: startupCategory ? 'failed' : 'interrupted',
@@ -3219,6 +3279,23 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           break;
         }
 
+        // Issue #5713 (review round 2): a provider's run-capacity wait marker
+        // (content-free status + metadata.queueWait facts) renders through the
+        // unified busy-input receipt — the ONE construction point for every
+        // busy/interjection notice. Harness modules report facts only; a
+        // backend that gains a run governor joins this same display contract
+        // instead of adding its own wording. `queued` already excludes this
+        // input (its row has not joined the waiter list yet). Delivery goes
+        // through the #5719 accounting wrapper like every progress notice.
+        if (parsed.type === 'status') {
+          const wait = parsed.metadata?.queueWait as AgentMessageMetadata['queueWait'] | undefined;
+          if (wait) {
+            this.logger.info({ chatId, queueWait: wait }, 'Backend run-capacity wait; unified busy-input receipt follows');
+            void deliverProgress('queued-input', this.buildBusyInputReceipt('queued-capacity', wait.queued),
+              resolveReplyThreadRoot());
+          }
+        }
+
         // Send message content to callback
         // Issue #3641: In topic group threads, filter intermediate messages
         // (tool_use, tool_result, tool_progress) to reduce noise.
@@ -3423,8 +3500,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
               chatId,
               // Issue #5654: the non-output-limit failure branches carry the
               // side-effect receipt (the output-limit branch already itemizes
-              // its tool activity above).
-              `${outputLimitReceipt}${outputLimit ? '' : formatSideEffectReceipt()}\n${this.formatFailureDiagnostic(failure)}`,
+              // its tool activity above). #4914: a model-class failure adds
+              // the native config entry inline — the moment the user actually
+              // wants to switch models.
+              `${outputLimitReceipt}${outputLimit ? '' : formatSideEffectReceipt()}${this.agentConfigHint(chatId, failureDetail)}\n${this.formatFailureDiagnostic(failure)}`,
               resolveReplyThreadRoot()
             );
             this.logger.error({ ...failure, event: 'agent_turn_failure', user_visible: delivered,
@@ -3864,6 +3943,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
               const noticeLines = [
                 '❌ 本轮被上游 API 错误（overloaded_error / 5xx）中断，未正常完成，请稍后重试。',
               ];
+              // #4914 (T-088): a stderr tail naming the model (not found / no
+              // access / at capacity) adds the native config entry inline.
+              const configHint = this.agentConfigHint(chatId, stderrTail).trim();
+              if (configHint) { noticeLines.push(configHint); }
               if (requestId) {
                 noticeLines.push(`upstream request_id: ${requestId}`);
               }

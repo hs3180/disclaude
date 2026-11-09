@@ -95,6 +95,13 @@ export interface ChannelSetupContext {
       getMode(chatId: string): 'mention' | 'always' | 'auto';
       setMode(chatId: string, mode: 'mention' | 'always' | 'auto'): void;
     };
+    /**
+     * #4914: preset catalog/selection ports and the host access policy,
+     * exposed so descriptor setup can wire channel-native config surfaces to
+     * the SAME services the /agent command consumes. Optional for tests.
+     */
+    agentPool?: ControlHandlerContext['agentPool'];
+    isCommandAllowed?: ControlHandlerContext['isCommandAllowed'];
   };
   /** Logger instance */
   logger: Logger;
