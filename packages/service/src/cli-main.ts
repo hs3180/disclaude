@@ -728,6 +728,11 @@ export async function main(): Promise<void> {
         agentPool.getActiveAgentPreset(chatId, threadRootId),
       switchAgentPreset: (chatId, presetName, threadRootId, actorId) =>
         agentPool.switchAgentPreset(chatId, presetName, threadRootId, actorId),
+      // Issue #5255: orthogonal backend/model dimension switches.
+      switchAgentBackend: (chatId, backend, threadRootId) =>
+        agentPool.switchAgentBackend(chatId, backend, threadRootId),
+      switchAgentModel: (chatId, model, threadRootId) =>
+        agentPool.switchAgentModel(chatId, model, threadRootId),
       steer: (chatId, prompt, threadRootId) => agentPool.steer(chatId, prompt, threadRootId),
       canSteer: (chatId, threadRootId) => agentPool.canSteer(chatId, threadRootId),
     },

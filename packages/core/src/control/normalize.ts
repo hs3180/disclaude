@@ -51,12 +51,14 @@ export function normalizeCommandData<T extends ControlCommandType>(
     case 'agent': {
       const args = Array.isArray(rawData.args) ? rawData.args as string[] : [];
       const subcommand = (args[0] ?? 'current').toLowerCase();
-      // `/agent use <preset>` is the only switch surface: the choice is saved
-      // for the chat (#5476, PR review: no extra commands or parameters), so
-      // plain positional parsing is enough and extra tokens are ignored.
+      // `use <preset>` saves the chat's choice (#5476) with a single token;
+      // Issue #5255 `backend`/`model` take a free-form value (model ids may
+      // contain dots/dashes).
+      const isDimensionSwitch = subcommand === 'backend' || subcommand === 'model';
       return {
         subcommand,
         ...(args[1] ? { preset: args[1] } : {}),
+        ...(isDimensionSwitch && args.length > 1 ? { value: args.slice(1).join(' ') } : {}),
       };
     }
     case 'steer': {

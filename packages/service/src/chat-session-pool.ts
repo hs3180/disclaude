@@ -21,12 +21,18 @@ import {
   type AgentPresets,
   type BaseAgentConfig,
   type ChatFailureRecord,
+  type SessionAgentOverride,
   buildSessionKey,
   chatIdOfSessionKey,
   createLogger,
   getProvider,
   Config,
   resolveAgentPreset,
+  composeSessionPreset,
+  backendLlmCompatibility,
+  switchableBackendsFor,
+  isValidModelForBackend,
+  SWITCHABLE_BACKENDS,
   validateAgentPresets,
   validateResolvedAgent,
 } from '@disclaude/core';
@@ -160,12 +166,29 @@ export interface ActiveAgentPreset {
   name: string;
   agentBackend: AgentPreset['agentBackend'];
   model: string;
+  /**
+   * Issue #5255: orthogonal dimension(s) currently overriding the selected
+   * preset. Present only when that dimension diverges from the preset.
+   */
+  backendOverride?: AgentPreset['agentBackend'];
+  /** Issue #5255: model diverging from the selected preset. */
+  modelOverride?: string;
   /** Thinking/reasoning effort when the preset's LLM pins one (#4914 card display). */
   reasoningEffort?: AgentPreset['reasoningEffort'];
 }
 
 export type AgentPresetSwitchResult =
   | { ok: true; active: ActiveAgentPreset; sessionBoundary: 'new-session' }
+  /** Issue #5255: failures may carry the rejected dimension's selectable options. */
+  | { ok: false; error: string; options?: string[] };
+
+/**
+ * Issue #5255: base selection a session's orthogonal overrides compose onto.
+ * `preset` is the configured selection (named or default); `singleton` is the
+ * process-wide default agent used when no `agents:` map exists.
+ */
+type SessionBase =
+  | { ok: true; name: string; preset?: AgentPreset; singleton?: BaseAgentConfig; binding: Pick<AgentPreset, 'apiProtocol' | 'apiBaseUrl'> }
   | { ok: false; error: string };
 
 /**
@@ -205,6 +228,13 @@ export class ChatSessionPool {
   private readonly projectSessions = new Map<string, { chatId: string; threadRootId?: string }>();
   private readonly callbacksBySession = new Map<string, ChatAgentCallbacks>();
   private readonly selectedPresetBySession = new Map<string, string>();
+  /**
+   * Issue #5255: per-session orthogonal backend/model overrides, parallel to
+   * selectedPresetBySession. Like the preset selection they survive reset()
+   * and idle eviction, so a rebuilt agent recomposes the same dimensions
+   * (getOrCreateChatAgent applies them at creation).
+   */
+  private readonly agentOverrideBySession = new Map<string, SessionAgentOverride>();
   private readonly presets?: AgentPresets;
   private readonly options: ChatSessionPoolOptions;
   /**
@@ -265,6 +295,186 @@ export class ChatSessionPool {
     return resolveAgentPreset(this.presets, requested);
   }
 
+  getActiveAgentPreset(chatId: string, threadRootId?: string): ActiveAgentPreset | undefined {
+    const sessionKey = this.sessionKeyOf(chatId, threadRootId);
+    return this.activeDimensions(chatId, sessionKey);
+  }
+
+  /**
+   * Issue #5255: base selection a session's orthogonal overrides compose
+   * onto — the chat's resolved preset (via resolvePreset: this session's
+   * switch > the chat's saved choice (#5476) > the per-app/channel default >
+   * global default), or the process-wide singleton agent when no `agents:`
+   * map exists.
+   */
+  private sessionBase(chatId: string, sessionKey: string): SessionBase {
+    if (this.presets) {
+      const resolved = this.resolvePreset(chatId, sessionKey);
+      if (resolved && resolved.ok) {
+        return { ok: true, name: resolved.name, preset: resolved.preset, binding: resolved.preset };
+      }
+      return resolved ?? { ok: false, error: 'No named agent presets are configured' };
+    }
+    try {
+      const singleton = AgentFactory.resolveConfig({});
+      return {
+        ok: true,
+        name: 'default',
+        singleton,
+        binding: { apiProtocol: singleton.apiProtocol, apiBaseUrl: singleton.apiBaseUrl },
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: `No named agent presets are configured and the default agent could not be resolved (${error instanceof Error ? error.message : String(error)})`,
+      };
+    }
+  }
+
+  /** Issue #5255: effective two-dimension view of a session's base + overrides. */
+  private activeDimensions(chatId: string, sessionKey: string): ActiveAgentPreset | undefined {
+    const base = this.sessionBase(chatId, sessionKey);
+    if (!base.ok) { return undefined; }
+    return this.composeActive(base, this.agentOverrideBySession.get(sessionKey));
+  }
+
+  private composeActive(base: Extract<SessionBase, { ok: true }>, override?: SessionAgentOverride): ActiveAgentPreset | undefined {
+    const overrideFields = {
+      ...(override?.backendOverride ? { backendOverride: override.backendOverride } : {}),
+      ...(override?.modelOverride ? { modelOverride: override.modelOverride } : {}),
+    };
+    if (base.preset) {
+      const effective = composeSessionPreset(base.preset, override);
+      return {
+        name: base.name,
+        agentBackend: effective.agentBackend,
+        model: effective.model,
+        ...(effective.reasoningEffort ? { reasoningEffort: effective.reasoningEffort } : {}),
+        ...overrideFields,
+      };
+    }
+    const agentBackend = override?.backendOverride ?? base.singleton?.agentBackend;
+    const model = override?.modelOverride ?? base.singleton?.model;
+    if (!agentBackend || !model) { return undefined; }
+    return { name: base.name, agentBackend, model, ...overrideFields };
+  }
+
+  /** Issue #5255: synthesize a preset for a backend override on the singleton default. */
+  private singletonPreset(agentBackend: AgentPreset['agentBackend'], base: Extract<SessionBase, { ok: true }>): AgentPreset {
+    const singleton: Partial<BaseAgentConfig> = base.singleton ?? {};
+    return {
+      agentBackend,
+      llm: singleton.llm ?? '',
+      model: singleton.model ?? '',
+      apiKey: singleton.apiKey ?? '',
+      ...(singleton.apiProtocol ? { apiProtocol: singleton.apiProtocol } : {}),
+      ...(singleton.apiBaseUrl ? { apiBaseUrl: singleton.apiBaseUrl } : {}),
+      ...(singleton.reasoningEffort !== undefined ? { reasoningEffort: singleton.reasoningEffort as AgentPreset['reasoningEffort'] } : {}),
+      ...(singleton.maxConcurrentSessions !== undefined ? { maxConcurrentSessions: singleton.maxConcurrentSessions } : {}),
+      ...(singleton.env ? { env: singleton.env } : {}),
+      ...(singleton.credentialEnvKeys ? { credentialEnvKeys: singleton.credentialEnvKeys } : {}),
+    };
+  }
+
+  /** Issue #5255: store or clear a session's override envelope (empty envelope = no override). */
+  private setSessionOverride(sessionKey: string, override: SessionAgentOverride | undefined): void {
+    if (override?.backendOverride || override?.modelOverride) {
+      this.agentOverrideBySession.set(sessionKey, override);
+    } else {
+      this.agentOverrideBySession.delete(sessionKey);
+    }
+  }
+
+  /** Issue #5255: models of the configured presets usable on the session's effective backend. */
+  private modelOptions(chatId: string, sessionKey: string): string[] | undefined {
+    if (!this.presets) { return undefined; }
+    const base = this.sessionBase(chatId, sessionKey);
+    if (!base.ok) { return undefined; }
+    const backend = this.agentOverrideBySession.get(sessionKey)?.backendOverride ?? base.preset?.agentBackend;
+    const models = [...new Set(Object.values(this.presets)
+      .map((preset) => preset.model)
+      .filter((model) => model && (!backend || isValidModelForBackend(backend, model))))];
+    return models.length ? models : undefined;
+  }
+
+  /**
+   * Issue #5255: common switch safety sequence shared by `/agent use` and the
+   * orthogonal backend/model switches — busy reject → availability probe →
+   * candidate construction → provider forgetSession → atomic swap. Failure at
+   * any step leaves the currently active session untouched.
+   */
+  private activateAgentSelection(
+    chatId: string,
+    sessionKey: string,
+    label: string,
+    candidate: { preset?: AgentPreset; modelOverride?: string },
+  ): { ok: true } | { ok: false; error: string } {
+    const previous = this.agents.get(sessionKey);
+    if (previous?.isBusy) {
+      return { ok: false, error: 'The current chat is busy; wait for the response or use /stop before switching presets' };
+    }
+
+    let info: { available: boolean; unavailableReason?: string };
+    let backend: AgentPreset['agentBackend'] | undefined;
+    try {
+      const config = candidate.preset
+        ? AgentFactory.resolveConfig({ ...candidate.preset, settings: candidate.preset })
+        : AgentFactory.resolveConfig(candidate.modelOverride !== undefined ? { model: candidate.modelOverride } : {});
+      backend = candidate.preset?.agentBackend ?? config.agentBackend;
+      if (!backend) {
+        return { ok: false, error: `Could not validate agent ${label}: no agent backend is configured. Check backend configuration and availability; the current session is unchanged.` };
+      }
+      info = this.options.validatePresetBackend
+        ? this.options.validatePresetBackend(backend, config)
+        : getProvider(backend, candidate.preset).getInfo(config);
+    } catch {
+      return { ok: false, error: `Could not validate agent ${label}. Check backend configuration and availability; the current session is unchanged.` };
+    }
+    if (!info.available) {
+      return { ok: false, error: `Agent ${label} is unavailable: ${info.unavailableReason ?? 'backend unavailable'}` };
+    }
+
+    const callbacks = this.callbacksBySession.get(sessionKey);
+    let constructed: ChatAgent | undefined;
+    if (callbacks && previous) {
+      try {
+        constructed = this.createAgent(chatId, callbacks, candidate.preset, true, sessionKey, candidate.modelOverride);
+      } catch (error) {
+        return {
+          ok: false,
+          error: `Could not activate agent ${label}: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+    }
+
+    if (constructed) {
+      // Construction is side-effect free with respect to the native SDK
+      // session. Forget the selected backend only after construction succeeds,
+      // so a failed switch leaves the currently active session untouched.
+      try {
+        if (backend) {
+          getProvider(backend, candidate.preset).forgetSession?.(sessionKey);
+        } else {
+          this.forgetProviderSession(sessionKey);
+        }
+      } catch (error) {
+        constructed.dispose();
+        return {
+          ok: false,
+          error: `Could not start a fresh session for agent ${label}: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+      this.agents.set(sessionKey, constructed);
+      previous?.dispose();
+    } else {
+      // A command can select a target before this chat has created an agent.
+      // Consume this marker on first use so persisted textual history is not
+      // mistaken for cross-backend native-session migration.
+      this.skipHistoryChatIds.add(sessionKey);
+    }
+    return { ok: true };
+  }
+
   /** Refuse a chat-wide selection change while an affected session still owns work. */
   private selectionChangeBusy(chatId: string): boolean {
     return [...this.projectSessions.values()].some(scope => {
@@ -283,18 +493,6 @@ export class ChatSessionPool {
       const key = this.sessionKeyOf(scope.chatId, scope.threadRootId);
       if (!this.selectedPresetBySession.has(key)) { this.reset(scope.chatId, undefined, scope.threadRootId); }
     }
-  }
-
-  getActiveAgentPreset(chatId: string, threadRootId?: string): ActiveAgentPreset | undefined {
-    const resolved = this.resolvePreset(chatId, this.sessionKeyOf(chatId, threadRootId));
-    return resolved?.ok
-      ? {
-          name: resolved.name,
-          agentBackend: resolved.preset.agentBackend,
-          model: resolved.preset.model,
-          ...(resolved.preset.reasoningEffort ? { reasoningEffort: resolved.preset.reasoningEffort } : {}),
-        }
-      : undefined;
   }
 
   /**
@@ -400,6 +598,9 @@ export class ChatSessionPool {
       this.skipHistoryChatIds.add(sessionKey);
     }
     this.selectedPresetBySession.set(sessionKey, resolved.name);
+    // `/agent use` sets both dimensions at once: any orthogonal override on
+    // the previous selection is superseded (Issue #5255).
+    this.agentOverrideBySession.delete(sessionKey);
     // The issuing session now owns an explicit selection, so the sweep below
     // only resets the chat's other selection-following sessions (#5476).
     if (this.options.agentSelections) { this.resetSelectionFollowingSessions(chatId); }
@@ -413,6 +614,112 @@ export class ChatSessionPool {
       },
       sessionBoundary: 'new-session',
     };
+  }
+
+  /**
+   * Issue #5255: switch only the backend dimension, keeping the current
+   * model. The llm binding is kept and judged for protocol compatibility
+   * (claude needs anthropic; pi/dsh speak both, dsh needs baseUrl; codex
+   * owns its connection). Incompatible targets answer with the backends the
+   * binding can serve instead of hard-failing.
+   */
+  switchAgentBackend(
+    chatId: string,
+    backend: string,
+    threadRootId?: string
+  ): AgentPresetSwitchResult {
+    const target = backend.trim().toLowerCase() as AgentPreset['agentBackend'];
+    const sessionKey = this.sessionKeyOf(chatId, threadRootId);
+    const base = this.sessionBase(chatId, sessionKey);
+    if (!base.ok) { return base; }
+    if (!SWITCHABLE_BACKENDS.includes(target)) {
+      return {
+        ok: false,
+        error: `Unknown agent backend: ${backend.trim() || '(empty)'}. Backends must be one of: ${SWITCHABLE_BACKENDS.join(', ')}.`,
+        options: [...SWITCHABLE_BACKENDS],
+      };
+    }
+    const compatibility = backendLlmCompatibility(target, base.binding);
+    if (!compatibility.ok) {
+      return {
+        ok: false,
+        error: `Cannot switch the backend to ${target}: ${compatibility.reason}.`,
+        options: switchableBackendsFor(base.binding),
+      };
+    }
+
+    const override = this.agentOverrideBySession.get(sessionKey);
+    const baseBackend = base.preset?.agentBackend ?? base.singleton?.agentBackend;
+    const nextOverride: SessionAgentOverride = {
+      backendOverride: target === baseBackend ? undefined : target,
+      modelOverride: override?.modelOverride,
+    };
+    const active = this.composeActive(base, nextOverride);
+    if (!active) {
+      return { ok: false, error: 'The active agent selection could not be resolved; the current session is unchanged.' };
+    }
+    const result = this.activateAgentSelection(
+      chatId,
+      sessionKey,
+      `backend "${target}" on ${base.preset ? `preset "${base.name}"` : 'the default agent'}`,
+      base.preset
+        ? { preset: composeSessionPreset(base.preset, { backendOverride: target }) }
+        : { preset: this.singletonPreset(target, base) }
+    );
+    if (!result.ok) { return result; }
+    this.setSessionOverride(sessionKey, nextOverride);
+    return { ok: true, active, sessionBoundary: 'new-session' };
+  }
+
+  /**
+   * Issue #5255: switch only the model dimension, keeping the current
+   * backend (and its llm binding). Codex targets must be Codex/ChatGPT model
+   * identifiers; other backends pass the identifier to the provider verbatim.
+   */
+  switchAgentModel(
+    chatId: string,
+    model: string,
+    threadRootId?: string
+  ): AgentPresetSwitchResult {
+    const target = model.trim();
+    const sessionKey = this.sessionKeyOf(chatId, threadRootId);
+    if (!target) {
+      return { ok: false, error: 'Usage: /agent model <model-id>', options: this.modelOptions(chatId, sessionKey) };
+    }
+    const base = this.sessionBase(chatId, sessionKey);
+    if (!base.ok) { return base; }
+    const override = this.agentOverrideBySession.get(sessionKey);
+    const effectiveBackend = override?.backendOverride ?? base.preset?.agentBackend ?? base.singleton?.agentBackend;
+    if (effectiveBackend && !isValidModelForBackend(effectiveBackend, target)) {
+      return {
+        ok: false,
+        error: `Model "${target}" is not a valid ${effectiveBackend} model identifier.`,
+        options: this.modelOptions(chatId, sessionKey),
+      };
+    }
+
+    const baseModel = base.preset?.model ?? base.singleton?.model;
+    const nextOverride: SessionAgentOverride = {
+      backendOverride: override?.backendOverride,
+      modelOverride: target === baseModel ? undefined : target,
+    };
+    const active = this.composeActive(base, nextOverride);
+    if (!active) {
+      return { ok: false, error: 'The active agent selection could not be resolved; the current session is unchanged.' };
+    }
+    const result = this.activateAgentSelection(
+      chatId,
+      sessionKey,
+      `model "${target}" on ${base.preset ? `preset "${base.name}"` : 'the default agent'}`,
+      base.preset
+        ? { preset: composeSessionPreset(base.preset, { backendOverride: override?.backendOverride, modelOverride: target }) }
+        : override?.backendOverride
+          ? { preset: this.singletonPreset(override.backendOverride, base), modelOverride: target }
+          : { modelOverride: target }
+    );
+    if (!result.ok) { return result; }
+    this.setSessionOverride(sessionKey, nextOverride);
+    return { ok: true, active, sessionBoundary: 'new-session' };
   }
 
   /**
@@ -650,16 +957,45 @@ export class ChatSessionPool {
     }
     if (!agent) {
       const skipHistory = session?.skipHistory ?? this.skipHistoryChatIds.has(sessionKey);
-      const selected = this.resolveSessionPreset(session, chatId, sessionKey);
+      // Scoped scheduled executions (#5731: an explicit per-run `harness` or
+      // `model`) resolve their runtime without reading the chat's interactive
+      // dimension overrides. Interactive sessions instead compose the
+      // session's orthogonal overrides onto the chat's resolved base
+      // selection (session switch > saved choice > per-app default > global,
+      // #5476; or the singleton default when no agents: map exists) at
+      // creation, so a rebuilt agent — after reset or idle eviction — keeps
+      // the same dimensions (#5255).
+      const scoped = session?.harness !== undefined || session?.model !== undefined;
+      let preset: AgentPreset | undefined;
+      let modelArg: string | undefined;
+      if (scoped) {
+        preset = this.resolveSessionPreset(session, chatId, sessionKey);
+        // A resolved execution preset already carries its validated model
+        // override; pass the model through only on the legacy Config fallback.
+        modelArg = preset ? undefined : session?.model?.trim() || undefined;
+      } else {
+        const override = this.agentOverrideBySession.get(sessionKey);
+        if (this.presets) {
+          const base = this.sessionBase(chatId, sessionKey);
+          if (base.ok && base.preset) {
+            preset = composeSessionPreset(base.preset, override);
+          }
+        } else if (override?.backendOverride) {
+          // No agents: map — carry the singleton default's llm binding onto the
+          // overridden backend. If even the singleton cannot be resolved, leave
+          // the preset unset: construction surfaces the same configuration error.
+          const base = this.sessionBase(chatId, sessionKey);
+          if (base.ok) { preset = this.singletonPreset(override.backendOverride, base); }
+        }
+        modelArg = override?.modelOverride;
+      }
       agent = this.createAgent(
         chatId,
         callbacks,
-        selected,
+        preset,
         skipHistory,
         sessionKey,
-        // A resolved execution preset already carries its validated model
-        // override; pass the model through only on the legacy Config fallback.
-        selected ? undefined : session?.model?.trim() || undefined,
+        modelArg,
         session !== undefined
       );
       this.agents.set(sessionKey, agent);
@@ -772,9 +1108,13 @@ export class ChatSessionPool {
     // it must fire even when no ChatAgent instance exists (the chat may have
     // been idle-evicted from this pool while its codex stash lived on). Keyed
     // by the same scoped native session key used during construction.
-    const selected = this.resolvePreset(chatId, sessionKey);
-    if (selected?.ok) {
-      getProvider(selected.preset.agentBackend, selected.preset).forgetSession?.(sessionKey);
+    // Issue #5255: the EFFECTIVE backend (chat's resolved preset + backend
+    // override) owns the native session, so forget through the composed preset.
+    const base = this.sessionBase(chatId, sessionKey);
+    const effectiveOverride = this.agentOverrideBySession.get(sessionKey);
+    if (base.ok && base.preset) {
+      const effective = composeSessionPreset(base.preset, effectiveOverride);
+      getProvider(effective.agentBackend, effective).forgetSession?.(sessionKey);
     } else {
       this.forgetProviderSession(sessionKey);
     }
@@ -845,6 +1185,7 @@ export class ChatSessionPool {
     this.lastUsedAt.clear();
     this.callbacksBySession.clear();
     this.selectedPresetBySession.clear();
+    this.agentOverrideBySession.clear();
   }
 
   /**

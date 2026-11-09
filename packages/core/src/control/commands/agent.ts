@@ -1,11 +1,27 @@
 import type { ControlCommand, ControlResponse } from '../../types/channel.js';
-import type { CommandHandler, ControlHandlerContext } from '../types.js';
+import type { AgentDimensionSwitchResult, CommandHandler, ControlHandlerContext } from '../types.js';
 
 type AgentCommand = ControlCommand<'agent'>;
 
 function formatPreset(preset: { name: string; agentBackend: string; model: string }): string {
   return `**${preset.name}** — ${preset.agentBackend} / ${preset.model}`;
 }
+
+/** Issue #5255: summarize which dimensions diverge from the selected preset. */
+function formatOverrides(active: {
+  agentBackend: string;
+  model: string;
+  backendOverride?: string;
+  modelOverride?: string;
+}): string {
+  const parts: string[] = [];
+  if (active.backendOverride) { parts.push(`backend=${active.backendOverride}`); }
+  if (active.modelOverride) { parts.push(`model=${active.modelOverride}`); }
+  return parts.length ? `\n\nOverrides on top of the preset: ${parts.join(', ')}.` : '';
+}
+
+const SESSION_BOUNDARY_NOTE =
+  'A new native session will be used; context is not migrated across selections. The selection lasts until this service restarts.';
 
 export const handleAgent: CommandHandler<'agent'> = async (
   command: AgentCommand,
@@ -91,8 +107,44 @@ export const handleAgent: CommandHandler<'agent'> = async (
     }
   }
 
+  // Issue #5255: orthogonal dimension switches. Each changes one axis of the
+  // session's agent and keeps the other at its current value; incompatible
+  // targets answer with that dimension's selectable options, not a dead end.
+  if (subcommand === 'backend' || subcommand === 'model') {
+    const value = (command.data?.value ?? command.data?.preset ?? '').trim();
+    if (!value) {
+      return {
+        success: false,
+        message: subcommand === 'backend'
+          ? 'Usage: `/agent backend <claude|pi|codex|dsh>`'
+          : 'Usage: `/agent model <model-id>`',
+      };
+    }
+    if (subcommand === 'backend' && !api.switchAgentBackend) {
+      return { success: false, message: 'Switching the backend dimension is not available on this node.' };
+    }
+    if (subcommand === 'model' && !api.switchAgentModel) {
+      return { success: false, message: 'Switching the model dimension is not available on this node.' };
+    }
+    const switcher = subcommand === 'backend' ? api.switchAgentBackend : api.switchAgentModel;
+    if (!switcher) {
+      return { success: false, message: `Switching the ${subcommand} dimension is not available on this node.` };
+    }
+    const result: AgentDimensionSwitchResult = switcher(command.chatId, value, command.threadRootId);
+    if (!result.ok) {
+      const options = result.options?.length
+        ? `\n\nAvailable ${subcommand}s: ${result.options.join(', ')}.`
+        : '';
+      return { success: false, message: `${result.error}${options}\n\nThe current selection is unchanged.` };
+    }
+    return {
+      success: true,
+      message: `✅ Active agent: ${formatPreset(result.active)}${formatOverrides(result.active)}\n\n${SESSION_BOUNDARY_NOTE}`,
+    };
+  }
+
   if (subcommand !== 'current') {
-    return { success: false, message: 'Usage: `/agent [current|list|use <preset>|config]`' };
+    return { success: false, message: 'Usage: `/agent [current|list|use <preset>|backend <name>|model <id>|config]`' };
   }
 
   const active = api.getActiveAgentPreset(command.chatId, command.threadRootId);
@@ -102,6 +154,9 @@ export const handleAgent: CommandHandler<'agent'> = async (
     ? '\n\nSwitch or review it with `/agent config` — a card with restricted options, no model IDs to type.'
     : '';
   return active
-    ? { success: true, message: `🤖 Active agent: ${formatPreset(active)}\n\nSelection precedence: /agent use (this session) > the chat's saved /agent use choice > per-app default > global default.${cardHint}` }
-    : { success: false, message: 'No named agent presets are configured (legacy `agent:` configuration remains active).' };
+    ? {
+        success: true,
+        message: `🤖 Active agent: ${formatPreset(active)}${formatOverrides(active)}\n\nBackend and model can be switched independently with \`/agent backend <name>\` and \`/agent model <id>\`.\n\nSelection precedence: this session's switches (/agent use, backend, model) > the chat's saved /agent use choice > per-app default > global default. Dimension switches last until the next /agent use or service restart.${cardHint}`,
+      }
+    : { success: false, message: 'No agent selection is available on this node (no `agents:` map and no resolvable default agent).' };
 };

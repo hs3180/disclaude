@@ -160,9 +160,137 @@ describe('/agent', () => {
   it('documents the selection precedence chain on /agent current (#5476)', async () => {
     const result = await handleAgent({ type: 'agent', chatId: 'a', data: { subcommand: 'current' } }, context());
     expect(result.success).toBe(true);
-    expect(result.message).toContain('/agent use (this session)');
+    // Issue #5255 combination: the session tier also covers the orthogonal
+    // backend/model switches; the saved-choice/per-app/global chain is intact.
+    expect(result.message).toContain("this session's switches (/agent use, backend, model)");
     expect(result.message).toContain("the chat's saved /agent use choice");
     expect(result.message).toContain('per-app default');
     expect(result.message).toContain('global default');
+  });
+});
+
+describe('/agent orthogonal dimension switches (Issue #5255)', () => {
+  it('switches the backend dimension and reports it as an override on the preset', async () => {
+    const switchAgentBackend = vi.fn().mockReturnValue({
+      ok: true,
+      active: { name: 'default', agentBackend: 'pi', model: 'claude-sonnet', backendOverride: 'pi' },
+      sessionBoundary: 'new-session',
+    });
+    const result = await handleAgent(
+      { type: 'agent', chatId: 'a', data: { subcommand: 'backend', preset: 'pi', value: 'pi' } },
+      context({ switchAgentBackend })
+    );
+    expect(switchAgentBackend).toHaveBeenCalledExactlyOnceWith('a', 'pi', undefined);
+    expect(result).toMatchObject({ success: true });
+    expect(result.message).toContain('✅ Active agent: **default** — pi / claude-sonnet');
+    expect(result.message).toContain('backend=pi');
+    expect(result.message).toContain('context is not migrated');
+    expect(result.message).toContain('service restarts');
+  });
+
+  it('switches the model dimension and shows both diverging dimensions', async () => {
+    const switchAgentModel = vi.fn().mockReturnValue({
+      ok: true,
+      active: { name: 'default', agentBackend: 'pi', model: 'glm-5.3', backendOverride: 'pi', modelOverride: 'glm-5.3' },
+      sessionBoundary: 'new-session',
+    });
+    const result = await handleAgent(
+      { type: 'agent', chatId: 'a', threadRootId: 'topic', data: { subcommand: 'model', preset: 'glm-5.3', value: 'glm-5.3' } },
+      context({ switchAgentModel })
+    );
+    expect(switchAgentModel).toHaveBeenCalledExactlyOnceWith('a', 'glm-5.3', 'topic');
+    expect(result).toMatchObject({ success: true });
+    expect(result.message).toContain('backend=pi, model=glm-5.3');
+  });
+
+  it('answers an incompatible switch with the dimension options instead of a dead end', async () => {
+    const result = await handleAgent(
+      { type: 'agent', chatId: 'a', data: { subcommand: 'backend', preset: 'claude', value: 'claude' } },
+      context({
+        switchAgentBackend: () => ({
+          ok: false,
+          error: 'Cannot switch the backend to claude: the claude backend requires an anthropic-protocol llm provider.',
+          options: ['pi'],
+        }),
+      })
+    );
+    expect(result.success).toBe(false);
+    expect(result.message).toContain('anthropic-protocol');
+    expect(result.message).toContain('Available backends: pi.');
+    expect(result.message).toContain('current selection is unchanged');
+    expect(result.message).not.toContain('✅');
+  });
+
+  it('lists usable models after a rejected model switch', async () => {
+    const result = await handleAgent(
+      { type: 'agent', chatId: 'a', data: { subcommand: 'model', preset: 'claude-sonnet', value: 'claude-sonnet' } },
+      context({
+        switchAgentModel: () => ({
+          ok: false,
+          error: 'Model "claude-sonnet" is not a valid codex model identifier.',
+          options: ['gpt-5.6'],
+        }),
+      })
+    );
+    expect(result.success).toBe(false);
+    expect(result.message).toContain('Available models: gpt-5.6.');
+  });
+
+  it('keeps both dimensions set by /agent use beside the single-dimension subcommands', async () => {
+    const switchAgentPreset = vi.fn().mockReturnValue({
+      ok: true,
+      active: { name: 'fast', agentBackend: 'pi', model: 'glm-flash' },
+      sessionBoundary: 'new-session',
+    });
+    const ctx = context({ switchAgentPreset });
+    const use = await handleAgent({ type: 'agent', chatId: 'a', data: { subcommand: 'use', preset: 'fast' } }, ctx);
+    expect(use).toMatchObject({ success: true });
+    expect(use.message).toContain('pi / glm-flash');
+    expect(use.message).not.toContain('Overrides on top of the preset');
+    // T-068 coexistence: `use` keeps its single-token argument surface while
+    // backend/model dispatch independently on the same command.
+    expect(ctx.agentPool.switchAgentPreset).toHaveBeenCalledExactlyOnceWith('a', 'fast', undefined, undefined);
+  });
+
+  it('degrades with a clear message when a dimension switcher is not wired', async () => {
+    const missing = await handleAgent(
+      { type: 'agent', chatId: 'a', data: { subcommand: 'backend', preset: 'pi', value: 'pi' } },
+      context({ switchAgentBackend: undefined })
+    );
+    expect(missing).toMatchObject({ success: false });
+    expect(missing.message).toContain('Switching the backend dimension is not available on this node.');
+    const missingModel = await handleAgent(
+      { type: 'agent', chatId: 'a', data: { subcommand: 'model', preset: 'x', value: 'x' } },
+      context({ switchAgentModel: undefined })
+    );
+    expect(missingModel.message).toContain('Switching the model dimension is not available on this node.');
+  });
+
+  it('shows usage when a dimension is given without a value', async () => {
+    const backend = await handleAgent({ type: 'agent', chatId: 'a', data: { subcommand: 'backend' } }, context());
+    expect(backend).toMatchObject({ success: false });
+    expect(backend.message).toContain('Usage: `/agent backend <claude|pi|codex|dsh>`');
+    const model = await handleAgent({ type: 'agent', chatId: 'a', data: { subcommand: 'model' } }, context());
+    expect(model.message).toContain('Usage: `/agent model <model-id>`');
+  });
+
+  it('surfaces both dimensions on /agent current', async () => {
+    const result = await handleAgent({ type: 'agent', chatId: 'a', data: { subcommand: 'current' } }, context({
+      getActiveAgentPreset: () => ({
+        name: 'default', agentBackend: 'pi', model: 'glm-5.3',
+        backendOverride: 'pi', modelOverride: 'glm-5.3',
+      }),
+    }));
+    expect(result).toMatchObject({ success: true });
+    expect(result.message).toContain('🤖 Active agent: **default** — pi / glm-5.3');
+    expect(result.message).toContain('Overrides on top of the preset: backend=pi, model=glm-5.3.');
+    expect(result.message).toContain('`/agent backend <name>`');
+    expect(result.message).toContain('`/agent model <id>`');
+  });
+
+  it('keeps every subcommand in the usage line for unknown input', async () => {
+    const result = await handleAgent({ type: 'agent', chatId: 'a', data: { subcommand: 'bogus' } }, context());
+    expect(result).toMatchObject({ success: false });
+    expect(result.message).toContain('`/agent [current|list|use <preset>|backend <name>|model <id>|config]`');
   });
 });

@@ -27,8 +27,12 @@ export const commandRegistry: CommandDefinition[] = [
   { type: 'trigger', handler: handleTrigger as CommandDefinition['handler'], description: '切换触发模式', usage: '/trigger [mention|always|auto]',
     isAvailable: (c, command) => !!c.triggerMode && command.chatType !== 'p2p' },
   { type: 'project', handler: handleProject as CommandDefinition['handler'], description: '项目管理命令', usage: '/project [use|reset|info]', isAvailable: c => !!c.projectManager },
-  { type: 'agent', handler: handleAgent as CommandDefinition['handler'], description: '查看或切换 backend/model 预设', usage: '/agent [current|list|use <preset>|config]',
-    isAvailable: c => !!c.agentPool?.listAgentPresets && !!c.agentPool.getActiveAgentPreset && !!c.agentPool.switchAgentPreset && c.agentPool.listAgentPresets().length > 0 },
+  { type: 'agent', handler: handleAgent as CommandDefinition['handler'], description: '查看或切换 backend/model 预设', usage: '/agent [current|list|use <preset>|backend <name>|model <id>|config]',
+    // Issue #5255: with the orthogonal dimension switches wired, /agent is
+    // useful even before any `agents:` map exists — the singleton default
+    // provides the initial value for backend/model switches.
+    isAvailable: c => !!c.agentPool?.listAgentPresets && !!c.agentPool.getActiveAgentPreset && !!c.agentPool.switchAgentPreset
+      && (c.agentPool.listAgentPresets().length > 0 || !!c.agentPool.switchAgentBackend || !!c.agentPool.switchAgentModel) },
   { type: 'steer', handler: handleSteer as CommandDefinition['handler'], description: '运行中纠偏（需原生 turn/steer 支持）', usage: '/steer <instruction>',
     isAvailable: c => !!c.agentPool?.steer,
     showInHelp: (c, command) => c.agentPool.canSteer?.(command.chatId, command.threadRootId) === true },
