@@ -159,7 +159,8 @@ See [Claude model configuration](https://code.claude.com/docs/en/model-config).
 
 For a gateway or provider-specific model ID Claude Code does not know
 (`kimi-k3`, a Bedrock inference profile, …), bind its client-side identity with
-`agents.<name>.claude.behavesAs` (Issue #5410): a full Claude model ID whose catalog
+`agents.<name>.claude.behavesAs` (Issue #5410): a full Claude model ID (or a
+bare alias, see below) whose catalog
 entry — context window, capability and effort defaults — Claude Code applies to
 `model` while still sending `model` on the wire.
 `behavesAs: claude-opus-5` with the provider default `defaultModel: kimi-k3`
@@ -168,14 +169,27 @@ settings file; no user `~/.claude/settings.json` is written. Overrides also
 apply on the `ANTHROPIC_DEFAULT_*_MODEL` env-pin path. Window rules: Opus-line
 IDs (`claude-opus-5`, `claude-opus-4-8`, `claude-opus-4-7`) are the only 1M
 context keys — `claude-sonnet-4-5` / `claude-haiku-4-5` assume 200k, whatever
-slot the model serves. Pin the ID deliberately per deployment: aliases like
-`opus` are not auto-resolved, and once an override applies,
-`CLAUDE_CODE_MAX_CONTEXT_TOKENS` stops applying while the slot inherits the
-target's effort defaults (override with `CLAUDE_EFFORT`). Requires Claude
+slot the model serves. Pin the ID deliberately per deployment; once an
+override applies, `CLAUDE_CODE_MAX_CONTEXT_TOKENS` stops applying while the
+slot inherits the target's effort defaults (override with `CLAUDE_EFFORT`).
+Requires Claude
 Code ≥ v2.1.200; agent startup fails with a clear error when the bundled CLI
 is older. For multi-slot mappings set `agents.<name>.claude.modelOverrides` directly —
 a raw Claude Code `modelOverrides` map (full Claude model ID → provider ID),
 mutually exclusive with `behavesAs`.
+
+`behavesAs` also accepts a bare tier alias (Issue #5422). The alias names one
+of the tier identities the three-tier `models` mapping declares — `opus`,
+`sonnet` or `haiku`: those three tier mappings the user sets above ARE the
+behavesAs declaration, and a bare `behavesAs` writes exactly them into the
+behavesAs parameter mapping at config time. The compile shares one source
+with the tier environment — every tier key maps to `models.<tier>`, an
+omitted tier deriving from the provider `defaultModel` — so editing
+`agents.<name>.claude.models` changes behavesAs behavior everywhere at once.
+Nothing resolves against the running Claude catalog and no first-use
+resolution path exists. An alias that is not one of the declared tiers
+(`opus`, `sonnet`, `haiku`) is an explicit config-time error listing the
+declared tiers — never a silent fallback.
 
 One binding can serve several harnesses (Issue #5679): bind both
 `backend: claude` and `backend: dsh` (or `pi`) agents to the same `llms` entry

@@ -1672,3 +1672,144 @@ setInterval(() => {}, 1000);
     }
   });
 });
+
+// ============================================================================
+// behavesAs parameter mapping (Issue #5422, r2)
+// ============================================================================
+
+describe('behavesAs parameter mapping (Issue #5422)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  async function drain(stream: ReturnType<ClaudeSDKProvider['queryStream']>): Promise<AgentMessage[]> {
+    const messages: AgentMessage[] = [];
+    try {
+      for await (const message of stream.iterator) { messages.push(message); }
+    } finally {
+      stream.handle.close();
+    }
+    return messages;
+  }
+
+  /**
+   * A mock session carrying the r1 catalog channels, so tests can prove r2
+   * never calls them. Captures the modelOverrides the SDK received at
+   * invocation time — #5410 routes them into a private settings file that is
+   * removed once the stream settles.
+   */
+  function staticSession(captured: Array<Record<string, string> | undefined>, events?: string[]) {
+    mockQuery.mockImplementation(({ prompt, options }: { prompt: AsyncGenerator<unknown>; options: { settings?: unknown } }) => {
+      const { settings } = options;
+      captured.push(
+        typeof settings !== 'string'
+          ? (settings as { modelOverrides?: Record<string, string> } | undefined)?.modelOverrides
+          : (JSON.parse(readFileSync(settings, 'utf8')) as { modelOverrides?: Record<string, string> }).modelOverrides
+      );
+      return Object.assign((async function* () {
+        const first = await prompt.next();
+        events?.push(first.done ? 'input-closed' : 'input-forwarded');
+        yield { type: 'assistant', message: { content: [{ type: 'text', text: 'done' }] } };
+        yield { type: 'result', subtype: 'success', is_error: false, usage: {} };
+      })(), {
+        close: vi.fn(),
+        supportedModels: () => {
+          events?.push('catalog');
+          return Promise.resolve([
+            { value: 'opus', resolvedModel: 'claude-opus-5', displayName: 'opus', description: '' },
+          ]);
+        },
+        applyFlagSettings: () => {
+          events?.push('apply');
+          return Promise.resolve();
+        },
+      });
+    });
+  }
+
+  it('passes the config-compiled three-tier mapping to SDK settings verbatim without consulting the session', async () => {
+    const events: string[] = [];
+    const captured: Array<Record<string, string> | undefined> = [];
+    staticSession(captured, events);
+    const provider = new ClaudeSDKProvider();
+    const stream = provider.queryStream((async function* () {
+      events.push('host-input-pulled');
+      yield { role: 'user', content: 'hi' } as UserInput;
+    })(), {
+      // Exactly what resolved-agents compiles for behavesAs: "opus" under
+      // claude.models: { opus: kimi-k3, sonnet: kimi-k3-flash, haiku: kimi-k3-air }.
+      settingSources: [],
+      modelOverrides: { opus: 'kimi-k3', sonnet: 'kimi-k3-flash', haiku: 'kimi-k3-air' },
+      model: 'kimi-k3',
+    });
+    const messages = await drain(stream);
+    expect(messages.map((message) => message.type)).toContain('text');
+    // No resolution step gates the input: the host input flows straight
+    // through, and the catalog / flag-settings channels stay untouched.
+    expect(events).toEqual(['host-input-pulled', 'input-forwarded']);
+    expect(captured[0]).toEqual({ opus: 'kimi-k3', sonnet: 'kimi-k3-flash', haiku: 'kimi-k3-air' });
+    provider.dispose();
+  });
+
+  it('passes an explicit full-ID mapping through unchanged', async () => {
+    const captured: Array<Record<string, string> | undefined> = [];
+    staticSession(captured);
+    const provider = new ClaudeSDKProvider();
+    const stream = provider.queryStream((async function* () {
+      yield { role: 'user', content: 'hi' } as UserInput;
+    })(), {
+      settingSources: [], modelOverrides: { 'claude-opus-5': 'kimi-k3' }, model: 'kimi-k3',
+    });
+    await drain(stream);
+    expect(captured[0]).toEqual({ 'claude-opus-5': 'kimi-k3' });
+    provider.dispose();
+  });
+
+  it('leaves settings.modelOverrides unset when no mapping is configured', async () => {
+    const captured: Array<Record<string, string> | undefined> = [];
+    staticSession(captured);
+    const provider = new ClaudeSDKProvider();
+    const stream = provider.queryStream((async function* () {
+      yield { role: 'user', content: 'hi' } as UserInput;
+    })(), { settingSources: [], model: 'kimi-k3' });
+    await drain(stream);
+    expect(captured[0]).toBeUndefined();
+    provider.dispose();
+  });
+
+  it('serves whatever mapping config compiled to every fresh session — only a mapping change alters it', async () => {
+    // The r2 "simulated upgrade" replacement: the runtime no longer
+    // re-resolves a bare alias against a running catalog. Behavior changes
+    // exactly when agents.<name>.claude.models changes (config recompile),
+    // so the provider serves map A to session 1 and the re-mapped B to
+    // session 2 verbatim, with zero catalog consultation in between.
+    const events: string[] = [];
+    const captured: Array<Record<string, string> | undefined> = [];
+    staticSession(captured, events);
+    const provider = new ClaudeSDKProvider();
+    // behavesAs: opus, no claude.models declared — all tiers derive from
+    // the provider defaultModel.
+    await drain(provider.queryStream((async function* () {
+      yield { role: 'user', content: 'hi' } as UserInput;
+    })(), {
+      settingSources: [],
+      modelOverrides: { opus: 'glm-5.3', sonnet: 'glm-5.3', haiku: 'glm-5.3' },
+      model: 'glm-5.3',
+    }));
+    // The operator redeclares claude.models: the same behavesAs now maps the
+    // tiers onto different provider models.
+    await drain(provider.queryStream((async function* () {
+      yield { role: 'user', content: 'hi again' } as UserInput;
+    })(), {
+      settingSources: [],
+      modelOverrides: { opus: 'kimi-k3', sonnet: 'kimi-k3-flash', haiku: 'kimi-k3-air' },
+      model: 'kimi-k3',
+    }));
+    expect(captured).toEqual([
+      { opus: 'glm-5.3', sonnet: 'glm-5.3', haiku: 'glm-5.3' },
+      { opus: 'kimi-k3', sonnet: 'kimi-k3-flash', haiku: 'kimi-k3-air' },
+    ]);
+    expect(events).toEqual(['input-forwarded', 'input-forwarded']);
+    provider.dispose();
+  });
+});

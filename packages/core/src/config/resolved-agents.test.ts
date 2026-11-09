@@ -535,9 +535,6 @@ describe('named runtime and LLM configuration', () => {
   });
   it.each([
     (c: DisclaudeConfig) => {
-      c.agents!.assistant.claude = { behavesAs: 'opus' };
-    },
-    (c: DisclaudeConfig) => {
       c.agents!.assistant.claude = { behavesAs: 'claude_OPUS' };
     },
     (c: DisclaudeConfig) => {
@@ -572,15 +569,93 @@ describe('named runtime and LLM configuration', () => {
     expect(result.errors.length).toBe(1);
     expect(result.errors.join('\n')).toMatch(/behavesAs|modelOverrides/);
   });
-  it('rejects the bare alias with explicit pinning guidance', () => {
+  it('compiles a bare tier alias into the full three-tier parameter mapping (Issue #5422 r2)', () => {
     const config = configuration();
     config.agents!.assistant.claude = { ...config.agents!.assistant.claude, behavesAs: 'opus' };
+    const result = resolveConfiguredAgents(config);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    // No claude.models declared: every tier derives from the provider
+    // defaultModel. The compile happens at config time — the runtime never
+    // resolves against a running Claude catalog.
+    expect(result.presets.assistant.modelOverrides).toEqual({
+      opus: 'glm-5.3', sonnet: 'glm-5.3', haiku: 'glm-5.3',
+    });
+    expect((result.presets.assistant as unknown as Record<string, unknown>).behavesAsAlias).toBeUndefined();
+  });
+  it('compiles the mapping from the user-declared tiers; changing claude.models changes behavesAs', () => {
+    const config = configuration();
+    config.agents!.assistant.claude = {
+      ...config.agents!.assistant.claude,
+      behavesAs: 'opus',
+      models: { opus: 'kimi-k3', sonnet: 'kimi-k3-flash', haiku: 'kimi-k3-air' },
+    };
+    const result = resolveConfiguredAgents(config);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.presets.assistant.modelOverrides).toEqual({
+      opus: 'kimi-k3', sonnet: 'kimi-k3-flash', haiku: 'kimi-k3-air',
+    });
+    // The same declaration the tier environment builds from — one source of
+    // truth, so redeclaring the mapping moves both together.
+    expect(result.presets.assistant.env).toEqual(tierEnv('kimi-k3', 'kimi-k3-flash', 'kimi-k3-air'));
+  });
+  it('fills tiers omitted from claude.models with the provider default in the compiled mapping', () => {
+    const config = configuration();
+    config.agents!.assistant.claude = { behavesAs: 'sonnet', models: { sonnet: 'kimi-k3-flash' } };
+    const result = resolveConfiguredAgents(config);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.presets.assistant.modelOverrides).toEqual({
+      opus: 'glm-5.3', sonnet: 'kimi-k3-flash', haiku: 'glm-5.3',
+    });
+  });
+  it('normalizes a mixed-case bare alias onto the canonical tier keys', () => {
+    const config = configuration();
+    config.agents!.assistant.claude = { ...config.agents!.assistant.claude, behavesAs: ' Opus ' };
+    const result = resolveConfiguredAgents(config);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.presets.assistant.modelOverrides).toEqual({
+      opus: 'glm-5.3', sonnet: 'glm-5.3', haiku: 'glm-5.3',
+    });
+  });
+  it.each(['fable', 'default', 'turbo'] as const)(
+    'rejects a bare alias that is not a declared model tier: %s (r2)',
+    (alias) => {
+      const config = configuration();
+      config.agents!.assistant.claude = { ...config.agents!.assistant.claude, behavesAs: alias };
+      const result = resolveConfiguredAgents(config);
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        return;
+      }
+      expect(result.errors.length).toBe(1);
+      expect(result.errors.join('\n')).toBe(
+        `agents.assistant.claude.behavesAs "${alias}" is not a declared model tier (declared: opus, sonnet, haiku); `
+        + 'declare it under agents.assistant.claude.models or use a full Claude model ID'
+      );
+    }
+  );
+  it('lists only the tiers the user declared when rejecting a non-declared alias', () => {
+    const config = configuration();
+    config.agents!.assistant.claude = { behavesAs: 'fable', models: { sonnet: 'kimi-k3-flash' } };
     const result = resolveConfiguredAgents(config);
     expect(result.ok).toBe(false);
     if (result.ok) {
       return;
     }
-    expect(result.errors.join('\n')).toContain('aliases are not auto-resolved');
+    expect(result.errors.join('\n')).toContain(
+      'agents.assistant.claude.behavesAs "fable" is not a declared model tier (declared: sonnet)'
+    );
   });
 
   // --------------------------------------------------------------------------

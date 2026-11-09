@@ -94,7 +94,19 @@ export interface ClaudeModelTiers {
 }
 
 export interface ClaudeAgentConfig {
-  /** Full Claude catalog identity used for the provider default model. */
+  /**
+   * Claude catalog identity for the provider default model: a full Claude
+   * model ID, or a bare tier alias — `opus`, `sonnet` or `haiku` — naming
+   * one of the three-tier identities the `models` mapping declares. The
+   * three mappings the user sets in `models` ARE the behavesAs parameter
+   * mapping: a bare alias compiles exactly those three entries at config
+   * time (omitted tiers derived from the provider `defaultModel`), so
+   * changing `models` changes behavesAs behavior globally (Issue #5422).
+   * An alias that is not a declared tier is a config error listing the
+   * declared tiers — never a silent fallback, and never resolved against
+   * a running Claude catalog. A full ID compiles one `modelOverrides`
+   * entry at config time (unchanged).
+   */
   behavesAs?: string;
   /** Claude model names (including Opus/Sonnet/Haiku slots) mapped to provider IDs. */
   modelOverrides?: Record<string, string>;

@@ -140,7 +140,15 @@ export function adaptOptions(
 
   // Issue #5410: gateway model IDs ride Claude Code's modelOverrides so the
   // pinned catalog entry's window and capability defaults apply to them.
-  if (options.modelOverrides) {
+  // Issue #5422: bare alias keys (from a `behavesAs` alias) have no catalog
+  // entry yet — keep them out of the settings file; the provider resolves
+  // them against the booted session and merges the full-ID map before the
+  // first input.
+  // Issue #5422 (r2): modelOverrides arrives fully static — bare behavesAs
+  // aliases are compiled into three-tier parameter mappings at config time
+  // from the user-declared agents.<name>.claude.models mapping, so the
+  // runtime needs no alias resolution or catalog lookup.
+  if (options.modelOverrides && Object.keys(options.modelOverrides).length) {
     sdkOptions.settings = {
       ...(sdkOptions.settings as object | undefined),
       modelOverrides: options.modelOverrides,

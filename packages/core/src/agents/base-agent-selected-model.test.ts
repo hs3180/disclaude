@@ -156,6 +156,39 @@ describe('Claude modelOverrides identity (Issue #5410)', () => {
   });
 });
 
+describe('Claude behavesAs bare alias (Issue #5422)', () => {
+  // The generic agent layer is alias-agnostic: a bare `behavesAs` alias is
+  // compiled by config into the tier-keyed modelOverrides mapping itself
+  // (r2: no running-catalog resolution exists anywhere), so the standard
+  // passthrough and startup floor cover it.
+  it('passes an alias-keyed map to native queries unchanged, without alias-specific options', async () => {
+    const options = await selectedOptions('kimi-k3', undefined, undefined, { opus: 'kimi-k3' });
+    expect(options.modelOverrides).toEqual({ opus: 'kimi-k3' });
+    // The generic query options carry no alias concept of their own.
+    const raw = options as unknown as Record<string, unknown>;
+    expect(raw.behavesAsAlias).toBeUndefined();
+    expect(raw.llm).toBeUndefined();
+  });
+  it('fails agent startup when the bundled Claude Code predates modelOverrides with an alias key', async () => {
+    vi.doMock('../sdk/providers/claude/version.js', async (importOriginal) => ({
+      ...(await importOriginal<Record<string, unknown>>()),
+      bundledClaudeCodeVersion: () => '2.1.199',
+    }));
+    const { BaseAgent } = await import('./base-agent.js');
+    class GateAliasAgent extends BaseAgent {
+      protected getAgentName() { return 'GateAliasAgent'; }
+    }
+    expect(() => new GateAliasAgent({
+      apiKey: 'selected-key',
+      apiProtocol: 'anthropic',
+      model: 'kimi-k3',
+      llm: 'gateway',
+      modelOverrides: { opus: 'kimi-k3' },
+      agentBackend: 'claude',
+    })).toThrow(/requires Claude Code >= 2\.1\.200/);
+  });
+});
+
 describe('shared bindings across harnesses (Issue #5679)', () => {
   beforeEach(() => {
     vi.stubEnv('SHARED_GATEWAY_KEY', 'shared-test-key');

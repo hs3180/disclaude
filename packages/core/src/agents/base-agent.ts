@@ -36,16 +36,7 @@ import path from 'node:path';
 import { assertToolOptions } from '../sdk/tools.js';
 import { withLlmSessionLimit } from '../sdk/llm-session-limit.js';
 import { bundledClaudeCodeVersion, lacksModelOverrides } from '../sdk/providers/claude/version.js';
-
-/** Opus 4.7 and later (including Opus 5) are the 1M-context keys in Claude Code's catalog (Issue #5410). */
-function assumedContextWindow(claudeModelId: string): 1_000_000 | 200_000 {
-  const match = /^claude-opus-(\d+)(?:-(\d+))?/.exec(claudeModelId);
-  if (!match) {
-    return 200_000;
-  }
-  const major = Number(match[1]);
-  return major > 4 || (major === 4 && Number(match[2] ?? 0) >= 7) ? 1_000_000 : 200_000;
-}
+import { assumedContextWindow } from '../sdk/providers/claude/model-alias.js';
 
 // Re-export BaseAgentConfig for backward compatibility
 export type { BaseAgentConfig } from './types.js';

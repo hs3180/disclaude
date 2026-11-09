@@ -416,7 +416,9 @@ export interface AgentQueryOptions {
    * provider ID. Claude Code applies the key's catalog entry — context window,
    * capabilities, effort defaults — to the provider ID while sending the
    * provider ID on the wire. Injected via the per-query private settings file;
-   * requires Claude Code ≥ 2.1.200.
+   * requires Claude Code ≥ 2.1.200. A bare alias key (Issue #5422) has no
+   * catalog entry at spawn time; the Claude provider resolves it against the
+   * booted session's model catalog before the first input.
    */
   modelOverrides?: Record<string, string>;
   /**
