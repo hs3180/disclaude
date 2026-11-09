@@ -1119,7 +1119,8 @@ describe('ChatAgent (service)', () => {
       const failure = new Error('Original tool transport failed');
       try {
         store.startTurn({ chatId: 'owned-steer', sessionKey: 'owned-steer', traceId: 'trace-owner',
-          runId: 'run-owner', sourceMessageId: 'owner-A', threadRootId: 'root-A', startedAt: Date.now() });
+          runId: 'run-owner', sourceMessageId: 'owner-A', threadRootId: 'root-A', startedAt: Date.now(),
+          origin: 'interactive', diagnosticId: 'diag-owner' });
         (agent as any).recoveryRunIds.set('owner-A', 'run-owner');
         steer.mockImplementation(() => {
           const active = JSON.parse(readFileSync(journalPath, 'utf8')).turns;
@@ -3881,6 +3882,8 @@ describe('ChatAgent (service)', () => {
         runId: 'old-run',
         sourceMessageId: 'old-message',
         startedAt: 100,
+        origin: 'interactive',
+        diagnosticId: 'old-diag',
       });
       const nextProcess = new ServiceTurnRecoveryStore(journalPath);
       nextProcess.initialize(200);
@@ -3903,7 +3906,7 @@ describe('ChatAgent (service)', () => {
         await agent.processMessage({ chatId: 'reconcile-chat', payload: 'new request', messageId: 'new-message' });
         await agent.turnCompleteFor('new-message');
         expect(localCallbacks.sendMessage.mock.calls[0]?.[1]).toContain('old-message');
-        expect(localCallbacks.sendMessage.mock.calls[0]?.[1]).toContain('系统没有自动重放');
+        expect(localCallbacks.sendMessage.mock.calls[0]?.[1]).toContain('系统会自动向该会话注入一次续跑');
         expect(localCallbacks.sendMessage.mock.calls[1]?.[1]).toBe('New request response.');
         expect(nextProcess.getPendingNotifications('reconcile-chat')).toEqual([]);
       } finally {
@@ -3952,6 +3955,10 @@ describe('ChatAgent (service)', () => {
           runId: expect.any(String),
           sourceMessageId: 'source-message-1',
           state: 'active',
+          // Issue #5733: interactive turns are registered with their turn-scoped
+          // diagnostic id, so notices/banners and the ledger share one fact set.
+          origin: 'interactive',
+          diagnosticId: expect.any(String),
         });
 
         await agent.interruptForServiceRestart(100);
@@ -3965,7 +3972,7 @@ describe('ChatAgent (service)', () => {
         });
         expect(localCallbacks.sendMessage).toHaveBeenCalledWith(
           'restart-chat',
-          expect.stringContaining('系统没有自动重放'),
+          expect.stringContaining('系统会自动向该会话注入一次续跑'),
           'topic-root'
         );
 
@@ -4007,6 +4014,40 @@ describe('ChatAgent (service)', () => {
       const recovered = new ServiceTurnRecoveryStore(filePath).initialize();
       expect(recovered).toEqual([expect.objectContaining({ sourceMessageId: 'durable-input', state: 'interrupted_by_service_restart' })]);
     } finally { release(); agent.dispose(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  it('registers a scheduled-turn interruption with scheduled origin and no auto-resume claim (#5733)', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'restart-scheduled-origin-'));
+    const filePath = join(directory, 'turns.json');
+    const store = new ServiceTurnRecoveryStore(filePath);
+    store.initialize();
+    const callbacks = createMockCallbacks();
+    callbacks.sendMessage.mockResolvedValue('restart-notice-receipt');
+    const agent = new ChatAgent({ chatId: 'restart-scheduled', callbacks, apiKey: 'key', model: 'model',
+      apiProtocol: 'anthropic', turnRecovery: store });
+    (agent as any).isAgentTeamsEnabled = () => false;
+    let release!: () => void;
+    const parked = new Promise<void>(resolve => { release = resolve; });
+    (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(), cancel: vi.fn() },
+      iterator: (async function* () { await parked; })() });
+    try {
+      await agent.processMessage({ chatId: 'restart-scheduled', payload: 'cron work',
+        messageId: 'sched-task-7', threadRootId: 'topic-7' });
+      await agent.interruptForServiceRestart(1);
+      const [persisted] = JSON.parse(readFileSync(filePath, 'utf8')).turns;
+      expect(persisted).toMatchObject({
+        sourceMessageId: 'sched-task-7',
+        state: 'interrupted_by_service_restart',
+        origin: 'scheduled',
+        diagnosticId: expect.any(String),
+      });
+      expect(persisted.autoResume).toBeUndefined();
+      // Scheduled turns keep the replay-averse notice: the scheduler owns retry.
+      expect(callbacks.sendMessage).toHaveBeenCalledWith('restart-scheduled',
+        expect.stringContaining('系统没有自动重放'), 'topic-7');
+    } finally {
+      release(); agent.dispose(); rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it('reconciles an input accepted before history loading without later pushing or replaying it', async () => {

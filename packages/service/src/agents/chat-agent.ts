@@ -1354,6 +1354,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       traceId: `${chatId}:${messageId}`,
       runId: crypto.randomUUID(),
       sourceMessageId: messageId,
+      // Issue #5733: one durable diagnostic id per turn — shared by the
+      // recovery ledger, user-visible banners and the on-disk diagnostic record.
+      diagnosticId: crypto.randomUUID(),
     });
     this.logger.info({ event: 'agent_turn', state: 'started', ...lifecycleContext, user_visible: false }, 'agent_turn');
 
@@ -1487,6 +1490,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         sourceMessageId: messageId,
         threadRootId: threadRootId ?? this.conversationOrchestrator.getThreadRoot(chatId),
         startedAt: Date.now(),
+        // Issue #5733: interactive turns (real platform messages) get startup
+        // auto-resume; scheduled turns keep the scheduler's own semantics.
+        origin: messageId.startsWith('sched-') ? 'scheduled' : 'interactive',
+        diagnosticId: lifecycleContext.diagnosticId,
       });
       this.recoveryRunIds.set(messageId, lifecycleContext.runId);
     } catch (error) {
@@ -3605,11 +3612,24 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             missingToolReplyError = new Error('Provider ended after tools with no user-visible reply');
             missingToolReplyError.name = 'ProviderMissingReplyError';
             const context = currentTurnLifecycleContext;
+            // Issue #5733 ②/③: the banner's diagnostic id is the TURN's id —
+            // the same fact the recovery ledger stores — and gets a durable
+            // on-disk record so the id is searchable after the fact.
+            const turnDiagnosticId = context?.diagnosticId ?? diagnosticId;
+            this.turnRecovery?.recordTurnDiagnostic(turnDiagnosticId, {
+              kind: 'missing_tool_reply',
+              chatId,
+              runId: context?.runId,
+              traceId: context?.traceId,
+              sourceMessageId: context?.sourceMessageId ?? currentTurnMessageId,
+              toolCallCount,
+              occurredAt: Date.now(),
+            });
             const delivered = await this.deliverUserVisible(chatId,
-              `❌ 本轮工具调用后未收到最终回复，结果可能不完整。消息 ID: ${context?.sourceMessageId ?? currentTurnMessageId}。诊断 ID: ${diagnosticId}。请先核对已执行的操作，再决定是否继续；系统不会自动重放工具。`,
+              `❌ 本轮工具调用后未收到最终回复，结果可能不完整。消息 ID: ${context?.sourceMessageId ?? currentTurnMessageId}。诊断 ID: ${turnDiagnosticId}。请先核对已执行的操作，再决定是否继续；系统不会自动重放工具。`,
               resolveReplyThreadRoot());
             if (!turnHasTerminal) {
-              this.logger.warn({ event: 'agent_turn', state: 'failed', ...context, diagnosticId,
+              this.logger.warn({ event: 'agent_turn', state: 'failed', ...context, diagnosticId: turnDiagnosticId,
                 failureCause: 'missing_tool_reply', toolCallCount, user_visible: delivered,
               }, 'Terminal outcome for tool-only turn with no visible reply (#5288)');
             }
@@ -4097,8 +4117,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         // Issue #3003: Log detailed timing on iterator error
         this.logger.error(
           {
-            diagnosticId,
             ...((!turnHasTerminal ? currentTurnLifecycleContext : undefined) ?? this.pendingLifecycleContexts[0]),
+            // Keep the failure-scoped id explicit AFTER the spread: the turn
+            // correlation now also carries its own #5733 diagnosticId, and this
+            // id must stay the one the user-visible failure notice prints.
+            diagnosticId,
             chatId,
             messageCount,
             elapsedMs,

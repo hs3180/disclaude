@@ -36,7 +36,9 @@ export interface UserInput {
   role: 'user';
   content: string | ContentBlock[];
   /** Host-only identifiers; adapters must not append these to model content. */
-  correlation?: { runId: string; chatId: string; sourceMessageId: string; traceId: string };
+  correlation?: { runId: string; chatId: string; sourceMessageId: string; traceId: string;
+    /** Issue #5733: durable per-turn diagnostic id — same id in the ledger, notices and on-disk diagnostic records. */
+    diagnosticId?: string };
   inputContext?: AgentInputContext;
   /** Stable prompt instructions omitted on this continuation. Apply only if starting a fresh native conversation. */
   continuationContext?: string;

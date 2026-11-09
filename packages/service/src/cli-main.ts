@@ -54,6 +54,10 @@ import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
 import { waitForStartupReadiness } from './channels/feishu/dns-readiness.js';
 import { createChannelCallbacksFactory } from './utils/channel-handlers.js';
 import { ServiceTurnRecoveryStore } from './service-turn-recovery.js';
+import {
+  INTERRUPTED_TURN_RESUME_PROMPT,
+  resumeInterruptedInteractiveTurns,
+} from './service-turn-resume.js';
 import { BackgroundAgentTasks } from './agents/background-agent-tasks.js';
 import { createTaskParentReporter } from './agents/background-task-parent.js';
 import { GoalExecutionService } from './goals/goal-execution-service.js';
@@ -526,7 +530,10 @@ export async function main(): Promise<void> {
   }
 
   const turnRecovery = new ServiceTurnRecoveryStore(
-    path.join(workspaceDir, '.disclaude', 'service-turn-recovery.json')
+    path.join(workspaceDir, '.disclaude', 'service-turn-recovery.json'),
+    // Issue #5733 ③: durable, searchable diagnostic records keyed by the
+    // diagnostic id printed in notices and banners.
+    { diagnosticsDir: path.join(workspaceDir, '.disclaude', 'turn-diagnostics') }
   );
   try {
     const recoveredTurns = turnRecovery.initialize();
@@ -879,7 +886,7 @@ export async function main(): Promise<void> {
 
     // Channels are ready: report prior-process interruptions even if the
     // user sends no further message. Failed delivery stays pending for that
-    // session's next available path; startup never replays model inputs.
+    // session's next available path.
     await turnRecovery.deliverPendingNotifications(
       async (chatId, content, threadRootId) => {
         const channel = channelManager.resolveChannelForChatId(chatId);
@@ -888,6 +895,30 @@ export async function main(): Promise<void> {
       },
       { timeoutMs: 3_000 },
     );
+
+    // Issue #5733 ①: auto-resume interactive turns the previous process
+    // interrupted — the same restart-recovery shape the scheduler owns for
+    // scheduled turns, and the same bounded nudge as the in-session
+    // mid-stream auto-continue. One durable claim per turn (see
+    // service-turn-resume.ts); the notice above already told the user.
+    await resumeInterruptedInteractiveTurns({
+      store: turnRecovery,
+      resolveChannel: (chatId) => channelManager.resolveChannelForChatId(chatId),
+      inject: async (turn, resumeMessageId) => {
+        const agent = agentPool.getOrCreateChatAgent(
+          turn.chatId,
+          routerCallbacksFactory(turn.chatId, turn.threadRootId),
+          turn.threadRootId,
+        );
+        await agent.processMessage({
+          chatId: turn.chatId,
+          payload: INTERRUPTED_TURN_RESUME_PROMPT,
+          messageId: resumeMessageId,
+          threadRootId: turn.threadRootId,
+        });
+      },
+      logger,
+    });
 
     // Log startup info
     for (const { type, config } of channelEntries) {

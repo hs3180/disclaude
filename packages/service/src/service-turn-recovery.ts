@@ -17,6 +17,17 @@ const STORE_VERSION = 1;
 const MAX_RETAINED_TURNS = 1_000;
 const RETENTION_MS = 90 * 24 * 60 * 60 * 1_000;
 
+/** Turns a stored origin into a validated value, defaulting pre-#5733 journals. */
+function normalizeOrigin(sourceMessageId: string, origin: unknown): ServiceTurnOrigin {
+  if (origin === 'interactive' || origin === 'scheduled') { return origin; }
+  // Journals written before Issue #5733 carry no origin: the scheduler's
+  // synthetic ids are the only system-origin turns, everything else was
+  // admitted from a real platform message.
+  return sourceMessageId.startsWith('sched-') ? 'scheduled' : 'interactive';
+}
+
+export type ServiceTurnOrigin = 'interactive' | 'scheduled';
+
 export interface ServiceTurnStart {
   chatId: string;
   sessionKey: string;
@@ -25,6 +36,10 @@ export interface ServiceTurnStart {
   sourceMessageId: string;
   threadRootId?: string;
   startedAt: number;
+  /** Issue #5733: interactive (real platform input) vs scheduled (cron) admission. */
+  origin: ServiceTurnOrigin;
+  /** Issue #5733: durable per-turn diagnostic id shared with banners and on-disk diagnostic records. */
+  diagnosticId: string;
 }
 
 export interface InterruptedServiceTurn extends ServiceTurnStart {
@@ -33,6 +48,8 @@ export interface InterruptedServiceTurn extends ServiceTurnStart {
   interruptedAt: number;
   noticeDeliveredAt?: number;
   noticeMessageId?: string;
+  /** Issue #5733: one auto-resume injection per interrupted turn; durable guard across restarts. */
+  autoResume?: { attemptedAt: number; resumeMessageId: string };
 }
 
 interface ActiveServiceTurn extends ServiceTurnStart {
@@ -46,8 +63,7 @@ interface StoreDocument {
   turns: StoredServiceTurn[];
 }
 
-function isServiceTurn(value: unknown): value is StoredServiceTurn {
-  if (!value || typeof value !== 'object') {
+function isServiceTurn(value: unknown): value is StoredServiceTurn {  if (!value || typeof value !== 'object') {
     return false;
   }
   const turn = value as Record<string, unknown>;
@@ -58,7 +74,10 @@ function isServiceTurn(value: unknown): value is StoredServiceTurn {
     typeof turn.runId === 'string' &&
     typeof turn.sourceMessageId === 'string' &&
     typeof turn.startedAt === 'number' && Number.isFinite(turn.startedAt) &&
-    (turn.threadRootId === undefined || typeof turn.threadRootId === 'string');
+    (turn.threadRootId === undefined || typeof turn.threadRootId === 'string') &&
+    // #5733 additive fields: required on new writes, tolerated in old journals.
+    (turn.origin === undefined || turn.origin === 'interactive' || turn.origin === 'scheduled') &&
+    (turn.diagnosticId === undefined || typeof turn.diagnosticId === 'string');
   if (!common) {
     return false;
   }
@@ -71,7 +90,34 @@ function isServiceTurn(value: unknown): value is StoredServiceTurn {
     typeof turn.interruptedAt === 'number' && Number.isFinite(turn.interruptedAt) &&
     (turn.noticeDeliveredAt === undefined ||
       (typeof turn.noticeDeliveredAt === 'number' && Number.isFinite(turn.noticeDeliveredAt))) &&
-    (turn.noticeMessageId === undefined || typeof turn.noticeMessageId === 'string')
+    (turn.noticeMessageId === undefined || typeof turn.noticeMessageId === 'string') &&
+    (turn.autoResume === undefined ||
+      (typeof turn.autoResume === 'object' && !!turn.autoResume &&
+        typeof (turn.autoResume as Record<string, unknown>).attemptedAt === 'number' &&
+        typeof (turn.autoResume as Record<string, unknown>).resumeMessageId === 'string'))
+  );
+}
+
+/**
+ * Issue #5733 ④: notice wording must state the actual recovery behavior.
+ * Interactive turns are auto-resumed once at startup (service-turn-resume.ts),
+ * so the notice says so; scheduled turns keep the replay-averse wording —
+ * the scheduler owns their retry semantics and must not double-fire.
+ * Exported for tests and for callers that preview the notice content.
+ */
+export function buildInterruptionNotice(turn: InterruptedServiceTurn): string {
+  const ids = `（消息 ID：\`${turn.sourceMessageId}\`，运行 ID：\`${turn.runId}\`` +
+    `${turn.diagnosticId ? `，诊断 ID：\`${turn.diagnosticId}\`` : ''}）`;
+  if (turn.origin === 'interactive') {
+    return (
+      `⏹️ 服务重启时请求尚未完成，现已标记为中断${ids}。` +
+      '系统会自动向该会话注入一次续跑以完成未完成的任务（若不需要请发送 /stop 停止）。' +
+      '已执行的操作不会被自动重放；续跑会先核对已完成状态再继续。'
+    );
+  }
+  return (
+    `⏹️ 服务重启时请求尚未完成，现已标记为中断${ids}。` +
+    '系统没有自动重放，以免重复执行操作。请先核对已发生的操作，再决定是否重新提交或继续。'
   );
 }
 
@@ -83,8 +129,14 @@ function isServiceTurn(value: unknown): value is StoredServiceTurn {
 export class ServiceTurnRecoveryStore {
   private readonly turns = new Map<string, StoredServiceTurn>();
   private readonly noticesInFlight = new Map<string, Promise<void>>();
+  private readonly diagnosticsDir: string | undefined;
 
-  constructor(private readonly filePath: string) {}
+  constructor(
+    private readonly filePath: string,
+    options: { diagnosticsDir?: string } = {},
+  ) {
+    this.diagnosticsDir = options.diagnosticsDir;
+  }
 
   /** Load the prior process journal and persist an interruption outcome for any live turns. */
   initialize(now = Date.now()): InterruptedServiceTurn[] {
@@ -102,7 +154,12 @@ export class ServiceTurnRecoveryStore {
       }
       for (const turn of (raw as StoreDocument).turns) {
         if (this.turns.has(turn.runId)) { throw new Error('Duplicate runId in service turn recovery journal'); }
-        this.turns.set(turn.runId, { ...turn });
+        // Backfill #5733 additive fields so every in-memory record is complete.
+        this.turns.set(turn.runId, {
+          ...turn,
+          origin: normalizeOrigin(turn.sourceMessageId, turn.origin),
+          diagnosticId: turn.diagnosticId ?? '',
+        });
       }
     }
 
@@ -191,6 +248,64 @@ export class ServiceTurnRecoveryStore {
       .map((turn) => ({ ...turn }));
   }
 
+  /** All durable interruption records regardless of notice state (Issue #5733 auto-resume selection). */
+  getInterruptedTurns(): InterruptedServiceTurn[] {
+    return [...this.turns.values()]
+      .filter((turn): turn is InterruptedServiceTurn => turn.state === 'interrupted_by_service_restart')
+      .map((turn) => ({ ...turn }));
+  }
+
+  /**
+   * Durably claim a turn's single auto-resume slot BEFORE injecting the resume
+   * trigger (Issue #5733). Persisting first means a crash between the claim and
+   * the injection can never re-inject on the following startup.
+   */
+  markAutoResumeAttempted(runId: string, resumeMessageId: string, now = Date.now()): boolean {
+    const turn = this.turns.get(runId);
+    if (turn?.state !== 'interrupted_by_service_restart' || turn.autoResume) { return false; }
+    const snapshot = new Map(this.turns);
+    this.turns.set(runId, { ...turn, autoResume: { attemptedAt: now, resumeMessageId } });
+    try {
+      this.persist();
+    } catch (error) {
+      this.turns.clear();
+      for (const [id, entry] of snapshot) { this.turns.set(id, entry); }
+      throw error;
+    }
+    return true;
+  }
+
+  /**
+   * Issue #5733 ③: best-effort durable diagnostic record for a diagnostic id.
+   * Never throws — a diagnostics write failure must not affect turn flow.
+   */
+  recordTurnDiagnostic(diagnosticId: string, record: Record<string, unknown>): void {
+    if (!this.diagnosticsDir || !diagnosticId) { return; }
+    try {
+      mkdirSync(this.diagnosticsDir, { recursive: true });
+      const entry = {
+        version: 1,
+        diagnosticId,
+        recordedAt: Date.now(),
+        journalPath: this.filePath,
+        ...record,
+      };
+      const target = path.join(this.diagnosticsDir, `${diagnosticId}.json`);
+      const temporary = `${target}.tmp`;
+      const fd = openSync(temporary, 'w', 0o600);
+      try {
+        fchmodSync(fd, 0o600);
+        writeFileSync(fd, JSON.stringify(entry, null, 2), 'utf8');
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+      renameSync(temporary, target);
+    } catch (error) {
+      logger.warn({ err: error, diagnosticId }, 'Could not persist the turn diagnostic record');
+    }
+  }
+
   /** Reconcile on startup and on the next available session delivery path.
    * A timeout bounds the caller, not the send: keep its in-flight claim until
    * it settles and acknowledge late success instead of sending a duplicate.
@@ -202,9 +317,7 @@ export class ServiceTurnRecoveryStore {
     const operations = this.getPendingNotifications(options.sessionKey).map(record => {
       const existing = this.noticesInFlight.get(record.runId);
       if (existing) { return existing; }
-      const content =
-        `⏹️ 服务重启时请求尚未完成，现已标记为中断（消息 ID：\`${record.sourceMessageId}\`，运行 ID：\`${record.runId}\`）。` +
-        '系统没有自动重放，以免重复执行操作。请先核对已发生的操作，再决定是否重新提交或继续。';
+      const content = buildInterruptionNotice(record);
       const operation = Promise.resolve()
         .then(() => send(record.chatId, content, record.threadRootId))
         .then(receipt => {
@@ -287,6 +400,12 @@ export class ServiceTurnRecoveryStore {
       };
       this.turns.set(runId, record);
       interrupted.push({ ...record });
+      // Issue #5733 ③: every registered interruption gets a searchable
+      // on-disk record keyed by the diagnostic id shown in notices/banners.
+      this.recordTurnDiagnostic(record.diagnosticId, {
+        kind: 'service_restart_interruption',
+        ...record,
+      });
     }
     return interrupted;
   }
