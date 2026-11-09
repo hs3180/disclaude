@@ -25,7 +25,15 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, readFileSync, symlinkSync } from 'node:fs';
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  symlinkSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { manageDiagnosticsPlugin } from '../../../skills/diagnostics-plugin.js';
@@ -46,6 +54,8 @@ const { fakeState } = vi.hoisted(() => {
       scripts: [] as FakeEvent[][],
       /** AgentOptions captured from the constructor. */
       ctorOptions: null as unknown,
+      /** Issue #5718: every AgentOptions in construction order (per-query isolation assertions). */
+      ctorSnapshots: [] as unknown[],
       /** Live listeners registered via subscribe(). */
       listeners: [] as Array<(event: FakeEvent) => Promise<void> | void>,
       /** Issue #4386 (part 5): prompt() parks forever AFTER emitting its scripted events. */
@@ -72,6 +82,16 @@ const { fakeState } = vi.hoisted(() => {
       abortResolvesHang: false,
       /** Issue #4386 (part 5): delay between scripted events (0 = synchronous). */
       eventDelayMs: 0,
+      /**
+       * Issue #5718: steering for the fake native skills channel's loadSkills
+       * — 'ok' discovers the real installed bundle, 'empty'/'diagnostics'
+       * simulate registration failure.
+       */
+      loadSkillsResult: 'ok' as 'ok' | 'empty' | 'diagnostics',
+      /** Issue #5718: cwd each FakeNodeExecutionEnv was constructed with. */
+      nodeEnvCwds: [] as string[],
+      /** Issue #5718: how many times the fake ExecutionEnv was cleaned up. */
+      nodeEnvCleanups: 0,
     },
   };
 });
@@ -80,6 +100,7 @@ class FakeAgent {
   private followUpQueue: unknown[] = [];
   constructor(options: unknown) {
     fakeState.ctorOptions = options;
+    fakeState.ctorSnapshots.push(options);
   }
   subscribe(listener: (event: FakeEvent) => Promise<void> | void): () => void {
     fakeState.listeners.push(listener);
@@ -168,7 +189,127 @@ class FakeAgent {
   async waitForIdle(): Promise<void> {}
 }
 
-vi.mock('@earendil-works/pi-agent-core', () => ({ Agent: FakeAgent }));
+// Issue #5718: the fake ALSO reproduces the native skills channel verified in
+// the published 0.83.0 tarball — `loadSkills` (dist/harness/skills.js:
+// recursive SKILL.md discovery; here mirrored for the exercised paths against
+// REAL files) and `formatSkillsForSystemPrompt` (dist/harness/system-prompt.js,
+// mirrored verbatim: the spec-compatible XML block pi's own harness
+// composes). The capability-ABSENT runtime (pre-0.83.0) is covered separately
+// in provider.skills-channel.test.ts.
+vi.mock('@earendil-works/pi-agent-core', () => ({
+  Agent: FakeAgent,
+  loadSkills: (
+    env: unknown,
+    dirs: string | string[]
+  ): Promise<{
+    skills: Array<{ name: string; description: string; content: string; filePath: string }>;
+    diagnostics: Array<{ type: 'warning'; code: string; message: string; path: string }>;
+  }> => {
+    void env;
+    if (fakeState.loadSkillsResult === 'empty') {
+      return Promise.resolve({ skills: [], diagnostics: [] });
+    }
+    if (fakeState.loadSkillsResult === 'diagnostics') {
+      return Promise.resolve({
+        skills: [],
+        diagnostics: [
+          {
+            type: 'warning',
+            code: 'parse_failed',
+            message: 'fake parse failure',
+            path: String(dirs),
+          },
+        ],
+      });
+    }
+    const skills: Array<{ name: string; description: string; content: string; filePath: string }> =
+      [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (entry.name.startsWith('.') || entry.name === 'node_modules') {
+          continue;
+        }
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+        } else if (entry.isFile() && entry.name === 'SKILL.md') {
+          const raw = readFileSync(full, 'utf8');
+          const frontmatter = /^---\n([\s\S]*?)\n---\n?/.exec(raw);
+          const meta = frontmatter?.[1] ?? '';
+          const name = /^name:\s*(.+)$/m
+            .exec(meta)?.[1]
+            ?.trim()
+            .replace(/^["']|["']$/g, '');
+          const description = /^description:\s*(.+)$/m
+            .exec(meta)?.[1]
+            ?.trim()
+            .replace(/^["']|["']$/g, '');
+          if (name && description) {
+            skills.push({
+              name,
+              description,
+              content: raw.slice(frontmatter ? frontmatter[0].length : 0),
+              filePath: full,
+            });
+          }
+        }
+      }
+    };
+    for (const dir of Array.isArray(dirs) ? dirs : [dirs]) {
+      if (statSync(dir).isDirectory()) {
+        walk(dir);
+      }
+    }
+    return Promise.resolve({ skills, diagnostics: [] });
+  },
+  formatSkillsForSystemPrompt: (
+    skills: Array<{
+      name: string;
+      description: string;
+      filePath: string;
+      disableModelInvocation?: boolean;
+    }>
+  ): string => {
+    const visible = skills.filter((skill) => !skill.disableModelInvocation);
+    if (visible.length === 0) {
+      return '';
+    }
+    const escape = (value: string): string =>
+      value
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+    const lines = [
+      'The following skills provide specialized instructions for specific tasks.',
+      'Read the full skill file when the task matches its description.',
+      'When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.',
+      '',
+      '<available_skills>',
+    ];
+    for (const skill of visible) {
+      lines.push('  <skill>');
+      lines.push(`    <name>${escape(skill.name)}</name>`);
+      lines.push(`    <description>${escape(skill.description)}</description>`);
+      lines.push(`    <location>${escape(skill.filePath)}</location>`);
+      lines.push('  </skill>');
+    }
+    lines.push('</available_skills>');
+    return lines.join('\n');
+  },
+}));
+vi.mock('@earendil-works/pi-agent-core/node', () => ({
+  NodeExecutionEnv: class {
+    constructor(options: { cwd: string }) {
+      fakeState.nodeEnvCwds.push(options.cwd);
+    }
+    cleanup(): Promise<void> {
+      fakeState.nodeEnvCleanups++;
+      return Promise.resolve();
+    }
+  },
+}));
 
 import { PiAgentProvider } from './provider.js';
 import { resetPiRuntimeCache } from './pi-runtime.js';
@@ -230,11 +371,15 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
     fakeState.aborted = false;
     fakeState.scripts = [];
     fakeState.ctorOptions = null;
+    fakeState.ctorSnapshots = [];
     fakeState.listeners = [];
     fakeState.hangPrompt = false;
     fakeState.hangContinue = false;
     fakeState.abortResolvesHang = false;
     fakeState.eventDelayMs = 0;
+    fakeState.loadSkillsResult = 'ok';
+    fakeState.nodeEnvCwds = [];
+    fakeState.nodeEnvCleanups = 0;
     provider = new PiAgentProvider();
     provider.streamFn = stubStreamFn;
   });
@@ -242,7 +387,7 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
   it('throws a clear error when no stream function is configured', () => {
     provider.streamFn = null;
     expect(() => provider.queryStream(inputs(userInput('hi')), baseOptions())).toThrow(
-      /requires model and ANTHROPIC_API_KEY/,
+      /requires model and ANTHROPIC_API_KEY/
     );
   });
 
@@ -254,7 +399,8 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
   it('passes the injected streamFn and adapted system prompt to the pi Agent', async () => {
     fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
     const messages = await collect(
-      provider.queryStream(inputs(userInput('hi')), { ...baseOptions(), systemPrompt: 'be terse' }).iterator,
+      provider.queryStream(inputs(userInput('hi')), { ...baseOptions(), systemPrompt: 'be terse' })
+        .iterator
     );
     expect(fakeState.ctorOptions).toMatchObject({
       streamFn: stubStreamFn,
@@ -264,43 +410,179 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
     expect(messages.map((m) => m.type)).toContain('result');
   });
 
-  it('discovers the installed optional skill from Pi execution cwd while other Projects stay clean', async () => {
+  // -----------------------------------------------------------------------
+  // Issue #5718: native skills delivery through pi's own channel — no
+  // Disclaude-authored manifest in any prompt layer, ever again.
+  // -----------------------------------------------------------------------
+
+  it("delivers the installed plugin through pi's native skills channel, with no self-made manifest", async () => {
     const root = mkdtempSync(join(tmpdir(), 'pi-diagnostics-'));
     try {
-      const project = join(root, 'selected'), other = join(root, 'other'), execution = join(project, 'nested');
-      mkdirSync(execution, { recursive: true }); mkdirSync(other);
+      const project = join(root, 'selected'),
+        other = join(root, 'other'),
+        execution = join(project, 'nested');
+      mkdirSync(execution, { recursive: true });
+      mkdirSync(other);
       manageDiagnosticsPlugin('install', project, resolve('.'));
-      await collect(provider.queryStream(inputs(userInput('hi')), { ...baseOptions(), cwd: execution,
-        projectRoot: project, systemPrompt: 'be terse' }).iterator);
-      const prompt = (fakeState.ctorOptions as { initialState: { systemPrompt: string } }).initialState.systemPrompt;
-      expect(prompt).toContain('be terse'); expect(prompt).toContain('diagnose-logs');
-      const reference = /\[diagnose-logs\]\(([^)]+)\)/.exec(prompt)?.[1];
-      if (!reference) {throw new Error('Pi manifest omitted the installed skill reference');}
-      expect(readFileSync(resolve(execution, decodeURIComponent(reference)), 'utf8')).toContain('Disclaude service issues only');
-      await collect(provider.queryStream(inputs(userInput('hi')), { ...baseOptions(), cwd: other, systemPrompt: 'ordinary' }).iterator);
+      // cwd ≠ projectRoot: the install is discovered from projectRoot while the
+      // query executes from the nested cwd.
+      await collect(
+        provider.queryStream(inputs(userInput('hi')), {
+          ...baseOptions(),
+          cwd: execution,
+          projectRoot: project,
+          systemPrompt: 'be terse',
+        }).iterator
+      );
+      const prompt = (fakeState.ctorOptions as { initialState: { systemPrompt: string } })
+        .initialState.systemPrompt;
+      // User system prompt is preserved verbatim, and the pi-native spec block
+      // (pi's own wording/XML schema) carries the skill with its ABSOLUTE path.
+      expect(prompt.startsWith('be terse\n\n')).toBe(true);
+      expect(prompt).toContain('<available_skills>');
+      expect(prompt).toContain('<name>diagnose-logs</name>');
+      const location = /<location>([^<]+)<\/location>/.exec(prompt)?.[1];
+      if (!location) {
+        throw new Error('pi native skills block omitted the skill location');
+      }
+      expect(readFileSync(location, 'utf8')).toContain('Disclaude service issues only');
+      // The removed bug: a Disclaude-fabricated `Disclaude skills:` markdown
+      // listing. It must never come back — in this layer or any other.
+      expect(prompt).not.toContain('Disclaude skills:');
+      expect(prompt).not.toMatch(/\[diagnose-logs\]\(/);
+      // The discovery env ran against the installed plugin root and was cleaned up.
+      expect(fakeState.nodeEnvCwds).toEqual([
+        join(project, '.disclaude', 'plugins', 'diagnostics'),
+      ]);
+      expect(fakeState.nodeEnvCleanups).toBe(1);
+      // A different, clean Project in the same provider stays untouched.
+      await collect(
+        provider.queryStream(inputs(userInput('hi')), {
+          ...baseOptions(),
+          cwd: other,
+          systemPrompt: 'ordinary',
+        }).iterator
+      );
       expect(fakeState.ctorOptions).toMatchObject({ initialState: { systemPrompt: 'ordinary' } });
+      // Removing the explicit installation restores the no-plugin behavior.
       manageDiagnosticsPlugin('remove', project, resolve('.'));
-      await collect(provider.queryStream(inputs(userInput('hi')), { ...baseOptions(), cwd: execution, projectRoot: project }).iterator);
+      await collect(
+        provider.queryStream(inputs(userInput('hi')), {
+          ...baseOptions(),
+          cwd: execution,
+          projectRoot: project,
+        }).iterator
+      );
       expect(fakeState.ctorOptions).toMatchObject({ initialState: { systemPrompt: '' } });
-    } finally {rmSync(root, { recursive: true, force: true });}
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('fails fast with an explicit diagnosis when native registration yields no skills or diagnostics', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'pi-registration-'));
+    try {
+      const project = join(root, 'project');
+      mkdirSync(project);
+      manageDiagnosticsPlugin('install', project, resolve('.'));
+      for (const [mode, fragment] of [
+        ['empty', /Pi native skill registration failed[^\n]*0 skill\(s\) loaded/],
+        [
+          'diagnostics',
+          /Pi native skill registration failed[^\n]*: parse_failed at [^\n]*\(fake parse failure\)/,
+        ],
+      ] as const) {
+        fakeState.loadSkillsResult = mode;
+        fakeState.ctorOptions = null;
+        fakeState.prompts = [];
+        await expect(
+          collect(
+            provider.queryStream(inputs(userInput('hi')), { ...baseOptions(), cwd: project })
+              .iterator
+          )
+        ).rejects.toThrow(fragment);
+        // Fail-fast means fail-BEFORE the agent: no initialState at all, no
+        // model turn submitted, and no manifest anywhere.
+        expect(fakeState.ctorOptions).toBeNull();
+        expect(fakeState.prompts).toEqual([]);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('isolates per-query skill resolution across project switches and concurrent queries', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'pi-isolation-'));
+    try {
+      const withPlugin = join(root, 'with-plugin'),
+        clean = join(root, 'clean');
+      mkdirSync(withPlugin);
+      mkdirSync(clean);
+      manageDiagnosticsPlugin('install', withPlugin, resolve('.'));
+      // A clean query is IN FLIGHT (not awaited) while the plugin project's
+      // query runs to completion; both must resolve independently, each Agent
+      // constructed with its own project's skill resolution. Construction
+      // order is deterministic: the clean query is started first and its
+      // resolution path has no extra awaits before `new Agent`.
+      const cleanRun = collect(
+        provider.queryStream(inputs(userInput('clean')), {
+          ...baseOptions(),
+          cwd: clean,
+          systemPrompt: 'clean prompt',
+        }).iterator
+      );
+      await collect(
+        provider.queryStream(inputs(userInput('skills')), {
+          ...baseOptions(),
+          cwd: withPlugin,
+          systemPrompt: 'skill prompt',
+        }).iterator
+      );
+      await cleanRun;
+      const snap = (index: number): string =>
+        (fakeState.ctorSnapshots[index] as { initialState: { systemPrompt: string } }).initialState
+          .systemPrompt;
+      expect(fakeState.ctorSnapshots).toHaveLength(2);
+      expect(snap(0)).toBe('clean prompt');
+      expect(snap(1)).toContain('skill prompt');
+      expect(snap(1)).toContain('<name>diagnose-logs</name>');
+      // And back again — no sticky block and no sticky absence in either direction.
+      await collect(
+        provider.queryStream(inputs(userInput('hi')), { ...baseOptions(), cwd: clean }).iterator
+      );
+      expect(snap(2)).toBe('');
+      await collect(
+        provider.queryStream(inputs(userInput('hi')), { ...baseOptions(), cwd: withPlugin })
+          .iterator
+      );
+      expect(snap(3)).toContain('<name>diagnose-logs</name>');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('does not discover diagnostics through a cross-Project symlink ancestor', async () => {
     const root = mkdtempSync(join(tmpdir(), 'pi-diagnostics-link-'));
     try {
-      const owner = join(root, 'owner'), other = join(root, 'other'); mkdirSync(owner); mkdirSync(other);
+      const owner = join(root, 'owner'),
+        other = join(root, 'other');
+      mkdirSync(owner);
+      mkdirSync(other);
       manageDiagnosticsPlugin('install', owner, resolve('.'));
       mkdirSync(join(other, '.disclaude'));
       symlinkSync(join(owner, '.disclaude/plugins'), join(other, '.disclaude/plugins'));
-      await collect(provider.queryStream(inputs(userInput('hi')), { ...baseOptions(), cwd: other }).iterator);
+      await collect(
+        provider.queryStream(inputs(userInput('hi')), { ...baseOptions(), cwd: other }).iterator
+      );
       expect(fakeState.ctorOptions).toMatchObject({ initialState: { systemPrompt: '' } });
-    } finally {rmSync(root, { recursive: true, force: true });}
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   // -------------------------------------------------------------------------
   // Claude query fields are rejected; Pi keeps its native runtime defaults.
   // -------------------------------------------------------------------------
-
 
   it('uses Pi runtime defaults without a Claude permission hook', async () => {
     fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
@@ -309,31 +591,52 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
     expect(ctorOptions.beforeToolCall).toBeUndefined();
   });
 
-  it.each(['allowedTools', 'disallowedTools'])('rejects a Claude-only %s option before starting Pi', (field) => {
-    const previous = fakeState.ctorOptions;
-    expect(() => provider.queryStream(inputs(userInput('hi')), { ...baseOptions(), [field]: [] })).toThrow('Claude-specific');
-    expect(fakeState.ctorOptions).toBe(previous);
-  });
+  it.each(['allowedTools', 'disallowedTools'])(
+    'rejects a Claude-only %s option before starting Pi',
+    (field) => {
+      const previous = fakeState.ctorOptions;
+      expect(() =>
+        provider.queryStream(inputs(userInput('hi')), { ...baseOptions(), [field]: [] })
+      ).toThrow('Claude-specific');
+      expect(fakeState.ctorOptions).toBe(previous);
+    }
+  );
 
   describe('host tool injection', () => {
     const makeTool = (name: string) => ({
-      name, description: `${name} tool`,
-      inputSchema: { type: 'object', properties: { x: { type: 'number' } }, required: ['x'], additionalProperties: false },
+      name,
+      description: `${name} tool`,
+      inputSchema: {
+        type: 'object',
+        properties: { x: { type: 'number' } },
+        required: ['x'],
+        additionalProperties: false,
+      },
       outputSchema: { type: 'object' },
       execute: (args: Record<string, unknown>) => Promise.resolve({ doubled: Number(args.x) * 2 }),
     });
 
     it('registers and executes host callbacks with the canonical schema', async () => {
       fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
-      await collect(provider.queryStream(inputs(userInput('go')), { ...baseOptions(), tools: [makeTool('echo')] }).iterator);
-      const ctor = fakeState.ctorOptions as { initialState?: { tools?: Array<{ name: string; parameters: unknown; execute: Function }> } };
+      await collect(
+        provider.queryStream(inputs(userInput('go')), {
+          ...baseOptions(),
+          tools: [makeTool('echo')],
+        }).iterator
+      );
+      const ctor = fakeState.ctorOptions as {
+        initialState?: { tools?: Array<{ name: string; parameters: unknown; execute: Function }> };
+      };
       const tools = ctor.initialState?.tools ?? [];
-      expect(tools.map(tool => tool.name)).toEqual(['echo']);
+      expect(tools.map((tool) => tool.name)).toEqual(['echo']);
       expect(tools[0].parameters).toEqual(makeTool('echo').inputSchema);
-      await expect(tools[0].execute('call', { x: 21 }, undefined, undefined, undefined)).resolves.toMatchObject({ details: { doubled: 42 } });
-      await expect(tools[0].execute('invalid', { x: '21' }, undefined, undefined, undefined)).rejects.toThrow('Invalid host tool arguments');
+      await expect(
+        tools[0].execute('call', { x: 21 }, undefined, undefined, undefined)
+      ).resolves.toMatchObject({ details: { doubled: 42 } });
+      await expect(
+        tools[0].execute('invalid', { x: '21' }, undefined, undefined, undefined)
+      ).rejects.toThrow('Invalid host tool arguments');
     });
-
 
     it('uses an empty host registry when no callbacks are supplied', async () => {
       fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
@@ -343,7 +646,12 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
     });
 
     it('rejects external MCP instead of silently dropping it', () => {
-      expect(() => provider.queryStream(inputs(userInput('hi')), { ...baseOptions(), ...({ mcpServers: {} } as Record<string, unknown>) })).toThrow('no longer a query option');
+      expect(() =>
+        provider.queryStream(inputs(userInput('hi')), {
+          ...baseOptions(),
+          ...({ mcpServers: {} } as Record<string, unknown>),
+        })
+      ).toThrow('no longer a query option');
     });
   });
 
@@ -357,7 +665,7 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
       ],
     ];
     const messages = await collect(
-      provider.queryStream(inputs(userInput('hi')), baseOptions()).iterator,
+      provider.queryStream(inputs(userInput('hi')), baseOptions()).iterator
     );
     const texts = messages.filter((m) => m.type === 'text').map((m) => m.content);
     expect(texts).toEqual(['Hello', ' world']);
@@ -378,7 +686,9 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
         { type: 'agent_end', messages: [] },
       ],
     ];
-    const messages = await collect(provider.queryStream(inputs(userInput('go')), baseOptions()).iterator);
+    const messages = await collect(
+      provider.queryStream(inputs(userInput('go')), baseOptions()).iterator
+    );
     const types = messages.map((m) => m.type);
     expect(types).toEqual(['tool_use', 'tool_result', 'result']);
   });
@@ -406,7 +716,9 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
     // queryStream's run-settlement guard must wake the consumer and end the
     // stream once the input is also exhausted.
     fakeState.scripts = [[]];
-    const messages = await collect(provider.queryStream(inputs(userInput('hi')), baseOptions()).iterator);
+    const messages = await collect(
+      provider.queryStream(inputs(userInput('hi')), baseOptions()).iterator
+    );
     expect(messages).toEqual([]);
   });
 
@@ -460,8 +772,14 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
     // 0.82.1 semantics: agent-loop.js drains the follow-up queue only at a
     // run's stop checkpoint).
     fakeState.scripts = [
-      [{ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'one' } }, { type: 'agent_end', messages: [] }],
-      [{ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'two' } }, { type: 'agent_end', messages: [] }],
+      [
+        { type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'one' } },
+        { type: 'agent_end', messages: [] },
+      ],
+      [
+        { type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'two' } },
+        { type: 'agent_end', messages: [] },
+      ],
     ];
     let releaseSecond: (() => void) | undefined;
     const scriptedInput = (async function* (): AsyncGenerator<UserInput> {
@@ -599,7 +917,7 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
           // ONLY the watchdog (not input exhaustion) can end the stream.
           await new Promise<void>(() => {});
         })(),
-        baseOptions(),
+        baseOptions()
       );
       const messages: AgentMessage[] = [];
       const drained = (async () => {
@@ -612,9 +930,12 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
       // 60ms wait (not fake timers — the hung promise never settles, so
       // advanceTimersByTimeAsync alone would deadlock the drain) comfortably
       // under the 80ms deadline.
-      await vi.waitFor(() => {
-        expect(messages.map((m) => m.type)).toContain('text');
-      }, { timeout: 500, interval: 10 });
+      await vi.waitFor(
+        () => {
+          expect(messages.map((m) => m.type)).toContain('text');
+        },
+        { timeout: 500, interval: 10 }
+      );
       await new Promise((resolve) => setTimeout(resolve, 120)); // > 80ms stall deadline
       const settled = await Promise.race([
         drained.then(() => true),
@@ -659,7 +980,7 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
           // Channel never closes — only the watchdog can end the stream.
           await new Promise<void>(() => {});
         })(),
-        baseOptions(),
+        baseOptions()
       );
       const messages: AgentMessage[] = [];
       const drained = (async () => {
@@ -667,9 +988,12 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
           messages.push(message);
         }
       })();
-      await vi.waitFor(() => {
-        expect(messages.map((m) => m.type)).toContain('text');
-      }, { timeout: 500, interval: 10 });
+      await vi.waitFor(
+        () => {
+          expect(messages.map((m) => m.type)).toContain('text');
+        },
+        { timeout: 500, interval: 10 }
+      );
       await new Promise((resolve) => setTimeout(resolve, 120)); // > 80ms deadline
       const settled = await Promise.race([
         drained.then(() => true),
@@ -729,7 +1053,12 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
     process.env.DISCLAUDE_STALL_TIMEOUT_MS = '80';
     fakeState.scripts = [
       [
-        { type: 'tool_execution_start', toolCallId: 't1', toolName: 'Bash', args: { cmd: 'build' } },
+        {
+          type: 'tool_execution_start',
+          toolCallId: 't1',
+          toolName: 'Bash',
+          args: { cmd: 'build' },
+        },
         // NO tool_execution_end before the deadline — the tool is still
         // running silently (no onUpdate wired, direction 1 is separate).
         // hangPrompt keeps the run active forever, so ONLY the exemption
@@ -745,28 +1074,33 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
           yield userInput('build it');
           await new Promise<void>(() => {}); // channel never closes
         })(),
-        baseOptions(),
+        baseOptions()
       );
       const messages: AgentMessage[] = [];
-      const {iterator} = result;
+      const { iterator } = result;
       drained = (async () => {
         for await (const message of iterator) {
           messages.push(message);
         }
       })();
-      await vi.waitFor(() => {
-        expect(messages.map((m) => m.type)).toContain('tool_use');
-      }, { timeout: 500, interval: 10 });
+      await vi.waitFor(
+        () => {
+          expect(messages.map((m) => m.type)).toContain('tool_use');
+        },
+        { timeout: 500, interval: 10 }
+      );
       // 350ms ≈ 4+ stall windows of 80ms — without the exemption the
       // watchdog would have fired at ~80ms past the tool start.
       await new Promise((resolve) => setTimeout(resolve, 350));
       expect(messages.some((m) => m.metadata?.terminatedReason === 'stall')).toBe(false);
       expect(fakeState.aborted).toBe(false); // agent NOT aborted mid-tool
       // Still parked (no terminator) — the stream stays alive with the tool.
-      expect(await Promise.race([
-        drained.then(() => true),
-        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 100)),
-      ])).toBe(false);
+      expect(
+        await Promise.race([
+          drained.then(() => true),
+          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 100)),
+        ])
+      ).toBe(false);
     } finally {
       result?.handle.close();
       await drained;
@@ -781,7 +1115,13 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
     fakeState.scripts = [
       [
         { type: 'tool_execution_start', toolCallId: 't1', toolName: 'Bash', args: {} },
-        { type: 'tool_execution_end', toolCallId: 't1', toolName: 'Bash', result: 'ok', isError: false },
+        {
+          type: 'tool_execution_end',
+          toolCallId: 't1',
+          toolName: 'Bash',
+          result: 'ok',
+          isError: false,
+        },
         // tool end emitted, then the run hangs silently — open window closed,
         // exemption no longer applies.
       ],
@@ -793,7 +1133,7 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
           yield userInput('hi');
           await new Promise<void>(() => {}); // channel never closes
         })(),
-        baseOptions(),
+        baseOptions()
       );
       const messages: AgentMessage[] = [];
       const drained = (async () => {
@@ -801,9 +1141,12 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
           messages.push(message);
         }
       })();
-      await vi.waitFor(() => {
-        expect(messages.map((m) => m.type)).toContain('tool_result');
-      }, { timeout: 500, interval: 10 });
+      await vi.waitFor(
+        () => {
+          expect(messages.map((m) => m.type)).toContain('tool_result');
+        },
+        { timeout: 500, interval: 10 }
+      );
       await new Promise((resolve) => setTimeout(resolve, 120)); // > 80ms after tool end
       const settled = await Promise.race([
         drained.then(() => true),
@@ -853,7 +1196,7 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
           yield userInput('second');
           await new Promise<void>(() => {}); // channel never closes
         })(),
-        baseOptions(),
+        baseOptions()
       );
       const messages: AgentMessage[] = [];
       const drained = (async () => {
@@ -861,9 +1204,12 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
           messages.push(message);
         }
       })();
-      await vi.waitFor(() => {
-        expect(messages.map((m) => m.type)).toContain('tool_use');
-      }, { timeout: 500, interval: 10 });
+      await vi.waitFor(
+        () => {
+          expect(messages.map((m) => m.type)).toContain('tool_use');
+        },
+        { timeout: 500, interval: 10 }
+      );
       // 300ms ≈ run-2's stall deadline (80ms) plus generous slack — without
       // the per-run reset the exemption would have re-armed forever.
       await new Promise((resolve) => setTimeout(resolve, 300));
