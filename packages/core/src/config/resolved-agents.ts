@@ -11,6 +11,7 @@ import { validateAgentPresets } from './agent-presets.js';
 import { isCodexReasoningEffort } from './codex-settings.js';
 import { apiCredentialEnvName, credentialEnvName } from './env-reference.js';
 import { modelSecretReferences, secretConfigurationErrors, resolveLlmEnvironment, hasUrlCredential } from './secret-references.js';
+import { llmViaRegistry, llmProtocolRegistry } from './llm-access.js';
 
 const CONFIG_KEYS = new Set([
   'workspace',
@@ -122,8 +123,11 @@ export function resolveConfiguredAgents(
       }
     }
     const llm = raw as LlmConfig;
-    if (llm.via !== undefined && !['chatgpt', 'api'].includes(llm.via)) {
-      errors.push(`${field}.via must be chatgpt or api`);
+    // Access-method catalog is registry-driven (Issue #5745 Part 3): builtin
+    // chatgpt/api are preregistered entries; a runtime registration extends
+    // the accepted set with zero core-code changes.
+    if (llm.via !== undefined && !llmViaRegistry.has(llm.via)) {
+      errors.push(`${field}.via must be one of: ${llmViaRegistry.ids().join(', ')}`);
     }
     // Issue #5338: the access method is declared, never inferred from a
     // missing credential. chatgpt = the Codex-managed ChatGPT login, so an
@@ -175,8 +179,10 @@ export function resolveConfiguredAgents(
           errors.push(`${field}.api.${key} is unsupported`);
         }
       }
-      if (!['anthropic', 'openai'].includes(llm.api.protocol)) {
-        errors.push(`${field}.api.protocol must be anthropic or openai`);
+      // Wire-format catalog is registry-driven (Issue #5745 Part 3), same as
+      // via above.
+      if (!llmProtocolRegistry.has(llm.api.protocol)) {
+        errors.push(`${field}.api.protocol must be one of: ${llmProtocolRegistry.ids().join(', ')}`);
       }
       if (llm.api.baseUrl !== undefined) {
         try {
