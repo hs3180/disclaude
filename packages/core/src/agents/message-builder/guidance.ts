@@ -202,6 +202,31 @@ For a running session, job or cell, retain and poll the same handle until its un
 }
 
 /**
+ * Build the missing-context recovery guidance section.
+ *
+ * Issue #5746: switching presets (`/agent use`) starts a fresh native session
+ * and context is not migrated. A follow-up that refers to earlier work
+ * ("this article", "前面那篇") then has nothing in-context to resolve against,
+ * and agents picked a topic from thin air or re-asked for background that
+ * already exists in the chat log. The `disclaude history query` CLI
+ * (Issue #5603, the `history` skill) exposes that log read-only; this
+ * guidance routes the agent there before guessing or asking.
+ *
+ * @returns Formatted missing-context recovery guidance section
+ */
+export function buildContextRecoveryGuidance(): string {
+  return `\n## Recovering Missing Context
+
+When the request uses referring expressions ("this article", "that one", "前面那篇", "那个文件"), when its intent is unclear because it plainly builds on an earlier conversation you cannot see, or when this is the first message of a fresh session (e.g. right after a preset switch), do not pick a topic or background on your own. First recover the context, then decide whether anything still needs clarifying:
+
+\`disclaude history query --chat <the Chat ID in this prompt's metadata> --days 2 --limit 50\`
+
+If the referent or intent is still ambiguous after reading the history, ask one short question that lists the candidate referents you found (e.g. "I found article A and article B — which one do you mean?"). Do not make the user re-explain or re-send background that the history already contains.
+
+If the query fails or returns nothing usable (empty days, another machine, rebuilt service), say plainly which context is missing and ask the user to identify it. Never fabricate the missing context.`;
+}
+
+/**
  * Build the location awareness guidance section.
  *
  * Issue #1198: The agent runs on a server that is physically separate

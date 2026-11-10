@@ -15,6 +15,7 @@ import {
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
   buildRuntimeEnvironmentGuidance,
+  buildContextRecoveryGuidance,
 } from './guidance.js';
 import { CHANNEL_CLI_HELP, buildChannelCliHelpGuidance } from './channel-cli-help.js';
 
@@ -270,5 +271,35 @@ describe('buildChannelCliHelpGuidance', () => {
 
   it('should return empty string when disabled', () => {
     expect(buildChannelCliHelpGuidance('disclaude channel', { enabled: false })).toBe('');
+  });
+});
+
+// Issue #5746: after `/agent use` (fresh native session, no migrated context)
+// a referring follow-up must be resolved from `disclaude history query`, not
+// guessed or re-asked from the user.
+describe('buildContextRecoveryGuidance', () => {
+  it('routes referring, unclear or post-switch requests through the history CLI first', () => {
+    const result = buildContextRecoveryGuidance();
+    expect(result).toContain('Recovering Missing Context');
+    expect(result).toContain('referring expressions');
+    expect(result).toContain('前面那篇');
+    expect(result).toContain('preset switch');
+    expect(result).toContain('do not pick a topic or background on your own');
+    expect(result).toContain('disclaude history query --chat <the Chat ID in this prompt\'s metadata> --days 2 --limit 50');
+  });
+
+  it('falls back to a candidate-list question before making the user re-explain', () => {
+    const result = buildContextRecoveryGuidance();
+    expect(result).toContain('still ambiguous after reading the history');
+    expect(result).toContain('lists the candidate referents');
+    expect(result).toContain('which one do you mean');
+    expect(result).toContain('Do not make the user re-explain or re-send background');
+  });
+
+  it('degrades to naming the missing context instead of fabricating it', () => {
+    const result = buildContextRecoveryGuidance();
+    expect(result).toContain('fails or returns nothing usable');
+    expect(result).toContain('say plainly which context is missing');
+    expect(result).toContain('Never fabricate the missing context');
   });
 });
