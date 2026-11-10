@@ -20,6 +20,7 @@ persistent configuration.
 | `DISCLAUDE_MIDSTREAM_RETRY_DELAY_MS` | Set the delay used by mid-stream retry handling. | Internal reliability tuning; omit unless diagnosing or testing provider behavior. |
 | `CODEX_MODEL` | Explicit startup override for the default Codex binding. | The bound `llms.<name>.defaultModel` must already be declared and non-empty; other named bindings are unchanged. |
 | `ANTHROPIC_MODEL` / `OPENAI_MODEL` | Native runtime environment settings. | They do not supply or override a public named LLM's required model declaration. |
+| `DISCLAUDE_HARNESS_CLAUDE_VERSION` / `DISCLAUDE_HARNESS_PI_VERSION` / `DISCLAUDE_HARNESS_CODEX_VERSION` / `DISCLAUDE_HARNESS_DSH_VERSION` | Pin the version `disclaude harness install` targets for that agent harness runtime. | `--version` on the command wins. Defaults: claude follows the bundled agent SDK's Claude Code version; pi follows [docs/pi-backend.md](pi-backend.md); codex/dsh follow the `Dockerfile.service` build pins. Affects installs only, never the running service. |
 
 The bound `llms.<name>.defaultModel` selects the model independently of its
 vendor; it is optional — an omitted default keeps each bound runtime's native
