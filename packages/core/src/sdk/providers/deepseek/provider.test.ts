@@ -29,7 +29,7 @@ async function collect(iterator: ReturnType<DeepSeekHarnessProvider['queryStream
 }
 
 async function sdkFixture(
-  options: { foreignSession?: boolean; captureConnection?: boolean; publicStages?: boolean } = {}
+  options: { foreignSession?: boolean; captureConnection?: boolean; publicStages?: boolean; skillsCapability?: boolean } = {}
 ): Promise<{ dir: string; binary: string }> {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-provider-'));
   const binary = join(dir, 'dsh');
@@ -72,7 +72,7 @@ rl.on('line', line => {
   fs.appendFileSync(path.join(root, 'requests.jsonl'), JSON.stringify(req) + '\\n');
   if (req.method === 'initialize') {
     initialization = req.params;
-    reply(req.id, { capabilities: { tools: true, resume: true, cancel: true } }); return;
+    reply(req.id, { capabilities: { tools: true, resume: true, cancel: true,${options.skillsCapability === false ? '' : ' skills: true,'} } }); return;
   }
   if (req.method === 'shutdown') { reply(req.id, {}); process.exit(0); return; }
   const sid = req.params.sessionId;
@@ -142,7 +142,7 @@ async function* oneInput() {
 }
 
 describe('DeepSeekHarnessProvider (Issue #4741)', () => {
-  it('sends no skills manifest and fails fast only after explicit Project installation (#5717)', async () => {
+  it('sends no skills manifest and fails fast on a skill-less minimal profile (#5717)', async () => {
     const fixture = await sdkFixture();
     const provider = new DeepSeekHarnessProvider({ binary: fixture.binary, dshHome: fixture.dir, mode: 'minimal' });
     const readRequests = () =>
@@ -152,18 +152,22 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
       const options = { settingSources: [], cwd: fixture.dir, systemPrompt: 'Original context' };
       await collect(provider.queryStream(oneInput(), options).iterator);
       let requests = await readRequests();
-      // The captured harness input is the bare operator prompt: no fabricated
-      // manifest reaches initialize/open/prompt frames in any form.
-      expect(requests.find((request) => request.method === 'initialize').params.systemPrompt).toBe('Original context');
+      // The captured harness input is the bare operator prompt plus the native
+      // registration plan: no fabricated manifest reaches initialize/open/
+      // prompt frames in any form.
+      const initialized = requests.find((request) => request.method === 'initialize');
+      expect(initialized.params.systemPrompt).toBe('Original context');
+      expect(initialized.params.skills).toEqual({ builtinRoot: expect.any(String), projectRoot: fixture.dir });
       for (const request of requests) {
         expect(JSON.stringify(request)).not.toContain('Disclaude skills');
         expect(JSON.stringify(request)).not.toContain('SKILL.md');
       }
       manageDiagnosticsPlugin('install', fixture.dir, resolve('.'));
-      // An explicit installation DSH cannot deliver natively fails fast with
-      // the remedy, before any model turn — the wire log must not grow.
+      // The minimal profile verifiably mounts no skills service: an explicit
+      // installation fails fast with the remedy, before any process or model
+      // turn — the wire log must not grow.
       expect(() => provider.queryStream(oneInput(), options)).toThrow(
-        /DSH \(DeepSeek Harness\) cannot natively load Disclaude-managed skills:.*no native skill registration\/discovery API.*plugins remove diagnostics.*No prompt manifest was injected and no model turn was submitted\./s
+        /DSH \(DeepSeek Harness\) cannot natively load Disclaude-managed skills:.*no native skills service.*agent.dsh mode standard.*plugins remove diagnostics.*No prompt manifest was injected and no model turn was submitted\./s
       );
       requests = await readRequests();
       expect(requests.filter((request) => request.method === 'initialize')).toHaveLength(1);
@@ -173,6 +177,79 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
       const prompt = requests.filter((request) => request.method === 'initialize').at(-1).params.systemPrompt;
       expect(prompt).toBe('Original context');
       expect(prompt).not.toContain('diagnose-logs');
+    } finally {
+      await provider.shutdown();
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
+  });
+  it('registers skills natively on a standard profile and keeps every prompt layer bare (#5717)', async () => {
+    const fixture = await sdkFixture();
+    const provider = new DeepSeekHarnessProvider({ binary: fixture.binary, dshHome: fixture.dir, mode: 'standard' });
+    const project = join(fixture.dir, 'standard-project');
+    await mkdir(project, { recursive: true });
+    try {
+      manageDiagnosticsPlugin('install', project, resolve('.'));
+      // The sdk profile reports its native skills capability: the explicit
+      // installation is deliverable through ctx.skills registration, so the
+      // query runs and the diagnostics skill reaches the harness only via the
+      // registration plan — never as a manifest in the prompt.
+      await collect(provider.queryStream(oneInput(), {
+        settingSources: [], cwd: project, projectRoot: project, systemPrompt: 'Original context',
+      }).iterator);
+      const requests = (await readFile(join(fixture.dir, 'requests.jsonl'), 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+      const initialized = requests.find((request) => request.method === 'initialize');
+      expect(initialized.params.systemPrompt).toBe('Original context');
+      expect(initialized.params.skills).toEqual({ builtinRoot: expect.any(String), projectRoot: project });
+      for (const request of requests) {
+        expect(JSON.stringify(request)).not.toContain('Disclaude skills');
+        expect(JSON.stringify(request)).not.toContain('diagnose-logs');
+      }
+      manageDiagnosticsPlugin('remove', project, resolve('.'));
+    } finally {
+      await provider.shutdown();
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
+  });
+  it('fails an explicit installation when the booted profile reports no skills capability (#5717)', async () => {
+    const fixture = await sdkFixture({ skillsCapability: false });
+    const provider = new DeepSeekHarnessProvider({ binary: fixture.binary, dshHome: fixture.dir, mode: 'standard' });
+    const project = join(fixture.dir, 'no-skill-profile');
+    await mkdir(project, { recursive: true });
+    try {
+      manageDiagnosticsPlugin('install', project, resolve('.'));
+      await expect(collect(provider.queryStream(oneInput(), {
+        settingSources: [], cwd: project, projectRoot: project, systemPrompt: 'Original context',
+      }).iterator)).rejects.toThrow(
+        /no skills capability at initialize.*No prompt manifest was injected and no model turn was submitted/s
+      );
+      const requests = (await readFile(join(fixture.dir, 'requests.jsonl'), 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+      // The failure lands between initialize and session/open: no session was
+      // opened and no model turn was submitted for the undeliverable skill.
+      expect(requests.filter((request) => request.method === 'initialize')).toHaveLength(1);
+      expect(requests.filter((request) => request.method === 'session/open')).toHaveLength(0);
+      expect(requests.filter((request) => request.method === 'session/prompt')).toHaveLength(0);
+      expect(JSON.stringify(requests)).not.toContain('Disclaude skills');
+      manageDiagnosticsPlugin('remove', project, resolve('.'));
+    } finally {
+      await provider.shutdown();
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
+  });
+  it('judges custom process args by the capability probe, not the host-side profile guess', async () => {
+    const fixture = await sdkFixture({ skillsCapability: false });
+    const provider = new DeepSeekHarnessProvider({
+      binary: fixture.binary, dshHome: fixture.dir, args: ['--profile', 'sdk-minimal-custom'],
+    });
+    const project = join(fixture.dir, 'custom-args-project');
+    await mkdir(project, { recursive: true });
+    try {
+      manageDiagnosticsPlugin('install', project, resolve('.'));
+      // Custom args may boot anything, so no pre-spawn verdict is possible:
+      // the probe decides, and a skill-less profile fails the same way.
+      await expect(collect(provider.queryStream(oneInput(), {
+        settingSources: [], cwd: project, projectRoot: project, systemPrompt: 'Original context',
+      }).iterator)).rejects.toThrow(/no skills capability at initialize/);
+      manageDiagnosticsPlugin('remove', project, resolve('.'));
     } finally {
       await provider.shutdown();
       await rm(fixture.dir, { recursive: true, force: true });

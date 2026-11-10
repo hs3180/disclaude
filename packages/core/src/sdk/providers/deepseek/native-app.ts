@@ -8,6 +8,12 @@ import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { assertToolOptions, type ToolDefinition } from '../../tools.js';
 import { registerDshTools } from './tool-adapter.js';
+import {
+  dshSkillPlan,
+  registerDisclaudeSkills,
+  type DshSkillRegistryLike,
+  type DisclaudeDshSkillPlan,
+} from './dsh-skills.js';
 
 export const name = 'disclaude-dsh-native-app';
 export const inject = ['agents', 'tools', 'systemPrompt', 'sdkAppStartup'];
@@ -43,6 +49,8 @@ export class DshNativeApp {
   private options: AgentOptions = {};
   private descriptors: ToolDescriptor[] = [];
   private prompt?: string;
+  private skillPlan?: DisclaudeDshSkillPlan;
+  private disposeSkills?: () => void;
   private readonly sessions = new Map<string, AgentHandle>();
   private readonly openings = new Map<string, Promise<unknown>>();
   private readonly disposers: (() => void)[];
@@ -160,11 +168,73 @@ export class DshNativeApp {
     };
     assertToolOptions(params);
     this.prompt = optionalString(params.systemPrompt, 'systemPrompt');
+    if (params.skills !== undefined) {
+      if (!params.skills || typeof params.skills !== 'object' || Array.isArray(params.skills)) {
+        throw new TypeError('skills must be an object');
+      }
+      const builtinRoot = optionalString((params.skills as Record<string, unknown>).builtinRoot, 'skills.builtinRoot');
+      const projectRoot = optionalString(
+        (params.skills as Record<string, unknown>).projectRoot,
+        'skills.projectRoot'
+      );
+      if (!builtinRoot) {
+        throw new TypeError('skills.builtinRoot must be a non-empty string');
+      }
+      this.skillPlan = dshSkillPlan(projectRoot, builtinRoot);
+    }
     this.initialized = true;
     return {
       serverInfo: { name, version: '1' },
-      capabilities: { tools: true, resume: true, cancel: true, images: !!this.ctx.get('attachments') },
+      capabilities: {
+        tools: true,
+        resume: true,
+        cancel: true,
+        images: !!this.ctx.get('attachments'),
+        // Whether Disclaude skills were registered on the profile's native
+        // skills registry (#5717): false means the booted profile provides no
+        // ctx.skills service (e.g. sdk-minimal) and no skill is deliverable.
+        skills: this.registerSkills(),
+      },
     };
+  }
+
+  /**
+   * Register the Disclaude provider on the profile's native skills registry.
+   * The registration happens here — not in a separate composition plugin —
+   * so a load or registration failure fails initialize loudly instead of a
+   * silently never-starting plugin, and the host can act on the capability.
+   */
+  private registerSkills(): boolean {
+    if (!this.skillPlan) {
+      return false;
+    }
+    // `skills` is the cordis service name of dsh-skill's SkillRegistry
+    // (`super(ctx, "skills")`, dsh CLI 0.1.2-rc.1). Read it through the
+    // optional-service accessor: property access without `inject` throws
+    // ("cannot get property \"skills\" without inject"), while declaring it
+    // in `inject` would defer this plugin until the service exists and so
+    // break skill-less profiles like sdk-minimal — both verified against
+    // real `dsh --profile sdk` / `sdk-minimal` boots.
+    const registry = this.ctx.get('skills') as DshSkillRegistryLike | undefined;
+    if (!registry || typeof registry.registerProvider !== 'function') {
+      return false;
+    }
+    const warn = (message: string) => this.ctx.logger.warn(message);
+    try {
+      const registration = registerDisclaudeSkills(registry, this.skillPlan, warn);
+      this.disposeSkills = registration.dispose;
+      this.ctx.logger.info(
+        `registered ${registration.skills} Disclaude skill(s) on the DSH skills registry`
+      );
+      return true;
+    } catch (error) {
+      throw new Error(
+        `Disclaude skills could not be registered on the DSH skills registry: ${
+          error instanceof Error ? error.message : String(error)
+        }. Fix the reported skill source, or boot a profile whose skills registry is intact. ` +
+          'No prompt manifest was injected and no model turn was submitted.'
+      );
+    }
   }
 
   private async open(
@@ -266,6 +336,8 @@ export class DshNativeApp {
   async shutdown(): Promise<Record<string, never>> {
     this.closing = true;
     await Promise.allSettled(this.openings.values());
+    this.disposeSkills?.();
+    this.disposeSkills = undefined;
     const handles = [...this.sessions.values()];
     this.sessions.clear();
     for (const dispose of this.disposers.splice(0)) {

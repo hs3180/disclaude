@@ -4,6 +4,8 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createLogger } from '../../../utils/logger.js';
+import { Config } from '../../../config/index.js';
+import { installedDiagnosticsPlugin } from '../../../skills/diagnostics-plugin.js';
 import type { IAgentSDKProvider } from '../../interface.js';
 import { assertToolOptions, prepareTools, type ToolDefinition } from '../../tools.js';
 import type {
@@ -24,31 +26,41 @@ import {
 } from './native-profile.js';
 import { DshSessionBindings } from './session-bindings.js';
 import { resolveDshCompaction } from './compaction.js';
-import {
-  assertNoUndeliverableSkillSources,
-  type NativeSkillChannel,
-} from '../../../skills/native-skill-channel.js';
+import { dshSkillPlan } from './dsh-skills.js';
+import { undeliverableSkillSourceError, type NativeSkillChannel } from '../../../skills/native-skill-channel.js';
 
 const logger = createLogger('DeepSeekHarnessProvider');
 
 /**
- * Verified 2026-11-07 against the vendored @deepseek-ai/dsh-* 0.1.2-rc.1
- * runtime and the dsh CLI 0.1.2-rc.1: no skills service on any context, no
- * SKILL.md discovery, and no skills method on the SDK stdio protocol
- * (`initialize`/`session/prompt`/`shutdown` only). The wire vocabulary's
- * `SkillInvocationSource` is a UI-side message provenance, not a host
- * registration API, and `systemPrompt.section()` would only relocate a
- * host-authored manifest into another prompt layer.
+ * Verified 2026-11-09 against the installed dsh CLI 0.1.2-rc.1: the `sdk`
+ * profile layers over `dsh-base`, which mounts the native skill stack
+ * (`@deepseek-ai/dsh-skill` ctx.skills registry, dsh-skill-filesystem,
+ * dsh-tool-skill's model-facing `skill` tool and session catalog), so
+ * Disclaude registers its skills as a provider there (#5717 rework). The
+ * `sdk-minimal` profile is standalone and mounts none of it
+ * (sdk-minimal/cordis.patch.yml: "does not layer over dsh-base"), and a
+ * caller may pass custom process args booting any other profile.
  */
-const DSH_SKILL_CHANNEL: NativeSkillChannel = {
+const DSH_PROFILE_WITHOUT_SKILLS: NativeSkillChannel = {
   harness: 'DSH (DeepSeek Harness)',
   evidence:
-    'the harness exposes no native skill registration/discovery API ' +
-    '(verified against vendored @deepseek-ai/dsh-* 0.1.2-rc.1: no skills service, ' +
-    'no SKILL.md discovery, no skills method on the SDK stdio protocol)',
+    'the booted DSH profile provides no native skills service ' +
+    '(sdk-minimal and skill-less custom profiles omit the dsh-base skill stack; ' +
+    'verified against dsh CLI 0.1.2-rc.1)',
   remedy:
-    'Run plugins remove diagnostics for DSH-only projects, or use a backend with ' +
-    'a native skills channel (claude, codex app-server transport).',
+    'Use the standard DSH profile (agent.dsh mode standard), boot a profile with the ' +
+    'dsh-base skill stack, or run plugins remove diagnostics for this project.',
+};
+
+/** Same actionable failure, evidenced by the in-process capability probe. */
+const DSH_NO_SKILL_CAPABILITY: NativeSkillChannel = {
+  harness: 'DSH (DeepSeek Harness)',
+  evidence:
+    'the booted DSH profile reported no skills capability at initialize ' +
+    '(its composition provides no ctx.skills registry for native registration)',
+  remedy:
+    'Use the standard DSH profile (agent.dsh mode standard), boot a profile with the ' +
+    'dsh-base skill stack, or run plugins remove diagnostics for this project.',
 };
 
 export interface DeepSeekHarnessProviderOptions {
@@ -108,6 +120,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
   private readonly configuredHome?: string;
   private readonly route?: string;
   private readonly profile: 'sdk' | 'sdk-minimal';
+  private readonly processArgs?: string[];
   private readonly api?: DshApiConnection;
   private readonly apiKey?: string;
   private readonly bindings: DshSessionBindings;
@@ -148,6 +161,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
       }
     }
     this.profile = mode === 'minimal' ? 'sdk-minimal' : 'sdk';
+    this.processArgs = options.args;
     this.api = options.api;
     this.apiKey = options.apiKey;
     const env = options.env ?? process.env;
@@ -233,13 +247,25 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
     const descriptors = prepareTools(options.tools);
     const tools = new Map(descriptors.map((tool) => [tool.name, tool]));
     const cwd = resolve(options.cwd ?? process.cwd());
-    // Native skill discovery (#5717, sharing the codex #5520 fail-fast shape):
-    // DSH has no native skills channel (see DSH_SKILL_CHANNEL), so the opt-in
-    // diagnostics plugin cannot be delivered on this backend. Fail fast with
-    // the remedy when that explicit installation exists — never fabricate a
-    // skills manifest into the system prompt. The explicit-install boundary
-    // is preserved: projects without the plugin run unchanged.
-    assertNoUndeliverableSkillSources(DSH_SKILL_CHANNEL, options.projectRoot ?? cwd);
+    // Native skill discovery (#5717 rework): built-in and explicitly installed
+    // skills are registered on DSH's own ctx.skills registry by the in-process
+    // plugin (dsh-skills.ts), and DSH authors the model-facing catalog. No
+    // Disclaude-fabricated manifest enters any prompt layer. The explicit
+    // diagnostics install boundary is re-validated inside DSH from the same
+    // root the previous manifest resolution used (projectRoot ?? cwd).
+    const projectRoot = resolve(options.projectRoot ?? cwd);
+    const diagnosticsRoot = installedDiagnosticsPlugin(projectRoot);
+    if (
+      diagnosticsRoot &&
+      this.processArgs === undefined &&
+      this.profile === 'sdk-minimal'
+    ) {
+      // The minimal profile verifiably mounts no skills service: fail before
+      // spawning instead of wasting a process. Every other configuration is
+      // judged by the initialize capability probe below.
+      throw undeliverableSkillSourceError(DSH_PROFILE_WITHOUT_SKILLS);
+    }
+    const skills = dshSkillPlan(projectRoot, Config.getBuiltinsDir());
     const binding = this.bindings.reserve(options.sessionKey, cwd);
     if (this.active.has(binding.sessionId)) {
       throw new Error('Native DSH conversation already has an active query');
@@ -340,6 +366,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
               ? {}
               : { reasoningEffort: options.reasoningEffort }),
             ...(options.systemPrompt === undefined ? {} : { systemPrompt: options.systemPrompt }),
+            skills,
             tools: descriptors.map(({ name, description, inputSchema, outputSchema }) => ({
               name,
               description,
@@ -348,13 +375,25 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
             })),
           },
           state.abort.signal
-        )) as { capabilities?: { tools?: boolean; resume?: boolean; cancel?: boolean } };
+        )) as { capabilities?: { tools?: boolean; resume?: boolean; cancel?: boolean; skills?: boolean } };
         if (
           !initialized?.capabilities?.tools ||
           !initialized.capabilities.resume ||
           !initialized.capabilities.cancel
         ) {
           throw new Error('Selected DSH profile did not load the native controller');
+        }
+        if (initialized.capabilities.skills !== true) {
+          if (diagnosticsRoot) {
+            // The explicitly installed diagnostics skill is undeliverable on
+            // this profile: fail before any session opens — actionable, never
+            // a silent fallback to a prompt manifest.
+            throw undeliverableSkillSourceError(DSH_NO_SKILL_CAPABILITY);
+          }
+          logger.warn(
+            { sessionKey: options.sessionKey, profile: this.profile },
+            'DSH profile exposes no native skills service; Disclaude built-in skills were not registered and no manifest was injected'
+          );
         }
         state.abort.signal.throwIfAborted();
         this.bindings.opening(binding);
