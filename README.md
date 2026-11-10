@@ -30,8 +30,9 @@ changes ship under a new version.
   is required.
 - **Operations:** scheduled tasks, workspace-backed files, service diagnostics,
   read-only structured session history queries (`disclaude history query`,
-  [history skill](skills/history/SKILL.md)), and source-checkout Docker Compose
-  or macOS deployment.
+  [history skill](skills/history/SKILL.md) — agents query it first to recover
+  context after preset switches instead of guessing, Issue #5746), and
+  source-checkout Docker Compose or macOS deployment.
 
 ## Documentation
 

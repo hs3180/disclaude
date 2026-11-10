@@ -94,6 +94,7 @@ describe('MessageBuilder', () => {
       expect(prompt).not.toContain('Stable command instructions');
       expect(prompt).not.toContain('Shared Runtime Environment');
       expect(prompt).not.toContain('Topic-thread context before replying');
+      expect(prompt).not.toContain('Recovering Missing Context');
       expect(builder.buildEnhancedContent({ text: 'Fresh query', messageId: 'm3' }, 'chat-2'))
         .toContain('Stable command instructions');
     });
@@ -126,6 +127,25 @@ describe('MessageBuilder', () => {
       expect(result).toContain('Location Awareness');
     });
 
+    // Issue #5746: the history-query recovery rule must reach the agent-visible
+    // prompt surface — both the full per-turn content and the stable prefix
+    // that a fresh native session (preset switch) re-receives on its first
+    // message, alongside the metadata that names the Chat ID it refers to.
+    it('should include the missing-context recovery guidance for regular messages', () => {
+      const input = { text: '改一下前面那篇文章', messageId: 'om_message_123' };
+      const result = messageBuilder.buildEnhancedContent(input, 'chat-456');
+
+      expect(result).toContain('Recovering Missing Context');
+      expect(result).toContain('disclaude history query --chat <the Chat ID in this prompt\'s metadata> --days 2 --limit 50');
+      expect(result).toContain('Never fabricate the missing context');
+      // The --chat placeholder must be resolvable in the same prompt.
+      expect(result).toContain('**Chat ID:** chat-456');
+
+      const stableContext = messageBuilder.buildStableContext(input, 'chat-456');
+      expect(stableContext).toContain('Recovering Missing Context');
+      expect(stableContext).toContain('disclaude history query');
+    });
+
     it('should not include guidance sections for skill commands', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: '/reset',
@@ -135,6 +155,7 @@ describe('MessageBuilder', () => {
       expect(result).not.toContain('Next Steps After Response');
       expect(result).not.toContain('Output Format Requirements');
       expect(result).not.toContain('Location Awareness');
+      expect(result).not.toContain('Recovering Missing Context');
     });
   });
 

@@ -18,6 +18,18 @@ disclaude history query --chat <chatId> [--days N] [--limit N] [--format json|te
 - The result lists days newest-first with per-day absolute `path` and parsed messages (`direction`, `timestamp`, `messageId`, `content`). When a truncated day matters, read that day file directly instead of raising the limit blindly.
 - A chat with no local history returns an empty result (`days: []`), not an error.
 
+## When context is missing (Issue #5746)
+
+A preset switch (`/agent use`) or session reset starts a fresh native session; context is not migrated. When a request uses referring expressions ("this article", "前面那篇", "那个文件"), plainly builds on an earlier conversation that is not in your context, or arrives as the first message of a fresh session, query this chat's history before doing anything else:
+
+```bash
+disclaude history query --chat <current Chat ID from the prompt metadata> --days 2 --limit 50
+```
+
+Fallback order: query history → if the referent or intent is still ambiguous, ask one short question listing the candidate referents found → do not make the user re-explain or re-send background the history already contains. If the query fails or returns nothing usable, say plainly which context is missing and ask the user to identify it; never fabricate the missing context.
+
+Manually configured agents (outside disclaude's preset system) can reuse this pattern by copying this section into their own AGENTS.md or system prompt.
+
 ## Output schema
 
 `--format json` (default) prints a single line `{"ok": true, ...result}` on stdout so callers can separate it from diagnostics:
