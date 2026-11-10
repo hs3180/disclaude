@@ -131,7 +131,11 @@ echo 'step two'`);
       () => {},
     ).promise;
     const captured = readFileSync(fixture.capturePath, 'utf8');
-    expect(captured).not.toContain('-m');
+    // Token-precise: the captured line embeds mkdtemp paths whose random
+    // suffix can start with "m" right after the prefix dash — a bare
+    // substring check on "-m" flakes on that (~1.5% of runs). The runner
+    // emits `-m` as a standalone argv token, so match token boundaries.
+    expect(captured).not.toMatch(/(?:^|\s)-m(?:\s|$)/);
   });
 
   it('forwards stderr chunk-wise and keeps the rolling tail for error mapping', async () => {
