@@ -51,7 +51,9 @@ import { ChatSessionPool } from './chat-session-pool.js';
 import { AgentSelectionStore } from './agent-selection-store.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
 import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
-import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
+// Issue #5745 Part 2: channel type catalog lives in the unified extension
+// registry (built-ins pre-registered; runtime-registered types enumerate too).
+import { channelTypeRegistry } from './channels/wired-descriptors.js';
 // #5519: bounded DNS/connection readiness wait before the startup sequence
 // reports the Feishu channel as available.
 import { waitForStartupReadiness } from './channels/feishu/dns-readiness.js';
@@ -773,7 +775,8 @@ export async function main(): Promise<void> {
   // Issue #3801: Use descriptor-driven callback creation instead of hardcoded channel.id checks.
   // Each WiredChannelDescriptor declares its own callback options (e.g., sendDoneSignal),
   // so the routerCallbacksFactory looks up the descriptor by channel type.
-  const descriptorMap = new Map(BUILTIN_WIRED_DESCRIPTORS.map((d) => [d.type, d]));
+  // Issue #5745 Part 2: lookup goes through channelTypeRegistry (live — includes
+  // runtime-registered channel types, not just built-ins).
   const routerCallbacksFactory = (chatId: string, threadRootId?: string) => {
     // Issue #3824: Use resolveChannelForChatId for ownership query fallback.
     // After restart, chatIdChannelMap is empty. resolveChannelForChatId queries
@@ -787,7 +790,7 @@ export async function main(): Promise<void> {
       : channel.id.startsWith('feishu:')
         ? 'feishu'
         : channel.id;
-    const descriptor = descriptorMap.get(channelType);
+    const descriptor = channelTypeRegistry.get(channelType);
     if (descriptor) {
       return descriptor.createCallbacks(channel, channelSetupContext)(chatId, threadRootId);
     }
@@ -922,10 +925,12 @@ export async function main(): Promise<void> {
     inputMessageRouter: service.getInputMessageRouter(),
   });
 
-  // Register all built-in channel descriptors (Issue #1594 Phase 3)
+  // Register all channel type descriptors (Issue #1594 Phase 3; Issue #5745 Part 2)
   // This enables config-driven creation via createAndWireByType().
-  // Adding a new channel only requires adding a descriptor to BUILTIN_WIRED_DESCRIPTORS.
-  for (const descriptor of BUILTIN_WIRED_DESCRIPTORS) {
+  // Enumeration covers built-ins plus any channel type registered into
+  // channelTypeRegistry before startup — adding a new channel no longer
+  // requires touching this loop.
+  for (const descriptor of channelTypeRegistry.descriptors()) {
     lifecycleManager.registerWiredDescriptor(descriptor);
   }
 

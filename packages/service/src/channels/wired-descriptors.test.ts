@@ -11,6 +11,8 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
+  BUILTIN_WIRED_DESCRIPTORS,
+  channelTypeRegistry,
   REST_WIRED_DESCRIPTOR,
   FEISHU_WIRED_DESCRIPTOR,
   WECHAT_WIRED_DESCRIPTOR,
@@ -19,7 +21,7 @@ import type {
   ChannelSetupContext,
   WiredContext,
 } from '../channel-lifecycle-manager.js';
-import { createControlHandler, type IChannel, type ControlHandler, type ChannelCapabilities, type FeishuApiHandlers, type ChannelApiHandlers } from '@disclaude/core';
+import { createControlHandler, ExtensionRegistrationError, type IChannel, type ControlHandler, type ChannelCapabilities, type FeishuApiHandlers, type ChannelApiHandlers } from '@disclaude/core';
 
 // Mock logger
 const mockLogger = {
@@ -801,6 +803,46 @@ describe('WiredChannelDescriptors', () => {
       await expect(
         registeredHandlers!.pushToAgent!('oc_test123', 'Hello')
       ).rejects.toThrow('Agent pool full');
+    });
+  });
+
+  describe('channelTypeRegistry (Issue #5745 Part 2)', () => {
+    it('pre-registers the three built-in channel types as builtin-source entries', () => {
+      expect(channelTypeRegistry.ids()).toEqual(['rest', 'feishu', 'wechat']);
+      for (const record of channelTypeRegistry.records()) {
+        expect(record.source).toBe('builtin');
+      }
+      expect(channelTypeRegistry.get('rest')).toBe(REST_WIRED_DESCRIPTOR);
+      expect(channelTypeRegistry.get('feishu')).toBe(FEISHU_WIRED_DESCRIPTOR);
+      expect(channelTypeRegistry.get('wechat')).toBe(WECHAT_WIRED_DESCRIPTOR);
+    });
+
+    it('rejects duplicate registration without override and leaves other entries untouched (error isolation)', () => {
+      expect(() => channelTypeRegistry.register('rest', REST_WIRED_DESCRIPTOR)).toThrow(
+        ExtensionRegistrationError
+      );
+      expect(channelTypeRegistry.ids()).toEqual(['rest', 'feishu', 'wechat']);
+      expect(channelTypeRegistry.get('rest')).toBe(REST_WIRED_DESCRIPTOR);
+    });
+
+    it('accepts an external channel type alongside built-ins and unregisters cleanly', () => {
+      const externalDescriptor = { ...REST_WIRED_DESCRIPTOR, type: 'external-test', name: 'External Test' };
+      try {
+        const record = channelTypeRegistry.register('external-test', externalDescriptor);
+        expect(record.source).toBe('external');
+        expect(channelTypeRegistry.has('external-test')).toBe(true);
+        expect(channelTypeRegistry.get('external-test')).toBe(externalDescriptor);
+        // Built-ins stay intact alongside the external entry.
+        expect(channelTypeRegistry.ids()).toEqual(['rest', 'feishu', 'wechat', 'external-test']);
+        expect(channelTypeRegistry.get('feishu')).toBe(FEISHU_WIRED_DESCRIPTOR);
+      } finally {
+        expect(channelTypeRegistry.unregister('external-test')).toBe(true);
+      }
+      expect(channelTypeRegistry.ids()).toEqual(['rest', 'feishu', 'wechat']);
+    });
+
+    it('exposes BUILTIN_WIRED_DESCRIPTORS as a derived compat snapshot of the built-ins', () => {
+      expect(BUILTIN_WIRED_DESCRIPTORS.map((d) => d.type)).toEqual(['rest', 'feishu', 'wechat']);
     });
   });
 });
