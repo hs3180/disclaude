@@ -23,6 +23,7 @@ import {
 } from './providers/miniswe/index.js';
 import { Config, type AgentConfig } from '../config/index.js';
 import type { BaseAgentConfig } from '../agents/types.js';
+import { ExtensionSection } from '../extensions/registry.js';
 
 /**
  * 已注册的 Provider 类型
@@ -101,34 +102,50 @@ function providerCacheKey(type: ProviderType, settings?: AgentConfig): string {
 /**
  * Provider 注册表
  */
-const providerRegistry = new Map<ProviderType, ProviderFactory>([
-  ['claude', () => new ClaudeSDKProvider()],
-  ['pi', () => new PiAgentProvider()],
-  // Issue #4629 (S1 of #4627); sandbox override #4631 (S4); governance
-  // caps wired in #4634 (S7).
-  [
-    'codex',
-    () =>
-      new CodexAgentProvider({
-        sandboxOverride: Config.CODEX_SANDBOX,
-        fullAccess: Config.FULL_ACCESS,
-        networkAccess: Config.CODEX_NETWORK_ACCESS,
-        maxActiveSessions: Config.CODEX_MAX_ACTIVE_SESSIONS,
-        maxConcurrentRuns: Config.CODEX_MAX_CONCURRENT_RUNS,
-        weeklyQuota: Config.CODEX_WEEKLY_QUOTA,
-        transport: Config.CODEX_TRANSPORT,
-        model: Config.CODEX_MODEL || undefined,
-        modelSource: Config.CODEX_MODEL_SOURCE,
-        reasoningEffort: Config.CODEX_REASONING_EFFORT,
-        reasoningEffortSource: Config.CODEX_REASONING_EFFORT_SOURCE,
-      }),
-  ],
-  ['dsh', (settings) => new DeepSeekHarnessProvider(dshOptions(settings))],
-  // Issue #5006: optional mini-swe-agent backend (headless CLI subprocess,
-  // LiteLLM/OpenAI-compatible model backends). Fail-fast binary detection and
-  // unavailable reporting live in the provider.
-  ['miniswe', (settings) => new MiniSweAgentProvider(minisweOptions(settings))],
-]);
+/**
+ * Harness Provider 注册表(Issue #5745 Part 1:统一扩展注册核心)
+ *
+ * 内置 harness 经同一注册路径预注册(内置=预注册的普通扩展,消除双轨);
+ * 第三方运行期注册沿用 registerProvider()/registerProviderClass() 入口,
+ * 落到同一分区。注册/覆盖的校验与错误隔离语义见 extensions/registry.ts。
+ */
+export const harnessRegistry = new ExtensionSection<ProviderFactory>('provider');
+
+harnessRegistry.register('claude', () => new ClaudeSDKProvider(), { source: 'builtin' });
+harnessRegistry.register('pi', () => new PiAgentProvider(), { source: 'builtin' });
+// Issue #4629 (S1 of #4627); sandbox override #4631 (S4); governance
+// caps wired in #4634 (S7).
+harnessRegistry.register(
+  'codex',
+  () =>
+    new CodexAgentProvider({
+      sandboxOverride: Config.CODEX_SANDBOX,
+      fullAccess: Config.FULL_ACCESS,
+      networkAccess: Config.CODEX_NETWORK_ACCESS,
+      maxActiveSessions: Config.CODEX_MAX_ACTIVE_SESSIONS,
+      maxConcurrentRuns: Config.CODEX_MAX_CONCURRENT_RUNS,
+      weeklyQuota: Config.CODEX_WEEKLY_QUOTA,
+      transport: Config.CODEX_TRANSPORT,
+      model: Config.CODEX_MODEL || undefined,
+      modelSource: Config.CODEX_MODEL_SOURCE,
+      reasoningEffort: Config.CODEX_REASONING_EFFORT,
+      reasoningEffortSource: Config.CODEX_REASONING_EFFORT_SOURCE,
+    }),
+  { source: 'builtin' }
+);
+harnessRegistry.register(
+  'dsh',
+  (settings) => new DeepSeekHarnessProvider(dshOptions(settings)),
+  { source: 'builtin' }
+);
+// Issue #5006: optional mini-swe-agent backend (headless CLI subprocess,
+// LiteLLM/OpenAI-compatible model backends). Fail-fast binary detection and
+// unavailable reporting live in the provider.
+harnessRegistry.register(
+  'miniswe',
+  (settings) => new MiniSweAgentProvider(minisweOptions(settings)),
+  { source: 'builtin' }
+);
 
 /**
  * 默认 Provider 类型
@@ -166,10 +183,10 @@ export function getProvider(
   }
 
   // 获取工厂函数
-  const factory = providerRegistry.get(providerType);
+  const factory = harnessRegistry.get(providerType);
   if (!factory) {
     throw new Error(
-      `Unknown provider type: ${providerType}. Available: ${[...providerRegistry.keys()].join(', ')}`
+      `Unknown provider type: ${providerType}. Available: ${harnessRegistry.ids().join(', ')}`
     );
   }
 
@@ -189,7 +206,8 @@ export function getProvider(
  * @param factory - Provider 工厂函数
  */
 export function registerProvider(type: ProviderType, factory: ProviderFactory): void {
-  providerRegistry.set(type, factory);
+  // 既有口径:同 id 覆盖(override),来源随之更新为 external
+  harnessRegistry.register(type, factory, { override: true });
   // 清除该类型的缓存
   providerCache.delete(type);
 }
@@ -210,9 +228,9 @@ export function registerProviderClass(type: ProviderType, constructor: ProviderC
  * @param type - Provider 类型
  */
 export function setDefaultProvider(type: ProviderType): void {
-  if (!providerRegistry.has(type)) {
+  if (!harnessRegistry.has(type)) {
     throw new Error(
-      `Unknown provider type: ${type}. Available: ${[...providerRegistry.keys()].join(', ')}`
+      `Unknown provider type: ${type}. Available: ${harnessRegistry.ids().join(', ')}`
     );
   }
   defaultProviderType = type;
@@ -231,7 +249,7 @@ export function getDefaultProviderType(): ProviderType {
 export function getAvailableProviders(): ProviderInfo[] {
   const infos: ProviderInfo[] = [];
 
-  for (const [type, factory] of providerRegistry) {
+  for (const { id: type, descriptor: factory } of harnessRegistry.records()) {
     try {
       const provider = factory();
       infos.push(provider.getInfo());
@@ -270,7 +288,7 @@ export function clearProviderCache(type?: ProviderType): void {
  * @returns Provider 是否可用
  */
 export function isProviderAvailable(type: ProviderType): boolean {
-  const factory = providerRegistry.get(type);
+  const factory = harnessRegistry.get(type);
   if (!factory) {
     return false;
   }
