@@ -42,6 +42,14 @@ import {
   getProvider,
   TaskResultOutbox,
   type ChatType,
+  // Issue #5745 Part 5: external extension modules are applied before the
+  // validating config load (see applyConfiguredExtensions below).
+  applyExtensionDeclarations,
+  harnessRegistry,
+  llmViaRegistry,
+  llmProtocolRegistry,
+  type ExtensionLoadReport,
+  type ExtensionModuleDeclaration,
 } from '@disclaude/core';
 import crypto from 'node:crypto';
 import { SERVICE_VERSION } from './version.js';
@@ -54,6 +62,9 @@ import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 // Issue #5745 Part 2: channel type catalog lives in the unified extension
 // registry (built-ins pre-registered; runtime-registered types enumerate too).
 import { channelTypeRegistry } from './channels/wired-descriptors.js';
+// Issue #5745 Part 5: external extension modules are applied before the
+// validating config load (see applyConfiguredExtensions below).
+import * as yaml from 'js-yaml';
 // #5519: bounded DNS/connection readiness wait before the startup sequence
 // reports the Feishu channel as available.
 import { waitForStartupReadiness } from './channels/feishu/dns-readiness.js';
@@ -78,7 +89,7 @@ import { WeChatRegistrationRuntime } from './channels/wechat/runtime.js';
 import net from 'node:net';
 import path from 'node:path';
 import { homedir } from 'node:os';
-import { statSync, realpathSync } from 'node:fs';
+import { statSync, realpathSync, readFileSync } from 'node:fs';
 
 const logger = createLogger('DisclaudeServiceCLI');
 
@@ -426,6 +437,39 @@ async function runHistoryCommand(options: CliOptions): Promise<void> {
 }
 
 /**
+ * Issue #5745 Part 5: apply `extensions.<name>` declarations from the raw YAML
+ * at `configPath` BEFORE the validating config load. The loader validates
+ * `llms.<name>.via` and channel `type` values against the unified registries,
+ * so externally-registered types must exist first — hence the raw pre-scan
+ * (no shape validation here; declaration validation stays on the loader's
+ * CONFIG_KEYS path). Never throws; a broken/unreadable file is left to
+ * loadConfigFile's own error handling.
+ */
+export async function applyConfiguredExtensions(configPath: string): Promise<ExtensionLoadReport[]> {
+  let raw: unknown;
+  try {
+    raw = yaml.load(readFileSync(configPath, 'utf8'));
+  } catch {
+    return [];
+  }
+  const declarations = (raw as Record<string, unknown> | null | undefined)?.extensions as
+    | Record<string, ExtensionModuleDeclaration>
+    | undefined;
+  if (!declarations || typeof declarations !== 'object') {
+    return [];
+  }
+  return await applyExtensionDeclarations(declarations, {
+    configDir: path.dirname(configPath),
+    registries: {
+      harness: harnessRegistry,
+      channelType: channelTypeRegistry,
+      llmVia: llmViaRegistry,
+      llmProtocol: llmProtocolRegistry,
+    },
+  });
+}
+
+/**
  * Main entry point.
  */
 export async function main(): Promise<void> {
@@ -493,6 +537,18 @@ export async function main(): Promise<void> {
   // Load configuration if provided
   if (options.configPath) {
     logger.info({ path: options.configPath }, 'Loading configuration file');
+    // Issue #5745 Part 5: register external extension types first — the
+    // validating load below resolves llms.via / channel types through the
+    // unified registries. Failed declarations are isolated (never throw);
+    // warn and continue so one bad extension cannot take the service down.
+    for (const report of await applyConfiguredExtensions(options.configPath)) {
+      if (report.status === 'failed') {
+        logger.warn(
+          { extension: report.name, module: report.module, error: report.error },
+          'Extension declaration failed (isolated); continuing startup'
+        );
+      }
+    }
     const config = loadConfigFile(options.configPath);
     if (!config._fromFile) {
       logger.error({ path: options.configPath }, 'Failed to load configuration file');
