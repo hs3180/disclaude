@@ -235,6 +235,21 @@ workspace:
 #   installationId: "234567890"
 #   privateKey: $GITHUB_APP_PRIVATE_KEY
 
+# Runtime extension modules (Issue #5745): register new harness / LLM-access
+# (llms.via / llms.api.protocol) / channel types without core-code changes.
+# SECURITY: disabled by default — a declaration is imported ONLY when
+# `enabled: true`. The module's register() receives the extension registries
+# and nothing else (no config, no credentials, no env). Trust boundary:
+# whoever can write this file can load code into the service process.
+#   module: absolute path, config-relative ./path, or a bare package specifier.
+# A failed declaration (missing module, bad export shape, register() throw) is
+# isolated: that entry is skipped and reported, the rest of the service and
+# other extensions are unaffected.
+extensions:
+  my-harness:
+    module: ./extensions/my-harness.mjs
+    enabled: false
+
 logging:
   level: info
   pretty: true

@@ -354,8 +354,13 @@ export interface AgentQueryOptions {
     fullAccess?: boolean;
     networkAccess?: boolean;
     transport?: 'exec' | 'app-server';
-    /** Access method of the bound LLM (Issue #5338); default chatgpt. */
-    llmVia?: import('../config/types.js').LlmAccessVia;
+    /**
+     * Access method of the bound LLM (Issue #5338); default chatgpt.
+     * Registry-driven values beyond the builtin union flow through unchanged
+     * (Issue #5745); the Codex provider treats non-'api' values as
+     * login-backed access.
+     */
+    llmVia?: import('../config/types.js').LlmAccessVia | (string & Record<never, never>);
     /**
      * Compatible API connection when llmVia is 'api' (Issue #5338): the
      * provider injects it as an upstream Codex `model_providers` entry

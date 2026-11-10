@@ -395,6 +395,26 @@ export {
 // Internal Event Bus (Issue #4031: decoupled event propagation)
 export { InternalEventBus, eventBus, type InternalEventMap } from './event-bus.js';
 
+// Extensions registry (Issue #5745: unified registration for harness/channel/LLM-access extensions)
+export {
+  ExtensionSection,
+  ExtensionRegistrationError,
+  type ExtensionRecord,
+  type ExtensionSource,
+  type RegisterOptions,
+} from './extensions/registry.js';
+// Issue #5745 Part 5: module-loading surface + the concrete registry sections
+// the service bootstrap wires into `applyExtensionDeclarations`.
+export {
+  applyExtensionDeclarations,
+  unregisterApplied,
+  type ExtensionLoadReport,
+  type ExtensionModuleDeclaration,
+  type ExtensionRegistries,
+} from './extensions/loading.js';
+export { harnessRegistry } from './sdk/factory.js';
+export { llmViaRegistry, llmProtocolRegistry } from './config/llm-access.js';
+
 // Project module — simplified per-chatId working directory binding (Issue #3519)
 export type {
   CwdProvider,

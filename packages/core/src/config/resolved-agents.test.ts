@@ -3,6 +3,7 @@ import { resolveConfiguredAgents, validateResolvedAgent } from './resolved-agent
 import { resolveAgentPreset } from './agent-presets.js';
 import { validateConfig, validateRequiredConfig } from './loader.js';
 import { buildSdkEnv } from '../utils/sdk.js';
+import { llmViaRegistry, llmProtocolRegistry } from './llm-access.js';
 import type { DisclaudeConfig, LlmConfig } from './types.js';
 
 afterEach(() => vi.unstubAllEnvs());
@@ -1176,8 +1177,43 @@ describe('named runtime and LLM configuration', () => {
       config.llms!.daily.via = via as never;
       expect(resolveConfiguredAgents(config)).toMatchObject({
         ok: false,
-        errors: ['llms.daily.via must be chatgpt or api'],
+        errors: ['llms.daily.via must be one of: chatgpt, api'],
       });
+    });
+
+    it('rejects an unregistered api.protocol with the registry catalog', () => {
+      const config = configuration();
+      config.llms!.daily.via = 'api';
+      config.llms!.daily.api = { protocol: 'grpc' as never, baseUrl: 'https://proxy.example', apiKey: '$PROXY_KEY' };
+      expect(resolveConfiguredAgents(config)).toMatchObject({
+        ok: false,
+        errors: ['llms.daily.api.protocol must be one of: anthropic, openai'],
+      });
+    });
+
+    it('accepts via and api.protocol values registered at runtime (Issue #5745)', () => {
+      llmViaRegistry.register('relay', { description: 'test-only relay access' });
+      llmProtocolRegistry.register('gateway', { description: 'test-only gateway wire format' });
+      try {
+        const config = configuration();
+        config.llms!.daily.via = 'relay' as never;
+        config.llms!.daily.api = { protocol: 'gateway' as never, baseUrl: 'https://relay.example', apiKey: '$RELAY_KEY' };
+        expect(resolveConfiguredAgents(config).ok).toBe(true);
+
+        llmViaRegistry.unregister('relay');
+        llmProtocolRegistry.unregister('gateway');
+        expect(resolveConfiguredAgents(config)).toMatchObject({
+          ok: false,
+          errors: [
+            'llms.daily.via must be one of: chatgpt, api',
+            'llms.daily.api.protocol must be one of: anthropic, openai',
+          ],
+        });
+      } finally {
+        // Unregister is idempotent; keep the builtin-only catalog pristine.
+        llmViaRegistry.unregister('relay');
+        llmProtocolRegistry.unregister('gateway');
+      }
     });
   });
 });
