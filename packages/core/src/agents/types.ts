@@ -286,8 +286,12 @@ export interface BaseAgentConfig {
   modelOverrides?: Record<string, string>;
   /** API wire format of the selected LLM. */
   apiProtocol?: ApiProtocol;
-  /** Access method of the selected LLM: Codex ChatGPT login vs API (Issue #5338). */
-  llmVia?: LlmAccessVia;
+  /**
+   * Access method of the selected LLM: Codex ChatGPT login vs API (Issue #5338).
+   * Registry-driven values beyond the builtin union flow through unchanged
+   * (Issue #5745).
+   */
+  llmVia?: LlmAccessVia | (string & Record<never, never>);
   env?: Record<string, string>;
   credentialEnvKeys?: string[];
   settings?: AgentSettings;

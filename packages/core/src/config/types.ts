@@ -190,8 +190,12 @@ export interface LlmConfig {
    * the `api` block. When omitted, the presence of the `api` block decides
    * (`api` block → api access; none → the Codex ChatGPT login for a `codex`
    * runtime). A missing credential is never inferred as `chatgpt`.
+   *
+   * Values beyond the builtin union are accepted at runtime: the accepted set
+   * is registry-driven (Issue #5745 — `llmViaRegistry`, extended by external
+   * extension modules), validated in `resolved-agents.ts`.
    */
-  via?: LlmAccessVia;
+  via?: LlmAccessVia | (string & Record<never, never>);
   /**
    * Default model for this provider. Agents bound to the provider can use
    * ANY model it serves; this key only pins the default used when nothing
@@ -230,9 +234,10 @@ export interface AgentPreset extends AgentConfig {
   /**
    * Resolved access method of the bound llms entry (Issue #5338). Always set
    * by resolveConfiguredAgents; hand-built presets may omit it and default
-   * to the legacy chatgpt-only shape.
+   * to the legacy chatgpt-only shape. Registry-driven values beyond the
+   * builtin union flow through unchanged (Issue #5745).
    */
-  llmVia?: LlmAccessVia;
+  llmVia?: LlmAccessVia | (string & Record<never, never>);
   model: string;
   apiKey: string;
   apiProtocol?: ApiProtocol;
@@ -514,6 +519,19 @@ export interface GitHubFeedbackConfig {
 }
 
 /**
+ * External extension module declaration (Issue #5745 Part 4).
+ *
+ * Disabled unless `enabled: true`; see `extensions/loading.ts` for the
+ * loading contract, security boundary and error isolation.
+ */
+export interface ExtensionModuleConfig {
+  /** Module specifier: absolute or config-relative path, or a bare package specifier. */
+  module?: string;
+  /** Explicit opt-in; extensions are disabled by default. */
+  enabled?: boolean;
+}
+
+/**
  * Main configuration interface (core).
  *
  * This represents the structure of disclaude.config.yaml WITHOUT channel-specific config.
@@ -557,6 +575,12 @@ export interface DisclaudeConfig {
    * ```
    */
   projectTemplates?: Record<string, { displayName?: string; description?: string }>;
+  /**
+   * External extension modules (Issue #5745 Part 4). Each declaration names a
+   * module whose register() function adds harness/channel-type/llm-access
+   * entries at boot — zero core-code changes. Disabled unless `enabled: true`.
+   */
+  extensions?: Record<string, ExtensionModuleConfig>;
 }
 
 /**

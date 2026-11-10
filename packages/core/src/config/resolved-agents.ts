@@ -23,6 +23,7 @@ const CONFIG_KEYS = new Set([
   'messaging',
   'sessionRestore',
   'env',
+  'extensions',
   'projectTemplates',
   '_source',
   '_fromFile',
@@ -91,6 +92,36 @@ export function resolveConfiguredAgents(
       ))
   ) {
     errors.push('env must map variable names to strings');
+  }
+  // Issue #5745 Part 4: `extensions.<name>: { module, enabled }` declarations
+  // (loading contract in extensions/loading.ts). Shape only — whether a
+  // module loads is a boot-time concern, not a config-validation error.
+  if (config.extensions !== undefined) {
+    if (!mapping(config.extensions)) {
+      errors.push('extensions must map names to { module, enabled }');
+    } else {
+      for (const [name, declaration] of Object.entries(config.extensions)) {
+        const field = `extensions.${name}`;
+        if (declaration === null || typeof declaration !== 'object') {
+          errors.push(`${field} must map to { module, enabled }`);
+          continue;
+        }
+        for (const key of Object.keys(declaration)) {
+          if (!['module', 'enabled'].includes(key)) {
+            errors.push(`${field}.${key} is unsupported`);
+          }
+        }
+        if (
+          declaration.module !== undefined &&
+          (typeof declaration.module !== 'string' || declaration.module.length === 0)
+        ) {
+          errors.push(`${field}.module must be a non-empty string`);
+        }
+        if (declaration.enabled !== undefined && typeof declaration.enabled !== 'boolean') {
+          errors.push(`${field}.enabled must be a boolean`);
+        }
+      }
+    }
   }
   if (config.agents === undefined && config.llms === undefined) {
     return errors.length ? { ok: false, errors } : { ok: true, presets: {} };
