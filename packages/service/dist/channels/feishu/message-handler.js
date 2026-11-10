@@ -324,11 +324,27 @@ export class MessageHandler {
     }
     /**
      * Build a download command string for the agent to use as a fallback hint.
+     *
+     * lark-cli `--as bot` authenticates from the `LARKSUITE_CLI_APP_ID` +
+     * `LARKSUITE_CLI_TENANT_ACCESS_TOKEN` environment variables (the same source
+     * `downloadResourceViaLarkCli` injects into its child env). In a named-channel
+     * deployment there are no process-level env credentials, so a bare `--as bot`
+     * command would target the wrong/absent app. When the owning channel's appId
+     * is resolvable (same precedence as the real download path), pin it inline so
+     * the hint targets the correct app; otherwise fall back to the legacy bare
+     * `--as bot` command unchanged (single-app env-credential deployments resolve
+     * credentials from the environment at agent runtime). (T-107)
      */
     buildDownloadCmd(messageId, fileKey, resourceType, outputPath) {
         const ext = resourceType === 'image' ? 'jpg' : 'bin';
         const output = outputPath ?? `./downloaded_file.${ext}`;
-        return `npx @larksuite/cli im +messages-resources-download --message-id ${messageId} --file-key ${fileKey} --type ${resourceType} --as bot --output ${output}`;
+        const cmd = `npx @larksuite/cli im +messages-resources-download --message-id ${messageId} --file-key ${fileKey} --type ${resourceType} --as bot --output ${output}`;
+        const appId = this.client?.appId || process.env.LARKSUITE_CLI_APP_ID || Config.FEISHU_APP_ID;
+        if (!appId) {
+            // No channel-scoped app identity available → legacy env-credential command.
+            return cmd;
+        }
+        return `LARKSUITE_CLI_APP_ID=${appId} ${cmd} # 需先 export LARKSUITE_CLI_TENANT_ACCESS_TOKEN(该 app 的 tenant_access_token)`;
     }
     /**
      * Parse a media message's content JSON into its resource key + display name.

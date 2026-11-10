@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.27] - 2026-11-10
+
+### Fixed
+
+- Gate codex `weeklyQuotaAdmission: enforce` on app-server readings too
+  (#5734; #5740). The rate-limit extractor now accepts both field-name
+  conventions per field — exec JSONL snake_case `{used_percent,
+  window_minutes, resets_at}` and app-server camelCase `{usedPercent,
+  windowDurationMins, resetsAt}` (codex 0.167) — normalizing them into
+  one ledger window; previously app-server readings were silently dropped
+  and enforce admitted new sessions on "insufficient data" even with most
+  of the weekly window spent. Primary/secondary/null windows, observe
+  mode, and the exec path are unchanged.
+- Pin the owning channel's appId in the file-download fallback hint
+  (#5738; #5743). The `lark-cli --as bot` hint command now resolves the
+  owning channel's appId (channel client, `LARKSUITE_CLI_APP_ID`, legacy
+  `Config.FEISHU_APP_ID` — the same precedence as the real download path)
+  and emits `LARKSUITE_CLI_APP_ID=<appId> ...` with the tenant token the
+  caller must export, instead of a command guaranteed to fail in
+  named-channel deployments; deployments without a resolvable appId keep
+  the previous bare command unchanged.
+
 ## [0.6.26] - 2026-11-09
 
 ### Added

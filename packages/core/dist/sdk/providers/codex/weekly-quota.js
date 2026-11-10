@@ -1,13 +1,16 @@
 /**
  * Codex weekly-quota ledger + fresh-session admission (#5607, rework 1).
  *
- * Data basis: the codex CLI's own structured rate-limit readings. The
- * installed codex binary (0.151.0) exposes, per plan window, a
- * `RateLimitWindow { used_percent, window_minutes, resets_at }` — carried
- * by the exec transport's `token_count` JSONL event (field `rate_limits`)
- * and by the app-server `account/rateLimits/updated` /
- * `thread/tokenUsage/updated` notifications (serde field-name evidence in
- * the binary; both channels are already owned by this repo's adapters).
+ * Data basis: the codex CLI's own structured rate-limit readings. Per plan
+ * window both transports carry the same `RateLimitWindow` numbers, but with
+ * version-dependent field-name conventions (#5734): the exec transport's
+ * `token_count` JSONL event (field `rate_limits`, binary-proven on 0.151.0)
+ * uses snake_case `{ used_percent, window_minutes, resets_at }`, while the
+ * app-server `account/rateLimits/updated` / `thread/tokenUsage/updated`
+ * notifications on 0.167 use camelCase
+ * `{ usedPercent, windowDurationMins, resetsAt }`. The extractor accepts
+ * both per field and normalizes them into one ledger window; both channels
+ * are already owned by this repo's adapters.
  * No token-budget estimation is involved: every gated number is a REAL
  * upstream reading, only its freshness is process-local.
  *
@@ -118,12 +121,16 @@ function toPercent(value) {
     return Math.min(100, value);
 }
 /**
- * Recursively collect `{used_percent, window_minutes[, resets_at]}` window
- * readings from an arbitrary payload. The binary-proven shapes are
- * `rate_limits: {primary, secondary}` (notification) and `rate_limits`
- * (token_count event) — but the nesting is version-dependent, so any
- * object carrying BOTH a used_percent and a window_minutes number at any
- * depth (bounded) counts. Extra unknown siblings are ignored.
+ * Recursively collect window readings from an arbitrary payload. Two
+ * field-name conventions are accepted per field — exec JSONL snake_case
+ * `{used_percent, window_minutes[, resets_at]}` (0.151 binary-proven) and
+ * app-server camelCase `{usedPercent, windowDurationMins[, resetsAt]}`
+ * (#5734, codex 0.167) — normalized into the same reading. The shapes are
+ * `rate_limits: {primary, secondary}` (either window may be null) and
+ * `rate_limits` (token_count event), but the nesting is version-dependent,
+ * so any object carrying BOTH a used-share and a window-span number at any
+ * depth (bounded) counts, in either convention. Extra unknown siblings are
+ * ignored.
  */
 export function extractCodexRateLimitReadings(payload, source, now) {
     const readings = [];
@@ -141,12 +148,17 @@ export function extractCodexRateLimitReadings(payload, source, now) {
             return;
         }
         const record = value;
-        const usedPercent = toPercent(record.used_percent);
-        const windowMinutes = typeof record.window_minutes === 'number' && Number.isFinite(record.window_minutes) && record.window_minutes > 0
-            ? record.window_minutes
+        // Per-field convention fallback (#5734): snake_case first (binary-proven
+        // exec shape), then the app-server 0.167 camelCase spelling. A window
+        // record never carries the same field in both conventions; if one ever
+        // did, snake_case wins as the shape the ledger was built against.
+        const usedPercent = toPercent(record.used_percent !== undefined ? record.used_percent : record.usedPercent);
+        const rawWindowMinutes = record.window_minutes !== undefined ? record.window_minutes : record.windowDurationMins;
+        const windowMinutes = typeof rawWindowMinutes === 'number' && Number.isFinite(rawWindowMinutes) && rawWindowMinutes > 0
+            ? rawWindowMinutes
             : undefined;
         if (usedPercent !== undefined && windowMinutes !== undefined) {
-            const resetsAt = parseResetsAt(record.resets_at);
+            const resetsAt = parseResetsAt(record.resets_at !== undefined ? record.resets_at : record.resetsAt);
             readings.push({
                 usedPercent,
                 windowMinutes,
@@ -288,7 +300,7 @@ export class CodexWeeklyQuotaLedger {
         if (progress.usageProgress > progress.timeProgress) {
             const resetAt = this.weeklyReading?.resetsAt;
             const reason = `Codex 周额度消耗进度已超时间进度：已用 ${formatPercent(progress.usageProgress)}，` +
-                `本窗口时间仅过 ${formatPercent(progress.timeProgress)}（上游实测 used_percent/${Math.round(this.weeklyReading?.windowMinutes ?? 0)} 分钟窗口，` +
+                `本窗口时间仅过 ${formatPercent(progress.timeProgress)}（上游实测 ${Math.round(this.weeklyReading?.windowMinutes ?? 0)} 分钟窗口读数，` +
                 `预计 ${resetAt === undefined ? '' : `${formatTime(resetAt)} `}重置）。为避免窗口末段撞限，新会话暂缓；` +
                 '运行中的回合与续聊不受影响；消耗进度回落到时间进度之下或窗口重置后重发消息即可恢复。如已配置其它 agentBackend，可临时切换使用。';
             this.lastBlock = { at: now, reason };
