@@ -80,12 +80,12 @@ export interface ChannelApiRequestPayloads {
     /** If true, the response waits for the agent turn to complete before returning. */
     waitForCompletion?: boolean;
     /**
-     * Runtime profile declared when the chat was created (Issue #4913): a
-     * named preset or an explicit harness/model/thinking triple. Validated
+     * Runtime profile declared when the chat was created (Issue #4913): an
+     * explicit harness/model/reasoningEffort triple. Validated
      * and durably bound by the service BEFORE the message is routed; never
      * carries credentials or endpoints.
      */
-    runtime?: { preset?: string; harness?: string; model?: string; thinking?: string };
+    runtime?: { harness?: string; model?: string; reasoningEffort?: string };
   };
 }
 

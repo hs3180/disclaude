@@ -10,10 +10,9 @@ const presets: AgentPresets = {
 };
 
 describe('parseRuntimeProfileDeclaration', () => {
-  it('accepts a named preset and an explicit triple', () => {
-    expect(parseRuntimeProfileDeclaration({ preset: 'codex-main' })).toEqual({ preset: 'codex-main' });
-    expect(parseRuntimeProfileDeclaration({ harness: 'codex', model: 'gpt-5.2-codex', thinking: 'high' }))
-      .toEqual({ harness: 'codex', model: 'gpt-5.2-codex', thinking: 'high' });
+  it('accepts only the explicit harness/model/reasoningEffort surface', () => {
+    expect(parseRuntimeProfileDeclaration({ harness: 'codex', model: 'gpt-5.2-codex', reasoningEffort: 'high' }))
+      .toEqual({ harness: 'codex', model: 'gpt-5.2-codex', reasoningEffort: 'high' });
   });
 
   it('treats absence as no declaration', () => {
@@ -21,45 +20,30 @@ describe('parseRuntimeProfileDeclaration', () => {
     expect(parseRuntimeProfileDeclaration(null)).toBeUndefined();
   });
 
+  it('rejects legacy fields without aliasing or catalog derivation', () => {
+    expect(() => parseRuntimeProfileDeclaration({ preset: 'codex-main' })).toThrow(/unsupported field\(s\): preset/);
+    expect(() => parseRuntimeProfileDeclaration({ harness: 'codex', model: 'gpt-5.2-codex', thinking: 'high' })).toThrow(/unsupported field\(s\): thinking/);
+  });
+
   it('rejects credential- or endpoint-looking fields instead of ignoring them', () => {
-    expect(() => parseRuntimeProfileDeclaration({ preset: 'x', apiKey: 'sk-1' })).toThrow(/unsupported field\(s\): apiKey/);
-    expect(() => parseRuntimeProfileDeclaration({ preset: 'x', apiBaseUrl: 'https://evil' })).toThrow(/apiBaseUrl/);
+    expect(() => parseRuntimeProfileDeclaration({ harness: 'codex', apiKey: 'sk-1' })).toThrow(/unsupported field\(s\): apiKey/);
+    expect(() => parseRuntimeProfileDeclaration({ harness: 'codex', apiBaseUrl: 'https://evil' })).toThrow(/apiBaseUrl/);
   });
 
   it('rejects empty values and empty objects', () => {
     expect(() => parseRuntimeProfileDeclaration({})).toThrow(/must declare/);
-    expect(() => parseRuntimeProfileDeclaration({ preset: ' ' })).toThrow(/non-empty/);
+    expect(() => parseRuntimeProfileDeclaration({ model: ' ' })).toThrow(/non-empty/);
   });
 });
 
 describe('resolveRuntimeProfile', () => {
-  it('resolves a named preset from the enabled catalog unchanged', () => {
-    const result = resolveRuntimeProfile(presets, { preset: 'claude-main' });
-    expect(result).toEqual({ ok: true, presetName: 'claude-main', preset: presets['claude-main'] });
-  });
-
-  it('rejects unknown preset names with the available catalog as options', () => {
-    const result = resolveRuntimeProfile(presets, { preset: 'nope' });
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error).toContain('Unknown agent preset: nope');
-      expect(result.options).toEqual(['codex-main', 'claude-main', 'pi-main']);
-    }
-  });
-
-  it('rejects combining a named preset with explicit dimensions', () => {
-    const result = resolveRuntimeProfile(presets, { preset: 'codex-main', model: 'gpt-5.2' });
-    expect(result.ok).toBe(false);
-    if (!result.ok) { expect(result.error).toContain('cannot combine'); }
-  });
-
-  it('resolves an explicit codex triple against a catalog preset of that harness', () => {
-    const result = resolveRuntimeProfile(presets, { harness: 'codex', model: 'gpt-5.3-codex', thinking: 'high' });
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.presetName).toBe('codex-main');
-      expect(result.overrides).toEqual({ model: 'gpt-5.3-codex', reasoningEffort: 'high' });
-    }
+  it('validates an explicit codex triple and returns only an internal credential base', () => {
+    const result = resolveRuntimeProfile(presets, { harness: 'codex', model: 'gpt-5.3-codex', reasoningEffort: 'high' });
+    expect(result).toEqual({
+      ok: true,
+      base: { presetName: 'codex-main', preset: presets['codex-main'] },
+      overrides: { model: 'gpt-5.3-codex', reasoningEffort: 'high' },
+    });
   });
 
   it('rejects an unsupported harness with the valid harnesses as options', () => {
@@ -83,30 +67,30 @@ describe('resolveRuntimeProfile', () => {
     if (!result.ok) { expect(result.error).toContain('must declare a model'); }
   });
 
-  it('rejects thinking on harnesses that cannot apply it instead of silently ignoring it', () => {
-    const result = resolveRuntimeProfile(presets, { harness: 'claude', model: 'claude-sonnet-4-6', thinking: 'high' });
+  it('rejects reasoning effort on harnesses that cannot apply it', () => {
+    const result = resolveRuntimeProfile(presets, { harness: 'claude', model: 'claude-sonnet-4-6', reasoningEffort: 'high' });
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error).toContain('does not support a thinking level');
+      expect(result.error).toContain('does not support a reasoning effort');
       expect(result.options).toEqual(['codex']);
     }
   });
 
-  it('rejects invalid thinking values with the supported levels as options', () => {
-    const result = resolveRuntimeProfile(presets, { harness: 'codex', model: 'gpt-5.2-codex', thinking: 'extreme' });
+  it('rejects invalid reasoning effort values with the supported levels as options', () => {
+    const result = resolveRuntimeProfile(presets, { harness: 'codex', model: 'gpt-5.2-codex', reasoningEffort: 'extreme' });
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error).toContain('Invalid thinking level: extreme');
+      expect(result.error).toContain('Invalid reasoning effort: extreme');
       expect(result.options).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
     }
   });
 
-  it('rejects an explicit harness no enabled preset provides (no credential borrowing)', () => {
+  it('rejects a harness with no enabled credential base before chat creation', () => {
     const result = resolveRuntimeProfile(
       { 'claude-main': presets['claude-main'] },
       { harness: 'codex', model: 'gpt-5.2-codex' }
     );
     expect(result.ok).toBe(false);
-    if (!result.ok) { expect(result.error).toContain('No enabled agent preset provides the codex harness'); }
+    if (!result.ok) { expect(result.error).toContain('No enabled agent provides the codex harness'); }
   });
 });

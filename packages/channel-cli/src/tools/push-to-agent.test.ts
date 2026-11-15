@@ -109,22 +109,22 @@ describe('push_to_agent', () => {
   it('passes a creation-time runtime declaration through and echoes the bound profile (#4913)', async () => {
     mockPushToAgent.mockResolvedValue({
       success: true,
-      profile: { name: 'codex-main', agentBackend: 'codex', model: 'gpt-5.3-codex', thinking: 'high' },
+      profile: { agentBackend: 'codex', model: 'gpt-5.3-codex', reasoningEffort: 'high' },
     });
 
     const result = await push_to_agent({
       chatId: 'oc_new_group',
       message: 'Kick off the discussion.',
-      runtime: { harness: 'codex', model: 'gpt-5.3-codex', thinking: 'high' },
+      runtime: { harness: 'codex', model: 'gpt-5.3-codex', reasoningEffort: 'high' },
     });
 
     expect(result.success).toBe(true);
     expect(mockPushToAgent).toHaveBeenCalledWith(
       'oc_new_group',
       'Kick off the discussion.',
-      { runtime: { harness: 'codex', model: 'gpt-5.3-codex', thinking: 'high' } }
+      { runtime: { harness: 'codex', model: 'gpt-5.3-codex', reasoningEffort: 'high' } }
     );
-    expect(result.message).toContain('codex-main');
-    expect(result.message).toContain('thinking high');
+    expect(result.message).toContain('codex / gpt-5.3-codex');
+    expect(result.message).toContain('reasoning effort high');
   });
 });

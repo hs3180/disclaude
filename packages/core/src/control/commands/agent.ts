@@ -7,16 +7,16 @@ function formatPreset(preset: {
   name: string;
   agentBackend: string;
   model: string;
-  thinking?: string;
+  reasoningEffort?: string;
   origin?: 'creation' | 'command';
 }): string {
-  // Thinking (#4913) and origin are optional; show them only when they apply so
-  // legacy responses without the fields render identically.
+  // Effort and origin are optional; legacy responses render identically.
   const extras = [
-    preset.thinking ? `thinking: ${preset.thinking}` : '',
+    preset.reasoningEffort ? `reasoning effort: ${preset.reasoningEffort}` : '',
     preset.origin ? `source: ${preset.origin === 'creation' ? 'group creation binding' : '/agent use'}` : '',
   ].filter(Boolean).join(', ');
-  return `**${preset.name}** — ${preset.agentBackend} / ${preset.model}${extras ? ` (${extras})` : ''}`;
+  const prefix = preset.origin === 'creation' ? '' : `**${preset.name}** — `;
+  return `${prefix}${preset.agentBackend} / ${preset.model}${extras ? ` (${extras})` : ''}`;
 }
 
 export const handleAgent: CommandHandler<'agent'> = async (

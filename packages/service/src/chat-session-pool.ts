@@ -162,16 +162,27 @@ export interface ActiveAgentPreset {
   name: string;
   agentBackend: AgentPreset['agentBackend'];
   model: string;
-  /** Effective reasoning effort when one applies (codex runtimes, #4913). */
-  thinking?: string;
   /** Where the binding came from, for status responses (#4913). */
   origin?: 'creation' | 'command';
-  /** Thinking/reasoning effort when the preset's LLM pins one (#4914 card display). */
+  /** Effective reasoning effort when one applies (codex runtimes, #4913/#4914). */
   reasoningEffort?: AgentPreset['reasoningEffort'];
 }
 
 export type AgentPresetSwitchResult =
   | { ok: true; active: ActiveAgentPreset; sessionBoundary: 'new-session' }
+  | { ok: false; error: string };
+
+export type RuntimeProfileDeclarationResult =
+  | {
+      ok: true;
+      active: {
+        agentBackend: AgentPreset['agentBackend'];
+        model: string;
+        reasoningEffort?: AgentPreset['reasoningEffort'];
+        origin?: 'creation';
+      };
+      sessionBoundary: 'new-session';
+    }
   | { ok: false; error: string };
 
 /**
@@ -274,7 +285,7 @@ export class ChatSessionPool {
   /**
    * The chat's effective INTERACTIVE runtime (#4913): the base #5476 chain
    * above plus a creation-time runtime profile declaration. A creation-time
-   * explicit {harness, model, thinking} declaration rides a catalog preset
+   * explicit {harness, model, reasoningEffort} declaration uses an internal credential/store base
    * and overrides its model/effort for this chat. Session-level /agent use
    * wins over the chat binding, so overrides only apply when the binding is
    * the effective choice. Scoped executions that pin their own harness or
@@ -333,7 +344,7 @@ export class ChatSessionPool {
         agentBackend: resolved.preset.agentBackend,
         model: resolved.preset.model,
         ...(resolved.preset.reasoningEffort
-          ? { thinking: resolved.preset.reasoningEffort, reasoningEffort: resolved.preset.reasoningEffort }
+          ? { reasoningEffort: resolved.preset.reasoningEffort }
           : {}),
         ...(origin ? { origin } : {}),
       }
@@ -563,22 +574,18 @@ export class ChatSessionPool {
   }
 
   /**
-   * Bind a chat's runtime at creation time (#4913): the declaration (a named
-   * preset, or an explicit {harness, model, thinking} backed by a catalog
-   * preset) is resolved against the configured enabled catalog and durably
-   * saved BEFORE the chat's first prompt is delivered, so the first turn
-   * already runs on the selected runtime. Incompatible or unsupported
-   * declarations fail with an actionable error — never a silent fallback to
-   * another harness, model or the global default.
+   * Validate and bind an explicit creation-time runtime before the first prompt.
+   * The enabled agent is only an internal credential/store base; declaration
+   * semantics come exclusively from harness/model/reasoningEffort.
    */
   declareChatRuntimeProfile(
     chatId: string,
     declaration: RuntimeProfileDeclaration,
     actorId: string,
     options: { persist?: boolean } = {}
-  ): AgentPresetSwitchResult {
+  ): RuntimeProfileDeclarationResult {
     if (!this.presets) {
-      return { ok: false, error: 'No named agent presets are configured (add an agents: map); runtime profiles cannot be declared' };
+      return { ok: false, error: 'No enabled agents are configured; runtime profiles cannot be declared' };
     }
     const resolved = resolveRuntimeProfile(this.presets, declaration);
     if (!resolved.ok) {
@@ -589,33 +596,24 @@ export class ChatSessionPool {
           : resolved.error,
       };
     }
-    // Validate-only probes (group creation preflight, #4913) bind nothing.
+    const active = {
+      agentBackend: resolved.base.preset.agentBackend,
+      model: resolved.overrides.model,
+      ...(resolved.overrides.reasoningEffort ? { reasoningEffort: resolved.overrides.reasoningEffort } : {}),
+    };
+    // Group-creation preflight validates compatibility without binding anything.
     if (options.persist === false) {
-      const thinking = resolved.overrides?.reasoningEffort ?? resolved.preset.reasoningEffort;
-      return {
-        ok: true,
-        active: {
-          name: resolved.presetName,
-          agentBackend: resolved.preset.agentBackend,
-          model: resolved.overrides?.model ?? resolved.preset.model,
-          ...(thinking ? { thinking } : {}),
-        },
-        sessionBoundary: 'new-session',
-      };
+      return { ok: true, active, sessionBoundary: 'new-session' };
     }
-    // Refuse to displace a busy chat's runtime, mirroring /agent use (#5476).
     if (this.selectionChangeBusy(chatId)) {
       return { ok: false, error: 'Another session of this chat is busy; wait for the response or use /stop before declaring its runtime' };
     }
-    const effectiveModel = resolved.overrides?.model ?? resolved.preset.model;
-    const thinking = resolved.overrides?.reasoningEffort ?? resolved.preset.reasoningEffort;
     if (!this.options.agentSelections) {
       return { ok: false, error: 'Runtime declarations require the durable agent selection store; the chat keeps its current selection' };
     }
     try {
-      // Persist before the first prompt is routed; a failed save leaves the
-      // chat unbound rather than half-configured (#4913 atomicity).
-      this.options.agentSelections.set(chatId, resolved.presetName, actorId, {
+      // Persist the internal base plus explicit overrides before prompt routing.
+      this.options.agentSelections.set(chatId, resolved.base.presetName, actorId, {
         overrides: resolved.overrides,
         origin: 'creation',
       });
@@ -627,13 +625,7 @@ export class ChatSessionPool {
     }
     return {
       ok: true,
-      active: {
-        name: resolved.presetName,
-        agentBackend: resolved.preset.agentBackend,
-        model: effectiveModel,
-        ...(thinking ? { thinking } : {}),
-        origin: 'creation',
-      },
+      active: { ...active, origin: 'creation' },
       sessionBoundary: 'new-session',
     };
   }

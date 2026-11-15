@@ -255,7 +255,7 @@ export async function pushToAgent(
   client: ChannelApiClientLike,
   chatId: string,
   message: string,
-  options?: { waitForCompletion?: boolean; timeoutMs?: number; runtime?: { preset?: string; harness?: string; model?: string; thinking?: string } }
+  options?: { waitForCompletion?: boolean; timeoutMs?: number; runtime?: { harness?: string; model?: string; reasoningEffort?: string } }
 ): Promise<ChannelApiMethodResult> {
   try {
     return await client.request('pushToAgent', {

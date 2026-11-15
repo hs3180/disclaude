@@ -1210,7 +1210,7 @@ describe('HttpApiServer', () => {
   });
 
   describe('POST /api/push runtime binding + POST /api/agent-runtime (#4913)', () => {
-    const activeProfile = { name: 'researcher', agentBackend: 'codex', model: 'gpt-5.2-codex', thinking: 'high' };
+    const activeProfile = { agentBackend: 'codex', model: 'gpt-5.2-codex', reasoningEffort: 'high' };
 
     it('binds the declared runtime BEFORE routing the first prompt and echoes the profile', async () => {
       const pushHandler = vi.fn().mockResolvedValue(undefined);
@@ -1222,7 +1222,7 @@ describe('HttpApiServer', () => {
         method: 'POST',
         url: '/api/push',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ chatId: 'oc_new_group', message: 'first prompt', runtime: { preset: 'researcher' } }),
+        body: JSON.stringify({ chatId: 'oc_new_group', message: 'first prompt', runtime: { harness: 'codex', model: 'gpt-5.2-codex', reasoningEffort: 'high' } }),
       });
 
       expect(statusCode).toBe(200);
@@ -1230,7 +1230,7 @@ describe('HttpApiServer', () => {
       expect(data.ok).toBe(true);
       expect(data.profile).toEqual(activeProfile);
       // Binding precedes prompt delivery.
-      expect(declarer).toHaveBeenCalledExactlyOnceWith('oc_new_group', { preset: 'researcher' }, 'http-push');
+      expect(declarer).toHaveBeenCalledExactlyOnceWith('oc_new_group', { harness: 'codex', model: 'gpt-5.2-codex', reasoningEffort: 'high' }, 'http-push');
       expect(pushHandler).toHaveBeenCalledExactlyOnceWith('oc_new_group', 'first prompt');
       const [declarerOrder] = declarer.mock.invocationCallOrder;
       const [pushOrder] = pushHandler.mock.invocationCallOrder;
@@ -1265,7 +1265,7 @@ describe('HttpApiServer', () => {
         method: 'POST',
         url: '/api/push',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ chatId: 'oc_test', message: 'hi', runtime: { preset: 'x' } }),
+        body: JSON.stringify({ chatId: 'oc_test', message: 'hi', runtime: { harness: 'codex', model: 'gpt-5.2-codex' } }),
       });
       expect(statusCode).toBe(503);
     });
@@ -1278,7 +1278,7 @@ describe('HttpApiServer', () => {
         method: 'POST',
         url: '/api/agent-runtime',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ chatId: 'oc_probe', runtime: { preset: 'researcher' } }),
+        body: JSON.stringify({ chatId: 'oc_probe', runtime: { harness: 'codex', model: 'gpt-5.2-codex', reasoningEffort: 'high' } }),
       });
 
       expect(statusCode).toBe(200);
@@ -1286,19 +1286,19 @@ describe('HttpApiServer', () => {
       expect(data.ok).toBe(true);
       expect(data.profile).toEqual(activeProfile);
       // Validate-only: persist=false is passed through.
-      expect(declarer).toHaveBeenCalledExactlyOnceWith('oc_probe', { preset: 'researcher' }, 'agent-runtime-validate', { persist: false });
+      expect(declarer).toHaveBeenCalledExactlyOnceWith('oc_probe', { harness: 'codex', model: 'gpt-5.2-codex', reasoningEffort: 'high' }, 'agent-runtime-validate', { persist: false });
     });
 
     it('answers 422 with the actionable error for an incompatible /api/agent-runtime declaration', async () => {
       server.setRuntimeProfileDeclarer(
-        vi.fn().mockResolvedValue({ ok: false, error: 'thinking is not supported by harness claude (supported: codex)' })
+        vi.fn().mockResolvedValue({ ok: false, error: 'reasoning effort is not supported by harness claude (supported: codex)' })
       );
 
       const { statusCode, body } = await dispatch(server, {
         method: 'POST',
         url: '/api/agent-runtime',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ runtime: { harness: 'claude', model: 'sonnet', thinking: 'high' } }),
+        body: JSON.stringify({ runtime: { harness: 'claude', model: 'sonnet', reasoningEffort: 'high' } }),
       });
 
       expect(statusCode).toBe(422);

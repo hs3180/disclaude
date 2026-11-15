@@ -267,8 +267,8 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
       message = readInput(args, 'message', 'message-file');
       if (!message) { emitFail(command, 'Missing message content', 'pass --message <string>, --message-file <path>, or pipe content on stdin'); return 1; }
       runtime = parseJson<Record<string, string>>(arg(args, 'runtime'), 'runtime');
-      if (runtime && (Array.isArray(runtime) || Object.keys(runtime).some(key => !['preset', 'harness', 'model', 'thinking'].includes(key)))) {
-        emitFail(command, 'runtime must be an object declaring preset or harness/model/thinking only'); return 1;
+      if (runtime && (Array.isArray(runtime) || Object.keys(runtime).some(key => !['harness', 'model', 'reasoningEffort'].includes(key)))) {
+        emitFail(command, 'runtime must be an object declaring harness/model/reasoningEffort only'); return 1;
       }
     } else {
       question = readInput(args, 'question', 'question-file');

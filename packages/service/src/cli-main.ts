@@ -1214,7 +1214,7 @@ export async function main(): Promise<void> {
         httpApiServer.setRuntimeProfileDeclarer((chatId, runtime, actorId, options) => {
           const declaration = parseRuntimeProfileDeclaration(runtime);
           if (!declaration) {
-            return { ok: false, error: 'runtime must declare a preset or an explicit harness/model/thinking' };
+            return { ok: false, error: 'runtime must declare harness/model/reasoningEffort' };
           }
           const result = agentPool.declareChatRuntimeProfile(chatId, declaration, actorId, options);
           return result.ok

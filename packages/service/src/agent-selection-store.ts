@@ -6,8 +6,8 @@ import { isCodexReasoningEffort, type CodexReasoningEffort } from '@disclaude/co
 
 /**
  * Creation-time overrides stored alongside a preset binding (#4913): an
- * explicit {harness, model, thinking} declaration rides a catalog preset of
- * the chosen harness, overriding its model/effort for this chat.
+ * explicit {harness, model, reasoningEffort} declaration uses an internal
+ * credential/store base, overriding model/effort for this chat.
  */
 export interface AgentSelectionOverrides {
   model?: string;

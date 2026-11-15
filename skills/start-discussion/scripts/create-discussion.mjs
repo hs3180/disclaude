@@ -17,15 +17,14 @@ function dataOf(response) {
   return response?.data && typeof response.data === 'object' ? response.data : response;
 }
 
-const RUNTIME_KEYS = new Set(['preset', 'harness', 'model', 'thinking']);
+const RUNTIME_KEYS = new Set(['harness', 'model', 'reasoningEffort']);
 
 /**
  * Issue #4913: validate a declared runtime profile against the service's
  * configured enabled catalog BEFORE the group is created, so an incompatible
  * or unsupported declaration aborts with an actionable error and never
  * produces a half-configured active group. The declaration never carries
- * credentials or endpoints — a named preset or an explicit
- * harness/model/thinking triple only.
+ * credentials or endpoints — only harness/model/reasoningEffort.
  */
 async function preflightRuntime(runtime, fetchImpl = fetch) {
   if (runtime === undefined || runtime === null) { return undefined; }
@@ -64,7 +63,7 @@ export function positioningPost({
   ledgerRule = '本群台账只记录本群决策与交付，原群历史不重复搬运。',
 }, runtimeProfile) {
   const runtimeLine = runtimeProfile
-    ? `\n- 运行时：本群由 **${runtimeProfile.name ?? runtimeProfile.agentBackend}**（${runtimeProfile.agentBackend}${runtimeProfile.model ? ` / ${runtimeProfile.model}` : ''}${runtimeProfile.thinking ? ` / thinking: ${runtimeProfile.thinking}` : ''}）服务，首回合即生效；会话内可用 /agent use 临时切换。`
+    ? `\n- 运行时：本群由 **${runtimeProfile.agentBackend}**（${runtimeProfile.agentBackend}${runtimeProfile.model ? ` / ${runtimeProfile.model}` : ''}${runtimeProfile.reasoningEffort ? ` / reasoning effort: ${runtimeProfile.reasoningEffort}` : ''}）服务，首回合即生效；会话内可用 /agent use 临时切换。`
     : '';
   return `【群定位声明】讨论：${topic}\n- 本群管什么：只讨论「${topic}」及该话题的决策与交付。\n- 原群/原 thread 保留什么：原有其他话题与历史上下文，不再承接本话题讨论。\n- 执行流水去处：本话题的进度、执行流水与交付只发到本群。\n- 台账规则：${ledgerRule}${runtimeLine}`;
 }

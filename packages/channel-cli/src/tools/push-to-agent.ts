@@ -21,8 +21,8 @@ const logger = createLogger('PushToAgent');
  * @param params.chatId - Target chat ID
  * @param params.message - The instruction text to push
  * @param params.runtime - Optional creation-time runtime profile (Issue #4913):
- *   a named preset (`{ preset }`) or an explicit `{ harness, model, thinking }`
- *   triple. The service resolves it against the configured enabled catalog and
+ *   an explicit `{ harness, model, reasoningEffort }` triple. The service
+ *   validates compatibility before durably binding it and
  *   durably binds it to the chat BEFORE this message is routed, so a newly
  *   created group's first turn already runs on the selected runtime. Invalid
  *   or unsupported declarations fail the push with an actionable error — no
@@ -31,7 +31,7 @@ const logger = createLogger('PushToAgent');
 export async function push_to_agent(params: {
   chatId: string;
   message: string;
-  runtime?: { preset?: string; harness?: string; model?: string; thinking?: string };
+  runtime?: { harness?: string; model?: string; reasoningEffort?: string };
 }): Promise<SendMessageResult> {
   const { chatId, message, runtime } = params;
 
@@ -77,9 +77,9 @@ export async function push_to_agent(params: {
 
     logger.debug({ chatId }, 'push_to_agent succeeded');
     // Issue #4913: surface the effective runtime the first turn will use.
-    const {profile} = (result as { profile?: { name?: string; agentBackend?: string; model?: string; thinking?: string } });
+    const {profile} = (result as { profile?: { agentBackend?: string; model?: string; reasoningEffort?: string } });
     const profileNote = profile
-      ? ` Runtime bound: ${profile.name} (${profile.agentBackend} / ${profile.model}${profile.thinking ? ` / thinking ${profile.thinking}` : ''}).`
+      ? ` Runtime bound: ${profile.agentBackend} / ${profile.model}${profile.reasoningEffort ? ` / reasoning effort ${profile.reasoningEffort}` : ''}.`
       : '';
     return { success: true, message: `✅ Instruction pushed to agent successfully.${profileNote}` };
 

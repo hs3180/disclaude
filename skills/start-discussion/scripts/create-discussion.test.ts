@@ -115,6 +115,15 @@ describe('atomic discussion handoff', () => {
     }
   });
 
+  it.each(['preset', 'thinking'])('rejects legacy runtime field %s before preflight or group creation', async (field) => {
+    const run = mockChain();
+    const fetchImpl = vi.fn();
+    await expect(createDiscussion({ ...input, runtime: { [field]: 'high' }, fetchImpl }, run))
+      .rejects.toThrow(`runtime_rejects_fields:${field}`);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it('adds the runtime line to the pinned positioning post and echoes the profile (#4913)', async () => {
     const run = mockChain();
     const previousBase = process.env.DISCLAUDE_API_BASE_URL;
@@ -124,18 +133,18 @@ describe('atomic discussion handoff', () => {
         ok: true,
         json: async () => ({
           ok: true,
-          profile: { name: 'researcher', agentBackend: 'codex', model: 'gpt-5.2-codex', thinking: 'high' },
+          profile: { agentBackend: 'codex', model: 'gpt-5.2-codex', reasoningEffort: 'high' },
         }),
       });
       await expect(
-        createDiscussion({ ...input, runtime: { preset: 'researcher' }, fetchImpl }, run)
+        createDiscussion({ ...input, runtime: { harness: 'codex', model: 'gpt-5.2-codex', reasoningEffort: 'high' }, fetchImpl }, run)
       ).resolves.toMatchObject({
         chatId: 'oc_new',
-        runtime: { name: 'researcher', agentBackend: 'codex', model: 'gpt-5.2-codex', thinking: 'high' },
+        runtime: { agentBackend: 'codex', model: 'gpt-5.2-codex', reasoningEffort: 'high' },
       });
       const firstPost = run.mock.calls[1][1][run.mock.calls[1][1].indexOf('--text') + 1];
-      expect(firstPost).toContain('researcher');
-      expect(firstPost).toContain('codex / gpt-5.2-codex / thinking: high');
+      expect(firstPost).not.toContain('researcher');
+      expect(firstPost).toContain('codex / gpt-5.2-codex / reasoning effort: high');
       expect(firstPost).toContain('/agent use');
     } finally {
       if (previousBase === undefined) { delete process.env.DISCLAUDE_API_BASE_URL; }

@@ -112,7 +112,7 @@ export type PushHandler = (chatId: string, message: string) => Promise<void>;
 
 /** Issue #4913: result of resolving/validating a creation-time runtime declaration. */
 export type RuntimeProfileDeclarerResult =
-  | { ok: true; active: { name: string; agentBackend: string; model: string; thinking?: string; origin?: string } }
+  | { ok: true; active: { agentBackend: string; model: string; reasoningEffort?: string; origin?: string } }
   | { ok: false; error: string };
 /** Issue #4913: resolves/validates a creation-time runtime declaration (sync or async). */
 export type RuntimeProfileDeclarer = (chatId: string, runtime: unknown, actorId: string, options?: { persist?: boolean }) =>
@@ -461,7 +461,7 @@ export class HttpApiServer {
 
   /**
    * Set the runtime profile declarer (#4913): validates a creation-time
-   * declaration (named preset or explicit harness/model/thinking) against the
+   * declaration (explicit harness/model/reasoningEffort) against the
    * configured enabled catalog and durably binds it to the chat. Used by
    * POST /api/push before the first prompt is routed and by the validate-only
    * POST /api/agent-runtime probe that group-creation scripts call BEFORE the
@@ -1186,7 +1186,7 @@ export class HttpApiServer {
    * Group-creation scripts call this BEFORE the group exists so an
    * incompatible or unsupported declaration aborts creation with an
    * actionable error instead of producing a half-configured active group.
-   * Body: { runtime: { preset } | { harness, model, thinking } }.
+   * Body: { runtime: { harness, model, reasoningEffort } }.
    */
   private async handleAgentRuntime(
     req: IncomingMessage,

@@ -5,42 +5,35 @@ import { isCodexReasoningEffort } from './codex-settings.js';
 
 const VALID_BACKENDS = new Set<AgentPreset['agentBackend']>(['claude', 'pi', 'codex', 'dsh']);
 const CODEX_MODEL_PATTERN = /^gpt-\d+(?:[.-].+)/i;
-const DECLARATION_KEYS = new Set(['preset', 'harness', 'model', 'thinking']);
+const DECLARATION_KEYS = new Set(['harness', 'model', 'reasoningEffort']);
+const REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
 
-/**
- * A runtime profile declared when a chat/group is created. Exactly one form:
- * a named preset from the configured enabled catalog, or an explicit
- * {harness, model, thinking} triple. Credentials and endpoints are never
- * accepted — the explicit form is always backed by a catalog preset.
- */
+/** The only accepted creation-time declaration surface. */
 export interface RuntimeProfileDeclaration {
-  preset?: string;
   harness?: string;
   model?: string;
-  thinking?: string;
+  reasoningEffort?: string;
 }
 
 export type RuntimeProfileResolution =
   | {
       ok: true;
-      /** Catalog preset that supplies provider settings/credentials. */
-      presetName: string;
-      preset: AgentPreset;
-      /** Creation-time overrides applied on top of the catalog preset. */
-      overrides?: { model?: string; reasoningEffort?: CodexReasoningEffort };
+      /** Internal credential/store base; never part of the declaration API. */
+      base: { presetName: string; preset: AgentPreset };
+      overrides: { model: string; reasoningEffort?: CodexReasoningEffort };
     }
   | { ok: false; error: string; options?: string[] };
 
-/** Strictly parse a raw declaration value; rejects unknown keys (no credentials/endpoints). */
+/** Strictly parse a declaration; credentials, endpoints and legacy aliases are rejected. */
 export function parseRuntimeProfileDeclaration(value: unknown): RuntimeProfileDeclaration | undefined {
   if (value === undefined || value === null) { return undefined; }
   if (typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('runtime must be an object with preset or harness/model/thinking');
+    throw new Error('runtime must be an object declaring harness/model/reasoningEffort');
   }
   const entries = Object.entries(value as Record<string, unknown>);
   const unknown = entries.filter(([key]) => !DECLARATION_KEYS.has(key)).map(([key]) => key);
   if (unknown.length > 0) {
-    throw new Error(`runtime declares unsupported field(s): ${unknown.join(', ')}; only preset or harness/model/thinking are accepted (never credentials or endpoints)`);
+    throw new Error(`runtime declares unsupported field(s): ${unknown.join(', ')}; only harness/model/reasoningEffort are accepted (preset and thinking are rejected; credentials and endpoints are never accepted)`);
   }
   const declaration: RuntimeProfileDeclaration = {};
   for (const [key, raw] of entries) {
@@ -50,76 +43,53 @@ export function parseRuntimeProfileDeclaration(value: unknown): RuntimeProfileDe
     declaration[key as keyof RuntimeProfileDeclaration] = raw.trim();
   }
   if (entries.length === 0) {
-    throw new Error('runtime must declare a preset or an explicit harness/model/thinking');
+    throw new Error('runtime must declare harness/model/reasoningEffort');
   }
   return declaration;
 }
 
-/**
- * Resolve a creation-time declaration against the configured enabled preset
- * catalog. Validation is strict and actionable: an unsupported combination
- * fails with the available options instead of silently degrading to another
- * harness, model or effort.
- */
+/** Validate the explicit runtime and select its internal credential/store base. */
 export function resolveRuntimeProfile(
   agents: AgentPresets,
   declaration: RuntimeProfileDeclaration
 ): RuntimeProfileResolution {
   const names = Object.keys(agents);
-  if (declaration.preset !== undefined) {
-    if (declaration.harness !== undefined || declaration.model !== undefined || declaration.thinking !== undefined) {
-      return { ok: false, error: 'runtime cannot combine a named preset with explicit harness/model/thinking; declare one form' };
-    }
-    const preset = agents[declaration.preset];
-    return preset
-      ? { ok: true, presetName: declaration.preset, preset }
-      : { ok: false, error: `Unknown agent preset: ${declaration.preset}`, options: names };
-  }
-
-  const {harness} = declaration;
+  const { harness, model, reasoningEffort } = declaration;
   if (harness === undefined) {
-    return { ok: false, error: 'runtime must declare a preset or a harness' };
+    return { ok: false, error: 'runtime must declare a harness' };
   }
   if (!VALID_BACKENDS.has(harness as AgentPreset['agentBackend'])) {
     return { ok: false, error: `Unsupported harness: ${harness}`, options: [...VALID_BACKENDS] };
   }
-  // Only the codex runtime applies a reasoning effort; refuse instead of
-  // silently ignoring the requested thinking on other harnesses (#4913).
-  if (declaration.thinking !== undefined) {
-    if (harness !== 'codex') {
-      return { ok: false, error: `Harness ${harness} does not support a thinking level; only codex applies one`, options: ['codex'] };
-    }
-    if (!isCodexReasoningEffort(declaration.thinking)) {
-      return { ok: false, error: `Invalid thinking level: ${declaration.thinking}`, options: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] };
-    }
-  }
-  const {model} = declaration;
   if (model === undefined) {
     return { ok: false, error: `An explicit runtime must declare a model for harness ${harness}; no fallback model is applied` };
   }
   if (harness === 'codex' && !CODEX_MODEL_PATTERN.test(model)) {
-    return { ok: false, error: `Model ${model} is not a Codex/ChatGPT model identifier`, options: undefined };
+    return { ok: false, error: `Model ${model} is not a Codex/ChatGPT model identifier` };
+  }
+  if (reasoningEffort !== undefined) {
+    if (harness !== 'codex') {
+      return { ok: false, error: `Harness ${harness} does not support a reasoning effort; only codex applies one`, options: ['codex'] };
+    }
+    if (!isCodexReasoningEffort(reasoningEffort)) {
+      return { ok: false, error: `Invalid reasoning effort: ${reasoningEffort}`, options: REASONING_EFFORTS };
+    }
   }
 
-  // The explicit triple borrows credentials/provider settings from a catalog
-  // preset of the same harness. Deterministic base: the validated default
-  // preset when it matches, else the first catalog entry in declaration order.
-  const [base] =
-    names
-      .filter((name) => agents[name].agentBackend === harness)
-      .sort((a, b) => Number(b === 'default' || agents[b].default === true) - Number(a === 'default' || agents[a].default === true));
+  // Credentials come only from an enabled agent for the requested harness.
+  // Prefer its default, otherwise use declaration order deterministically.
+  const [base] = names
+    .filter((name) => agents[name].agentBackend === harness)
+    .sort((a, b) => Number(b === 'default' || agents[b].default === true) - Number(a === 'default' || agents[a].default === true));
   if (base === undefined) {
-    return { ok: false, error: `No enabled agent preset provides the ${harness} harness; add one to the agents: map first`, options: names };
+    return { ok: false, error: `No enabled agent provides the ${harness} harness; configure and enable one first`, options: names };
   }
   return {
     ok: true,
-    presetName: base,
-    preset: agents[base],
+    base: { presetName: base, preset: agents[base] },
     overrides: {
-      ...(model !== undefined ? { model } : {}),
-      ...(declaration.thinking !== undefined && isCodexReasoningEffort(declaration.thinking)
-        ? { reasoningEffort: declaration.thinking }
-        : {}),
+      model,
+      ...(reasoningEffort !== undefined && isCodexReasoningEffort(reasoningEffort) ? { reasoningEffort } : {}),
     },
   };
 }
