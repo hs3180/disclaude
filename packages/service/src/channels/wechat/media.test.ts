@@ -15,6 +15,7 @@ import {
   UPLOAD_CONNECT_BUDGET_MS,
   UPLOAD_MAX_ATTEMPTS,
   UPLOAD_STALL_BUDGET_MS,
+  UPLOAD_WRITE_CHUNK_BYTES,
 } from './media.js';
 import { channelError } from '../../channel-error.js';
 
@@ -58,10 +59,15 @@ function injectUploadRequest(fake: (callback?: unknown) => ClientRequest): void 
   }) as unknown as typeof https.request);
 }
 
+// #5751: uploadPost hands the body over in bounded chunks via req.write()
+// before end(), so every fake transport must stub `write` or the loop dies on
+// a TypeError. `write: () => true` = no backpressure: the whole ciphertext is
+// accepted synchronously (writtenBytes advances even though nothing was sent).
 function failUploadWith(error: Error & { code?: string }): void {
   injectUploadRequest(() => {
     const req = new EventEmitter() as unknown as ClientRequest;
     Object.assign(req, {
+      write: () => true,
       end: () => {
         process.nextTick(() => req.emit('error', error));
       },
@@ -75,6 +81,7 @@ function stallUpload(): void {
   injectUploadRequest(() => {
     const req = new EventEmitter() as unknown as ClientRequest;
     Object.assign(req, {
+      write: () => true,
       end: () => {},
       destroy: (destroyError?: Error) => {
         req.emit('error', destroyError ?? new Error('destroyed'));
@@ -82,6 +89,38 @@ function stallUpload(): void {
     });
     return req;
   });
+}
+
+/**
+ * #5751: a peer that stops reading mid-body. The connection is healthy
+ * (socket + secureConnect) but `write` only accepts `acceptedChunks` chunks,
+ * then reports backpressure and never emits 'drain' — the write loop parks on
+ * `once(req, 'drain')` and only the stall watchdog can end it.
+ */
+function stallAfterChunks(acceptedChunks: number): { writeCalls: () => number; destroys: () => number } {
+  let writes = 0;
+  let destroys = 0;
+  injectUploadRequest(() => {
+    const req = new EventEmitter();
+    const socket = new EventEmitter();
+    Object.assign(req, {
+      write: () => (writes += 1) <= acceptedChunks,
+      end: () => {},
+      destroy: (destroyError?: Error) => {
+        destroys += 1;
+        req.emit('error', destroyError ?? new Error('destroyed'));
+      },
+    });
+    // Factory tick (not end()): the steps must be able to run while the
+    // write loop is parked on backpressure, and end() is only reached after
+    // the last accepted chunk.
+    process.nextTick(() => {
+      req.emit('socket', socket);
+      socket.emit('secureConnect'); // link is fine; only the body stalls
+    });
+    return req as unknown as ClientRequest;
+  });
+  return { writeCalls: () => writes, destroys: () => destroys };
 }
 
 /**
@@ -110,15 +149,18 @@ function scriptUploads(...steps: ((context: UploadScriptContext) => void)[]): vo
       res.emit('end');
     };
     Object.assign(req, {
-      end: () => {
-        process.nextTick(() => {
-          req.emit('socket', socket);
-          step({ req, socket, respond });
-        });
-      },
+      write: () => true,
+      end: () => {},
       destroy: (destroyError?: Error) => {
         req.emit('error', destroyError ?? new Error('destroyed'));
       },
+    });
+    // #5751: emitted from the factory, not end() — end() is now only reached
+    // after the whole body was handed over chunk by chunk, so steps parked on
+    // backpressure would otherwise never run.
+    process.nextTick(() => {
+      req.emit('socket', socket);
+      step({ req, socket, respond });
     });
     return req as unknown as ClientRequest;
   });
@@ -361,7 +403,9 @@ describe('WeChat encrypted CDN protocol', () => {
         requestUpload,
       });
       const expectation = expect(pending).rejects.toMatchObject({
-        detail: { stage: 'upload', reason: 'timeout', phase: 'connect', writtenBytes: 0, attempt: 2, messageSent: false },
+        // #5751: connect-phase failures report the locally buffered bytes
+        // (the whole 16-byte ciphertext of 'fixture'), not a finish-time zero.
+        detail: { stage: 'upload', reason: 'timeout', phase: 'connect', writtenBytes: 16, attempt: 2, messageSent: false },
         cause: { name: 'TimeoutError', code: 'ETIMEDOUT' },
       });
       await vi.advanceTimersByTimeAsync(2 * 10_000 + 1_000); // connect budget per attempt
@@ -620,7 +664,7 @@ describe('WeChat CDN upload phase diagnostics (#5720)', () => {
       const error = pending.catch((error: Error & { detail?: Record<string, unknown> }) => error);
       const expectation = expect(pending).rejects.toMatchObject({
         detail: {
-          stage: 'upload', reason: 'timeout', phase: 'connect', writtenBytes: 0,
+          stage: 'upload', reason: 'timeout', phase: 'connect', writtenBytes: 16,
           attempt: UPLOAD_MAX_ATTEMPTS, messageSent: false,
         },
         cause: { name: 'TimeoutError', code: 'ETIMEDOUT' },
@@ -636,27 +680,58 @@ describe('WeChat CDN upload phase diagnostics (#5720)', () => {
     }
   });
 
-  it('distinguishes a body-write stall: no retry, zero bytes confirmed, far below the size-aware total', async () => {
+  it('distinguishes a body-write stall: no retry, partial bytes handed over, far below the size-aware total', async () => {
     vi.useFakeTimers();
     try {
       const requestUpload = vi.fn(negotiate);
-      scriptUploads(({ socket }) => {
-        socket.emit('secureConnect'); // connected, but the body never makes progress
-      });
+      stallAfterChunks(3); // healthy link; peer accepts 3 chunks then never reads again
       // 1 MiB total budget would be 15s + 4.2s; the stall watchdog must fire at 15s instead.
       const pending = uploadEncryptedMedia({ fileData: Buffer.alloc(1024 * 1024), to: 'peer', kind: 'video', requestUpload });
+      const failure = pending.catch((error: Error & { detail?: { acknowledged?: unknown } }) => error);
       const expectation = expect(pending).rejects.toMatchObject({
         detail: {
-          stage: 'upload', reason: 'timeout', phase: 'write', writtenBytes: 0, attempt: 1, messageSent: false,
-          connectMs: 0,
+          // #5751: progressive count of the 3 accepted 64 KiB chunks — local
+          // handoff, never a CDN acknowledgement.
+          stage: 'upload', reason: 'timeout', phase: 'write', writtenBytes: 3 * UPLOAD_WRITE_CHUNK_BYTES,
+          attempt: 1, messageSent: false, connectMs: 0,
         },
       });
       await vi.advanceTimersByTimeAsync(UPLOAD_STALL_BUDGET_MS + 500);
       await expectation;
+      expect((await failure).detail?.acknowledged).toBeUndefined();
       expect(requestUpload).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  // #5751 regression (b): true stall with real clocks — the peer stops reading
+  // mid-body, the write loop parks on backpressure, and only the stall
+  // watchdog may end the attempt: it fires at the 15s budget, destroys the
+  // request exactly once, hands over no further ciphertext afterwards, and
+  // rejects once without a blind resend (no second POST).
+  it('destroys a true mid-write stall at the stall budget on real clocks and rejects once without retrying', { timeout: 30_000 }, async () => {
+    const requestUpload = vi.fn(negotiate);
+    const peer = stallAfterChunks(3);
+    const started = Date.now();
+    const pending = uploadEncryptedMedia({
+      fileData: Buffer.alloc(1024 * 1024), to: 'peer', kind: 'video', requestUpload,
+    });
+    const failure = pending.catch((error: Error & { detail?: Record<string, unknown> }) => error);
+    await expect(pending).rejects.toMatchObject({
+      detail: {
+        stage: 'upload', reason: 'timeout', phase: 'write',
+        writtenBytes: 3 * UPLOAD_WRITE_CHUNK_BYTES, attempt: 1, messageSent: false,
+      },
+      cause: { name: 'TimeoutError', code: 'ETIMEDOUT' },
+    });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(UPLOAD_STALL_BUDGET_MS - 100); // watchdog, not an early throw
+    expect(peer.destroys()).toBe(1); // request destroyed exactly once
+    const writesAtStall = peer.writeCalls();
+    await new Promise((resolve) => setTimeout(resolve, 100)); // give any stray write a chance to land
+    expect(peer.writeCalls()).toBe(writesAtStall); // no ciphertext after teardown
+    expect(requestUpload).toHaveBeenCalledTimes(1); // single rejection, no resend
+    expect((await failure).detail?.acknowledged).toBeUndefined();
   });
 
   it('distinguishes a receipt-wait lag after the body was written and never resends it', async () => {
@@ -716,7 +791,9 @@ describe('WeChat CDN upload phase diagnostics (#5720)', () => {
       fileData: Buffer.from('fixture'), to: 'peer', kind: 'file', requestUpload,
     }).catch((error: Error) => error);
     expect((error as { detail?: Record<string, unknown> }).detail).toMatchObject({
-      stage: 'upload', reason: 'http', httpStatus: status, phase: 'response', writtenBytes: 16, attempt: 1, messageSent: false,
+      // #5751: response headers arrived, so the CDN-side acknowledgement bit is set.
+      stage: 'upload', reason: 'http', httpStatus: status, phase: 'response', writtenBytes: 16,
+      acknowledged: true, attempt: 1, messageSent: false,
     });
     expect(requestUpload).toHaveBeenCalledTimes(1);
   });
@@ -731,7 +808,7 @@ describe('WeChat CDN upload phase diagnostics (#5720)', () => {
     await expect(
       uploadEncryptedMedia({ fileData: Buffer.from('fixture'), to: 'peer', kind: 'file', requestUpload })
     ).rejects.toMatchObject({
-      detail: { stage: 'receipt', reason: 'receipt', phase: 'response', attempt: 1, messageSent: false },
+      detail: { stage: 'receipt', reason: 'receipt', phase: 'response', acknowledged: true, attempt: 1, messageSent: false },
     });
     expect(requestUpload).toHaveBeenCalledTimes(1);
   });
@@ -748,7 +825,8 @@ describe('WeChat CDN upload phase diagnostics (#5720)', () => {
     await new Promise((resolve) => setImmediate(resolve)); // let the fake request arm its listeners
     controller.abort();
     await expect(pending).rejects.toMatchObject({
-      detail: { stage: 'upload', reason: 'cancelled', phase: 'write', writtenBytes: 0, attempt: 1, messageSent: false },
+      // #5751: the whole 16-byte ciphertext was buffered locally before the abort.
+      detail: { stage: 'upload', reason: 'cancelled', phase: 'write', writtenBytes: 16, attempt: 1, messageSent: false },
     });
     expect(requestUpload).toHaveBeenCalledTimes(1);
   });
