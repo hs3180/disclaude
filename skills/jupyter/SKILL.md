@@ -104,6 +104,15 @@ for the current JSON input schemas and [README.md](./README.md) for setup.
    identifiers. Check its delivery result before claiming success; inspect an
    uncertain delivery before retrying. Cite the report revision in the summary.
 
+Text files (`.py`, `.md`, …) opened in RTC collaboration mode live in a YDoc
+room, not only on disk. A failed or deferred save can leave the room newer
+than the disk; idle rooms are destroyed after 60s with a final flush, but
+inside that window — or when that flush itself fails — the disk stays stale
+while Lab keeps showing the edited buffer. After manually editing a text file
+in RTC mode, verify the disk content before running it (read the file back
+and compare, e.g. by hash) — kernels and terminals execute the disk bytes,
+not the editor buffer.
+
 Failures carry a safe layer/code and, for HTTP, a scrubbed server excerpt. Use
 `--verbose` for phase diagnostics; never print raw upstream exceptions. Read
 the error hint and original run status before deciding whether to continue.
