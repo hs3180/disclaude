@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.28] - 2026-11-15
+
+### Added
+
+- Add the unified `disclaude harness list` / `install` / `doctor` command
+  family for claude, pi, codex, and dsh (#5169; #5709). Show install targets,
+  pinned versions and their sources, current install state, and authentication
+  next steps; support version overrides, idempotent skip/upgrade/repair,
+  explicit install plans, `--dry-run`, and `--yes` without reading or writing
+  credentials. Old `disclaude backend ...` invocations now fail with the
+  equivalent harness command rather than routing through an alias.
+
+### Fixed
+
+- Register named Feishu channel declarations independently of the legacy
+  `channels.feishu.enabled` switch (#5736; #5742). Disabling the legacy single
+  app while retaining named declarations no longer silently produces zero
+  channels; with no declarations, legacy single-app behavior is unchanged.
+
 ## [0.6.27] - 2026-11-10
 
 ### Fixed
