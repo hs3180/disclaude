@@ -18,7 +18,7 @@ describe('isFullClaudeModelId (Issue #5422)', () => {
     expect(isFullClaudeModelId('claude-opus-4-1-20250805')).toBe(true);
   });
 
-  it('rejects bare tier aliases — r2 compiles them into tier-keyed mappings at config time', () => {
+  it('rejects bare tier aliases — config compiles the claude.models declaration into tier-keyed mappings', () => {
     expect(isFullClaudeModelId('opus')).toBe(false);
     expect(isFullClaudeModelId('sonnet')).toBe(false);
     expect(isFullClaudeModelId('haiku')).toBe(false);

@@ -156,11 +156,11 @@ describe('Claude modelOverrides identity (Issue #5410)', () => {
   });
 });
 
-describe('Claude behavesAs bare alias (Issue #5422)', () => {
-  // The generic agent layer is alias-agnostic: a bare `behavesAs` alias is
-  // compiled by config into the tier-keyed modelOverrides mapping itself
-  // (r2: no running-catalog resolution exists anywhere), so the standard
-  // passthrough and startup floor cover it.
+describe('Claude tier-alias parameter mapping (Issue #5422)', () => {
+  // The generic agent layer is alias-agnostic: the config-compiled
+  // tier-keyed modelOverrides mapping (from the `claude.models` declaration;
+  // no behavesAs key exists) flows through the standard passthrough and
+  // startup floor — no running-catalog resolution exists anywhere.
   it('passes an alias-keyed map to native queries unchanged, without alias-specific options', async () => {
     const options = await selectedOptions('kimi-k3', undefined, undefined, { opus: 'kimi-k3' });
     expect(options.modelOverrides).toEqual({ opus: 'kimi-k3' });
@@ -198,7 +198,7 @@ describe('shared bindings across harnesses (Issue #5679)', () => {
       agents: {
         assistant: {
           backend: 'claude', llm: 'shared', default: true,
-          claude: { behavesAs: 'claude-sonnet-4-5' },
+          claude: { models: { sonnet: 'group/hq-degrade' } },
         },
         research: { backend: 'dsh', llm: 'shared', mode: 'minimal' },
       },
@@ -230,7 +230,11 @@ describe('shared bindings across harnesses (Issue #5679)', () => {
     // Claude gets the wire model plus the capability mapping.
     const claude = new BoundAgent({ ...presets.assistant, settings: presets.assistant }).options();
     expect(claude.model).toBe('group/hq-degrade');
-    expect(claude.modelOverrides).toEqual({ 'claude-sonnet-4-5': 'group/hq-degrade' });
+    // The tier declaration compiles to the tier-alias parameter mapping
+    // (Issue #5422 r3); omitted tiers derive from the wire model.
+    expect(claude.modelOverrides).toEqual({
+      opus: 'group/hq-degrade', sonnet: 'group/hq-degrade', haiku: 'group/hq-degrade',
+    });
     // DSH gets the same wire model verbatim and no Claude-side mapping.
     const dsh = new BoundAgent({ ...presets.research, settings: presets.research }).options();
     expect(dsh.model).toBe('group/hq-degrade');

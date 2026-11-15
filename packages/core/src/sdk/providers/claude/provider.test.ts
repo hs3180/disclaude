@@ -1674,10 +1674,10 @@ setInterval(() => {}, 1000);
 });
 
 // ============================================================================
-// behavesAs parameter mapping (Issue #5422, r2)
+// Tier-declaration parameter mapping (Issue #5422)
 // ============================================================================
 
-describe('behavesAs parameter mapping (Issue #5422)', () => {
+describe('tier-declaration parameter mapping (Issue #5422)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -1736,7 +1736,7 @@ describe('behavesAs parameter mapping (Issue #5422)', () => {
       events.push('host-input-pulled');
       yield { role: 'user', content: 'hi' } as UserInput;
     })(), {
-      // Exactly what resolved-agents compiles for behavesAs: "opus" under
+      // Exactly what resolved-agents compiles from the claude.models
       // claude.models: { opus: kimi-k3, sonnet: kimi-k3-flash, haiku: kimi-k3-air }.
       settingSources: [],
       modelOverrides: { opus: 'kimi-k3', sonnet: 'kimi-k3-flash', haiku: 'kimi-k3-air' },
@@ -1787,8 +1787,8 @@ describe('behavesAs parameter mapping (Issue #5422)', () => {
     const captured: Array<Record<string, string> | undefined> = [];
     staticSession(captured, events);
     const provider = new ClaudeSDKProvider();
-    // behavesAs: opus, no claude.models declared — all tiers derive from
-    // the provider defaultModel.
+    // claude.models omitted — no parameter mapping is derived here; this
+    // fixture mirrors a partial declaration, tiers deriving from defaultModel.
     await drain(provider.queryStream((async function* () {
       yield { role: 'user', content: 'hi' } as UserInput;
     })(), {
@@ -1796,8 +1796,8 @@ describe('behavesAs parameter mapping (Issue #5422)', () => {
       modelOverrides: { opus: 'glm-5.3', sonnet: 'glm-5.3', haiku: 'glm-5.3' },
       model: 'glm-5.3',
     }));
-    // The operator redeclares claude.models: the same behavesAs now maps the
-    // tiers onto different provider models.
+    // The operator redeclares claude.models: the derived mapping now points
+    // the tiers onto different provider models.
     await drain(provider.queryStream((async function* () {
       yield { role: 'user', content: 'hi again' } as UserInput;
     })(), {

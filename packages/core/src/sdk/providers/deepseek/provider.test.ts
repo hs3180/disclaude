@@ -373,7 +373,7 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
       agents: {
         assistant: {
           backend: 'claude', llm: 'shared', default: true,
-          claude: { behavesAs: 'claude-sonnet-4-5' },
+          claude: { models: { sonnet: 'group/hq-degrade' } },
         },
         research: { backend: 'dsh', llm: 'shared', mode: 'minimal' },
       },

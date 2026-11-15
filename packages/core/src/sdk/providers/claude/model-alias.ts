@@ -10,11 +10,13 @@ export function assumedContextWindow(claudeModelId: string): 1_000_000 | 200_000
 
 /**
  * Full Claude model IDs as modelOverrides keys (Issue #5410). A bare alias
- * key never reaches the provider anymore (Issue #5422 r2): `behavesAs` bare
- * aliases are compiled into full three-tier parameter mappings at config
- * time from the user-declared `agents.<name>.claude.models` mapping, so the
- * Claude runtime receives only static entries — no live-catalog resolution
- * and no first-use resolution path exists.
+ * key reaches the provider only as the config-compiled three-tier mapping
+ * (Issue #5422): the user-declared `agents.<name>.claude.models` mapping is
+ * the single capability-slot source and is compiled into the parameter
+ * mapping at config time, so the Claude runtime receives only static
+ * entries — no live-catalog resolution and no first-use resolution path
+ * exists. Claude Code resolves each tier alias against its current catalog
+ * before the wire, so the binding follows CLI upgrades.
  */
 const FULL_CLAUDE_MODEL_ID = /^claude-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 

@@ -95,22 +95,24 @@ export interface ClaudeModelTiers {
 
 export interface ClaudeAgentConfig {
   /**
-   * Claude catalog identity for the provider default model: a full Claude
-   * model ID, or a bare tier alias — `opus`, `sonnet` or `haiku` — naming
-   * one of the three-tier identities the `models` mapping declares. The
-   * three mappings the user sets in `models` ARE the behavesAs parameter
-   * mapping: a bare alias compiles exactly those three entries at config
-   * time (omitted tiers derived from the provider `defaultModel`), so
-   * changing `models` changes behavesAs behavior globally (Issue #5422).
-   * An alias that is not a declared tier is a config error listing the
-   * declared tiers — never a silent fallback, and never resolved against
-   * a running Claude catalog. A full ID compiles one `modelOverrides`
-   * entry at config time (unchanged).
+   * Claude model names (including Opus/Sonnet/Haiku slots) mapped to provider
+   * IDs: a raw Claude Code `modelOverrides` map (full Claude model ID →
+   * provider ID) for multi-slot gateways. Mutually exclusive with `models` —
+   * the three-tier declaration is the derived form for the common case.
    */
-  behavesAs?: string;
-  /** Claude model names (including Opus/Sonnet/Haiku slots) mapped to provider IDs. */
   modelOverrides?: Record<string, string>;
-  /** Three-tier opus/sonnet/haiku model mapping for Claude Code multi-agent use. */
+  /**
+   * Three-tier opus/sonnet/haiku model mapping, and the single source of the
+   * capability-slot binding (Issue #5422): no separate `behavesAs` key
+   * exists. Config compiles the declaration itself into the
+   * `modelOverrides` parameter mapping at config time — every tier alias
+   * key maps to `models.<tier>`, an omitted tier deriving from the provider
+   * `defaultModel` — so editing `models` changes the applied Claude catalog
+   * identity everywhere at once. Claude Code resolves each tier alias
+   * against its current catalog, so the binding follows CLI upgrades
+   * instead of pinning a full ID. A stale `behavesAs` key is a config
+   * error pointing here, never a silent no-op.
+   */
   models?: ClaudeModelTiers;
   /** Claude-specific environment, including ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL. */
   env?: Record<string, string>;
