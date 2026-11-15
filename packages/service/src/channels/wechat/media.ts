@@ -1,5 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
 import * as fs from 'node:fs/promises';
+import { once } from 'node:events';
 import { request as httpsRequest } from 'node:https';
 import type { IncomingHttpHeaders } from 'node:http';
 import { basename, join } from 'node:path';
@@ -73,12 +74,27 @@ export const UPLOAD_DEADLINE_MS_PER_BYTE = 0.004;
 /** #5720: DNS+TCP+TLS must fit inside this slice of the total budget. */
 export const UPLOAD_CONNECT_BUDGET_MS = 10_000;
 /**
- * #5720: no-activity watchdog. Any phase that stops making progress (socket
- * drain, body finish, receipt bytes) for this long fails as a timeout even
- * while the total budget still has room — a stalled link is surfaced at
- * ~15s instead of burning a 25–77s size-aware budget on dead air.
+ * #5751: no-activity watchdog. Any phase that stops making progress for this
+ * long fails as a timeout even while the total budget still has room. Since
+ * #5751 "progress" during the body write means *write activity* — a chunk
+ * accepted by the transport, or a backpressure drain — not "whole body
+ * finished": TLS backpressure routinely sustains a transfer for more than 15s
+ * without ever finishing (a 5 MiB MP4 took 42s inside a 60s budget in
+ * production), and the old finish-only signal misjudged exactly that as a
+ * stall. True dead air (peer stops reading: no drain, no accepted chunk, no
+ * receipt byte) is still surfaced at ~15s instead of burning the full
+ * size-aware budget.
  */
 export const UPLOAD_STALL_BUDGET_MS = 15_000;
+/**
+ * #5751: the body is handed to the transport in bounded chunks instead of one
+ * `end(body)` write. A single write hands the whole ciphertext to the kernel
+ * at once and the stream then emits no progress event until the entire buffer
+ * flushes, making sustained-but-slow transfers indistinguishable from stalls.
+ * Each accepted chunk is one write-activity signal for the stall watchdog and
+ * one incremental step of `writtenBytes`.
+ */
+export const UPLOAD_WRITE_CHUNK_BYTES = 64 * 1024;
 /**
  * #5720: a connect-phase failure is provably safe to retry (no ciphertext
  * byte left the host): fresh negotiation + one more POST. Everything at or
@@ -104,7 +120,18 @@ export interface WeChatUploadProgress {
   connectMs?: number;
   writeMs?: number;
   responseMs?: number;
+  /**
+   * #5751: ciphertext bytes handed to the transport, updated per chunk while
+   * the write progresses — no longer a zero that only jumps to the full size
+   * at `finish`. This is a *local handoff* count, not a CDN acknowledgement:
+   * `finish` only proves the whole body left the local buffer, and the CDN
+   * side becomes observable only when the response arrives (`acknowledged`).
+   * Retry decisions must not treat a write-phase snapshot as "nothing was
+   * sent" just because the old finish-time counter read zero.
+   */
   writtenBytes: number;
+  /** #5751: true only once response headers arrived — the first CDN-side acknowledgement of the body. */
+  acknowledged?: boolean;
 }
 
 /** Tag a transport error with its phase snapshot; diagnostics are enums and numbers only. */
@@ -152,6 +179,8 @@ function uploadPost(
     let connectedAt: number | undefined;
     let finishedAt: number | undefined;
     let writtenBytes = 0;
+    let acknowledged = false;
+    let settled = false;
     let lastProgressAt = started;
     let totalTimer: ReturnType<typeof setTimeout> | undefined;
     let connectTimer: ReturnType<typeof setTimeout> | undefined;
@@ -163,6 +192,7 @@ function uploadPost(
       ...(connectedAt !== undefined ? { connectMs: connectedAt - started } : {}),
       ...(finishedAt !== undefined && connectedAt !== undefined ? { writeMs: finishedAt - connectedAt } : {}),
       ...(finishedAt !== undefined ? { responseMs: Date.now() - finishedAt } : {}),
+      ...(acknowledged ? { acknowledged: true } : {}),
     });
 
     const clearTimers = () => {
@@ -170,10 +200,29 @@ function uploadPost(
       totalTimer = connectTimer = stallTimer = undefined;
     };
 
+    /**
+     * #5751: every terminal path settles exactly once, tears down all three
+     * timers and the abort listener, and *destroys the transport*. Rejecting
+     * alone (the #5728 stall branch) left the POST transmitting in the
+     * background: the caller had already failed while ciphertext kept leaving
+     * the host, so a retry could duplicate the upload.
+     */
     const fail = (error: unknown) => {
+      if (settled) { return; }
+      settled = true;
       clearTimers();
       signal?.removeEventListener('abort', onAbort);
-      reject(withProgress(error, snapshot()));
+      const decorated = withProgress(error, snapshot());
+      req.destroy(decorated);
+      reject(decorated);
+    };
+
+    const settle = (value: { status: number; headers: IncomingHttpHeaders; progress: WeChatUploadProgress }) => {
+      if (settled) { return; }
+      settled = true;
+      clearTimers();
+      signal?.removeEventListener('abort', onAbort);
+      resolve(value);
     };
 
     const markProgress = () => { lastProgressAt = Date.now(); };
@@ -211,30 +260,36 @@ function uploadPost(
         },
       },
       (res) => {
+        acknowledged = true; // Response headers: the first CDN-side acknowledgement of the body.
         markProgress(); // Response headers arrived: the receipt wait is making progress.
         res.on('data', markProgress); // Drain the tiny receipt body; only headers carry state.
         res.on('end', () => {
-          clearTimers();
-          signal?.removeEventListener('abort', onAbort);
-          resolve({ status: res.statusCode ?? 0, headers: res.headers, progress: snapshot() });
+          settle({ status: res.statusCode ?? 0, headers: res.headers, progress: snapshot() });
         });
         res.on('error', fail);
       }
     );
 
+    // #5751: timers fail (and destroy) directly — a destroy on an
+    // already-dead socket may never re-emit 'error', and a bare destroy left
+    // the promise pending forever.
     totalTimer = setTimeout(() => {
-      req.destroy(deadlineError(phase));
+      fail(deadlineError(phase));
     }, timeoutMs);
 
     connectTimer = setTimeout(() => {
       connectTimer = undefined;
-      req.destroy(deadlineError('connect'));
+      fail(deadlineError('connect'));
     }, Math.min(UPLOAD_CONNECT_BUDGET_MS, timeoutMs));
     armStallWatchdog();
 
     if (signal?.aborted) { onAbort(); } else { signal?.addEventListener('abort', onAbort, { once: true }); }
 
     req.on('socket', (socket) => {
+      // #5751: a reused keep-alive TLS socket never re-emits secureConnect —
+      // recognizing it here moves the attempt into the write phase, so a
+      // failure on it is never misclassified as a retryable connect failure.
+      if ((socket as { encrypted?: boolean }).encrypted) { markConnected(); }
       socket.on('connect', markProgress); // TCP up; TLS handshake still pending.
       socket.on('secureConnect', markConnected);
       socket.on('drain', () => { markConnected(); markProgress(); });
@@ -244,12 +299,43 @@ function uploadPost(
     req.on('finish', () => {
       markConnected();
       finishedAt = Date.now();
-      writtenBytes = body.length;
+      // #5751: writtenBytes already counts every handed-over chunk; finish
+      // only records that the whole body left the local buffer (NOT that the
+      // CDN received it).
       phase = 'response';
       markProgress();
     });
     req.on('error', fail);
-    req.end(body);
+
+    // #5751: chunked, backpressure-observable body handoff. `end(body)` hands
+    // the whole ciphertext to the kernel as one write; under TLS backpressure
+    // the stream then emits no progress event until the ENTIRE buffer has
+    // flushed, so a sustained transfer outlasting UPLOAD_STALL_BUDGET_MS was
+    // misjudged as a stall (two production 14.6 MiB / 5 MiB MP4 failures; the
+    // local repro finished 5 MiB in 41,998 ms inside the 60s total budget but
+    // was killed at 15s). Writing in bounded chunks makes every accepted
+    // chunk a write-activity signal: writtenBytes advances incrementally
+    // (local handoff, not CDN receipt) and the watchdog fires only on true
+    // dead air. Backpressure (`write` → false, await drain) is progress, not
+    // a stall: the transport keeps flushing previously handed chunks.
+    void (async () => {
+      try {
+        for (let offset = 0; offset < body.length; ) {
+          if (settled) { return; } // Failed/cancelled elsewhere: hand over no further ciphertext.
+          const chunk = body.subarray(offset, offset + UPLOAD_WRITE_CHUNK_BYTES);
+          if (!req.write(chunk)) {
+            await once(req, 'drain'); // Rejects via 'error' when the transport is destroyed.
+            if (settled) { return; }
+          }
+          offset += chunk.length;
+          writtenBytes = offset;
+          markProgress();
+        }
+        req.end();
+      } catch (error) {
+        fail(error); // No-op when the destroy/error that ended us already settled.
+      }
+    })();
   });
 }
 
@@ -283,7 +369,7 @@ export async function uploadEncryptedMedia(params: {
         elapsedMs: Date.now() - started,
         httpStatus,
         attempt,
-        ...(progress ? { phases: { phase: progress.phase, writtenBytes: progress.writtenBytes, ...(progress.connectMs !== undefined ? { connectMs: progress.connectMs } : {}), ...(progress.writeMs !== undefined ? { writeMs: progress.writeMs } : {}), ...(progress.responseMs !== undefined ? { responseMs: progress.responseMs } : {}) } } : {}),
+        ...(progress ? { phases: { phase: progress.phase, writtenBytes: progress.writtenBytes, ...(progress.acknowledged !== undefined ? { acknowledged: progress.acknowledged } : {}), ...(progress.connectMs !== undefined ? { connectMs: progress.connectMs } : {}), ...(progress.writeMs !== undefined ? { writeMs: progress.writeMs } : {}), ...(progress.responseMs !== undefined ? { responseMs: progress.responseMs } : {}) } } : {}),
       },
       error
     );
@@ -326,14 +412,20 @@ export async function uploadEncryptedMedia(params: {
       } catch (error) {
         const progress = readProgress(error);
         const cause = safeMediaCause(error);
-        // #5720 (T-101): retry only a provably pre-write failure — still in the
-        // connect phase, zero ciphertext bytes handed over, caller not cancelling,
-        // cause allowlisted as connect-establishment. Everything else (write
-        // stall, receipt wait, HTTP, cancelled, ambiguous ECONNRESET) throws.
+        // #5720/#5751: retry only a provably pre-wire failure — still in the
+        // connect phase (no secureConnect, no drain, no finish; a reused TLS
+        // socket is recognized as connected the moment it is handed over),
+        // caller not cancelling, cause allowlisted as connect-establishment.
+        // While the phase is 'connect' the TLS session was never established,
+        // so locally buffered chunks cannot have left the host — no matter
+        // what the progressive writtenBytes count says. That count (#5751)
+        // replaced the #5728 finish-time zero, which read 0 for ambiguous
+        // write-phase failures too and could have widened retry past the
+        // safe boundary. Everything else (write stall, receipt wait, HTTP,
+        // cancelled, ambiguous ECONNRESET) throws.
         const retriable =
           attempt < UPLOAD_MAX_ATTEMPTS &&
           progress?.phase === 'connect' &&
-          progress.writtenBytes === 0 &&
           !params.signal?.aborted &&
           (cause?.name === 'TimeoutError' || (cause?.code !== undefined && RETRYABLE_CONNECT_CODES.has(cause.code)));
         if (!retriable) {
