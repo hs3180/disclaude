@@ -109,9 +109,14 @@ room, not only on disk. A failed or deferred save can leave the room newer
 than the disk; idle rooms are destroyed after 60s with a final flush, but
 inside that window — or when that flush itself fails — the disk stays stale
 while Lab keeps showing the edited buffer. After manually editing a text file
-in RTC mode, verify the disk content before running it (read the file back
-and compare, e.g. by hash) — kernels and terminals execute the disk bytes,
-not the editor buffer.
+in RTC mode, verify the disk content before running it with
+`jupyter sync-check --input-file -` and `{"path":"..."}`: `in-sync` confirms
+the disk matches the room, `diverged` reports both SHA-256 hashes without
+writing — re-check after the 60s idle-room final flush, or explicitly pass
+`forceFlush:true` to write the room snapshot through the contents API and
+re-verify (`flushed`). Only when sync-check itself is unavailable, fall back
+to reading the file back and comparing by hash — kernels and terminals
+execute the disk bytes, not the editor buffer.
 
 Failures carry a safe layer/code and, for HTTP, a scrubbed server excerpt. Use
 `--verbose` for phase diagnostics; never print raw upstream exceptions. Read

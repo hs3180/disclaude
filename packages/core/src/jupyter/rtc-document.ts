@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { YNotebook } from '@jupyter/ydoc';
+import { YFile, YNotebook } from '@jupyter/ydoc';
 import * as decoding from 'lib0/decoding';
 import * as encoding from 'lib0/encoding';
 import * as sync from 'y-protocols/sync';
@@ -17,6 +17,20 @@ export function notebookPath(path: string): string {
     path.split('/').some((p) => !p || p === '.' || p === '..')
   ) {
     throw new Error('Notebook requires a relative .ipynb path without traversal');
+  }
+  return path.split('/').map(encodeURIComponent).join('/');
+}
+
+export function textFilePath(path: string): string {
+  if (
+    !path ||
+    path.length > 1024 ||
+    path.endsWith('.ipynb') ||
+    path.includes('\\') ||
+    path.includes('\0') ||
+    path.split('/').some((p) => !p || p === '.' || p === '..')
+  ) {
+    throw new Error('Text file requires a relative non-Notebook path without traversal');
   }
   return path.split('/').map(encodeURIComponent).join('/');
 }
@@ -210,5 +224,177 @@ export class JupyterRtcDocument {
     this.socket?.close();
     this.notebook.dispose();
     this.notebook.ydoc.destroy();
+  }
+}
+
+/** Native Jupyter collaboration client for plain text files, using the official YFile model. */
+export class JupyterRtcTextDocument {
+  readonly file = new YFile();
+  private socket?: WebSocket;
+  private closed = false;
+  private disposed = false;
+  private synced = false;
+  private syncReply?: { resolve(): void; reject(error: Error): void };
+
+  private constructor(
+    readonly documentId: string,
+    readonly contentPath: string
+  ) {}
+
+  static async open(
+    client: DatalayerJupyterClient,
+    path: string
+  ): Promise<JupyterRtcTextDocument> {
+    const session = (await client.json(`api/collaboration/session/${textFilePath(path)}`, 'PUT', {
+      format: 'text',
+      type: 'file',
+    })) as Record<string, unknown>;
+    if (
+      session.format !== 'text' ||
+      session.type !== 'file' ||
+      typeof session.fileId !== 'string' ||
+      typeof session.sessionId !== 'string' ||
+      !/^[A-Za-z0-9_-]{1,256}$/.test(session.fileId) ||
+      !/^[A-Za-z0-9_-]{1,256}$/.test(session.sessionId)
+    ) {
+      throw new Error('Invalid Jupyter collaboration session');
+    }
+    const doc = new JupyterRtcTextDocument(session.fileId, path);
+    const options = await client.socket(
+      `api/collaboration/room/text:file:${session.fileId}?sessionId=${encodeURIComponent(session.sessionId)}`
+    );
+    const socket = new WebSocket(options.url, {
+      headers: options.headers,
+      followRedirects: false,
+      handshakeTimeout: 15000,
+      maxPayload: 8 * 1024 * 1024,
+    });
+    doc.socket = socket;
+    socket.on('error', () => doc.fail('Jupyter collaboration connection failed'));
+    socket.on('close', () => doc.fail('Jupyter collaboration connection closed'));
+    socket.on('message', (data) => {
+      try {
+        const bytes = Array.isArray(data)
+          ? Buffer.concat(data)
+          : data instanceof ArrayBuffer
+            ? new Uint8Array(data)
+            : data;
+        const decoder = decoding.createDecoder(bytes);
+        const type = decoding.readVarUint(decoder);
+        if (type === 2) {
+          doc.fail('Jupyter collaboration authorization failed');
+          return;
+        }
+        if (type !== 0) {
+          return;
+        }
+        const reply = encoding.createEncoder();
+        encoding.writeVarUint(reply, 0);
+        const kind = sync.readSyncMessage(decoder, reply, doc.file.ydoc, socket);
+        if (encoding.length(reply) > 1 && socket.readyState === WebSocket.OPEN) {
+          socket.send(encoding.toUint8Array(reply));
+        }
+        if (kind === sync.messageYjsSyncStep2) {
+          doc.synced = true;
+          const waiting = doc.syncReply;
+          doc.syncReply = undefined;
+          waiting?.resolve();
+        }
+      } catch {
+        doc.fail('Jupyter collaboration sync failed');
+      }
+    });
+    doc.file.ydoc.on('update', (update: Uint8Array, origin: unknown) => {
+      if (origin === socket || !doc.synced || doc.closed || socket.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      const encoder = encoding.createEncoder();
+      encoding.writeVarUint(encoder, 0);
+      sync.writeUpdate(encoder, update);
+      socket.send(encoding.toUint8Array(encoder));
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          doc.syncReply = undefined;
+          reject(new Error('Jupyter collaboration initial sync timed out'));
+        }, 15000);
+        doc.syncReply = {
+          resolve: () => {
+            clearTimeout(timer);
+            resolve();
+          },
+          reject: (error) => {
+            clearTimeout(timer);
+            reject(error);
+          },
+        };
+        socket.once('open', () => doc.sendSync());
+      });
+      return doc;
+    } catch (error) {
+      doc.close();
+      throw error;
+    }
+  }
+
+  private sendSync(): void {
+    const encoder = encoding.createEncoder();
+    encoding.writeVarUint(encoder, 0);
+    sync.writeSyncStep1(encoder, this.file.ydoc);
+    this.socket?.send(encoding.toUint8Array(encoder));
+  }
+
+  private fail(message: string): void {
+    this.closed = true;
+    const waiting = this.syncReply;
+    this.syncReply = undefined;
+    waiting?.reject(new Error(message));
+  }
+
+  /** Ordered sync roundtrip confirms the server received preceding document updates. */
+  async flush(): Promise<void> {
+    if (this.closed || this.socket?.readyState !== WebSocket.OPEN) {
+      throw new Error('Jupyter collaboration connection is unavailable');
+    }
+    if (this.syncReply) {
+      throw new Error('Jupyter collaboration sync is already pending');
+    }
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.syncReply = undefined;
+        reject(new Error('Jupyter collaboration sync timed out'));
+      }, 15000);
+      this.syncReply = {
+        resolve: () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        reject: (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      };
+      this.sendSync();
+    });
+  }
+
+  /** Latest room text after a flush; the disk file may still lag behind it. */
+  source(): string {
+    if (this.closed) {
+      throw new Error('Jupyter collaboration connection is unavailable');
+    }
+    return this.file.source;
+  }
+
+  close(): void {
+    if (this.disposed) {
+      return;
+    }
+    this.disposed = true;
+    this.fail('Jupyter collaboration connection closed');
+    this.socket?.close();
+    this.file.dispose();
+    this.file.ydoc.destroy();
   }
 }

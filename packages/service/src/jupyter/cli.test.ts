@@ -142,7 +142,7 @@ describe('Optional Jupyter CLI boundary', () => {
     expect(entries.map((entry) => entry.command)).toEqual([
       'list', 'describe', 'read-cell', 'insert-cell', 'edit-cell', 'move-cell',
       'delete-cell', 'execute', 'status', 'reconcile', 'stop', 'observe-image',
-      'import-file', 'download-report', 'export',
+      'import-file', 'download-report', 'export', 'sync-check',
       'check', 'link', 'create', 'unlink', 'interrupt', 'runtime-probe',
     ]);
     for (const entry of entries) {

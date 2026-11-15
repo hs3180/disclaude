@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { notebookSnapshotHash, insertNotebookCell, JupyterDiagnosticError, jupyterHashConflict, type DatalayerJupyterClient } from '@disclaude/core/jupyter';
+import { notebookSnapshotHash, insertNotebookCell, JupyterDiagnosticError, jupyterHashConflict, textFilePath, type DatalayerJupyterClient } from '@disclaude/core/jupyter';
 import type { ToolDefinition, ToolContext } from '@disclaude/core';
 import {
   JupyterProjectConfigStore,
@@ -120,6 +120,8 @@ export interface NotebookToolOptions {
     namespace: string,
     operation: (client: DatalayerJupyterClient) => Promise<T>
   ): Promise<T>;
+  /** Path-scoped commands need a client without any Project notebook reference. */
+  connect?<T>(operation: (client: DatalayerJupyterClient) => Promise<T>): Promise<T>;
   /** Test seam for the import-file size boundaries; production uses the defaults. */
   importFileLimits?: ImportFileLimits;
 }
@@ -458,6 +460,22 @@ export class NotebookTools {
         'Export HTML and an ipynb snapshot from the same live revision on the remote server. Images stay in the report; return links and revision metadata.',
         notebookId,
         async (input) => this.export(await this.bound(String(input.notebookId)))
+      ),
+      this.tool(
+        'notebook_sync_check',
+        'Compare one text file (.py/.md/..., not .ipynb) between its RTC room and its disk bytes: in-sync, diverged (both SHA-256, never writes by default) or unsupported-binary. Kernels and terminals execute the disk bytes, not the room. forceFlush only when diverged: PUT the room snapshot through the contents API and re-verify (flushed).',
+        {
+          path: {
+            type: 'string',
+            description: 'Relative remote Contents text-file path: no leading slash, backslash, "."/".." segment or .ipynb.',
+          },
+          forceFlush: {
+            type: 'boolean',
+            optional: true,
+            description: 'Only when diverged: write the room snapshot to disk via the contents API, then re-verify by re-reading it.',
+          },
+        },
+        (input, invocation) => this.syncCheck(input, invocation)
       ),
     ];
   }
@@ -1433,6 +1451,92 @@ export class NotebookTools {
       notebookPath,
       htmlPath,
     };
+  }
+
+  /**
+   * One-shot room-versus-disk comparison for one RTC text file. The room is
+   * opened per call and closed after use; nothing is cached. Default never
+   * writes: a diverged result reports both hashes and how to reconcile.
+   */
+  private async syncCheck(
+    input: Record<string, unknown>,
+    invocation: ToolContext
+  ): Promise<Record<string, unknown>> {
+    const roomPath = String(input.path);
+    // Validate before any remote call so traversal rejection stays offline.
+    const encoded = textFilePath(roomPath);
+    const connect = this.options.connect;
+    if (!connect) {
+      throw new Error('Notebook sync check is not connected to a host client');
+    }
+    return await connect(async (client) => {
+      const room = await client.openTextDocument(roomPath);
+      try {
+        invocation.signal.throwIfAborted();
+        await room.flush();
+        const roomSource = room.source();
+        const roomSha = hash(roomSource);
+        const roomBytes = Buffer.byteLength(roomSource, 'utf8');
+        const read = () =>
+          client.json(`api/contents/${encoded}?content=1`) as Promise<Record<string, unknown>>;
+        const disk = await read();
+        if (disk.type !== 'file') {
+          throw new Error('Sync check target is not a Contents file');
+        }
+        if (disk.format === 'base64') {
+          return { status: 'unsupported-binary', path: roomPath };
+        }
+        if (typeof disk.content !== 'string') {
+          throw new Error('Disk content could not be read as text');
+        }
+        const diskSha = hash(disk.content);
+        const diskBytes = Buffer.byteLength(disk.content, 'utf8');
+        if (roomSha === diskSha) {
+          return { status: 'in-sync', path: roomPath, sha: roomSha, roomBytes, diskBytes };
+        }
+        if (!input.forceFlush) {
+          return {
+            status: 'diverged',
+            path: roomPath,
+            roomSha,
+            diskSha,
+            roomBytes,
+            diskBytes,
+            warning:
+              'The disk bytes are what the kernel and terminal execute, not the editor room. ' +
+              'Idle rooms are destroyed after 60s with a final flush; re-check after that window, ' +
+              'or explicitly pass forceFlush:true to write the room snapshot to disk through the contents API.',
+          };
+        }
+        invocation.signal.throwIfAborted();
+        await client.json(`api/contents/${encoded}`, 'PUT', {
+          type: 'file',
+          format: 'text',
+          content: roomSource,
+        });
+        const verified = await read();
+        if (verified.type !== 'file' || typeof verified.content !== 'string') {
+          throw new Error('Flushed disk content could not be verified');
+        }
+        const flushedSha = hash(verified.content);
+        const flushedBytes = Buffer.byteLength(verified.content, 'utf8');
+        if (flushedSha === roomSha) {
+          return { status: 'flushed', path: roomPath, sha: roomSha, roomBytes, diskBytes: flushedBytes };
+        }
+        return {
+          status: 'diverged',
+          path: roomPath,
+          roomSha,
+          diskSha: flushedSha,
+          roomBytes,
+          diskBytes: flushedBytes,
+          warning:
+            'verification-failed: the contents API still reports different bytes after the forced flush; inspect the server-side save pipeline before retrying',
+        };
+      } finally {
+        room.close();
+      }
+    });
   }
 
   private async downloadReport(

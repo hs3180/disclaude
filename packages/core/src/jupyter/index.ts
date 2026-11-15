@@ -10,6 +10,7 @@ export type {
 } from './datalayer-client.js';
 export { JupyterHttpConnection, createJupyterCookieJar } from './http-connection.js';
 export type { JupyterHttpOptions } from './http-connection.js';
+export { textFilePath } from './rtc-document.js';
 export { notebookSnapshotHash } from './notebook-fingerprint.js';
 export { insertNotebookCell } from './notebook-cell.js';
 export { JupyterDiagnosticError, jupyterDiagnostic, jupyterExitCode, jupyterHashConflict,

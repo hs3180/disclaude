@@ -21,6 +21,7 @@ const commands = [
   'observe-image',
   'import-file',
   'export',
+  'sync-check',
   'download-report',
 ];
 const management = ['tools', 'check', 'link', 'create', 'unlink'];
@@ -478,6 +479,10 @@ export async function runNotebookCommand(
       }
       signal.throwIfAborted();
       return await operation(resolved.client);
+    },
+    connect: async (operation) => {
+      signal.throwIfAborted();
+      return await operation((await connection()).client);
     },
   });
   try {
