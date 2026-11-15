@@ -1211,6 +1211,27 @@ describe('MessageHandler', () => {
       expect(msg.content).toContain('report.pdf');
     });
 
+    it('pins the owning channel appId inline in the download hint for named deployments (T-107)', async () => {
+      const { handler } = createHandler({ tenantAccessToken: '' });
+      // Named-channel client carries its own appId; the hint must target that app.
+      handler.initialize({ appId: 'cli_named_work' } as any);
+      await handler.handleMessageReceive(fileEvent('file', { file_key: 'file_named', file_name: 'report.pdf' }));
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.content).toContain('LARKSUITE_CLI_APP_ID=cli_named_work npx @larksuite/cli im +messages-resources-download');
+      expect(msg.content).toContain('LARKSUITE_CLI_TENANT_ACCESS_TOKEN');
+    });
+
+    it('keeps the legacy bare --as bot command when no channel appId is resolvable (T-107 back-compat)', async () => {
+      const { handler } = createHandler({ tenantAccessToken: '' });
+      // No client appId, no env appId → single-app env-credential command unchanged.
+      await handler.handleMessageReceive(fileEvent('file', { file_key: 'file_legacy', file_name: 'report.pdf' }));
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.content).toContain('npx @larksuite/cli im +messages-resources-download');
+      expect(msg.content).not.toContain('LARKSUITE_CLI_APP_ID=');
+    });
+
     it('treats a mentioned attachment as the current input, not an empty mention', async () => {
       mockState.isBotMentioned = true;
       mockState.getChatHistory.mockResolvedValue('An older request that was already answered');
