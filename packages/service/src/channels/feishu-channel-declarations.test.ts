@@ -155,6 +155,69 @@ describe('named channel declarations (#5254)', () => {
     ]);
   });
 
+  it('does not gate named declarations on the legacy channels.feishu.enabled switch (T-105)', () => {
+    // Regression: turning OFF the legacy single app while keeping named declarations
+    // must not silently drop the declarations (previously `feishuEnabled &&` sent the
+    // migration config into the legacy else-branch → zero channels, no error).
+    process.env.FEISHU_APP_SECRET_PERSONAL = SECRET_A;
+    process.env.FEISHU_APP_SECRET_WORK = SECRET_B;
+
+    // Quadrant: legacy OFF + declarations present → named channels still register.
+    const migrationRaw = {
+      ...declaredRawConfig(),
+      channels: { ...declaredRawConfig().channels, feishu: { enabled: false } },
+    } as unknown as DisclaudeConfigWithChannels;
+    const migrationEntries = resolveChannelConfigs(migrationRaw, {
+      FEISHU_STREAMING_CARD: false,
+    } as never).filter((entry) => entry.type === 'feishu');
+    expect(migrationEntries.map((entry) => entry.config.channelName).sort()).toEqual([
+      'personal',
+      'work',
+    ]);
+
+    // Quadrant: legacy ON + declarations present → named channels (declarations win,
+    // no duplicate legacy single-app entry). Same shape as the existing two-app test.
+    const bothRaw = {
+      ...declaredRawConfig(),
+      channels: { ...declaredRawConfig().channels, feishu: { enabled: true } },
+    } as unknown as DisclaudeConfigWithChannels;
+    const bothEntries = resolveChannelConfigs(bothRaw, {
+      FEISHU_APP_ID: 'cli_legacy',
+      FEISHU_APP_SECRET: 'legacy-secret',
+      FEISHU_STREAMING_CARD: false,
+    } as never).filter((entry) => entry.type === 'feishu');
+    expect(bothEntries.map((entry) => entry.config.channelName).sort()).toEqual([
+      'personal',
+      'work',
+    ]);
+
+    // Quadrant: legacy OFF + no declarations → zero feishu channels (explicit intent:
+    // user disabled feishu and declared nothing named).
+    const offOnlyRaw = {
+      channels: { feishu: { enabled: false } },
+    } as unknown as DisclaudeConfigWithChannels;
+    const offOnlyEntries = resolveChannelConfigs(offOnlyRaw, {
+      FEISHU_APP_ID: 'cli_legacy',
+      FEISHU_APP_SECRET: 'legacy-secret',
+      FEISHU_STREAMING_CARD: false,
+    } as never).filter((entry) => entry.type === 'feishu');
+    expect(offOnlyEntries).toEqual([]);
+
+    // Quadrant: legacy ON + no declarations → legacy single-app entry unchanged.
+    const legacyOnlyRaw = { channels: { feishu: {} } } as unknown as DisclaudeConfigWithChannels;
+    const legacyOnlyEntries = resolveChannelConfigs(legacyOnlyRaw, {
+      FEISHU_APP_ID: 'cli_legacy',
+      FEISHU_APP_SECRET: 'legacy-secret',
+      FEISHU_STREAMING_CARD: false,
+    } as never);
+    expect(legacyOnlyEntries).toEqual([
+      {
+        type: 'feishu',
+        config: { appId: 'cli_legacy', appSecret: 'legacy-secret', streamingCard: false },
+      },
+    ]);
+  });
+
   it('supports per-declaration streamingCard with fallback to the shared setting', () => {
     process.env.FEISHU_APP_SECRET_PERSONAL = SECRET_A;
     const raw = {
