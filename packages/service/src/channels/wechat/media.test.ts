@@ -2,6 +2,8 @@ import { afterEach, describe, it, expect, vi } from 'vitest';
 import { createCipheriv, createDecipheriv } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import { EventEmitter } from 'node:events';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import * as https from 'node:https';
 import type { ClientRequest } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -43,6 +45,7 @@ afterEach(() => {
 });
 
 let actualRequest: typeof https.request | undefined;
+const execFileAsync = promisify(execFile);
 
 /** Route only CDN upload requests to `fake`; every other https.request passes through untouched. */
 function injectUploadRequest(fake: (callback?: unknown) => ClientRequest): void {
@@ -66,12 +69,17 @@ function injectUploadRequest(fake: (callback?: unknown) => ClientRequest): void 
 function failUploadWith(error: Error & { code?: string }): void {
   injectUploadRequest(() => {
     const req = new EventEmitter() as unknown as ClientRequest;
+    const socket = new EventEmitter();
     Object.assign(req, {
       write: () => true,
       end: () => {
         process.nextTick(() => req.emit('error', error));
       },
       destroy: () => {},
+    });
+    process.nextTick(() => {
+      req.emit('socket', socket);
+      socket.emit('secureConnect');
     });
     return req;
   });
@@ -403,9 +411,8 @@ describe('WeChat encrypted CDN protocol', () => {
         requestUpload,
       });
       const expectation = expect(pending).rejects.toMatchObject({
-        // #5751: connect-phase failures report the locally buffered bytes
-        // (the whole 16-byte ciphertext of 'fixture'), not a finish-time zero.
-        detail: { stage: 'upload', reason: 'timeout', phase: 'connect', writtenBytes: 16, attempt: 2, messageSent: false },
+        // No body byte is handed over before TLS reaches secureConnect.
+        detail: { stage: 'upload', reason: 'timeout', phase: 'connect', writtenBytes: 0, attempt: 2, messageSent: false },
         cause: { name: 'TimeoutError', code: 'ETIMEDOUT' },
       });
       await vi.advanceTimersByTimeAsync(2 * 10_000 + 1_000); // connect budget per attempt
@@ -600,6 +607,95 @@ describe('WeChat encrypted CDN protocol', () => {
 describe('WeChat CDN upload phase diagnostics (#5720)', () => {
   const negotiate = () => Promise.resolve({ upload_param: 'private-upload-ref' });
 
+  // #5751 regression (a): real TLS, real clocks and deterministic request-level
+  // backpressure. Only the write return/drain pacing is injected; ciphertext
+  // still traverses the real ClientRequest and loopback TLS server.
+  it('completes an 8 MiB TLS upload with sustained client backpressure beyond the stall budget', { timeout: 45_000 }, async () => {
+    const directory = await fs.mkdtemp(join(tmpdir(), 'wechat-slow-tls-'));
+    let agent: https.Agent | undefined;
+    let server: https.Server | undefined;
+    const pendingWrites = new Set<ReturnType<typeof setTimeout>>();
+    try {
+      const keyPath = join(directory, 'key.pem');
+      const certPath = join(directory, 'cert.pem');
+      await execFileAsync('openssl', [
+        'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
+        '-subj', '/CN=localhost', '-keyout', keyPath, '-out', certPath,
+      ]);
+      const [key, cert] = await Promise.all([fs.readFile(keyPath), fs.readFile(certPath)]);
+      const fileData = Buffer.alloc(8 * 1024 * 1024, 0x5a);
+      const encryptedBytes = fileData.length + 16; // AES-128-ECB padding
+      let received = 0;
+      let posts = 0;
+      server = https.createServer({ key, cert }, (req, res) => {
+        posts += 1;
+        req.on('data', (chunk) => { received += chunk.length; });
+        req.on('end', () => {
+          res.writeHead(200, { 'x-encrypted-param': 'slow-tls-ok' });
+          res.end('ok');
+        });
+      });
+      await new Promise<void>((resolve, reject) => {
+        server!.once('error', reject);
+        server!.listen(0, '127.0.0.1', () => {
+          server!.off('error', reject);
+          resolve();
+        });
+      });
+      const address = server.address();
+      if (!address || typeof address === 'string') { throw new Error('TLS test server has no TCP port'); }
+      nock.enableNetConnect(`127.0.0.1:${address.port}`);
+      agent = new https.Agent({ rejectUnauthorized: false }); // test-only, generated self-signed cert
+      let clientFinishAt = 0;
+      let responseEndAt = 0;
+      const writeProgressTimes: number[] = [];
+      injectUploadRequest((callback) => {
+        const req = actualRequest!(`https://127.0.0.1:${address.port}/upload`, {
+          method: 'POST', agent, headers: { 'content-length': String(encryptedBytes) },
+        }, callback as never);
+        const write = req.write.bind(req);
+        req.write = ((chunk: Buffer) => {
+          const timer = setTimeout(() => {
+            pendingWrites.delete(timer);
+            if (req.destroyed) { return; }
+            if (write(chunk)) { req.emit('drain'); }
+            // A real false return is completed by the request's own drain.
+          }, 150);
+          pendingWrites.add(timer);
+          return false;
+        }) as typeof req.write;
+        req.on('drain', () => { writeProgressTimes.push(Date.now()); });
+        req.on('finish', () => { clientFinishAt = Date.now(); writeProgressTimes.push(clientFinishAt); });
+        req.on('response', (res) => res.on('end', () => { responseEndAt = Date.now(); }));
+        return req;
+      });
+      const requestUpload = vi.fn(negotiate);
+      const started = Date.now();
+      const uploaded = await uploadEncryptedMedia({ fileData, to: 'peer', kind: 'video', requestUpload });
+      const elapsed = Date.now() - started;
+      expect(uploaded.media.encrypt_query_param).toBe('slow-tls-ok');
+      expect(posts).toBe(1);
+      expect(requestUpload).toHaveBeenCalledTimes(1);
+      expect(received).toBe(encryptedBytes);
+      expect(clientFinishAt - started).toBeGreaterThan(UPLOAD_STALL_BUDGET_MS);
+      expect(responseEndAt).toBeGreaterThanOrEqual(clientFinishAt);
+      expect(elapsed).toBeLessThan(uploadDeadlineMs(encryptedBytes));
+      expect(writeProgressTimes.length).toBeGreaterThan(2);
+      for (let index = 1; index < writeProgressTimes.length; index += 1) {
+        expect(writeProgressTimes[index] - writeProgressTimes[index - 1]).toBeLessThan(UPLOAD_STALL_BUDGET_MS);
+      }
+    } finally {
+      for (const timer of pendingWrites) { clearTimeout(timer); }
+      agent?.destroy();
+      if (server) {
+        const closed = new Promise<void>((resolve) => { server!.close(() => resolve()); });
+        server.closeAllConnections();
+        await closed;
+      }
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('delivers through all three phases on one attempt without renegotiating', async () => {
     const requestUpload = vi.fn(negotiate);
     scriptUploads(({ socket, req, respond }) => {
@@ -664,7 +760,7 @@ describe('WeChat CDN upload phase diagnostics (#5720)', () => {
       const error = pending.catch((error: Error & { detail?: Record<string, unknown> }) => error);
       const expectation = expect(pending).rejects.toMatchObject({
         detail: {
-          stage: 'upload', reason: 'timeout', phase: 'connect', writtenBytes: 16,
+          stage: 'upload', reason: 'timeout', phase: 'connect', writtenBytes: 0,
           attempt: UPLOAD_MAX_ATTEMPTS, messageSent: false,
         },
         cause: { name: 'TimeoutError', code: 'ETIMEDOUT' },
@@ -687,7 +783,10 @@ describe('WeChat CDN upload phase diagnostics (#5720)', () => {
       stallAfterChunks(3); // healthy link; peer accepts 3 chunks then never reads again
       // 1 MiB total budget would be 15s + 4.2s; the stall watchdog must fire at 15s instead.
       const pending = uploadEncryptedMedia({ fileData: Buffer.alloc(1024 * 1024), to: 'peer', kind: 'video', requestUpload });
-      const failure = pending.catch((error: Error & { detail?: { acknowledged?: unknown } }) => error);
+      const failure = pending.then(
+        () => { throw new Error('expected upload rejection'); },
+        (error: Error & { detail?: { acknowledged?: unknown } }) => error
+      );
       const expectation = expect(pending).rejects.toMatchObject({
         detail: {
           // #5751: progressive count of the 3 accepted 64 KiB chunks — local
@@ -717,7 +816,10 @@ describe('WeChat CDN upload phase diagnostics (#5720)', () => {
     const pending = uploadEncryptedMedia({
       fileData: Buffer.alloc(1024 * 1024), to: 'peer', kind: 'video', requestUpload,
     });
-    const failure = pending.catch((error: Error & { detail?: Record<string, unknown> }) => error);
+    const failure = pending.then(
+      () => { throw new Error('expected upload rejection'); },
+      (error: Error & { detail?: Record<string, unknown> }) => error
+    );
     await expect(pending).rejects.toMatchObject({
       detail: {
         stage: 'upload', reason: 'timeout', phase: 'write',

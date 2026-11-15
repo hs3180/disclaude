@@ -181,6 +181,7 @@ function uploadPost(
     let writtenBytes = 0;
     let acknowledged = false;
     let settled = false;
+    let bodyStarted = false;
     let lastProgressAt = started;
     let totalTimer: ReturnType<typeof setTimeout> | undefined;
     let connectTimer: ReturnType<typeof setTimeout> | undefined;
@@ -213,7 +214,10 @@ function uploadPost(
       clearTimers();
       signal?.removeEventListener('abort', onAbort);
       const decorated = withProgress(error, snapshot());
-      req.destroy(decorated);
+      const requestError = decorated instanceof Error
+        ? decorated
+        : new Error('WeChat CDN upload transport failure', { cause: decorated });
+      req.destroy(requestError);
       reject(decorated);
     };
 
@@ -229,11 +233,13 @@ function uploadPost(
 
     /** A reused keep-alive socket never re-emits secureConnect; first write progress proves the connection. */
     const markConnected = () => {
-      if (connectedAt !== undefined) { return; }
-      connectedAt = Date.now();
-      phase = 'write';
-      if (connectTimer) { clearTimeout(connectTimer); connectTimer = undefined; }
-      markProgress();
+      if (connectedAt === undefined) {
+        connectedAt = Date.now();
+        phase = 'write';
+        if (connectTimer) { clearTimeout(connectTimer); connectTimer = undefined; }
+        markProgress();
+      }
+      startBody();
     };
 
     const armStallWatchdog = () => {
@@ -286,16 +292,17 @@ function uploadPost(
     if (signal?.aborted) { onAbort(); } else { signal?.addEventListener('abort', onAbort, { once: true }); }
 
     req.on('socket', (socket) => {
-      // #5751: a reused keep-alive TLS socket never re-emits secureConnect —
-      // recognizing it here moves the attempt into the write phase, so a
-      // failure on it is never misclassified as a retryable connect failure.
-      if ((socket as { encrypted?: boolean }).encrypted) { markConnected(); }
+      // A reused keep-alive TLS socket never re-emits secureConnect. `encrypted`
+      // alone only identifies a TLSSocket (including one still handshaking);
+      // a negotiated protocol proves the session was already established.
+      const tlsSocket = socket as { encrypted?: boolean; getProtocol?: () => string | null };
+      if (tlsSocket.encrypted && tlsSocket.getProtocol?.()) { markConnected(); }
       socket.on('connect', markProgress); // TCP up; TLS handshake still pending.
       socket.on('secureConnect', markConnected);
-      socket.on('drain', () => { markConnected(); markProgress(); });
+      socket.on('drain', markProgress);
       socket.on('error', () => { /* forwarded by ClientRequest to req 'error' */ });
     });
-    req.on('drain', () => { markConnected(); markProgress(); });
+    req.on('drain', markProgress);
     req.on('finish', () => {
       markConnected();
       finishedAt = Date.now();
@@ -307,35 +314,32 @@ function uploadPost(
     });
     req.on('error', fail);
 
-    // #5751: chunked, backpressure-observable body handoff. `end(body)` hands
-    // the whole ciphertext to the kernel as one write; under TLS backpressure
-    // the stream then emits no progress event until the ENTIRE buffer has
-    // flushed, so a sustained transfer outlasting UPLOAD_STALL_BUDGET_MS was
-    // misjudged as a stall (two production 14.6 MiB / 5 MiB MP4 failures; the
-    // local repro finished 5 MiB in 41,998 ms inside the 60s total budget but
-    // was killed at 15s). Writing in bounded chunks makes every accepted
-    // chunk a write-activity signal: writtenBytes advances incrementally
-    // (local handoff, not CDN receipt) and the watchdog fires only on true
-    // dead air. Backpressure (`write` → false, await drain) is progress, not
-    // a stall: the transport keeps flushing previously handed chunks.
-    void (async () => {
-      try {
-        for (let offset = 0; offset < body.length; ) {
-          if (settled) { return; } // Failed/cancelled elsewhere: hand over no further ciphertext.
-          const chunk = body.subarray(offset, offset + UPLOAD_WRITE_CHUNK_BYTES);
-          if (!req.write(chunk)) {
-            await once(req, 'drain'); // Rejects via 'error' when the transport is destroyed.
-            if (settled) { return; }
+    // #5751: wait for TLS before the chunked, backpressure-observable handoff.
+    // Calling write/end during connect lets ClientRequest buffer the entire
+    // body before the transport exists: finish fires early and the watchdog
+    // mistakes the subsequent peer-consumption wait for a stalled response.
+    function startBody(): void {
+      if (bodyStarted || settled) { return; }
+      bodyStarted = true;
+      void (async () => {
+        try {
+          for (let offset = 0; offset < body.length; ) {
+            if (settled) { return; } // Failed/cancelled elsewhere: hand over no further ciphertext.
+            const chunk = body.subarray(offset, offset + UPLOAD_WRITE_CHUNK_BYTES);
+            if (!req.write(chunk)) {
+              await once(req, 'drain'); // Rejects via 'error' when the transport is destroyed.
+              if (settled) { return; }
+            }
+            offset += chunk.length;
+            writtenBytes = offset;
+            markProgress();
           }
-          offset += chunk.length;
-          writtenBytes = offset;
-          markProgress();
+          req.end();
+        } catch (error) {
+          fail(error); // No-op when the destroy/error that ended us already settled.
         }
-        req.end();
-      } catch (error) {
-        fail(error); // No-op when the destroy/error that ended us already settled.
-      }
-    })();
+      })();
+    }
   });
 }
 
