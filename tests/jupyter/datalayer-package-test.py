@@ -141,7 +141,7 @@ class EnvironmentTests(unittest.TestCase):
         self.assertEqual(self.original.read_bytes(), b"patched = True\n")
         self.assertEqual(self.original.stat().st_mode & 0o777, 0o640)
         self.assertIn("c.ServerApp.port = 9999", self.config.read_text())
-        self.assertIn("c.YDocExtension.document_cleanup_delay = None", self.config.read_text())
+        self.assertIn("c.YDocExtension.document_cleanup_delay = 60", self.config.read_text())
         self.assertFalse(environment.transition(self.plan, self.state, "apply")["changed"])
         status = environment.status(self.plan, self.state)
         self.assertTrue(status["serverRestartRequired"])
