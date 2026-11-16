@@ -1465,7 +1465,7 @@ export class NotebookTools {
     const roomPath = String(input.path);
     // Validate before any remote call so traversal rejection stays offline.
     const encoded = textFilePath(roomPath);
-    const connect = this.options.connect;
+    const { connect } = this.options;
     if (!connect) {
       throw new Error('Notebook sync check is not connected to a host client');
     }

@@ -19,7 +19,7 @@ const roomRoute = 'api/contents/script.py?content=1';
 const putRoute = 'api/contents/script.py';
 
 /** Fake client plus a path-addressable RTC text room, mirroring notebook-tools fixtures. */
-async function fixture(options: {
+function fixture(options: {
   diskContent?: string;
   roomContent?: string;
   diskFormat?: string;
