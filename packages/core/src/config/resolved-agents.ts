@@ -210,6 +210,9 @@ export function resolveConfiguredAgents(
   const presets: AgentPresets = {};
   // Issue #5679: backends referencing each binding, for cross-harness checks.
   const backendsByLlm = new Map<string, Set<string>>();
+  // Bindings pinning their own model (r4 schema step); their validation errors
+  // must not be rewritten onto llms.<llm>.defaultModel below.
+  const explicitModels = new Set<string>();
   for (const [name, raw] of Object.entries(config.agents as Record<string, unknown>)) {
     const field = `agents.${name}`;
     if (!mapping(raw)) {
@@ -220,6 +223,7 @@ export function resolveConfiguredAgents(
     const allowed = new Set([
       'backend',
       'llm',
+      'model',
       'default',
       'mode',
       'dshHome',
@@ -258,6 +262,9 @@ export function resolveConfiguredAgents(
     const referenced = backendsByLlm.get(agent.llm) ?? new Set<string>();
     referenced.add(agent.backend);
     backendsByLlm.set(agent.llm, referenced);
+    if (agent.model !== undefined) {
+      explicitModels.add(name);
+    }
     for (const key of [
       'fullAccess',
       'codexNetworkAccess',
@@ -276,6 +283,11 @@ export function resolveConfiguredAgents(
       ) {
         errors.push(`${field}.${key} must be a non-negative integer${key === 'autoCompactWindow' ? ' or auto' : ''}`);
       }
+    }
+    // Per-runtime model pin (r4 review 5948908832 schema step): optional on the
+    // binding; resolution falls back to llms.<llm>.defaultModel below.
+    if (agent.model !== undefined && (typeof agent.model !== 'string' || !agent.model.trim())) {
+      errors.push(`${field}.model must be a non-empty string when set`);
     }
     if (
       agent.permissionMode !== undefined &&
@@ -490,7 +502,8 @@ export function resolveConfiguredAgents(
     const protocol = llm.api?.protocol;
     const keyEnv = llm.api ? apiCredentialEnvName(llm.api) : undefined;
     const { backend, ...settings } = agent;
-    const defaultModel = llm.defaultModel?.trim() ?? '';
+    // Per-runtime model pins outrank the provider default (r4 schema step).
+    const defaultModel = agent.model?.trim() || llm.defaultModel?.trim() || '';
     const resolvedEnv = resolveLlmEnvironment({
       ...llm.env,
       ...(backend === 'claude' ? agent.claude?.env : {}),
@@ -549,9 +562,13 @@ export function resolveConfiguredAgents(
       errors.push(
         ...validation.errors.map((error) => {
           for (const [name, preset] of Object.entries(presets)) {
-            error = error
-              .replace(`agents.${name}.model`, `llms.${preset.llm}.defaultModel`)
-              .replace(`agents.${name}.agentBackend`, `agents.${name}.backend`);
+            if (!explicitModels.has(name)) {
+              error = error.replace(
+                `agents.${name}.model`,
+                `llms.${preset.llm}.defaultModel`
+              );
+            }
+            error = error.replace(`agents.${name}.agentBackend`, `agents.${name}.backend`);
           }
           return error;
         })

@@ -1181,3 +1181,31 @@ describe('named runtime and LLM configuration', () => {
     });
   });
 });
+
+// r4 schema step (review 5948908832): each runtime binding may pin its own
+// model; the provider defaultModel is only the fallback.
+describe('per-runtime model pin', () => {
+  it('outranks llms.<llm>.defaultModel when set', () => {
+    const config = configuration();
+    config.agents!.assistant.model = 'glm-5.4-air';
+    expect(validateConfig(config)).toBe(true);
+    const result = resolveConfiguredAgents(config);
+    expect(result.ok && result.presets.assistant.model).toBe('glm-5.4-air');
+    expect(result.ok && result.presets.assistant.modelOverrides).toBeUndefined();
+  });
+
+  it('falls back to llms.<llm>.defaultModel when omitted', () => {
+    const result = resolveConfiguredAgents(configuration());
+    expect(result.ok && result.presets.assistant.model).toBe('glm-5.3');
+  });
+
+  it('rejects an empty per-runtime model', () => {
+    const config = configuration();
+    (config.agents!.assistant as unknown as Record<string, unknown>).model = '  ';
+    const result = resolveConfiguredAgents(config);
+    expect(result.ok).toBe(false);
+    expect(result.ok ? [] : result.errors).toContain(
+      'agents.assistant.model must be a non-empty string when set'
+    );
+  });
+});

@@ -221,6 +221,12 @@ export interface LlmConfig {
 export interface AgentDefinition extends Omit<AgentConfig, 'agentBackend'> {
   backend: NonNullable<AgentConfig['agentBackend']>;
   llm: string;
+  /**
+   * Optional per-runtime model pin (r4 review 5948908832): outranks the bound
+   * provider's defaultModel; when omitted the resolution falls back to
+   * llms.<llm>.defaultModel.
+   */
+  model?: string;
   default?: boolean;
 }
 
