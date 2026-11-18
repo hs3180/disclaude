@@ -27,7 +27,7 @@
  */
 import { getSupportedChannelSendCommands } from './channel-cli-help.js';
 import { isSyntheticMessageId } from '../../utils/message-id.js';
-import { buildChatHistorySection, buildPersistedHistorySection, buildThreadContextSection, buildThreadSelfServiceGuidance, buildNextStepGuidance, buildOutputFormatGuidance, buildLocationAwarenessGuidance, buildRuntimeEnvironmentGuidance, } from './guidance.js';
+import { buildChatHistorySection, buildPersistedHistorySection, buildThreadContextSection, buildThreadSelfServiceGuidance, buildNextStepGuidance, buildOutputFormatGuidance, buildLocationAwarenessGuidance, buildRuntimeEnvironmentGuidance, buildContextRecoveryGuidance, } from './guidance.js';
 /**
  * Message builder for agent prompts.
  *
@@ -165,7 +165,10 @@ export class MessageBuilder {
         if (stableToolsSection && msg.includeStableContext !== false) {
             sections.push({ kind: 'tools', stability: 'stable', content: `\n---\n\n## Tools\n${stableToolsSection}` });
         }
-        for (const guidance of [nextStepGuidance, threadSelfServiceGuidance, outputFormatGuidance, locationAwarenessGuidance, buildRuntimeEnvironmentGuidance()]) {
+        // Issue #5746: context-recovery guidance is stable, so a fresh native
+        // session (preset switch, restart recovery) re-receives it with its first
+        // message via buildStableContext.
+        for (const guidance of [nextStepGuidance, threadSelfServiceGuidance, outputFormatGuidance, locationAwarenessGuidance, buildRuntimeEnvironmentGuidance(), buildContextRecoveryGuidance()]) {
             if (guidance && msg.includeStableContext !== false) {
                 sections.push({ kind: 'guidance', stability: 'stable', content: guidance });
             }

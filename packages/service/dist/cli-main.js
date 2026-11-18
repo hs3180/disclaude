@@ -1023,7 +1023,7 @@ export async function main() {
             // Issue #5504: wire REST /api/self-sent/:messageId to the shared
             // message-logger self-sent registry so session-side tools can suppress
             // echoes of their own user-identity sends.
-            httpApiServer.setSelfSentRegistrar((messageId) => messageLogger.registerSelfSent(messageId));
+            httpApiServer.setSelfSentRegistrar((messageId, channelName) => messageLogger.registerSelfSent(messageId, channelName));
             await httpApiServer.start();
             const address = httpApiServer.getAddress();
             const actualPort = address?.port ?? options.apiPort;

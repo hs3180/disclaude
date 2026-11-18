@@ -1294,7 +1294,7 @@ export class HttpApiServer {
      * Feishu processes the send, so a registration issued immediately after
      * the send response lands first in practice.
      */
-    handleSelfSent(_req, res, params) {
+    handleSelfSent(req, res, params) {
         if (!this.selfSentRegistrar) {
             this.sendJson(res, 503, { ok: false, message: 'Self-sent registrar not configured' });
             return Promise.resolve();
@@ -1304,9 +1304,13 @@ export class HttpApiServer {
             this.sendJson(res, 400, { ok: false, message: 'Required: messageId path parameter' });
             return Promise.resolve();
         }
+        // T-106: optional `?channel=<name>` scopes the registration to a named channel
+        // so the echo is only filtered on the owning channel in multi-app deployments.
+        // Omitting it preserves the legacy bare-id (single-app) behavior.
+        const channelName = new URL(req.url ?? '/', `http://${req.headers.host}`).searchParams.get('channel')?.trim() || undefined;
         try {
-            this.selfSentRegistrar(messageId);
-            logger.debug({ messageId }, 'Registered self-sent message id');
+            this.selfSentRegistrar(messageId, channelName);
+            logger.debug({ messageId, channelName }, 'Registered self-sent message id');
             this.sendJson(res, 200, { ok: true, messageId });
         }
         catch (err) {

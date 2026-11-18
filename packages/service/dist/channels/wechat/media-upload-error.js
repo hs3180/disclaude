@@ -30,6 +30,7 @@ export class WeChatMediaUploadError extends Error {
             ...detail, httpStatus, apiCode, elapsedMs, attempt,
             ...(phases ? {
                 phase: phases.phase, writtenBytes: phases.writtenBytes,
+                ...(phases.acknowledged !== undefined ? { acknowledged: phases.acknowledged } : {}),
                 ...(phases.connectMs !== undefined ? { connectMs: round(phases.connectMs) } : {}),
                 ...(phases.writeMs !== undefined ? { writeMs: round(phases.writeMs) } : {}),
                 ...(phases.responseMs !== undefined ? { responseMs: round(phases.responseMs) } : {}),

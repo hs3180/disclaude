@@ -634,7 +634,7 @@ export class FeishuChannel extends BaseChannel {
                 return;
             }
             messageLogger
-                .logOutgoingMessage(msgId, message.chatId, contentSummary, msgType)
+                .logOutgoingMessage(msgId, message.chatId, contentSummary, msgType, undefined, this.toRoutedMessageId(msgId))
                 .catch((err) => {
                 logger.warn({ err, chatId: message.chatId, msgId }, 'Failed to log outgoing message');
             });
@@ -1275,7 +1275,7 @@ export class FeishuChannel extends BaseChannel {
             throw new Error('Welcome delivery was not confirmed');
         }
         await messageLogger
-            .logOutgoingMessage(response.data.message_id, routedChatId, text, 'text')
+            .logOutgoingMessage(response.data.message_id, routedChatId, text, 'text', undefined, this.toRoutedMessageId(response.data.message_id))
             .catch((error) => {
             logger.warn({ error, chatId: routedChatId }, 'Failed to record welcome receipt');
         });
@@ -1326,7 +1326,7 @@ export class FeishuChannel extends BaseChannel {
             });
             const msgId = resp.data?.message_id;
             if (msgId) {
-                messageLogger.logOutgoingMessage(msgId, routedChatId, text, 'text').catch((err) => {
+                messageLogger.logOutgoingMessage(msgId, routedChatId, text, 'text', undefined, this.toRoutedMessageId(msgId)).catch((err) => {
                     logger.warn({ err, chatId: routedChatId, msgId }, 'Failed to log outgoing notification message');
                 });
             }

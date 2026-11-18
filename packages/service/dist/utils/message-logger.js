@@ -203,7 +203,7 @@ export class MessageLogger {
     /**
      * Log an outgoing bot message.
      */
-    async logOutgoingMessage(messageId, chatId, content, messageType = 'text', timestamp) {
+    async logOutgoingMessage(messageId, chatId, content, messageType = 'text', timestamp, routedMessageId) {
         const entry = {
             messageId,
             senderId: 'bot',
@@ -217,7 +217,13 @@ export class MessageLogger {
         // Our own outbound echo must never be re-ingested as a user turn (#5504).
         // Bot-identity sends are already caught by the sender_type='app' filter;
         // user-identity sends (e.g. from session-side tools) echo as 'user'.
-        this.rememberSelfSentId(messageId);
+        // The registry is keyed by the ROUTED id (T-106): in a single-instance
+        // multi-app deployment the process-wide registry is shared across channels,
+        // so a bare message_id sent by app A would otherwise collide with an inbound
+        // @mention of the same id received by app B and be silently dropped. Routing
+        // the key by channel ownership mirrors the dedup registry. Single-app (no
+        // route prefix) yields routedMessageId === messageId → bit-identical.
+        this.rememberSelfSentId(routedMessageId ?? messageId);
     }
     /**
      * Check if a message has already been processed.
@@ -234,8 +240,14 @@ export class MessageLogger {
      * `POST /api/self-sent/:messageId` so the resulting echo event is filtered
      * instead of being fed back to the agent as a new user turn.
      */
-    registerSelfSent(messageId) {
-        this.rememberSelfSentId(messageId);
+    registerSelfSent(messageId, channelName) {
+        // Ownership-aware keying (T-106): when the caller identifies the named
+        // channel the user-identity send went through, store the routed key so the
+        // echo is only filtered on that channel. Without a channel (legacy
+        // single-app) store the bare id — the inbound check routes via
+        // toRoutedMessageId, which is the identity function when no route prefix
+        // is configured, so bare registration still matches.
+        this.rememberSelfSentId(channelName ? `feishu:${channelName}:${messageId}` : messageId);
     }
     /** Returns true if this message id was sent by us (echo candidate, #5504). */
     isSelfSentMessage(messageId) {

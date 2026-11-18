@@ -1035,7 +1035,7 @@ export class MessageHandler {
         }, {
             isProcessed: (id) => messageLogger.isMessageProcessed(this.toRoutedMessageId(id)),
             claim: (id) => messageLogger.claimMessage(this.toRoutedMessageId(id)),
-            isSelfSent: (id) => messageLogger.isSelfSentMessage(id),
+            isSelfSent: (id) => messageLogger.isSelfSentMessage(this.toRoutedMessageId(id)),
             maxMessageAge: this.MAX_MESSAGE_AGE,
         });
         if (!filterVerdict.passed) {

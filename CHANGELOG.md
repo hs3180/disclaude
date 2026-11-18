@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.29] - 2026-11-18
+
+### Added
+
+- Guide agents to recover missing context through `disclaude history query`
+  before guessing or re-asking (#5746; #5748). When a request leans on
+  earlier context that the current session cannot see, or opens a fresh
+  session after a preset switch, stable guidance now says to query the
+  chat history first, then ask one short clarifying question listing the
+  candidate referents, and never invent the missing context. The same
+  ordering rule is documented in the history skill and the README.
+
+### Fixed
+
+- Key the self-sent echo registry by routed message id so that a second
+  named Feishu app on the same instance no longer silently drops
+  legitimate @mentions whose bare message ids collide (#5737; #5744).
+  Single-app deployments keep bit-identical behavior, and
+  `POST /api/self-sent/:messageId` gains an optional `?channel=<name>`
+  parameter for scoped registration.
+- Stop the WeChat CDN upload stall watchdog from misjudging slow but
+  active video uploads (#5751; #5753). Request bodies are handed to the
+  transport in backpressure-aware 64 KiB chunks so sustained transfers
+  count as write activity, stall detection requires a truly quiet link,
+  every terminal path settles exactly once and destroys the request, and
+  progressive `writtenBytes` reporting distinguishes local handoff from
+  CDN acknowledgement.
+- Match the miniswe runner `-m` test assertion on argv token boundaries
+  so random mkdtemp path suffixes can no longer flake the Unit Tests
+  check (#5749). Test-only; the asserted product behavior (no `-m` when
+  no model is selected) is unchanged and still covered.
+
 ## [0.6.28] - 2026-11-15
 
 ### Added
