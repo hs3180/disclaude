@@ -8,13 +8,12 @@ import type { DisclaudeConfig, LlmConfig } from './types.js';
 afterEach(() => vi.unstubAllEnvs());
 const configuration = (): DisclaudeConfig => ({
   agents: {
-    daily: {
-      backend: 'codex',
+    codex: {
       llm: 'daily',
       default: true,
     },
-    assistant: { backend: 'claude', llm: 'proxy' },
-    other: { backend: 'pi', llm: 'other' },
+    claude: { llm: 'proxy' },
+    pi: { llm: 'other' },
   },
   llms: {
     daily: { defaultModel: 'gpt-6-luna', reasoningEffort: 'max', maxConcurrentSessions: 3 },
@@ -53,14 +52,14 @@ const tierEnv = (opus: string, sonnet = opus, haiku = opus) => ({
 describe('named runtime and LLM configuration', () => {
   it('accepts explicit auto metadata discovery as an opt-in', () => {
     const config = configuration();
-    config.agents!.assistant.autoCompactWindow = 'auto';
+    config.agents!.claude.autoCompactWindow = 'auto';
     expect(validateConfig(config)).toBe(true);
     const result = resolveConfiguredAgents(config);
-    expect(result.ok && result.presets.assistant.autoCompactWindow).toBe('auto');
+    expect(result.ok && result.presets.claude.autoCompactWindow).toBe('auto');
   });
   it('accepts a defaultHarness that names a configured runtime', () => {
     const config = configuration();
-    config.defaultHarness = 'assistant';
+    config.defaultHarness = 'claude';
     expect(validateConfig(config)).toBe(true);
     expect(resolveConfiguredAgents(config).ok).toBe(true);
   });
@@ -89,7 +88,7 @@ describe('named runtime and LLM configuration', () => {
     (protocol) => {
       vi.stubEnv('DSH_KEY', 'selected-test-key');
       const config = configuration();
-      config.agents!.dsh = { backend: 'dsh', llm: 'selected', mode: 'minimal' };
+      config.agents!.dsh = { llm: 'selected', mode: 'minimal' };
       config.llms!.selected = selectedDshLlm(protocol, '${DSH_KEY}');
       const result = resolveConfiguredAgents(config);
       expect(result.ok).toBe(true);
@@ -109,7 +108,7 @@ describe('named runtime and LLM configuration', () => {
     'requires an explicit DSH connection and address (%j)',
     (api) => {
       const config = configuration();
-      config.agents!.dsh = { backend: 'dsh', llm: 'selected' };
+      config.agents!.dsh = { llm: 'selected' };
       config.llms!.selected = { defaultModel: 'glm-5.3', api: api as never };
       expect(resolveConfiguredAgents(config)).toEqual({
         ok: false,
@@ -123,7 +122,7 @@ describe('named runtime and LLM configuration', () => {
   it('requires the selected DSH credential without blocking a dormant binding', () => {
     vi.stubEnv('DSH_KEY', '');
     const config = configuration();
-    config.agents!.dsh = { backend: 'dsh', llm: 'selected' };
+    config.agents!.dsh = { llm: 'selected' };
     config.llms!.selected = selectedDshLlm('openai');
     expect(validateRequiredConfig(config).valid).toBe(true);
     const result = resolveConfiguredAgents(config);
@@ -137,7 +136,6 @@ describe('named runtime and LLM configuration', () => {
     const config = configuration();
     config.llms!.native = nativeDshLlm();
     config.agents!.dsh = {
-      backend: 'dsh',
       llm: 'native',
       mode: 'minimal',
       dshHome: '/dsh-home',
@@ -159,10 +157,12 @@ describe('named runtime and LLM configuration', () => {
   it('rejects the legacy backend with migration guidance', () => {
     const config = configuration();
     config.llms!.native = nativeDshLlm();
-    config.agents!.dsh = { backend: 'deepseek' as never, llm: 'native' };
+    config.agents!.dsh = { backend: 'deepseek', llm: 'native' } as never;
     expect(resolveConfiguredAgents(config)).toEqual({
       ok: false,
-      errors: ['agents.dsh.backend deepseek is unsupported; use backend: dsh'],
+      errors: [
+        'agents.dsh.backend is unsupported; models and API connections belong in llms',
+      ],
     });
   });
 
@@ -172,11 +172,11 @@ describe('named runtime and LLM configuration', () => {
       const config = configuration();
       config.llms!.native = nativeDshLlm();
       const binding = backend === 'codex' ? 'daily' : backend === 'dsh' ? 'native' : 'proxy';
-      config.agents!.legacy = { backend, llm: binding, deepseek: { mode: 'minimal' } } as never;
+      config.agents![backend] = { llm: binding, deepseek: { mode: 'minimal' } } as never;
       expect(resolveConfiguredAgents(config)).toEqual({
         ok: false,
         errors: [
-          `agents.legacy.deepseek is unsupported; keep mode and dshHome on the agent and move protocol, baseUrl and credential reference to llms.${binding}.api`,
+          `agents.${backend}.deepseek is unsupported; keep mode and dshHome on the agent and move protocol, baseUrl and credential reference to llms.${binding}.api`,
         ],
       });
     }
@@ -184,15 +184,14 @@ describe('named runtime and LLM configuration', () => {
 
   it.each(['codex', 'pi', 'claude'] as const)('rejects DSH settings under %s', (backend) => {
     const config = configuration();
-    config.agents!.misplaced = {
-      backend,
+    config.agents![backend] = {
       llm: nonDshLlmBinding(backend),
       dsh: { provider: 'native-route' },
     } as never;
     expect(resolveConfiguredAgents(config)).toMatchObject({
       ok: false,
       errors: [
-        `agents.misplaced.dsh is unsupported; keep mode and dshHome on the agent and move protocol, baseUrl and credential reference to llms.${nonDshLlmBinding(backend)}.api`,
+        `agents.${backend}.dsh is unsupported; keep mode and dshHome on the agent and move protocol, baseUrl and credential reference to llms.${nonDshLlmBinding(backend)}.api`,
       ],
     });
   });
@@ -202,7 +201,7 @@ describe('named runtime and LLM configuration', () => {
     (mode) => {
       const config = configuration();
       config.llms!.native = nativeDshLlm();
-      config.agents!.dsh = { backend: 'dsh', llm: 'native', mode, dshHome: '/selected-home' };
+      config.agents!.dsh = { llm: 'native', mode, dshHome: '/selected-home' };
       expect(resolveConfiguredAgents(config)).toMatchObject({
         ok: true,
         presets: {
@@ -214,21 +213,20 @@ describe('named runtime and LLM configuration', () => {
 
   it.each(['codex', 'pi', 'claude'] as const)('rejects unsupported mode on %s', (backend) => {
     const config = configuration();
-    config.agents!.misplaced = {
-      backend,
+    config.agents![backend] = {
       llm: nonDshLlmBinding(backend),
       mode: 'minimal',
     };
     expect(resolveConfiguredAgents(config)).toEqual({
       ok: false,
-      errors: ['agents.misplaced.mode requires backend: dsh'],
+      errors: [`agents.${backend}.mode requires backend: dsh`],
     });
   });
 
   it.each([null, false, 42, '', 'typo', {}])('rejects malformed mode (%j)', (mode) => {
     const config = configuration();
     config.llms!.native = nativeDshLlm();
-    config.agents!.dsh = { backend: 'dsh', llm: 'native', mode: mode as never };
+    config.agents!.dsh = { llm: 'native', mode: mode as never };
     expect(resolveConfiguredAgents(config)).toEqual({
       ok: false,
       errors: ['agents.dsh.mode must be minimal or standard'],
@@ -241,7 +239,6 @@ describe('named runtime and LLM configuration', () => {
       const config = configuration();
       config.llms!.native = nativeDshLlm();
       config.agents!.dsh = {
-        backend: 'dsh',
         llm: 'native',
         mode,
         dsh: { mode: 'minimal' },
@@ -257,21 +254,20 @@ describe('named runtime and LLM configuration', () => {
 
   it.each(['codex', 'pi', 'claude'] as const)('rejects unsupported dshHome on %s', (backend) => {
     const config = configuration();
-    config.agents!.misplaced = {
-      backend,
+    config.agents![backend] = {
       llm: nonDshLlmBinding(backend),
       dshHome: '/selected-home',
     };
     expect(resolveConfiguredAgents(config)).toEqual({
       ok: false,
-      errors: ['agents.misplaced.dshHome requires backend: dsh'],
+      errors: [`agents.${backend}.dshHome requires backend: dsh`],
     });
   });
 
   it.each([null, false, 42, '', '   ', {}])('rejects malformed dshHome (%j)', (dshHome) => {
     const config = configuration();
     config.llms!.native = nativeDshLlm();
-    config.agents!.dsh = { backend: 'dsh', llm: 'native', dshHome: dshHome as never };
+    config.agents!.dsh = { llm: 'native', dshHome: dshHome as never };
     expect(resolveConfiguredAgents(config)).toEqual({
       ok: false,
       errors: ['agents.dsh.dshHome must be a non-empty string'],
@@ -284,7 +280,6 @@ describe('named runtime and LLM configuration', () => {
       const config = configuration();
       config.llms!.native = nativeDshLlm();
       config.agents!.dsh = {
-        backend: 'dsh',
         llm: 'native',
         dshHome,
         dsh: { dshHome: '/legacy-home' },
@@ -309,7 +304,7 @@ describe('named runtime and LLM configuration', () => {
   ])('rejects malformed or ignored DSH settings (%j)', (dsh) => {
     const config = configuration();
     config.llms!.native = nativeDshLlm();
-    config.agents!.dsh = { backend: 'dsh', llm: 'native', dsh } as never;
+    config.agents!.dsh = { llm: 'native', dsh } as never;
     expect(resolveConfiguredAgents(config).ok).toBe(false);
   });
 
@@ -320,19 +315,19 @@ describe('named runtime and LLM configuration', () => {
     if (!result.ok) {
       return;
     }
-    expect(result.presets.assistant).toMatchObject({
+    expect(result.presets.claude).toMatchObject({
       model: 'glm-5.3',
       apiProtocol: 'anthropic',
       apiKey: 'proxy-secret',
     });
-    expect(result.presets.other.apiProtocol).toBe('openai');
-    expect(result.presets.daily).toMatchObject({
+    expect(result.presets.pi.apiProtocol).toBe('openai');
+    expect(result.presets.codex).toMatchObject({
       apiKey: '',
       model: 'gpt-6-luna',
       reasoningEffort: 'max',
       maxConcurrentSessions: 3,
     });
-    expect(resolveAgentPreset(result.presets)).toMatchObject({ ok: true, name: 'daily' });
+    expect(resolveAgentPreset(result.presets)).toMatchObject({ ok: true, name: 'codex' });
   });
   it('validates only selected credentials and permits a native default with dormant API bindings', () => {
     vi.stubEnv('PROXY_KEY', '');
@@ -343,7 +338,7 @@ describe('named runtime and LLM configuration', () => {
     if (!result.ok) {
       throw new Error(result.errors.join('\n'));
     }
-    expect(validateResolvedAgent(result.presets.assistant)).toContain('llms.proxy.api.apiKey');
+    expect(validateResolvedAgent(result.presets.claude)).toContain('llms.proxy.api.apiKey');
   });
   it('injects only the selected external API credentials and endpoint', () => {
     vi.stubEnv('PROXY_KEY', 'selected-secret');
@@ -356,7 +351,7 @@ describe('named runtime and LLM configuration', () => {
     if (!result.ok) {
       throw new Error(result.errors.join('\n'));
     }
-    const preset = result.presets.assistant;
+    const preset = result.presets.claude;
     const env = buildSdkEnv(preset.apiKey, preset.apiBaseUrl, {}, false, undefined, {
       protocol: preset.apiProtocol,
       credentialEnvKeys: preset.credentialEnvKeys,
@@ -376,7 +371,7 @@ describe('named runtime and LLM configuration', () => {
     if (!result.ok) {
       throw new Error(result.errors.join('\n'));
     }
-    const preset = result.presets.other;
+    const preset = result.presets.pi;
     const env = buildSdkEnv(preset.apiKey, preset.apiBaseUrl, {}, false, undefined, {
       protocol: preset.apiProtocol,
       credentialEnvKeys: preset.credentialEnvKeys,
@@ -389,7 +384,7 @@ describe('named runtime and LLM configuration', () => {
     vi.stubEnv('CODEX_MODEL', 'gpt-6-luna');
     const config = configuration();
     delete config.llms!.daily.defaultModel;
-    expect(resolveConfiguredAgents(config)).toMatchObject({ ok: true, presets: { daily: { model: '' } } });
+    expect(resolveConfiguredAgents(config)).toMatchObject({ ok: true, presets: { codex: { model: '' } } });
   });
   it.each(['', '   '])('rejects a blank provider default model (%j)', (model) => {
     const config = configuration();
@@ -416,27 +411,27 @@ describe('named runtime and LLM configuration', () => {
     const result = resolveConfiguredAgents(config);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.presets[name === 'proxy' ? 'assistant' : 'other'].model).toBe('');
+      expect(result.presets[name === 'proxy' ? 'claude' : 'pi'].model).toBe('');
     }
   });
-  it('keeps explicit models independent for two agents on the same backend', () => {
+  it('keeps explicit models independent across bindings on different backends', () => {
     vi.stubEnv('ANTHROPIC_MODEL', 'unrelated-global-model');
     const config = configuration();
-    config.agents!.second = { backend: 'claude', llm: 'second' };
+    config.agents!.dsh = { llm: 'second' };
     config.llms!.second = {
       defaultModel: 'second-explicit-model',
       api: { protocol: 'anthropic', baseUrl: 'https://second.example', apiKey: '$SECOND_KEY' },
     };
     expect(resolveConfiguredAgents(config)).toMatchObject({ ok: true, presets: {
-      assistant: { agentBackend: 'claude', model: 'glm-5.3', apiBaseUrl: 'https://proxy.example' },
-      second: { agentBackend: 'claude', model: 'second-explicit-model', apiBaseUrl: 'https://second.example' },
+      claude: { agentBackend: 'claude', model: 'glm-5.3', apiBaseUrl: 'https://proxy.example' },
+      dsh: { agentBackend: 'dsh', model: 'second-explicit-model', apiBaseUrl: 'https://second.example' },
     } });
   });
   it('accepts an empty resolved model as the runtime default', () => {
     const result = resolveConfiguredAgents(configuration());
     if (!result.ok) { throw new Error(result.errors.join('\n')); }
-    result.presets.daily.model = '';
-    expect(validateResolvedAgent(result.presets.daily)).toBeUndefined();
+    result.presets.codex.model = '';
+    expect(validateResolvedAgent(result.presets.codex)).toBeUndefined();
   });
   it('resolves braced references and never expands embedded or shell expressions', () => {
     const config = configuration();
@@ -444,7 +439,7 @@ describe('named runtime and LLM configuration', () => {
     vi.stubEnv('PROXY_KEY', 'selected-secret');
     expect(resolveConfiguredAgents(config)).toMatchObject({
       ok: true,
-      presets: { assistant: { apiKey: 'selected-secret' } },
+      presets: { claude: { apiKey: 'selected-secret' } },
     });
     for (const value of [
       'PROXY_KEY',
@@ -461,8 +456,7 @@ describe('named runtime and LLM configuration', () => {
   });
   it('binds shared model settings independently of the default agent', () => {
     const config = configuration();
-    config.agents!.secondary = { backend: 'codex', llm: 'daily' };
-    config.agents!.independent = { backend: 'codex', llm: 'independent' };
+    config.agents!.pi = { llm: 'independent' };
     config.llms!.independent = {
       defaultModel: 'gpt-6-luna',
       reasoningEffort: 'low',
@@ -471,8 +465,8 @@ describe('named runtime and LLM configuration', () => {
     expect(resolveConfiguredAgents(config)).toMatchObject({
       ok: true,
       presets: {
-        secondary: { llm: 'daily', reasoningEffort: 'max', maxConcurrentSessions: 3 },
-        independent: { llm: 'independent', reasoningEffort: 'low', maxConcurrentSessions: 1 },
+        codex: { llm: 'daily', reasoningEffort: 'max', maxConcurrentSessions: 3 },
+        pi: { llm: 'independent', reasoningEffort: 'low', maxConcurrentSessions: 1 },
       },
     });
   });
@@ -488,10 +482,10 @@ describe('named runtime and LLM configuration', () => {
   });
   it.each([
     (c: DisclaudeConfig) => {
-      c.agents!.assistant.llm = 'undefined';
+      c.agents!.claude.llm = 'undefined';
     },
     (c: DisclaudeConfig) => {
-      c.agents!.assistant.default = true;
+      c.agents!.claude.default = true;
     },
     (c: DisclaudeConfig) => {
       c.llms!.proxy.api!.protocol = 'vendor' as never;
@@ -512,7 +506,7 @@ describe('named runtime and LLM configuration', () => {
       c.llms!.daily.defaultModel = 'claude-sonnet';
     },
     (c: DisclaudeConfig) => {
-      c.agents!.daily.codex = { maxConcurrentRuns: 0 };
+      c.agents!.codex.codex = { maxConcurrentRuns: 0 };
     },
     (c: DisclaudeConfig) => {
       c.llms!.daily.maxConcurrentSessions = 0;
@@ -524,14 +518,14 @@ describe('named runtime and LLM configuration', () => {
       c.llms!.daily.reasoningEffort = 'invalid' as never;
     },
     (c: DisclaudeConfig) => {
-      c.agents!.daily.fullAccess = true;
-      c.agents!.daily.codexSandbox = 'read-only';
+      c.agents!.codex.fullAccess = true;
+      c.agents!.codex.codexSandbox = 'read-only';
     },
     (c: DisclaudeConfig) => {
-      c.agents!.assistant.autoCompactWindow = -1;
+      c.agents!.claude.autoCompactWindow = -1;
     },
     (c: DisclaudeConfig) => {
-      c.agents!.assistant.sdkTimeoutMs = 1.5;
+      c.agents!.claude.sdkTimeoutMs = 1.5;
     },
   ])('rejects invalid references, formats, endpoints and runtime settings', (mutate) => {
     const config = configuration();
@@ -541,48 +535,48 @@ describe('named runtime and LLM configuration', () => {
   });
   it('compiles behavesAs into a single-entry modelOverrides map (Issue #5410)', () => {
     const config = configuration();
-    config.agents!.assistant.claude = { ...config.agents!.assistant.claude, behavesAs: 'claude-opus-5' };
+    config.agents!.claude.claude = { ...config.agents!.claude.claude, behavesAs: 'claude-opus-5' };
     const result = resolveConfiguredAgents(config);
     expect(result.ok).toBe(true);
     if (!result.ok) {
       return;
     }
-    expect(result.presets.assistant.modelOverrides).toEqual({ 'claude-opus-5': 'glm-5.3' });
+    expect(result.presets.claude.modelOverrides).toEqual({ 'claude-opus-5': 'glm-5.3' });
   });
   it('projects a raw multi-slot modelOverrides map verbatim', () => {
     const config = configuration();
-    config.agents!.assistant.claude = { ...config.agents!.assistant.claude, modelOverrides: { ...kimiTierOverrides } };
+    config.agents!.claude.claude = { ...config.agents!.claude.claude, modelOverrides: { ...kimiTierOverrides } };
     const result = resolveConfiguredAgents(config);
     expect(result.ok).toBe(true);
     if (!result.ok) {
       return;
     }
-    expect(result.presets.assistant.modelOverrides).toEqual(kimiTierOverrides);
+    expect(result.presets.claude.modelOverrides).toEqual(kimiTierOverrides);
   });
   it.each([
     (c: DisclaudeConfig) => {
-      c.agents!.assistant.claude = { behavesAs: 'opus' };
+      c.agents!.claude.claude = { behavesAs: 'opus' };
     },
     (c: DisclaudeConfig) => {
-      c.agents!.assistant.claude = { behavesAs: 'claude_OPUS' };
+      c.agents!.claude.claude = { behavesAs: 'claude_OPUS' };
     },
     (c: DisclaudeConfig) => {
-      c.agents!.assistant.claude = { behavesAs: '' };
+      c.agents!.claude.claude = { behavesAs: '' };
     },
     (c: DisclaudeConfig) => {
-      c.agents!.assistant.claude = { behavesAs: 'claude-opus-5', modelOverrides: { 'claude-opus-5': 'kimi-k3' } };
+      c.agents!.claude.claude = { behavesAs: 'claude-opus-5', modelOverrides: { 'claude-opus-5': 'kimi-k3' } };
     },
     (c: DisclaudeConfig) => {
-      c.agents!.assistant.claude = { modelOverrides: { opus: 'kimi-k3' } };
+      c.agents!.claude.claude = { modelOverrides: { opus: 'kimi-k3' } };
     },
     (c: DisclaudeConfig) => {
-      c.agents!.assistant.claude = { modelOverrides: { 'claude-opus-5': '  ' } };
+      c.agents!.claude.claude = { modelOverrides: { 'claude-opus-5': '  ' } };
     },
     (c: DisclaudeConfig) => {
-      c.agents!.assistant.claude = { modelOverrides: {} };
+      c.agents!.claude.claude = { modelOverrides: {} };
     },
     (c: DisclaudeConfig) => {
-      c.agents!.assistant.claude = { modelOverrides: 'claude-opus-5' as unknown as Record<string, string> };
+      c.agents!.claude.claude = { modelOverrides: 'claude-opus-5' as unknown as Record<string, string> };
     },
     (c: DisclaudeConfig) => {
       (c.llms!.daily as unknown as Record<string, unknown>).behavesAs = 'claude-opus-5';
@@ -600,7 +594,7 @@ describe('named runtime and LLM configuration', () => {
   });
   it('rejects the bare alias with explicit pinning guidance', () => {
     const config = configuration();
-    config.agents!.assistant.claude = { ...config.agents!.assistant.claude, behavesAs: 'opus' };
+    config.agents!.claude.claude = { ...config.agents!.claude.claude, behavesAs: 'opus' };
     const result = resolveConfiguredAgents(config);
     expect(result.ok).toBe(false);
     if (result.ok) {
@@ -616,8 +610,7 @@ describe('named runtime and LLM configuration', () => {
   it('resolves a mini-swe agent from its bound LLM connection', () => {
     vi.stubEnv('MINISWE_KEY', 'mini-test-key');
     const config = configuration();
-    config.agents!.mini = {
-      backend: 'miniswe',
+    config.agents!.miniswe = {
       llm: 'mini-openai',
       miniswe: { binary: 'mini', executionEnvironment: 'local', timeoutMs: 90_000 },
     };
@@ -627,7 +620,7 @@ describe('named runtime and LLM configuration', () => {
     if (!result.ok) {
       return;
     }
-    expect(result.presets.mini).toMatchObject({
+    expect(result.presets.miniswe).toMatchObject({
       agentBackend: 'miniswe',
       model: 'openai/gpt-5.4',
       apiProtocol: 'openai',
@@ -635,13 +628,13 @@ describe('named runtime and LLM configuration', () => {
       apiKey: 'mini-test-key',
       miniswe: { binary: 'mini', executionEnvironment: 'local', timeoutMs: 90_000 },
     });
-    expect(validateResolvedAgent(result.presets.mini)).toBeUndefined();
+    expect(validateResolvedAgent(result.presets.miniswe)).toBeUndefined();
   });
 
   it('requires the bound LLM api connection for mini-swe (no interactive fallback)', () => {
     const config = configuration();
     config.llms!.bare = { defaultModel: 'openai/gpt-5.4' };
-    config.agents!.mini = { backend: 'miniswe', llm: 'bare' };
+    config.agents!.miniswe = { llm: 'bare' };
     expect(resolveConfiguredAgents(config)).toEqual({
       ok: false,
       errors: [
@@ -653,42 +646,41 @@ describe('named runtime and LLM configuration', () => {
   it('flags a missing mini-swe credential at selection time without blocking resolve', () => {
     vi.stubEnv('MINISWE_KEY', '');
     const config = configuration();
-    config.agents!.mini = { backend: 'miniswe', llm: 'mini-openai' };
+    config.agents!.miniswe = { llm: 'mini-openai' };
     config.llms!['mini-openai'] = miniSweLlm();
     const result = resolveConfiguredAgents(config);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(validateResolvedAgent(result.presets.mini)).toMatch(/credential referenced by llms\.mini-openai\.api\.apiKey is missing/);
+      expect(validateResolvedAgent(result.presets.miniswe)).toMatch(/credential referenced by llms\.mini-openai\.api\.apiKey is missing/);
     }
   });
 
   it('rejects non-local execution environments with the out-of-scope message', () => {
     const config = configuration();
-    config.agents!.mini = {
-      backend: 'miniswe',
+    config.agents!.miniswe = {
       llm: 'proxy',
       miniswe: { executionEnvironment: 'docker' as never },
     };
     expect(resolveConfiguredAgents(config)).toEqual({
       ok: false,
       errors: [
-        'agents.mini.miniswe.executionEnvironment must be local; docker and SWE-ReX execution environments are out of scope for this adapter (run those as native mini-swe-agent workflows, #5006)',
+        'agents.miniswe.miniswe.executionEnvironment must be local; docker and SWE-ReX execution environments are out of scope for this adapter (run those as native mini-swe-agent workflows, #5006)',
       ],
     });
   });
 
   it.each([
     (c: DisclaudeConfig) => {
-      c.agents!.mini = { backend: 'miniswe', llm: 'proxy', miniswe: { image: 'swe' } as never };
+      c.agents!.miniswe = { llm: 'proxy', miniswe: { image: 'swe' } as never };
     },
     (c: DisclaudeConfig) => {
-      c.agents!.mini = { backend: 'miniswe', llm: 'proxy', miniswe: { binary: '  ' } };
+      c.agents!.miniswe = { llm: 'proxy', miniswe: { binary: '  ' } };
     },
     (c: DisclaudeConfig) => {
-      c.agents!.mini = { backend: 'miniswe', llm: 'proxy', miniswe: { timeoutMs: -1 } };
+      c.agents!.miniswe = { llm: 'proxy', miniswe: { timeoutMs: -1 } };
     },
     (c: DisclaudeConfig) => {
-      c.agents!.mini = { backend: 'miniswe', llm: 'proxy', miniswe: { timeoutMs: 1.5 } };
+      c.agents!.miniswe = { llm: 'proxy', miniswe: { timeoutMs: 1.5 } };
     },
   ])('rejects malformed miniswe execution settings', (mutate) => {
     const config = configuration();
@@ -699,15 +691,15 @@ describe('named runtime and LLM configuration', () => {
       return;
     }
     expect(result.errors.length).toBe(1);
-    expect(result.errors.join('\n')).toMatch(/agents\.mini\.miniswe\./);
+    expect(result.errors.join('\n')).toMatch(/agents\.miniswe\.miniswe\./);
   });
 
   it('rejects a miniswe block on a non-miniswe backend', () => {
     const config = configuration();
-    config.agents!.assistant.miniswe = { timeoutMs: 5_000 };
+    config.agents!.claude.miniswe = { timeoutMs: 5_000 };
     expect(resolveConfiguredAgents(config)).toEqual({
       ok: false,
-      errors: ['agents.assistant.miniswe requires backend: miniswe'],
+      errors: ['agents.claude.miniswe requires backend: miniswe'],
     });
   });
 
@@ -715,8 +707,8 @@ describe('named runtime and LLM configuration', () => {
     it('serves one wire model to Claude and DSH from a single binding', () => {
       const config = configuration();
       config.llms!.proxy.defaultModel = 'group/hq-degrade';
-      config.agents!.assistant.claude = { ...config.agents!.assistant.claude, behavesAs: 'claude-sonnet-4-5' };
-      config.agents!.research = { backend: 'dsh', llm: 'proxy' };
+      config.agents!.claude.claude = { ...config.agents!.claude.claude, behavesAs: 'claude-sonnet-4-5' };
+      config.agents!.dsh = { llm: 'proxy' };
       const result = resolveConfiguredAgents(config);
       expect(result.ok).toBe(true);
       if (!result.ok) {
@@ -724,12 +716,12 @@ describe('named runtime and LLM configuration', () => {
       }
       // The wire model is identical for both providers; only the Claude
       // preset carries the capability mapping.
-      expect(result.presets.assistant).toMatchObject({
+      expect(result.presets.claude).toMatchObject({
         agentBackend: 'claude',
         model: 'group/hq-degrade',
         modelOverrides: { 'claude-sonnet-4-5': 'group/hq-degrade' },
       });
-      expect(result.presets.research).toMatchObject({
+      expect(result.presets.dsh).toMatchObject({
         agentBackend: 'dsh',
         model: 'group/hq-degrade',
       });
@@ -737,13 +729,13 @@ describe('named runtime and LLM configuration', () => {
 
     it('keeps Claude mappings off a Pi-only agent', () => {
       const config = configuration();
-      config.agents!.assistant.claude = { behavesAs: 'claude-sonnet-4-5' };
+      config.agents!.claude.claude = { behavesAs: 'claude-sonnet-4-5' };
       const result = resolveConfiguredAgents(config);
       expect(result.ok).toBe(true);
       if (!result.ok) {
         return;
       }
-      expect(result.presets.other).toMatchObject({
+      expect(result.presets.pi).toMatchObject({
         agentBackend: 'pi',
         model: 'other-model',
         modelOverrides: undefined,
@@ -765,7 +757,7 @@ describe('named runtime and LLM configuration', () => {
 
     it('projects Claude model-name settings from the agent, not the provider', () => {
       const config = configuration();
-      config.agents!.assistant.claude = {
+      config.agents!.claude.claude = {
         modelOverrides: { ...kimiTierOverrides },
         env: tierEnv('endpoint-large', 'endpoint-main', 'endpoint-fast'),
       };
@@ -774,11 +766,11 @@ describe('named runtime and LLM configuration', () => {
       if (!result.ok) {
         return;
       }
-      expect(result.presets.assistant).toMatchObject({
+      expect(result.presets.claude).toMatchObject({
         modelOverrides: { ...kimiTierOverrides },
         env: tierEnv('endpoint-large', 'endpoint-main', 'endpoint-fast'),
       });
-      expect(result.presets.other.modelOverrides).toBeUndefined();
+      expect(result.presets.pi.modelOverrides).toBeUndefined();
     });
 
     it('rejects the old Claude alias environment placement with migration guidance', () => {
@@ -797,7 +789,7 @@ describe('named runtime and LLM configuration', () => {
     it('rejects a bare Claude alias shared across the harness boundary', () => {
       const config = configuration();
       config.llms!.proxy.defaultModel = 'sonnet';
-      config.agents!.research = { backend: 'dsh', llm: 'proxy' };
+      config.agents!.dsh = { llm: 'proxy' };
       const result = resolveConfiguredAgents(config);
       expect(result.ok).toBe(false);
       if (result.ok) {
@@ -811,7 +803,7 @@ describe('named runtime and LLM configuration', () => {
 
     it('keeps a bare alias model on a DSH-only binding', () => {
       const config = configuration();
-      config.agents!.research = { backend: 'dsh', llm: 'aliasonly' };
+      config.agents!.dsh = { llm: 'aliasonly' };
       config.llms!.aliasonly = {
         defaultModel: 'sonnet',
         api: { protocol: 'anthropic', baseUrl: 'https://gateway.example', apiKey: '$GW_KEY' },
@@ -823,52 +815,52 @@ describe('named runtime and LLM configuration', () => {
     it('passes explicit canonical model IDs through unchanged without mappings', () => {
       const config = configuration();
       config.llms!.proxy.defaultModel = 'claude-sonnet-4-5';
-      config.agents!.research = { backend: 'dsh', llm: 'proxy' };
+      config.agents!.dsh = { llm: 'proxy' };
       const result = resolveConfiguredAgents(config);
       expect(result.ok).toBe(true);
       if (!result.ok) {
         return;
       }
-      expect(result.presets.assistant.model).toBe('claude-sonnet-4-5');
-      expect(result.presets.assistant.modelOverrides).toBeUndefined();
-      expect(result.presets.research.model).toBe('claude-sonnet-4-5');
-      expect(result.presets.research.modelOverrides).toBeUndefined();
+      expect(result.presets.claude.model).toBe('claude-sonnet-4-5');
+      expect(result.presets.claude.modelOverrides).toBeUndefined();
+      expect(result.presets.dsh.model).toBe('claude-sonnet-4-5');
+      expect(result.presets.dsh.modelOverrides).toBeUndefined();
     });
 
     it('rejects Claude model settings on a non-Claude agent', () => {
       const config = configuration();
-      config.agents!.other.claude = { behavesAs: 'claude-opus-5' };
+      config.agents!.pi.claude = { behavesAs: 'claude-opus-5' };
       const result = resolveConfiguredAgents(config);
       expect(result.ok).toBe(false);
       if (result.ok) {
         return;
       }
-      expect(result.errors.join('\n')).toContain('agents.other.claude requires backend: claude');
+      expect(result.errors.join('\n')).toContain('agents.pi.claude requires backend: claude');
     });
 
     it('rejects a malformed or unknown Claude settings block', () => {
       const config = configuration();
-      config.agents!.assistant.claude = 'claude-opus-5' as never;
+      config.agents!.claude.claude = 'claude-opus-5' as never;
       const malformed = resolveConfiguredAgents(config);
       expect(malformed.ok).toBe(false);
       if (malformed.ok) {
         return;
       }
-      expect(malformed.errors.join('\n')).toContain('agents.assistant.claude must be a mapping');
+      expect(malformed.errors.join('\n')).toContain('agents.claude.claude must be a mapping');
 
       const unknown = configuration();
-      unknown.agents!.assistant.claude = { tiers: { opus: 'kimi-k3' } } as never;
+      unknown.agents!.claude.claude = { tiers: { opus: 'kimi-k3' } } as never;
       const rejected = resolveConfiguredAgents(unknown);
       expect(rejected.ok).toBe(false);
       if (rejected.ok) {
         return;
       }
-      expect(rejected.errors.join('\n')).toContain('agents.assistant.claude.tiers is unsupported');
+      expect(rejected.errors.join('\n')).toContain('agents.claude.claude.tiers is unsupported');
     });
 
     it('rejects combining behavesAs with modelOverrides and malformed mappings', () => {
       const config = configuration();
-      config.agents!.assistant.claude = {
+      config.agents!.claude.claude = {
         behavesAs: 'claude-opus-5',
         modelOverrides: { 'claude-opus-5': 'kimi-k3' },
       };
@@ -878,32 +870,32 @@ describe('named runtime and LLM configuration', () => {
         return;
       }
       expect(result.errors.join('\n')).toContain(
-        'agents.assistant.claude.behavesAs and modelOverrides are mutually exclusive'
+        'agents.claude.claude.behavesAs and modelOverrides are mutually exclusive'
       );
 
       const aliased = configuration();
-      aliased.agents!.assistant.claude = { modelOverrides: { sonnet: 'kimi-k3' } };
+      aliased.agents!.claude.claude = { modelOverrides: { sonnet: 'kimi-k3' } };
       const aliasResult = resolveConfiguredAgents(aliased);
       expect(aliasResult.ok).toBe(false);
       if (aliasResult.ok) {
         return;
       }
       expect(aliasResult.errors.join('\n')).toContain(
-        'agents.assistant.claude.modelOverrides must map full Claude model IDs to non-empty provider model IDs'
+        'agents.claude.claude.modelOverrides must map full Claude model IDs to non-empty provider model IDs'
       );
     });
 
     it('requires a provider default model when behavesAs carries the capability slot', () => {
       const config = configuration();
       delete config.llms!.proxy.defaultModel;
-      config.agents!.assistant.claude = { behavesAs: 'claude-opus-5' };
+      config.agents!.claude.claude = { behavesAs: 'claude-opus-5' };
       const result = resolveConfiguredAgents(config);
       expect(result.ok).toBe(false);
       if (result.ok) {
         return;
       }
       expect(result.errors.join('\n')).toContain(
-        'agents.assistant.claude.behavesAs requires a provider default model at llms.proxy.defaultModel'
+        'agents.claude.claude.behavesAs requires a provider default model at llms.proxy.defaultModel'
       );
     });
   });
@@ -911,30 +903,30 @@ describe('named runtime and LLM configuration', () => {
   describe('Claude three-tier model mapping (review 2026-11-06)', () => {
     it('compiles explicit tiers into the native tier environment', () => {
       const config = configuration();
-      config.agents!.assistant.claude = {
+      config.agents!.claude.claude = {
         models: { opus: 'kimi-k3', sonnet: 'kimi-k3-flash', haiku: 'kimi-k3-air' },
       };
-      config.agents!.research = { backend: 'dsh', llm: 'proxy' };
+      config.agents!.dsh = { llm: 'proxy' };
       const result = resolveConfiguredAgents(config);
       expect(result.ok).toBe(true);
       if (!result.ok) {
         return;
       }
-      expect(result.presets.assistant.env).toEqual(tierEnv('kimi-k3', 'kimi-k3-flash', 'kimi-k3-air'));
+      expect(result.presets.claude.env).toEqual(tierEnv('kimi-k3', 'kimi-k3-flash', 'kimi-k3-air'));
       // Tier metadata rides the Claude preset only; the DSH agent sharing the
       // binding keeps the wire model without Claude environment.
-      expect(result.presets.research.env?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
+      expect(result.presets.dsh.env?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
     });
 
     it('falls back to the provider default for omitted tiers', () => {
       const config = configuration();
-      config.agents!.assistant.claude = { models: { haiku: 'kimi-k3-air' } };
+      config.agents!.claude.claude = { models: { haiku: 'kimi-k3-air' } };
       const result = resolveConfiguredAgents(config);
       expect(result.ok).toBe(true);
       if (!result.ok) {
         return;
       }
-      expect(result.presets.assistant.env).toEqual(tierEnv('glm-5.3', 'glm-5.3', 'kimi-k3-air'));
+      expect(result.presets.claude.env).toEqual(tierEnv('glm-5.3', 'glm-5.3', 'kimi-k3-air'));
     });
 
     it('points all three tiers at the only configured model by default', () => {
@@ -944,9 +936,9 @@ describe('named runtime and LLM configuration', () => {
       if (!result.ok) {
         return;
       }
-      expect(result.presets.assistant.env).toEqual(tierEnv('glm-5.3'));
+      expect(result.presets.claude.env).toEqual(tierEnv('glm-5.3'));
       // Non-Claude runtimes never receive the tier environment.
-      expect(result.presets.other.env).toEqual({});
+      expect(result.presets.pi.env).toEqual({});
     });
 
     it('keeps native tiers when neither models nor a default model is configured', () => {
@@ -957,12 +949,12 @@ describe('named runtime and LLM configuration', () => {
       if (!result.ok) {
         return;
       }
-      expect(result.presets.assistant.env).toEqual({});
+      expect(result.presets.claude.env).toEqual({});
     });
 
     it('lets an explicit claude.env tier override the computed default', () => {
       const config = configuration();
-      config.agents!.assistant.claude = {
+      config.agents!.claude.claude = {
         env: { ANTHROPIC_DEFAULT_OPUS_MODEL: 'endpoint-large' },
       };
       const result = resolveConfiguredAgents(config);
@@ -970,12 +962,12 @@ describe('named runtime and LLM configuration', () => {
       if (!result.ok) {
         return;
       }
-      expect(result.presets.assistant.env).toEqual(tierEnv('endpoint-large', 'glm-5.3', 'glm-5.3'));
+      expect(result.presets.claude.env).toEqual(tierEnv('endpoint-large', 'glm-5.3', 'glm-5.3'));
     });
 
     it('rejects double-configuring one tier in models and env', () => {
       const config = configuration();
-      config.agents!.assistant.claude = {
+      config.agents!.claude.claude = {
         models: { haiku: 'kimi-k3-air' },
         env: { ANTHROPIC_DEFAULT_HAIKU_MODEL: 'small-model' },
       };
@@ -985,7 +977,7 @@ describe('named runtime and LLM configuration', () => {
         return;
       }
       expect(result.errors.join('\n')).toContain(
-        'agents.assistant.claude.models.haiku conflicts with agents.assistant.claude.env.ANTHROPIC_DEFAULT_HAIKU_MODEL; configure the tier in one place'
+        'agents.claude.claude.models.haiku conflicts with agents.claude.claude.env.ANTHROPIC_DEFAULT_HAIKU_MODEL; configure the tier in one place'
       );
     });
 
@@ -997,14 +989,14 @@ describe('named runtime and LLM configuration', () => {
       'kimi-k3',
     ])('rejects malformed tier declarations (%j)', (models) => {
       const config = configuration();
-      config.agents!.assistant.claude = { models: models as never };
+      config.agents!.claude.claude = { models: models as never };
       const result = resolveConfiguredAgents(config);
       expect(result.ok).toBe(false);
       if (result.ok) {
         return;
       }
       expect(result.errors.length).toBe(1);
-      expect(result.errors.join('\n')).toMatch(/agents\.assistant\.claude\.models/);
+      expect(result.errors.join('\n')).toMatch(/agents\.claude\.claude\.models/);
     });
 
     it('applies a provider reasoning effort to any runtime without a harness gate', () => {
@@ -1015,7 +1007,7 @@ describe('named runtime and LLM configuration', () => {
       if (!result.ok) {
         return;
       }
-      expect(result.presets.assistant.reasoningEffort).toBe('high');
+      expect(result.presets.claude.reasoningEffort).toBe('high');
     });
   });
 
@@ -1028,7 +1020,7 @@ describe('named runtime and LLM configuration', () => {
       if (!result.ok) {
         return;
       }
-      expect(result.presets.daily).toMatchObject({ agentBackend: 'codex', llmVia: 'chatgpt', apiKey: '' });
+      expect(result.presets.codex).toMatchObject({ agentBackend: 'codex', llmVia: 'chatgpt', apiKey: '' });
     });
 
     it('rejects declaring chatgpt together with an api block', () => {
@@ -1047,12 +1039,12 @@ describe('named runtime and LLM configuration', () => {
       'rejects via: chatgpt bound to the %s runtime',
       (backend) => {
         const config = configuration();
-        config.agents!.misbound = { backend, llm: 'sub' };
+        config.agents![backend] = { llm: 'sub' };
         config.llms!.sub = { via: 'chatgpt', defaultModel: 'gpt-6-luna' };
         expect(resolveConfiguredAgents(config)).toEqual({
           ok: false,
           errors: [
-            'agents.misbound: llms.sub.via chatgpt requires backend: codex — the ChatGPT login is managed by the Codex CLI',
+            `agents.${backend}: llms.sub.via chatgpt requires backend: codex — the ChatGPT login is managed by the Codex CLI`,
           ],
         });
       }
@@ -1060,12 +1052,12 @@ describe('named runtime and LLM configuration', () => {
 
     it('rejects via: chatgpt on dsh alongside its missing-connection error', () => {
       const config = configuration();
-      config.agents!.misbound = { backend: 'dsh', llm: 'sub' };
+      config.agents!.dsh = { llm: 'sub' };
       config.llms!.sub = { via: 'chatgpt', defaultModel: 'gpt-6-luna' };
       expect(resolveConfiguredAgents(config)).toMatchObject({
         ok: false,
         errors: expect.arrayContaining([
-          'agents.misbound: llms.sub.via chatgpt requires backend: codex — the ChatGPT login is managed by the Codex CLI',
+          'agents.dsh: llms.sub.via chatgpt requires backend: codex — the ChatGPT login is managed by the Codex CLI',
           'llms.sub.api with protocol, baseUrl and credential reference is required for DSH',
         ]),
       });
@@ -1073,7 +1065,7 @@ describe('named runtime and LLM configuration', () => {
 
     it('rejects via: api without an api block — a missing credential is never chatgpt', () => {
       const config = configuration();
-      config.agents!.apionly = { backend: 'codex', llm: 'apionly' };
+      config.agents!.codex = { llm: 'apionly' };
       config.llms!.apionly = { via: 'api', defaultModel: 'glm-5.3' };
       expect(resolveConfiguredAgents(config)).toEqual({
         ok: false,
@@ -1086,7 +1078,7 @@ describe('named runtime and LLM configuration', () => {
     it('binds the codex runtime to a compatible API LLM instead of rejecting it', () => {
       vi.stubEnv('API_KEY', 'api-secret');
       const config = configuration();
-      config.agents!.apicodex = { backend: 'codex', llm: 'gateway' };
+      config.agents!.codex = { llm: 'gateway' };
       config.llms!.gateway = {
         defaultModel: 'glm-5.3',
         api: { protocol: 'openai', baseUrl: 'https://api.example/v1', apiKey: '$API_KEY' },
@@ -1096,7 +1088,7 @@ describe('named runtime and LLM configuration', () => {
       if (!result.ok) {
         return;
       }
-      expect(result.presets.apicodex).toMatchObject({
+      expect(result.presets.codex).toMatchObject({
         agentBackend: 'codex',
         llmVia: 'api',
         apiProtocol: 'openai',
@@ -1104,12 +1096,12 @@ describe('named runtime and LLM configuration', () => {
         apiKey: 'api-secret',
         model: 'glm-5.3',
       });
-      expect(validateResolvedAgent(result.presets.apicodex)).toBeUndefined();
+      expect(validateResolvedAgent(result.presets.codex)).toBeUndefined();
     });
 
     it('requires the openai protocol and an endpoint for codex API access', () => {
       const anthropic = configuration();
-      anthropic.agents!.apicodex = { backend: 'codex', llm: 'gateway' };
+      anthropic.agents!.codex = { llm: 'gateway' };
       anthropic.llms!.gateway = {
         defaultModel: 'glm-5.3',
         api: { protocol: 'anthropic', baseUrl: 'https://api.example', apiKey: '$API_KEY' },
@@ -1117,12 +1109,12 @@ describe('named runtime and LLM configuration', () => {
       expect(resolveConfiguredAgents(anthropic)).toMatchObject({
         ok: false,
         errors: [
-          'agents.apicodex: the codex runtime drives OpenAI-protocol (Responses API) endpoints; llms.gateway.api.protocol must be openai',
+          'agents.codex: the codex runtime drives OpenAI-protocol (Responses API) endpoints; llms.gateway.api.protocol must be openai',
         ],
       });
 
       const addressless = configuration();
-      addressless.agents!.apicodex = { backend: 'codex', llm: 'gateway' };
+      addressless.agents!.codex = { llm: 'gateway' };
       addressless.llms!.gateway = {
         defaultModel: 'glm-5.3',
         api: { protocol: 'openai', apiKey: '$API_KEY' },
@@ -1133,31 +1125,25 @@ describe('named runtime and LLM configuration', () => {
       });
     });
 
-    it('serves a mixed deployment: chatgpt and API codex agents coexist with API Claude', () => {
+    it('serves a mixed deployment: chatgpt codex coexists with API Claude', () => {
       vi.stubEnv('API_KEY', 'api-secret');
       vi.stubEnv('PROXY_KEY', 'proxy-secret');
       const config = configuration();
       config.llms!.daily.via = 'chatgpt';
-      config.agents!.apicodex = { backend: 'codex', llm: 'gateway' };
-      config.llms!.gateway = {
-        defaultModel: 'glm-5.3',
-        api: { protocol: 'openai', baseUrl: 'https://api.example/v1', apiKey: '$API_KEY' },
-      };
       const result = resolveConfiguredAgents(config);
       expect(result.ok).toBe(true);
       if (!result.ok) {
         return;
       }
-      expect(result.presets.daily.llmVia).toBe('chatgpt');
-      expect(result.presets.apicodex.llmVia).toBe('api');
-      expect(result.presets.assistant.llmVia).toBe('api');
-      expect(resolveAgentPreset(result.presets)).toMatchObject({ ok: true, name: 'daily' });
+      expect(result.presets.codex.llmVia).toBe('chatgpt');
+      expect(result.presets.claude.llmVia).toBe('api');
+      expect(resolveAgentPreset(result.presets)).toMatchObject({ ok: true, name: 'codex' });
     });
 
     it('reports a missing API credential on codex as a credential error, never a login error', () => {
       vi.stubEnv('API_KEY', '');
       const config = configuration();
-      config.agents!.apicodex = { backend: 'codex', llm: 'gateway' };
+      config.agents!.codex = { llm: 'gateway' };
       config.llms!.gateway = {
         defaultModel: 'glm-5.3',
         api: { protocol: 'openai', baseUrl: 'https://api.example/v1', apiKey: '$API_KEY' },
@@ -1167,7 +1153,7 @@ describe('named runtime and LLM configuration', () => {
       if (!result.ok) {
         return;
       }
-      const error = validateResolvedAgent(result.presets.apicodex);
+      const error = validateResolvedAgent(result.presets.codex);
       expect(error).toContain('llms.gateway.api.apiKey is missing');
       expect(error).not.toMatch(/codex login|chatgpt|chatGpt/i);
     });
@@ -1175,7 +1161,7 @@ describe('named runtime and LLM configuration', () => {
     it('accepts third-party model identifiers on codex API bindings', () => {
       vi.stubEnv('API_KEY', 'api-secret');
       const config = configuration();
-      config.agents!.apicodex = { backend: 'codex', llm: 'gateway' };
+      config.agents!.codex = { llm: 'gateway' };
       config.llms!.gateway = {
         defaultModel: 'kimi-k3',
         api: { protocol: 'openai', baseUrl: 'https://api.example/v1', apiKey: '$API_KEY' },
@@ -1193,8 +1179,8 @@ describe('named runtime and LLM configuration', () => {
       if (!result.ok) {
         return;
       }
-      expect(result.presets.daily.llmVia).toBe('chatgpt');
-      expect(result.presets.assistant.llmVia).toBe('api');
+      expect(result.presets.codex.llmVia).toBe('chatgpt');
+      expect(result.presets.claude.llmVia).toBe('api');
     });
 
     it.each(['subscription', 'API', 'chat', true, 42])('rejects a malformed via value (%j)', (via) => {
@@ -1213,25 +1199,25 @@ describe('named runtime and LLM configuration', () => {
 describe('per-runtime model pin', () => {
   it('outranks llms.<llm>.defaultModel when set', () => {
     const config = configuration();
-    config.agents!.assistant.model = 'glm-5.4-air';
+    config.agents!.claude.model = 'glm-5.4-air';
     expect(validateConfig(config)).toBe(true);
     const result = resolveConfiguredAgents(config);
-    expect(result.ok && result.presets.assistant.model).toBe('glm-5.4-air');
-    expect(result.ok && result.presets.assistant.modelOverrides).toBeUndefined();
+    expect(result.ok && result.presets.claude.model).toBe('glm-5.4-air');
+    expect(result.ok && result.presets.claude.modelOverrides).toBeUndefined();
   });
 
   it('falls back to llms.<llm>.defaultModel when omitted', () => {
     const result = resolveConfiguredAgents(configuration());
-    expect(result.ok && result.presets.assistant.model).toBe('glm-5.3');
+    expect(result.ok && result.presets.claude.model).toBe('glm-5.3');
   });
 
   it('rejects an empty per-runtime model', () => {
     const config = configuration();
-    (config.agents!.assistant as unknown as Record<string, unknown>).model = '  ';
+    (config.agents!.claude as unknown as Record<string, unknown>).model = '  ';
     const result = resolveConfiguredAgents(config);
     expect(result.ok).toBe(false);
     expect(result.ok ? [] : result.errors).toContain(
-      'agents.assistant.model must be a non-empty string when set'
+      'agents.claude.model must be a non-empty string when set'
     );
   });
 });

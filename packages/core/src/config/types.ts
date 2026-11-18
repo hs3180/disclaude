@@ -217,9 +217,8 @@ export interface LlmConfig {
   env?: Record<string, string>;
 }
 
-/** A named runtime bound to exactly one named LLM. */
+/** A runtime keyed by its backend name, bound to exactly one named LLM. */
 export interface AgentDefinition extends Omit<AgentConfig, 'agentBackend'> {
-  backend: NonNullable<AgentConfig['agentBackend']>;
   llm: string;
   /**
    * Optional per-runtime model pin (r4 review 5948908832): outranks the bound

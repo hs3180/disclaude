@@ -26,7 +26,7 @@ beforeEach(() => {
   fixture.value = {
     workspace: { dir: '/owned-selected-model-test' },
     logging: { sdkDebug: false },
-    agents: { default: { backend: 'codex', llm: 'default' } },
+    agents: { codex: { llm: 'default' } },
     llms: { default: { defaultModel: 'gpt-6-luna' } },
   };
 });
@@ -63,8 +63,7 @@ async function selectedOptions(
 
 describe('Claude native model aliases', () => {
   it('passes reasoning and the shared session budget from the selected LLM to native queries', async () => {
-    fixture.value.agents!.secondary = { backend: 'codex', llm: 'default' };
-    fixture.value.agents!.independent = { backend: 'codex', llm: 'other' };
+    fixture.value.agents!.pi = { llm: 'other' };
     fixture.value.llms!.default.reasoningEffort = 'max';
     fixture.value.llms!.default.maxConcurrentSessions = 3;
     fixture.value.llms!.other = { defaultModel: 'gpt-6-luna', reasoningEffort: 'low', maxConcurrentSessions: 1 };
@@ -76,7 +75,7 @@ describe('Claude native model aliases', () => {
     }
     const presets = Config.getAgentPresets()!;
     for (const [name, llm, effort, cap] of [
-      ['secondary', 'default', 'max', 3], ['independent', 'other', 'low', 1],
+      ['codex', 'default', 'max', 3], ['pi', 'other', 'low', 1],
     ] as const) {
       const preset = presets[name];
       expect(new BoundAgent({ ...preset, settings: preset }).options()).toMatchObject({
@@ -93,9 +92,9 @@ describe('Claude native model aliases', () => {
     }
   });
   it('uses the selected agent defaults without inheriting another agent runtime policy', async () => {
-    fixture.value.agents!.default.enableAgentTeams = true;
-    fixture.value.agents!.default.autoCompactWindow = 80000;
-    fixture.value.agents!.default.sdkTimeoutMs = 1000;
+    fixture.value.agents!.codex.enableAgentTeams = true;
+    fixture.value.agents!.codex.autoCompactWindow = 80000;
+    fixture.value.agents!.codex.sdkTimeoutMs = 1000;
     vi.stubEnv('ANTHROPIC_TIMEOUT', undefined);
     const options = await selectedOptions('sonnet', undefined, {});
     expect(options.teammateMode).toBeUndefined();
@@ -163,11 +162,11 @@ describe('shared bindings across harnesses (Issue #5679)', () => {
       workspace: { dir: '/shared-binding-test' },
       logging: { sdkDebug: false },
       agents: {
-        assistant: {
-          backend: 'claude', llm: 'shared', default: true,
+        claude: {
+          llm: 'shared', default: true,
           claude: { behavesAs: 'claude-sonnet-4-5' },
         },
-        research: { backend: 'dsh', llm: 'shared', mode: 'minimal' },
+        dsh: { llm: 'shared', mode: 'minimal' },
       },
       llms: {
         shared: {
@@ -195,11 +194,11 @@ describe('shared bindings across harnesses (Issue #5679)', () => {
     }
     const presets = Config.getAgentPresets()!;
     // Claude gets the wire model plus the capability mapping.
-    const claude = new BoundAgent({ ...presets.assistant, settings: presets.assistant }).options();
+    const claude = new BoundAgent({ ...presets.claude, settings: presets.claude }).options();
     expect(claude.model).toBe('group/hq-degrade');
     expect(claude.modelOverrides).toEqual({ 'claude-sonnet-4-5': 'group/hq-degrade' });
     // DSH gets the same wire model verbatim and no Claude-side mapping.
-    const dsh = new BoundAgent({ ...presets.research, settings: presets.research }).options();
+    const dsh = new BoundAgent({ ...presets.dsh, settings: presets.dsh }).options();
     expect(dsh.model).toBe('group/hq-degrade');
     expect(dsh.modelOverrides).toBeUndefined();
   });

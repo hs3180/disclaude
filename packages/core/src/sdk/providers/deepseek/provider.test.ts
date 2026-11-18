@@ -371,11 +371,11 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
     const { dshOptions } = await import('../../factory.js');
     const resolved = resolveConfiguredAgents({
       agents: {
-        assistant: {
-          backend: 'claude', llm: 'shared', default: true,
+        claude: {
+          llm: 'shared', default: true,
           claude: { behavesAs: 'claude-sonnet-4-5' },
         },
-        research: { backend: 'dsh', llm: 'shared', mode: 'minimal' },
+        dsh: { llm: 'shared', mode: 'minimal' },
       },
       llms: {
         shared: {
@@ -396,7 +396,7 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
     // API connection model without alias resolution or Claude mappings.
     const fixture = await sdkFixture();
     const provider = new DeepSeekHarnessProvider({
-      ...dshOptions(resolved.presets.research),
+      ...dshOptions(resolved.presets.dsh),
       binary: fixture.binary,
       dshHome: fixture.dir,
     });
@@ -406,7 +406,7 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
       await collect(
         provider.queryStream(oneInput(), {
           settingSources: [],
-          model: resolved.presets.research.model,
+          model: resolved.presets.dsh.model,
         }).iterator
       );
       const requests = (await readFile(join(fixture.dir, 'requests.jsonl'), 'utf8'))
