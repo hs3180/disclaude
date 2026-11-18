@@ -21,12 +21,14 @@ import {
   type AgentPresets,
   type BaseAgentConfig,
   type ChatFailureRecord,
+  type RuntimeProfileDeclaration,
   buildSessionKey,
   chatIdOfSessionKey,
   createLogger,
   getProvider,
   Config,
   resolveAgentPreset,
+  resolveRuntimeProfile,
   validateAgentPresets,
   validateResolvedAgent,
 } from '@disclaude/core';
@@ -160,12 +162,27 @@ export interface ActiveAgentPreset {
   name: string;
   agentBackend: AgentPreset['agentBackend'];
   model: string;
-  /** Thinking/reasoning effort when the preset's LLM pins one (#4914 card display). */
+  /** Where the binding came from, for status responses (#4913). */
+  origin?: 'creation' | 'command';
+  /** Effective reasoning effort when one applies (effort-capable runtimes, #4913/#4914). */
   reasoningEffort?: AgentPreset['reasoningEffort'];
 }
 
 export type AgentPresetSwitchResult =
   | { ok: true; active: ActiveAgentPreset; sessionBoundary: 'new-session' }
+  | { ok: false; error: string };
+
+export type RuntimeProfileDeclarationResult =
+  | {
+      ok: true;
+      active: {
+        agentBackend: AgentPreset['agentBackend'];
+        model: string;
+        reasoningEffort?: AgentPreset['reasoningEffort'];
+        origin?: 'creation';
+      };
+      sessionBoundary: 'new-session';
+    }
   | { ok: false; error: string };
 
 /**
@@ -265,6 +282,34 @@ export class ChatSessionPool {
     return resolveAgentPreset(this.presets, requested);
   }
 
+  /**
+   * The chat's effective INTERACTIVE runtime (#4913): the base #5476 chain
+   * above plus a creation-time runtime profile declaration. A creation-time
+   * explicit {harness, model, reasoningEffort} declaration uses an internal credential/store base
+   * and overrides its model/effort for this chat. Session-level /agent use
+   * wins over the chat binding, so overrides only apply when the binding is
+   * the effective choice. Scoped executions that pin their own harness or
+   * model (#5731) resolve from `resolvePreset` directly instead.
+   */
+  private resolveInteractivePreset(chatId: string, sessionKey: string) {
+    const binding = this.options.agentSelections?.get(chatId);
+    const requested = this.selectedPresetBySession.get(sessionKey)
+      ?? binding?.presetName
+      ?? this.options.defaultAgentPresetForChat?.(chatId);
+    const resolved = this.resolvePreset(chatId, sessionKey);
+    if (resolved?.ok && binding?.overrides
+      && !this.selectedPresetBySession.has(sessionKey)
+      && requested === binding.presetName) {
+      const {overrides} = binding;
+      return {
+        ok: true as const,
+        name: resolved.name,
+        preset: { ...resolved.preset, ...(overrides.model ? { model: overrides.model } : {}), ...(overrides.reasoningEffort ? { reasoningEffort: overrides.reasoningEffort } : {}) },
+      };
+    }
+    return resolved;
+  }
+
   /** Refuse a chat-wide selection change while an affected session still owns work. */
   private selectionChangeBusy(chatId: string): boolean {
     return [...this.projectSessions.values()].some(scope => {
@@ -286,14 +331,23 @@ export class ChatSessionPool {
   }
 
   getActiveAgentPreset(chatId: string, threadRootId?: string): ActiveAgentPreset | undefined {
-    const resolved = this.resolvePreset(chatId, this.sessionKeyOf(chatId, threadRootId));
+    const sessionKey = this.sessionKeyOf(chatId, threadRootId);
+    const resolved = this.resolveInteractivePreset(chatId, sessionKey);
+    const binding = this.options.agentSelections?.get(chatId);
+    const origin = !this.selectedPresetBySession.has(sessionKey) && binding && resolved?.ok
+      && resolved.name === binding.presetName
+      ? binding.origin
+      : undefined;
     return resolved?.ok
       ? {
-          name: resolved.name,
-          agentBackend: resolved.preset.agentBackend,
-          model: resolved.preset.model,
-          ...(resolved.preset.reasoningEffort ? { reasoningEffort: resolved.preset.reasoningEffort } : {}),
-        }
+        name: resolved.name,
+        agentBackend: resolved.preset.agentBackend,
+        model: resolved.preset.model,
+        ...(resolved.preset.reasoningEffort
+          ? { reasoningEffort: resolved.preset.reasoningEffort }
+          : {}),
+        ...(origin ? { origin } : {}),
+      }
       : undefined;
   }
 
@@ -423,7 +477,10 @@ export class ChatSessionPool {
    * chain (session switch > the chat's saved `/agent use` choice > per-app
    * default > global default, plus its legacy Config fallback) decides the
    * runtime exactly as before, and a model-only override is validated under
-   * that resolved runtime's own rules.
+   * that resolved runtime's own rules. A scoped run that pins a model reads
+   * that base chain without the chat's creation-time runtime profile (#4913
+   * merge): the profile is an interactive-dimension binding, while plain
+   * interactive turns and unspecified scheduled runs keep it.
    */
   private resolveSessionPreset(session: AgentSessionOptions | undefined, chatId: string, sessionKey: string): AgentPreset | undefined {
     const harness = session?.harness?.trim();
@@ -431,13 +488,19 @@ export class ChatSessionPool {
       if (session?.harness !== undefined) {
         throw new Error('Scheduled harness must be a non-empty named agent runtime');
       }
-      const selected = this.resolvePreset(chatId, sessionKey);
+      const modelOverride = session?.model?.trim();
+      // #4913 merge: a per-run model override resolves from the base #5476
+      // chain only, so the chat's creation-time profile (model/effort) never
+      // bleeds into a scoped execution; its validation then follows the
+      // resolved runtime's own rules (#5731).
+      const selected = modelOverride
+        ? this.resolvePreset(chatId, sessionKey)
+        : this.resolveInteractivePreset(chatId, sessionKey);
       if (!selected?.ok) {
         // Preset-less and failed default resolution retain the legacy Config
         // fallback. That is deliberate for unspecified harnesses only.
         return undefined;
       }
-      const modelOverride = session?.model?.trim();
       if (!modelOverride) {
         // A whitespace model-only override stays ignored, as the schedule
         // watcher documents; the resolved preset runs with its own model.
@@ -508,6 +571,63 @@ export class ChatSessionPool {
     if (!validation.ok) {
       throw new Error(`${label} "${name}": ${validation.errors.join('; ')}`);
     }
+  }
+
+  /**
+   * Validate and bind an explicit creation-time runtime before the first prompt.
+   * The enabled agent is only an internal credential/store base; declaration
+   * semantics come exclusively from harness/model/reasoningEffort.
+   */
+  declareChatRuntimeProfile(
+    chatId: string,
+    declaration: RuntimeProfileDeclaration,
+    actorId: string,
+    options: { persist?: boolean } = {}
+  ): RuntimeProfileDeclarationResult {
+    if (!this.presets) {
+      return { ok: false, error: 'No enabled agents are configured; runtime profiles cannot be declared' };
+    }
+    const resolved = resolveRuntimeProfile(this.presets, declaration);
+    if (!resolved.ok) {
+      return {
+        ok: false,
+        error: resolved.options?.length
+          ? `${resolved.error}. Available: ${resolved.options.join(', ')}`
+          : resolved.error,
+      };
+    }
+    const active = {
+      agentBackend: resolved.base.preset.agentBackend,
+      model: resolved.overrides.model,
+      ...(resolved.overrides.reasoningEffort ? { reasoningEffort: resolved.overrides.reasoningEffort } : {}),
+    };
+    // Group-creation preflight validates compatibility without binding anything.
+    if (options.persist === false) {
+      return { ok: true, active, sessionBoundary: 'new-session' };
+    }
+    if (this.selectionChangeBusy(chatId)) {
+      return { ok: false, error: 'Another session of this chat is busy; wait for the response or use /stop before declaring its runtime' };
+    }
+    if (!this.options.agentSelections) {
+      return { ok: false, error: 'Runtime declarations require the durable agent selection store; the chat keeps its current selection' };
+    }
+    try {
+      // Persist the internal base plus explicit overrides before prompt routing.
+      this.options.agentSelections.set(chatId, resolved.base.presetName, actorId, {
+        overrides: resolved.overrides,
+        origin: 'creation',
+      });
+    } catch (error) {
+      return {
+        ok: false,
+        error: `Could not save the chat runtime profile: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+    return {
+      ok: true,
+      active: { ...active, origin: 'creation' },
+      sessionBoundary: 'new-session',
+    };
   }
 
   private createAgent(

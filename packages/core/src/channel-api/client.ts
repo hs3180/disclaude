@@ -133,8 +133,14 @@ const ROUTES: Readonly<Record<string, Route>> = {
   sendInteractive: { method: 'POST', path: '/api/send-interactive' },
   listTempChats: { method: 'GET', path: '/api/temp-chats' },
   markChatResponded: { method: 'POST', path: '/api/mark-chat-responded' },
-  // pushToAgent → /api/push (REST returns {ok, message}; REST API expects {success})
-  pushToAgent: { method: 'POST', path: '/api/push', shape: (b) => ({ success: b.ok === true }) },
+  // pushToAgent → /api/push (REST returns {ok, message, profile?}; REST API expects {success})
+  // Issue #4913: the bound runtime profile rides the response so creation-time
+  // callers can confirm the first turn's runtime.
+  pushToAgent: {
+    method: 'POST',
+    path: '/api/push',
+    shape: (b) => ({ success: b.ok === true, ...(b.profile ? { profile: b.profile } : {}) }),
+  },
 };
 
 export interface ChannelApiClientOptions {

@@ -3,8 +3,20 @@ import type { CommandHandler, ControlHandlerContext } from '../types.js';
 
 type AgentCommand = ControlCommand<'agent'>;
 
-function formatPreset(preset: { name: string; agentBackend: string; model: string }): string {
-  return `**${preset.name}** — ${preset.agentBackend} / ${preset.model}`;
+function formatPreset(preset: {
+  name: string;
+  agentBackend: string;
+  model: string;
+  reasoningEffort?: string;
+  origin?: 'creation' | 'command';
+}): string {
+  // Effort and origin are optional; legacy responses render identically.
+  const extras = [
+    preset.reasoningEffort ? `reasoning effort: ${preset.reasoningEffort}` : '',
+    preset.origin ? `source: ${preset.origin === 'creation' ? 'group creation binding' : '/agent use'}` : '',
+  ].filter(Boolean).join(', ');
+  const prefix = preset.origin === 'creation' ? '' : `**${preset.name}** — `;
+  return `${prefix}${preset.agentBackend} / ${preset.model}${extras ? ` (${extras})` : ''}`;
 }
 
 export const handleAgent: CommandHandler<'agent'> = async (

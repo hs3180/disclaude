@@ -43,8 +43,8 @@ export interface CodexAgentGovernanceConfig {
   weeklyLimitCooldownMs?: number;
 }
 
-/** Codex CLI reasoning levels currently exposed by the model catalog. */
-export type CodexReasoningEffort =
+/** Reasoning effort levels for runtimes that support effort control (generic config; currently matching the codex CLI catalog). */
+export type ReasoningEffort =
   | 'minimal'
   | 'low'
   | 'medium'
@@ -204,7 +204,7 @@ export interface LlmConfig {
    * provider-level default, not a harness setting: runtimes that cannot
    * apply an effort ignore it. Omission keeps the model's own default.
    */
-  reasoningEffort?: CodexReasoningEffort;
+  reasoningEffort?: ReasoningEffort;
   /** Maximum live host sessions sharing this LLM, across named agents. */
   maxConcurrentSessions?: number;
   api?: {
@@ -243,7 +243,7 @@ export interface AgentPreset extends AgentConfig {
   missingEnvReferences?: string[];
   default?: boolean;
   llm: string;
-  reasoningEffort?: CodexReasoningEffort;
+  reasoningEffort?: ReasoningEffort;
   maxConcurrentSessions?: number;
   /** Resolved Claude Code modelOverrides map (Issues #5410, #5679); compiled for every preset sharing the binding, applied by Claude runtimes only. */
   modelOverrides?: Record<string, string>;

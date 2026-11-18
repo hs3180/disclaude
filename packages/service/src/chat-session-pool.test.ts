@@ -393,7 +393,7 @@ describe('ChatSessionPool', () => {
       });
     });
 
-    it('surfaces the pinned thinking effort through the same selection API (#4914)', () => {
+    it('surfaces the pinned reasoning effort through the same selection API (#4914)', () => {
       const withEffort = {
         ...presets,
         deep: { apiKey: 'test-key', llm: 'test', agentBackend: 'codex' as const, model: 'gpt-5.1', reasoningEffort: 'high' as const },
@@ -407,6 +407,8 @@ describe('ChatSessionPool', () => {
           ok: true, active: { name: 'deep', reasoningEffort: 'high' },
         });
         expect(pool.getActiveAgentPreset('chat-effort')).toEqual({
+          // #4913 merge: the same effort also surfaces as `thinking` for the
+          // creation-profile/status consumers alongside #4914's field.
           name: 'deep', agentBackend: 'codex', model: 'gpt-5.1', reasoningEffort: 'high',
         });
       } finally { pool.disposeAll(); }
@@ -1778,6 +1780,81 @@ describe('ChatSessionPool', () => {
     it('chatIdOfSessionKey inverts buildSessionKey', () => {
       expect(chatIdOfSessionKey('oc_topic')).toBe('oc_topic');
       expect(chatIdOfSessionKey('oc_topic::om_threadA')).toBe('oc_topic');
+    });
+  });
+
+  describe('creation-time runtime profiles (#4913)', () => {
+    const presets = {
+      default: { apiKey: 'test-key', llm: 'test', agentBackend: 'claude' as const, model: 'claude-sonnet' },
+      codex: { apiKey: 'test-key', llm: 'test', agentBackend: 'codex' as const, model: 'gpt-5.2-codex' },
+    };
+    const declaration = { harness: 'codex', model: 'gpt-5.3-codex', reasoningEffort: 'high' };
+    const fakeStore = (): { store: import('./agent-selection-store.js').AgentSelectionStore; selections: Map<string, unknown> } => {
+      const selections = new Map<string, unknown>();
+      const store = {
+        get: (chatId: string) => selections.get(chatId),
+        set: (chatId: string, presetName: string, updatedBy: string, extras: { overrides?: { model?: string; reasoningEffort?: string }; origin?: string } = {}) => {
+          const value = { chatId, presetName, updatedBy, updatedAt: new Date().toISOString(), ...extras };
+          selections.set(chatId, value);
+          return value;
+        },
+      };
+      return { store: store as unknown as import('./agent-selection-store.js').AgentSelectionStore, selections };
+    };
+
+    it('persists explicit overrides without exposing the internal credential base', () => {
+      const { store, selections } = fakeStore();
+      const pool = new ChatSessionPool({ agentPresets: presets, agentSelections: store });
+      expect(pool.declareChatRuntimeProfile('oc_new', declaration, 'creator')).toEqual({
+        ok: true,
+        active: { agentBackend: 'codex', model: 'gpt-5.3-codex', reasoningEffort: 'high', origin: 'creation' },
+        sessionBoundary: 'new-session',
+      });
+      expect(selections.get('oc_new')).toMatchObject({ presetName: 'codex', updatedBy: 'creator', origin: 'creation', overrides: { model: 'gpt-5.3-codex', reasoningEffort: 'high' } });
+      pool.getOrCreateChatAgent('oc_new', createMockCallbacks());
+      expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith('pilot', 'oc_new', expect.anything(), expect.objectContaining({ agentBackend: 'codex', model: 'gpt-5.3-codex', reasoningEffort: 'high' }));
+      expect(pool.getActiveAgentPreset('oc_new')).toMatchObject({ model: 'gpt-5.3-codex', reasoningEffort: 'high', origin: 'creation' });
+      expect(pool.getActiveAgentPreset('oc_new')).not.toHaveProperty('thinking');
+      pool.disposeAll();
+    });
+
+    it('rejects unsupported reasoning effort with an actionable error and binds nothing', () => {
+      const { store, selections } = fakeStore();
+      const pool = new ChatSessionPool({ agentPresets: presets, agentSelections: store });
+      const rejected = pool.declareChatRuntimeProfile('oc_bad', { harness: 'claude', model: 'claude-sonnet', reasoningEffort: 'high' }, 'creator');
+      expect(rejected).toMatchObject({ ok: false, error: expect.stringContaining('does not support a reasoning effort') });
+      expect(selections.size).toBe(0);
+      pool.disposeAll();
+    });
+
+    it('validate-only probes bind nothing and return no credential-base name', () => {
+      const { store, selections } = fakeStore();
+      const pool = new ChatSessionPool({ agentPresets: presets, agentSelections: store });
+      const probe = pool.declareChatRuntimeProfile('oc_probe', declaration, 'preflight', { persist: false });
+      expect(probe).toEqual({ ok: true, active: { agentBackend: 'codex', model: 'gpt-5.3-codex', reasoningEffort: 'high' }, sessionBoundary: 'new-session' });
+      expect(selections.size).toBe(0);
+      pool.disposeAll();
+    });
+
+    it('is idempotent when the same explicit profile is redeclared', () => {
+      const { store, selections } = fakeStore();
+      const pool = new ChatSessionPool({ agentPresets: presets, agentSelections: store });
+      expect(pool.declareChatRuntimeProfile('oc_retry', declaration, 'creator')).toMatchObject({ ok: true });
+      expect(pool.declareChatRuntimeProfile('oc_retry', declaration, 'creator')).toMatchObject({ ok: true });
+      expect(selections.get('oc_retry')).toMatchObject({ presetName: 'codex', origin: 'creation' });
+      pool.disposeAll();
+    });
+
+    it('preserves /agent use precedence over the creation binding', () => {
+      const { store } = fakeStore();
+      const pool = new ChatSessionPool({ agentPresets: presets, agentSelections: store, defaultAgentPresetForChat: () => 'default', validatePresetBackend: () => ({ available: true }) });
+      expect(pool.declareChatRuntimeProfile('oc_chain', declaration, 'creator')).toMatchObject({ ok: true });
+      pool.getOrCreateChatAgent('oc_chain', createMockCallbacks());
+      expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith('pilot', 'oc_chain', expect.anything(), expect.objectContaining({ agentBackend: 'codex' }));
+      expect(pool.switchAgentPreset('oc_chain', 'default', undefined, 'user')).toMatchObject({ ok: true, active: { name: 'default' } });
+      pool.getOrCreateChatAgent('oc_chain', createMockCallbacks());
+      expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith('pilot', 'oc_chain', expect.anything(), expect.objectContaining({ agentBackend: 'claude', model: 'claude-sonnet' }));
+      pool.disposeAll();
     });
   });
 });

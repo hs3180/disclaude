@@ -16,7 +16,7 @@ import type {
 } from './types.js';
 import { resolveAgentPreset } from './agent-presets.js';
 import { resolveConfiguredAgents, validateResolvedAgent } from './resolved-agents.js';
-import { isCodexReasoningEffort } from './codex-settings.js';
+import { isReasoningEffort } from './codex-settings.js';
 import { channelCredentialErrors } from './channel-credentials.js';
 import { githubFeedbackErrors } from './github-feedback.js';
 
@@ -167,7 +167,7 @@ export function validateConfig(config: DisclaudeConfig): boolean {
     const model = process.env.CODEX_MODEL?.trim() || config.env?.CODEX_MODEL;
     const effort = process.env.CODEX_REASONING_EFFORT?.trim() || config.env?.CODEX_REASONING_EFFORT;
     if (model && !isCodexModel(model)) { logger.error('CODEX_MODEL is invalid'); return false; }
-    if (effort && !isCodexReasoningEffort(effort)) { logger.error('CODEX_REASONING_EFFORT is invalid'); return false; }
+    if (effort && !isReasoningEffort(effort)) { logger.error('CODEX_REASONING_EFFORT is invalid'); return false; }
   }
 
   // Validate logging config if present
