@@ -1,13 +1,21 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { notebookSnapshotHash, insertNotebookCell, JupyterDiagnosticError, jupyterHashConflict, type DatalayerJupyterClient } from '@disclaude/core/jupyter';
+import {
+  notebookSnapshotHash,
+  insertNotebookCell,
+  JupyterDiagnosticError,
+  jupyterHashConflict,
+  textFilePath,
+  type DatalayerJupyterClient,
+} from '@disclaude/core/jupyter';
 import type { ToolDefinition, ToolContext } from '@disclaude/core';
 import {
   JupyterProjectConfigStore,
   type JupyterNotebookReference,
 } from './project-config-store.js';
 import { DatalayerRunStore, type DatalayerRunRecord } from './datalayer-run-store.js';
+import { checkTextFileSync } from './sync-watchdog.js';
 
 type Document = Awaited<ReturnType<DatalayerJupyterClient['openDocument']>>;
 type Bound = { ref: JupyterNotebookReference; client: DatalayerJupyterClient; doc: Document };
@@ -20,11 +28,21 @@ const key = notebookIdentifier;
 const text = { type: 'string' };
 const notebookId = { notebookId: text };
 const cellId = { ...notebookId, cellId: text };
-const sourceHash = { type: 'string', pattern: '^[a-fA-F0-9]{64}$', description: 'Full SHA-256 from the latest live cell read; never truncate it.' };
+const sourceHash = {
+  type: 'string',
+  pattern: '^[a-fA-F0-9]{64}$',
+  description: 'Full SHA-256 from the latest live cell read; never truncate it.',
+};
 function requireCodeCell(cellType: unknown): void {
   if (cellType !== 'code') {
-    throw new JupyterDiagnosticError({ layer: 'schema', code: 'cell_not_executable', phase: 'input',
-      message: 'Notebook execute requires a code cell', hint: 'Select the stable ID of a code cell and read its latest sourceHash.', outcome: 'not-submitted' });
+    throw new JupyterDiagnosticError({
+      layer: 'schema',
+      code: 'cell_not_executable',
+      phase: 'input',
+      message: 'Notebook execute requires a code cell',
+      hint: 'Select the stable ID of a code cell and read its latest sourceHash.',
+      outcome: 'not-submitted',
+    });
   }
 }
 // Small files keep the single-request import path; larger ones upload in
@@ -85,33 +103,59 @@ const decodeStdoutCursor = (cursor: string): { runId: string; offset: number } =
     const { runId, offset } = parsed as { runId: string; offset: number };
     return { runId, offset };
   } catch {
-    throw new JupyterDiagnosticError({ layer: 'schema', code: 'invalid_stdout_cursor', phase: 'input',
-      message: 'Invalid stdout cursor', hint: 'Pass the untouched stdout.nextStdoutCursor from the same run, or omit it for new-session tail semantics.', outcome: 'not-submitted' });
+    throw new JupyterDiagnosticError({
+      layer: 'schema',
+      code: 'invalid_stdout_cursor',
+      phase: 'input',
+      message: 'Invalid stdout cursor',
+      hint: 'Pass the untouched stdout.nextStdoutCursor from the same run, or omit it for new-session tail semantics.',
+      outcome: 'not-submitted',
+    });
   }
 };
-const errorOutputDescription = 'Error previews expose output_type="error", ename:string, evalue:string and traceback:string[]. Tracebacks retain the last 20 frames, at most 1000 characters per frame and 8000 total. errorName/errorValue are deprecated aliases retained for this release.';
+const errorOutputDescription =
+  'Error previews expose output_type="error", ename:string, evalue:string and traceback:string[]. Tracebacks retain the last 20 frames, at most 1000 characters per frame and 8000 total. errorName/errorValue are deprecated aliases retained for this release.';
 
 function boundedErrorOutput(output: Record<string, unknown>): Record<string, unknown> {
-  const ename = (typeof output.ename === 'string' ? output.ename : 'Error').slice(0, 128).replace(/[\uD800-\uDBFF]$/, '');
-  const evalue = String(output.evalue ?? '').slice(0, 1000).replace(/[\uD800-\uDBFF]$/, '');
+  const ename = (typeof output.ename === 'string' ? output.ename : 'Error')
+    .slice(0, 128)
+    .replace(/[\uD800-\uDBFF]$/, '');
+  const evalue = String(output.evalue ?? '')
+    .slice(0, 1000)
+    .replace(/[\uD800-\uDBFF]$/, '');
   const frames = Array.isArray(output.traceback) ? output.traceback : [];
   const tail = frames.slice(-20);
   const kept: string[] = [];
   let budget = 8000;
-  let truncated = frames.length > tail.length || (output.traceback !== undefined && !Array.isArray(output.traceback));
+  let truncated =
+    frames.length > tail.length ||
+    (output.traceback !== undefined && !Array.isArray(output.traceback));
   for (const frame of [...tail].reverse()) {
-    if (typeof frame !== 'string') { truncated = true; continue; }
-    if (budget === 0) { truncated = true; break; }
+    if (typeof frame !== 'string') {
+      truncated = true;
+      continue;
+    }
+    if (budget === 0) {
+      truncated = true;
+      break;
+    }
     const shortened = frame.slice(-Math.min(1000, budget)).replace(/^[\uDC00-\uDFFF]/, '');
     truncated ||= shortened.length !== frame.length;
     budget -= shortened.length;
     kept.push(shortened);
   }
-  return { output_type: 'error', ename, evalue, traceback: kept.reverse(),
+  return {
+    output_type: 'error',
+    ename,
+    evalue,
+    traceback: kept.reverse(),
     // One-release compatibility for existing preview consumers. These DTOs
     // are not written back into the full remote nbformat Notebook export.
-    outputType: 'error', errorName: ename, errorValue: evalue,
-    ...(truncated ? { tracebackTruncated: true } : {}) };
+    outputType: 'error',
+    errorName: ename,
+    errorValue: evalue,
+    ...(truncated ? { tracebackTruncated: true } : {}),
+  };
 }
 export interface NotebookToolOptions {
   projectDir: string;
@@ -120,6 +164,8 @@ export interface NotebookToolOptions {
     namespace: string,
     operation: (client: DatalayerJupyterClient) => Promise<T>
   ): Promise<T>;
+  /** Path-scoped commands need a client without any Project notebook reference. */
+  connect?<T>(operation: (client: DatalayerJupyterClient) => Promise<T>): Promise<T>;
   /** Test seam for the import-file size boundaries; production uses the defaults. */
   importFileLimits?: ImportFileLimits;
 }
@@ -155,7 +201,9 @@ export class NotebookTools {
         {},
         () =>
           Promise.resolve({
-            scope: 'project-local-references', auth: 'not_checked', remoteInventory: 'not_queried',
+            scope: 'project-local-references',
+            auth: 'not_checked',
+            remoteInventory: 'not_queried',
             notebooks: this.refs().map((ref) => ({ ...ref, notebookId: key(ref) })),
             recentRuns: this.recentRuns(),
           })
@@ -224,15 +272,14 @@ export class NotebookTools {
           // cells (#5548). Appends would otherwise leave that seed as the
           // permanent first delivered cell. Insert the real content first, then
           // drop the seed, so the document never holds zero cells.
-          const seed = !input.beforeCellId && bound.doc.notebook.cells.length === 1
-            ? bound.doc.notebook.cells[0]
-            : undefined;
-          const removedSeedCellId = seed &&
-              seed.id !== input.cellId &&
-              seed.cell_type === 'code' &&
-              seed.source === ''
-            ? seed.id
-            : undefined;
+          const seed =
+            !input.beforeCellId && bound.doc.notebook.cells.length === 1
+              ? bound.doc.notebook.cells[0]
+              : undefined;
+          const removedSeedCellId =
+            seed && seed.id !== input.cellId && seed.cell_type === 'code' && seed.source === ''
+              ? seed.id
+              : undefined;
           insertNotebookCell(bound.doc.notebook, index, {
             id: String(input.cellId),
             cell_type: input.cellType as 'code' | 'markdown',
@@ -346,7 +393,8 @@ export class NotebookTools {
           stdoutCursor: {
             type: 'string',
             optional: true,
-            description: 'Opaque nextStdoutCursor from a previous stdout block of this same run; omit it for new-session tail semantics.',
+            description:
+              'Opaque nextStdoutCursor from a previous stdout block of this same run; omit it for new-session tail semantics.',
           },
         },
         (input) =>
@@ -459,6 +507,24 @@ export class NotebookTools {
         notebookId,
         async (input) => this.export(await this.bound(String(input.notebookId)))
       ),
+      this.tool(
+        'notebook_sync_check',
+        'Compare one text file (.py/.md/..., not .ipynb) between its RTC room and its disk bytes: in-sync, diverged (both SHA-256, never writes by default) or unsupported-binary. Kernels and terminals execute the disk bytes, not the room. forceFlush only when diverged: PUT the room snapshot through the contents API and re-verify (flushed).',
+        {
+          path: {
+            type: 'string',
+            description:
+              'Relative remote Contents text-file path: no leading slash, backslash, "."/".." segment or .ipynb.',
+          },
+          forceFlush: {
+            type: 'boolean',
+            optional: true,
+            description:
+              'Only when diverged: write the room snapshot to disk via the contents API, then re-verify by re-reading it.',
+          },
+        },
+        (input, invocation) => this.syncCheck(input, invocation)
+      ),
     ];
   }
 
@@ -490,8 +556,12 @@ export class NotebookTools {
         required: Object.keys(published).filter((field) => !optional.has(field)),
         additionalProperties: false,
       },
-      outputSchema: { type: 'object', ...(['notebook_read_cell', 'notebook_describe', 'notebook_status'].includes(name)
-        ? { description: errorOutputDescription } : {}) },
+      outputSchema: {
+        type: 'object',
+        ...(['notebook_read_cell', 'notebook_describe', 'notebook_status'].includes(name)
+          ? { description: errorOutputDescription }
+          : {}),
+      },
       execute: async (input, invocation) => {
         invocation.signal.throwIfAborted();
         this.assertActive();
@@ -512,18 +582,32 @@ export class NotebookTools {
             );
           })
         ) {
-          throw new JupyterDiagnosticError({ layer: 'schema', code: 'invalid_tool_input',
+          throw new JupyterDiagnosticError({
+            layer: 'schema',
+            code: 'invalid_tool_input',
             message: 'Invalid Notebook command input; read its schema with jupyter tools',
-            hint: 'Match the command input schema, including required fields and value types.', outcome: 'not-submitted' });
+            hint: 'Match the command input schema, including required fields and value types.',
+            outcome: 'not-submitted',
+          });
         }
-        if (input.expectedSourceHash !== undefined &&
-            (typeof input.expectedSourceHash !== 'string' || !/^[a-fA-F0-9]{64}$/.test(input.expectedSourceHash))) {
-          throw new JupyterDiagnosticError({ layer: 'cas', code: 'invalid_source_hash', phase: 'input',
+        if (
+          input.expectedSourceHash !== undefined &&
+          (typeof input.expectedSourceHash !== 'string' ||
+            !/^[a-fA-F0-9]{64}$/.test(input.expectedSourceHash))
+        ) {
+          throw new JupyterDiagnosticError({
+            layer: 'cas',
+            code: 'invalid_source_hash',
+            phase: 'input',
             message: 'Invalid expectedSourceHash: must be a full 64-character hexadecimal SHA-256',
-            hint: 'Re-describe or read-cell and copy the entire latest sourceHash. No remote request was submitted.', outcome: 'not-submitted' });
+            hint: 'Re-describe or read-cell and copy the entire latest sourceHash. No remote request was submitted.',
+            outcome: 'not-submitted',
+          });
         }
-        const normalizedInput = typeof input.expectedSourceHash === 'string'
-          ? { ...input, expectedSourceHash: input.expectedSourceHash.toLowerCase() } : input;
+        const normalizedInput =
+          typeof input.expectedSourceHash === 'string'
+            ? { ...input, expectedSourceHash: input.expectedSourceHash.toLowerCase() }
+            : input;
         // DSH supports a small schema subset; keep limits in the host boundary too.
         if (
           Buffer.byteLength(JSON.stringify(input)) > 300000 ||
@@ -539,8 +623,13 @@ export class NotebookTools {
                 ))
           )
         ) {
-          throw new JupyterDiagnosticError({ layer: 'schema', code: 'invalid_tool_argument',
-            message: 'Invalid or oversized Notebook tool argument', hint: 'Check source size and stable cell/run IDs against jupyter tools.', outcome: 'not-submitted' });
+          throw new JupyterDiagnosticError({
+            layer: 'schema',
+            code: 'invalid_tool_argument',
+            message: 'Invalid or oversized Notebook tool argument',
+            hint: 'Check source size and stable cell/run IDs against jupyter tools.',
+            outcome: 'not-submitted',
+          });
         }
         const result = await execute(normalizedInput, invocation);
         invocation.signal.throwIfAborted();
@@ -575,7 +664,12 @@ export class NotebookTools {
       maxBytes: this.options.importFileLimits?.maxBytes ?? importFileMaxBytes,
       chunkBytes: this.options.importFileLimits?.chunkBytes ?? importChunkBytes,
     };
-    if (relative.startsWith('..') || path.isAbsolute(relative) || !identity.isFile() || identity.isSymbolicLink()) {
+    if (
+      relative.startsWith('..') ||
+      path.isAbsolute(relative) ||
+      !identity.isFile() ||
+      identity.isSymbolicLink()
+    ) {
       throw new Error('Input must be a regular file inside this Project');
     }
     if (identity.size > limits.maxBytes) {
@@ -675,7 +769,8 @@ export class NotebookTools {
           stored.type !== 'file' ||
           stored.format !== 'base64' ||
           typeof stored.content !== 'string' ||
-          createHash('sha256').update(Buffer.from(stored.content, 'base64')).digest('hex') !== sha256
+          createHash('sha256').update(Buffer.from(stored.content, 'base64')).digest('hex') !==
+            sha256
         ) {
           throw new Error('Remote input content changed; refusing to overwrite it');
         }
@@ -810,10 +905,7 @@ export class NotebookTools {
       await bound.client.json(fileRoute, 'DELETE');
       return 'removed';
     } catch (error) {
-      if (
-        error instanceof JupyterDiagnosticError &&
-        error.diagnostic.status === 404
-      ) {
+      if (error instanceof JupyterDiagnosticError && error.diagnostic.status === 404) {
         return 'not_present';
       }
       return 'cleanup_failed';
@@ -977,7 +1069,9 @@ export class NotebookTools {
   private outputs(cell: Record<string, unknown>): unknown[] {
     const outputs = Array.isArray(cell.outputs) ? cell.outputs : [];
     return outputs.slice(0, 16).map((output: Record<string, unknown>) => {
-      if (output.output_type === 'error') { return boundedErrorOutput(output); }
+      if (output.output_type === 'error') {
+        return boundedErrorOutput(output);
+      }
       const data = output.data as Record<string, unknown> | undefined;
       return {
         outputType: output.output_type,
@@ -1230,10 +1324,7 @@ export class NotebookTools {
     }
     return this.options.useClient(ref.connectionId, ref.serverNamespace, operation);
   }
-  private async observe(
-    record: DatalayerRunRecord,
-    stdoutCursor?: unknown
-  ): Promise<unknown> {
+  private async observe(record: DatalayerRunRecord, stdoutCursor?: unknown): Promise<unknown> {
     let current = record;
     let source: 'live' | 'local-journal' = 'local-journal';
     if (!terminal.has(record.state) && record.handle) {
@@ -1337,8 +1428,14 @@ export class NotebookTools {
     if (cursor !== undefined) {
       const parsed = decodeStdoutCursor(String(cursor));
       if (parsed.runId !== record.runId) {
-        throw new JupyterDiagnosticError({ layer: 'schema', code: 'invalid_stdout_cursor', phase: 'input',
-          message: 'stdout cursor belongs to another run', hint: 'Pass the nextStdoutCursor of this same runId, or omit it for new-session tail semantics.', outcome: 'not-submitted' });
+        throw new JupyterDiagnosticError({
+          layer: 'schema',
+          code: 'invalid_stdout_cursor',
+          phase: 'input',
+          message: 'stdout cursor belongs to another run',
+          hint: 'Pass the nextStdoutCursor of this same runId, or omit it for new-session tail semantics.',
+          outcome: 'not-submitted',
+        });
       }
       if (parsed.offset <= total) {
         scope = 'delta';
@@ -1433,6 +1530,30 @@ export class NotebookTools {
       notebookPath,
       htmlPath,
     };
+  }
+
+  /**
+   * One-shot room-versus-disk comparison for one RTC text file. The room is
+   * opened per call and closed after use; nothing is cached. Default never
+   * writes: a diverged result reports both hashes and how to reconcile.
+   */
+  private async syncCheck(
+    input: Record<string, unknown>,
+    invocation: ToolContext
+  ): Promise<Record<string, unknown>> {
+    const roomPath = String(input.path);
+    // Validate before any remote call so traversal rejection stays offline.
+    textFilePath(roomPath);
+    const { connect } = this.options;
+    if (!connect) {
+      throw new Error('Notebook sync check is not connected to a host client');
+    }
+    return await connect((client) =>
+      checkTextFileSync(client, roomPath, {
+        forceFlush: Boolean(input.forceFlush),
+        signal: invocation.signal,
+      })
+    );
   }
 
   private async downloadReport(

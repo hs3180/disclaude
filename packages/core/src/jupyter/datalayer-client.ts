@@ -277,6 +277,13 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
     return JupyterRtcDocument.open(this, path, expectedId);
   }
 
+  async openTextDocument(
+    path: string
+  ): Promise<import('./rtc-document.js').JupyterRtcTextDocument> {
+    const { JupyterRtcTextDocument } = await import('./rtc-document.js');
+    return JupyterRtcTextDocument.open(this, path);
+  }
+
   notebookEntry(path: string): string {
     return this.url(`lab/tree/${path.split('/').map(encodeURIComponent).join('/')}`).href;
   }

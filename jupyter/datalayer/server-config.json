@@ -1,6 +1,6 @@
 {
   "YDocExtension": {
-    "document_cleanup_delay": null,
+    "document_cleanup_delay": 60,
     "document_save_delay": 1
   },
   "Extension": {
