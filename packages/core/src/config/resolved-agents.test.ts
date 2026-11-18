@@ -627,7 +627,7 @@ describe('named runtime and LLM configuration', () => {
     expect(result.errors.length).toBe(1);
     expect(result.errors.join('\n')).toBe(
       'agents.assistant.claude.modelMapping and modelOverrides are mutually exclusive: '
-      + 'declare the three tiers (models) or a raw full-Claude-ID map (modelOverrides), not both'
+      + 'declare the three tiers (modelMapping) or a raw full-Claude-ID map (modelOverrides), not both'
     );
   });
   it('leaves the parameter mapping unset when neither tiers nor a raw map is declared', () => {
@@ -903,7 +903,7 @@ describe('named runtime and LLM configuration', () => {
     it('rejects malformed tier declarations and raw mappings', () => {
       const config = configuration();
       config.agents!.assistant.claude = {
-        models: { sonnet: 'kimi-k3-flash' },
+        modelMapping: { sonnet: 'kimi-k3-flash' },
         modelOverrides: { 'claude-opus-5': 'kimi-k3' },
       };
       const result = resolveConfiguredAgents(config);
@@ -931,7 +931,7 @@ describe('named runtime and LLM configuration', () => {
       const config = configuration();
       delete config.llms!.proxy.defaultModel;
       config.agents!.assistant.claude = {
-        models: { opus: 'kimi-k3', sonnet: 'kimi-k3-flash', haiku: 'kimi-k3-air' },
+        modelMapping: { opus: 'kimi-k3', sonnet: 'kimi-k3-flash', haiku: 'kimi-k3-air' },
       };
       const result = resolveConfiguredAgents(config);
       expect(result.ok).toBe(true);
@@ -948,7 +948,7 @@ describe('named runtime and LLM configuration', () => {
     it('compiles explicit tiers into the native tier environment', () => {
       const config = configuration();
       config.agents!.assistant.claude = {
-        models: { opus: 'kimi-k3', sonnet: 'kimi-k3-flash', haiku: 'kimi-k3-air' },
+        modelMapping: { opus: 'kimi-k3', sonnet: 'kimi-k3-flash', haiku: 'kimi-k3-air' },
       };
       config.agents!.research = { backend: 'dsh', llm: 'proxy' };
       const result = resolveConfiguredAgents(config);
@@ -1012,7 +1012,7 @@ describe('named runtime and LLM configuration', () => {
     it('rejects double-configuring one tier in models and env', () => {
       const config = configuration();
       config.agents!.assistant.claude = {
-        models: { haiku: 'kimi-k3-air' },
+        modelMapping: { haiku: 'kimi-k3-air' },
         env: { ANTHROPIC_DEFAULT_HAIKU_MODEL: 'small-model' },
       };
       const result = resolveConfiguredAgents(config);

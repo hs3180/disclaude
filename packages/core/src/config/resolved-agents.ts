@@ -393,12 +393,12 @@ export function resolveConfiguredAgents(
         for (const key of Object.keys(agent.claude)) {
           if (key === 'behavesAs') {
             errors.push(`${field}.claude.behavesAs was removed (Issue #5422): declare the three tiers under ${field}.claude.modelMapping instead — the tier declaration itself is compiled into the capability-slot mapping`);
-          } else if (!['modelOverrides', 'models', 'env'].includes(key)) {
+          } else if (!['modelOverrides', 'modelMapping', 'env'].includes(key)) {
             errors.push(`${field}.claude.${key} is unsupported`);
           }
         }
         if (agent.claude.modelOverrides !== undefined && agent.claude.modelMapping !== undefined) {
-          errors.push(`${field}.claude.modelMapping and modelOverrides are mutually exclusive: declare the three tiers (models) or a raw full-Claude-ID map (modelOverrides), not both`);
+          errors.push(`${field}.claude.modelMapping and modelOverrides are mutually exclusive: declare the three tiers (modelMapping) or a raw full-Claude-ID map (modelOverrides), not both`);
         }
         if (agent.claude.modelOverrides !== undefined &&
           (!mapping(agent.claude.modelOverrides) || !Object.keys(agent.claude.modelOverrides).length ||
