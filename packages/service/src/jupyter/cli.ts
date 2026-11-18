@@ -3,6 +3,7 @@ import path from 'node:path';
 import { JupyterDiagnosticError, type DatalayerJupyterClient } from '@disclaude/core/jupyter';
 import { NotebookTools, createArtifactDirectory, notebookIdentifier } from './notebook-tools.js';
 import { JupyterProjectConfigStore } from './project-config-store.js';
+import { runSyncWatchdog, type SyncWatchdogEvent } from './sync-watchdog.js';
 
 const commands = [
   'list',
@@ -22,6 +23,7 @@ const commands = [
   'import-file',
   'export',
   'sync-check',
+  'sync-watch',
   'download-report',
 ];
 const management = ['tools', 'check', 'link', 'create', 'unlink'];
@@ -59,6 +61,12 @@ Options:
                         kernel execution. Terminal results distinguish
                         completed/failed/cancelled; wait:{state:"timeout"}
                         plus the still-running state marks a wait timeout.
+  --interval S         sync-watch only: seconds between sweeps (default 60)
+  --max-files N        sync-watch only: cap on files per sweep (default 200)
+  --auto-flush         sync-watch only: write diverged room snapshots to disk.
+                        Without it a sweep only reports divergence: a
+                        disk-ahead file (kernel or script output) must never be
+                        clobbered with older room bytes.
 
 Credentials: environment > .env > interactive input. Connection is lazy.
 The selected env-file path is reported; credential values and cookies stay private.
@@ -82,6 +90,12 @@ holds no lock while sleeping: other commands in the same Project keep
 working; a transient lock collision with an in-flight poll is a retriable
 error, not a run-state change.
 status labels source as live or local-journal; connection failures retain last-known facts.
+sync-watch is the continuous form of sync-check and takes flags, not --input-file:
+while web Lab sessions stay connected their RTC rooms never hit the 60s
+room-destruction final flush, so run it alongside human Lab editing to surface
+(and, with --auto-flush, repair) room/disk forks. It holds no lock while
+sleeping and closes each sweep's rooms; aborting the process (SIGINT) ends the
+watch and prints the last sweep summary.
 reconcile queries every nonterminal original handle after restoring credentials/connection.
 interrupt targets an existing kernelId, or a uniquely bound notebookId; no runId.
 It affects that kernel's current execution. HTTP 204 means accepted only;
@@ -105,6 +119,12 @@ export interface NotebookCLIOptions {
   wait?: boolean;
   /** Seconds; requires --wait. */
   timeoutSeconds?: number;
+  /** Seconds between sync-watch sweeps; requires sync-watch. */
+  intervalSeconds?: number;
+  /** sync-watch only: flush diverged room snapshots to disk. */
+  autoFlush?: boolean;
+  /** sync-watch only: cap on files checked per sweep. */
+  maxFiles?: number;
 }
 export interface NotebookCLIConnection {
   client: DatalayerJupyterClient;
@@ -114,14 +134,19 @@ export interface NotebookCLIConnection {
 
 const runtimeProbeCommand = {
   command: 'runtime-probe',
-  description: 'Probe an existing kernel with fixed host-owned code. Returns a hashed host ID and sorted GPU UUIDs; unknown never means safe to run. No Notebook writeback.',
+  description:
+    'Probe an existing kernel with fixed host-owned code. Returns a hashed host ID and sorted GPU UUIDs; unknown never means safe to run. No Notebook writeback.',
   inputSchema: {
-    type: 'object', properties: { kernelId: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,256}$' } },
-    required: ['kernelId'], additionalProperties: false,
+    type: 'object',
+    properties: { kernelId: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,256}$' } },
+    required: ['kernelId'],
+    additionalProperties: false,
   },
   outputSchema: {
-    type: 'object', required: ['schema', 'host', 'gpus'],
-    description: 'disclaude.jupyter-runtime.v1; host.id is sha256:<64 lowercase hex> or null; gpus.uuids is a sorted unique GPU-* list or null with state=unknown.',
+    type: 'object',
+    required: ['schema', 'host', 'gpus'],
+    description:
+      'disclaude.jupyter-runtime.v1; host.id is sha256:<64 lowercase hex> or null; gpus.uuids is a sorted unique GPU-* list or null with state=unknown.',
   },
 };
 
@@ -273,8 +298,14 @@ async function interruptKernel(
 
 export function parseNotebookOptions(args: string[]): NotebookCLIOptions {
   const invalid = (message: string): never => {
-    throw new JupyterDiagnosticError({ layer: 'schema', code: 'invalid_options', phase: 'options', message,
-      hint: 'Read disclaude jupyter --help and use the command input schema from jupyter tools.', outcome: 'not-submitted' });
+    throw new JupyterDiagnosticError({
+      layer: 'schema',
+      code: 'invalid_options',
+      phase: 'options',
+      message,
+      hint: 'Read disclaude jupyter --help and use the command input schema from jupyter tools.',
+      outcome: 'not-submitted',
+    });
   };
   const options: NotebookCLIOptions = {
     command: args[0],
@@ -299,8 +330,12 @@ export function parseNotebookOptions(args: string[]): NotebookCLIOptions {
   for (let i = 1; i < args.length; i++) {
     const flag = args[i];
     if (flag === '--verbose') {
-      if (seen.has('verbose')) { invalid('Repeated verbose option'); }
-      seen.add('verbose'); options.verbose = true; continue;
+      if (seen.has('verbose')) {
+        invalid('Repeated verbose option');
+      }
+      seen.add('verbose');
+      options.verbose = true;
+      continue;
     }
     if (['--interactive', '--no-interactive'].includes(flag)) {
       if (seen.has('interactive')) {
@@ -311,11 +346,17 @@ export function parseNotebookOptions(args: string[]): NotebookCLIOptions {
       continue;
     }
     if (flag === '--wait') {
-      if (seen.has('wait')) { invalid('Repeated wait option'); }
-      seen.add('wait'); options.wait = true; continue;
+      if (seen.has('wait')) {
+        invalid('Repeated wait option');
+      }
+      seen.add('wait');
+      options.wait = true;
+      continue;
     }
     if (flag === '--timeout') {
-      if (seen.has('timeout')) { invalid('Repeated timeout option'); }
+      if (seen.has('timeout')) {
+        invalid('Repeated timeout option');
+      }
       const raw = args[i + 1];
       if (raw === undefined || raw.startsWith('--')) {
         invalid('--timeout requires a positive seconds value');
@@ -327,6 +368,48 @@ export function parseNotebookOptions(args: string[]): NotebookCLIOptions {
       seen.add('timeout');
       options.timeoutSeconds = seconds;
       i++;
+      continue;
+    }
+    if (flag === '--interval') {
+      if (seen.has('interval')) {
+        invalid('Repeated interval option');
+      }
+      const raw = args[i + 1];
+      if (raw === undefined || raw.startsWith('--')) {
+        invalid('--interval requires a positive seconds value');
+      }
+      const seconds = Number(raw);
+      if (!Number.isFinite(seconds) || seconds < 5 || seconds > 86400) {
+        invalid('Invalid --interval seconds; use a number of seconds from 5 up to 86400');
+      }
+      seen.add('interval');
+      options.intervalSeconds = seconds;
+      i++;
+      continue;
+    }
+    if (flag === '--max-files') {
+      if (seen.has('max-files')) {
+        invalid('Repeated max-files option');
+      }
+      const raw = args[i + 1];
+      if (raw === undefined || raw.startsWith('--')) {
+        invalid('--max-files requires a positive count');
+      }
+      const count = Number(raw);
+      if (!Number.isInteger(count) || count < 1 || count > 2000) {
+        invalid('Invalid --max-files count; use an integer from 1 up to 2000');
+      }
+      seen.add('max-files');
+      options.maxFiles = count;
+      i++;
+      continue;
+    }
+    if (flag === '--auto-flush') {
+      if (seen.has('auto-flush')) {
+        invalid('Repeated auto-flush option');
+      }
+      seen.add('auto-flush');
+      options.autoFlush = true;
       continue;
     }
     const name = names[flag as keyof typeof names];
@@ -345,15 +428,30 @@ export function parseNotebookOptions(args: string[]): NotebookCLIOptions {
   if (options.timeoutSeconds !== undefined && !options.wait) {
     invalid('--timeout requires --wait');
   }
+  if (
+    options.command !== 'sync-watch' &&
+    (options.intervalSeconds !== undefined ||
+      options.autoFlush !== undefined ||
+      options.maxFiles !== undefined)
+  ) {
+    invalid('--interval/--auto-flush/--max-files are only valid for sync-watch');
+  }
   if (!/^[A-Za-z0-9_-]{1,200}$/.test(options.connectionId)) {
     invalid('Invalid connection ID');
   }
   const lifecycle = ['link', 'create', 'unlink'].includes(options.command);
   if (lifecycle && !!options.contentPath === !!options.inputFile) {
-    invalid('link/create/unlink take exactly one input: --path PATH or --input-file with {"path":...}');
+    invalid(
+      'link/create/unlink take exactly one input: --path PATH or --input-file with {"path":...}'
+    );
   }
-  if (!lifecycle && (options.contentPath || (!commands.includes(options.command) && options.inputFile))) {
-    invalid('--path is required only for link/create/unlink; --input-file is only valid for Notebook operations');
+  if (
+    !lifecycle &&
+    (options.contentPath || (!commands.includes(options.command) && options.inputFile))
+  ) {
+    invalid(
+      '--path is required only for link/create/unlink; --input-file is only valid for Notebook operations'
+    );
   }
   return options;
 }
@@ -361,13 +459,26 @@ export function parseNotebookOptions(args: string[]): NotebookCLIOptions {
 function notebookInput(file: string | undefined, read: (file: string) => string): unknown {
   const raw = file ? read(file) : '{}';
   if (Buffer.byteLength(raw) > 300000) {
-    throw new JupyterDiagnosticError({ layer: 'schema', code: 'input_limit_exceeded', phase: 'input',
-      message: 'Notebook input exceeds its limit', hint: 'Keep the command JSON input below 300000 bytes.', outcome: 'not-submitted' });
+    throw new JupyterDiagnosticError({
+      layer: 'schema',
+      code: 'input_limit_exceeded',
+      phase: 'input',
+      message: 'Notebook input exceeds its limit',
+      hint: 'Keep the command JSON input below 300000 bytes.',
+      outcome: 'not-submitted',
+    });
   }
-  try { return JSON.parse(raw.replace(/^\uFEFF/, '')) as unknown; }
-  catch {
-    throw new JupyterDiagnosticError({ layer: 'schema', code: 'invalid_json_input', phase: 'input',
-      message: 'Notebook input-file is not valid JSON', hint: 'Validate one JSON object against jupyter tools; do not include shell quoting or trailing text.', outcome: 'not-submitted' });
+  try {
+    return JSON.parse(raw.replace(/^\uFEFF/, '')) as unknown;
+  } catch {
+    throw new JupyterDiagnosticError({
+      layer: 'schema',
+      code: 'invalid_json_input',
+      phase: 'input',
+      message: 'Notebook input-file is not valid JSON',
+      hint: 'Validate one JSON object against jupyter tools; do not include shell quoting or trailing text.',
+      outcome: 'not-submitted',
+    });
   }
 }
 
@@ -432,13 +543,17 @@ export async function awaitNotebookTerminal(
     }
     await new Promise((resolve) => setTimeout(resolve, Math.min(delay, remaining)));
     signal.throwIfAborted();
-    last = (await observeStatus(
-      { notebookId, runId, ...(stdoutCursor ? { stdoutCursor } : {}) }
-    )) as Record<string, unknown>;
+    last = (await observeStatus({
+      notebookId,
+      runId,
+      ...(stdoutCursor ? { stdoutCursor } : {}),
+    })) as Record<string, unknown>;
   }
 }
 
-/** One local command lock prevents CLI processes from losing journal updates. */export async function withNotebookLock<T>(root: string, operation: () => Promise<T>): Promise<T> {
+/** One local command lock prevents CLI processes from losing journal updates. */ export async function withNotebookLock<
+  T,
+>(root: string, operation: () => Promise<T>): Promise<T> {
   const directory = path.join(fs.realpathSync(root), '.jupyter');
   try {
     fs.mkdirSync(directory, { mode: 0o700 });
@@ -473,9 +588,14 @@ export async function runNotebookCommand(
     useClient: async (id, namespace, operation) => {
       const resolved = await connection();
       if (resolved.connectionId !== id || resolved.namespace !== namespace) {
-        throw new JupyterDiagnosticError({ layer: 'auth', code: 'endpoint_reference_mismatch', phase: 'reference',
+        throw new JupyterDiagnosticError({
+          layer: 'auth',
+          code: 'endpoint_reference_mismatch',
+          phase: 'reference',
           message: 'Project reference belongs to another configured endpoint',
-          hint: 'Verify the selected env-file/endpoint and this Project reference before explicitly relinking it.', outcome: 'not-submitted' });
+          hint: 'Verify the selected env-file/endpoint and this Project reference before explicitly relinking it.',
+          outcome: 'not-submitted',
+        });
       }
       signal.throwIfAborted();
       return await operation(resolved.client);
@@ -502,8 +622,40 @@ export async function runNotebookCommand(
         runtimeProbeCommand,
       ];
     }
+    if (options.command === 'sync-watch') {
+      // Web Lab sessions keep RTC rooms alive indefinitely, so the 60s
+      // room-destruction final flush never fires for their files while they
+      // stay connected. This watch sweeps the project's text files on a timer,
+      // so a room/disk fork is surfaced (and, with --auto-flush, repaired)
+      // without waiting for a one-shot sync-check. The loop holds no lock while
+      // sleeping; each sweep opens and closes its own rooms.
+      let sweeps = 0;
+      let lastEvent: SyncWatchdogEvent | null = null;
+      await runSyncWatchdog({
+        connect: async (operation) => {
+          signal.throwIfAborted();
+          return await operation((await connection()).client);
+        },
+        intervalMs: (options.intervalSeconds ?? 60) * 1000,
+        autoFlush: options.autoFlush,
+        maxFiles: options.maxFiles,
+        signal,
+        onEvent: (event) => {
+          sweeps = event.sweep;
+          lastEvent = event;
+        },
+      });
+      return {
+        command: 'sync-watch',
+        sweeps,
+        lastEvent: lastEvent ?? null,
+      };
+    }
     if (options.command === 'list') {
-      return await tools.tools[0].execute(notebookInput(options.inputFile, readInput) as Record<string, unknown>, { signal });
+      return await tools.tools[0].execute(
+        notebookInput(options.inputFile, readInput) as Record<string, unknown>,
+        { signal }
+      );
     }
     if (options.command === 'check') {
       return await (await connection()).client.inspectConnection();
@@ -523,9 +675,14 @@ export async function runNotebookCommand(
             Object.keys(input).length !== 1 ||
             typeof (input as { path?: unknown }).path !== 'string')
         ) {
-          throw new JupyterDiagnosticError({ layer: 'schema', code: 'invalid_tool_input', phase: 'input',
+          throw new JupyterDiagnosticError({
+            layer: 'schema',
+            code: 'invalid_tool_input',
+            phase: 'input',
             message: 'Invalid lifecycle command input; read its schema with jupyter tools',
-            hint: 'Pass exactly {"path":"<relative .ipynb>"} from the command schema in jupyter tools, or use the --path shorthand.', outcome: 'not-submitted' });
+            hint: 'Pass exactly {"path":"<relative .ipynb>"} from the command schema in jupyter tools, or use the --path shorthand.',
+            outcome: 'not-submitted',
+          });
         }
         const contentPath = options.contentPath ?? (input as { path: string } | undefined)?.path;
         if (!contentPath) {
@@ -545,8 +702,14 @@ export async function runNotebookCommand(
           ref.contentPath.split('/').some((s) => ['.', '..'].includes(s)) ||
           ref.contentPath.length > 1024
         ) {
-          throw new JupyterDiagnosticError({ layer: 'schema', code: 'invalid_notebook_path', phase: 'input',
-            message: 'Invalid relative Notebook path', hint: 'Use a relative .ipynb Contents path without traversal or control characters.', outcome: 'not-submitted' });
+          throw new JupyterDiagnosticError({
+            layer: 'schema',
+            code: 'invalid_notebook_path',
+            phase: 'input',
+            message: 'Invalid relative Notebook path',
+            hint: 'Use a relative .ipynb Contents path without traversal or control characters.',
+            outcome: 'not-submitted',
+          });
         }
         const store = new JupyterProjectConfigStore(root);
         const loaded = store.listNotebookReferences();
@@ -572,17 +735,29 @@ export async function runNotebookCommand(
           const route = `api/contents/${ref.contentPath.split('/').map(encodeURIComponent).join('/')}`;
           const response = await client.response(`${route}?content=0`);
           const missing = response.status === 404;
-          if (!missing && !response.ok) { throw await client.responseError(response, 'create-preflight'); }
+          if (!missing && !response.ok) {
+            throw await client.responseError(response, 'create-preflight');
+          }
           await response.body?.cancel();
           if (!missing) {
-            throw new JupyterDiagnosticError({ layer: 'schema', code: 'notebook_already_exists', phase: 'create-preflight', status: response.status,
-              message: 'Remote Notebook already exists; refusing overwrite', hint: 'Choose another path or explicitly link the existing Notebook.', outcome: 'not-submitted' });
+            throw new JupyterDiagnosticError({
+              layer: 'schema',
+              code: 'notebook_already_exists',
+              phase: 'create-preflight',
+              status: response.status,
+              message: 'Remote Notebook already exists; refusing overwrite',
+              hint: 'Choose another path or explicitly link the existing Notebook.',
+              outcome: 'not-submitted',
+            });
           }
           signal.throwIfAborted();
           const segments = ref.contentPath.split('/');
           for (let index = 0; index < segments.length - 1; index++) {
             const parentPath = segments.slice(0, index + 1).join('/');
-            const parentRoute = `api/contents/${segments.slice(0, index + 1).map(encodeURIComponent).join('/')}`;
+            const parentRoute = `api/contents/${segments
+              .slice(0, index + 1)
+              .map(encodeURIComponent)
+              .join('/')}`;
             const parent = await client.response(`${parentRoute}?content=0`);
             if (parent.status !== 404) {
               if (!parent.ok) {
@@ -596,7 +771,9 @@ export async function runNotebookCommand(
             try {
               await client.json(parentRoute, 'PUT', { type: 'directory' });
             } catch (error) {
-              if (!(error instanceof JupyterDiagnosticError)) { throw error; }
+              if (!(error instanceof JupyterDiagnosticError)) {
+                throw error;
+              }
               throw new JupyterDiagnosticError({
                 ...error.diagnostic,
                 phase: `create-parent:${parentPath}`,
@@ -633,13 +810,21 @@ export async function runNotebookCommand(
         return interruptKernel(root, input, connection, signal);
       }
       if (options.command === 'runtime-probe') {
-        if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length !== 1 ||
+        if (
+          !input ||
+          typeof input !== 'object' ||
+          Array.isArray(input) ||
+          Object.keys(input).length !== 1 ||
           typeof (input as { kernelId?: unknown }).kernelId !== 'string' ||
-          !/^[A-Za-z0-9_-]{1,256}$/.test((input as { kernelId: string }).kernelId)) {
+          !/^[A-Za-z0-9_-]{1,256}$/.test((input as { kernelId: string }).kernelId)
+        ) {
           throw new Error('Invalid runtime probe input; an existing kernelId is required');
         }
         signal.throwIfAborted();
-        return (await connection()).client.probeRuntime((input as { kernelId: string }).kernelId, signal);
+        return (await connection()).client.probeRuntime(
+          (input as { kernelId: string }).kernelId,
+          signal
+        );
       }
       const name = `notebook_${options.command.replaceAll('-', '_')}`;
       const tool = tools.tools.find((t) => t.name === name);
