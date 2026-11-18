@@ -532,7 +532,7 @@ describe('named runtime and LLM configuration', () => {
     expect(result.errors.length).toBe(1);
     expect(result.errors.join('\n')).toBe(
       'agents.assistant.claude.behavesAs was removed (Issue #5422): declare the three tiers under '
-      + 'agents.assistant.claude.models instead — the tier declaration itself is compiled into the capability-slot mapping'
+      + 'agents.assistant.claude.modelMapping instead — the tier declaration itself is compiled into the capability-slot mapping'
     );
   });
   it('projects a raw multi-slot modelOverrides map verbatim', () => {
@@ -584,7 +584,7 @@ describe('named runtime and LLM configuration', () => {
   it('compiles the declared three tiers into the tier-alias parameter mapping (Issue #5422 r3)', () => {
     const config = configuration();
     config.agents!.assistant.claude = {
-      models: { opus: 'kimi-k3', sonnet: 'kimi-k3-flash', haiku: 'kimi-k3-air' },
+      modelMapping: { opus: 'kimi-k3', sonnet: 'kimi-k3-flash', haiku: 'kimi-k3-air' },
     };
     const result = resolveConfiguredAgents(config);
     expect(result.ok).toBe(true);
@@ -601,9 +601,9 @@ describe('named runtime and LLM configuration', () => {
     // truth, so redeclaring the mapping moves both together.
     expect(result.presets.assistant.env).toEqual(tierEnv('kimi-k3', 'kimi-k3-flash', 'kimi-k3-air'));
   });
-  it('fills tiers omitted from claude.models with the provider default in the compiled mapping', () => {
+  it('fills tiers omitted from claude.modelMapping with the provider default in the compiled mapping', () => {
     const config = configuration();
-    config.agents!.assistant.claude = { models: { sonnet: 'kimi-k3-flash' } };
+    config.agents!.assistant.claude = { modelMapping: { sonnet: 'kimi-k3-flash' } };
     const result = resolveConfiguredAgents(config);
     expect(result.ok).toBe(true);
     if (!result.ok) {
@@ -613,10 +613,10 @@ describe('named runtime and LLM configuration', () => {
       opus: 'glm-5.3', sonnet: 'kimi-k3-flash', haiku: 'glm-5.3',
     });
   });
-  it('rejects claude.models declared together with a raw modelOverrides map', () => {
+  it('rejects claude.modelMapping declared together with a raw modelOverrides map', () => {
     const config = configuration();
     config.agents!.assistant.claude = {
-      models: { sonnet: 'kimi-k3-flash' },
+      modelMapping: { sonnet: 'kimi-k3-flash' },
       modelOverrides: { ...kimiTierOverrides },
     };
     const result = resolveConfiguredAgents(config);
@@ -626,7 +626,7 @@ describe('named runtime and LLM configuration', () => {
     }
     expect(result.errors.length).toBe(1);
     expect(result.errors.join('\n')).toBe(
-      'agents.assistant.claude.models and modelOverrides are mutually exclusive: '
+      'agents.assistant.claude.modelMapping and modelOverrides are mutually exclusive: '
       + 'declare the three tiers (models) or a raw full-Claude-ID map (modelOverrides), not both'
     );
   });
@@ -793,7 +793,7 @@ describe('named runtime and LLM configuration', () => {
         return;
       }
       expect(result.errors.join('\n')).toContain(
-        'llms.daily.behavesAs was removed (Issue #5422); configure the three tiers under agents.<name>.claude.models'
+        'llms.daily.behavesAs was removed (Issue #5422); configure the three tiers under agents.<name>.claude.modelMapping'
       );
     });
 
@@ -824,7 +824,7 @@ describe('named runtime and LLM configuration', () => {
         return;
       }
       expect(result.errors.join('\n')).toContain(
-        'llms.proxy.env.ANTHROPIC_DEFAULT_SONNET_MODEL has moved to agents.<name>.claude.models or agents.<name>.claude.env.ANTHROPIC_DEFAULT_SONNET_MODEL'
+        'llms.proxy.env.ANTHROPIC_DEFAULT_SONNET_MODEL has moved to agents.<name>.claude.modelMapping or agents.<name>.claude.env.ANTHROPIC_DEFAULT_SONNET_MODEL'
       );
     });
 
@@ -912,7 +912,7 @@ describe('named runtime and LLM configuration', () => {
         return;
       }
       expect(result.errors.join('\n')).toContain(
-        'agents.assistant.claude.models and modelOverrides are mutually exclusive'
+        'agents.assistant.claude.modelMapping and modelOverrides are mutually exclusive'
       );
 
       const aliased = configuration();
@@ -964,7 +964,7 @@ describe('named runtime and LLM configuration', () => {
 
     it('falls back to the provider default for omitted tiers', () => {
       const config = configuration();
-      config.agents!.assistant.claude = { models: { haiku: 'kimi-k3-air' } };
+      config.agents!.assistant.claude = { modelMapping: { haiku: 'kimi-k3-air' } };
       const result = resolveConfiguredAgents(config);
       expect(result.ok).toBe(true);
       if (!result.ok) {
@@ -1021,7 +1021,7 @@ describe('named runtime and LLM configuration', () => {
         return;
       }
       expect(result.errors.join('\n')).toContain(
-        'agents.assistant.claude.models.haiku conflicts with agents.assistant.claude.env.ANTHROPIC_DEFAULT_HAIKU_MODEL; configure the tier in one place'
+        'agents.assistant.claude.modelMapping.haiku conflicts with agents.assistant.claude.env.ANTHROPIC_DEFAULT_HAIKU_MODEL; configure the tier in one place'
       );
     });
 
@@ -1033,14 +1033,14 @@ describe('named runtime and LLM configuration', () => {
       'kimi-k3',
     ])('rejects malformed tier declarations (%j)', (models) => {
       const config = configuration();
-      config.agents!.assistant.claude = { models: models as never };
+      config.agents!.assistant.claude = { modelMapping: models as never };
       const result = resolveConfiguredAgents(config);
       expect(result.ok).toBe(false);
       if (result.ok) {
         return;
       }
       expect(result.errors.length).toBe(1);
-      expect(result.errors.join('\n')).toMatch(/agents\.assistant\.claude\.models/);
+      expect(result.errors.join('\n')).toMatch(/agents\.assistant\.claude\.modelMapping/);
     });
 
     it('applies a provider reasoning effort to any runtime without a harness gate', () => {

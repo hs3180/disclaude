@@ -158,7 +158,7 @@ describe('Claude modelOverrides identity (Issue #5410)', () => {
 
 describe('Claude tier-alias parameter mapping (Issue #5422)', () => {
   // The generic agent layer is alias-agnostic: the config-compiled
-  // tier-keyed modelOverrides mapping (from the `claude.models` declaration;
+  // tier-keyed modelOverrides mapping (from the `claude.modelMapping` declaration;
   // no behavesAs key exists) flows through the standard passthrough and
   // startup floor — no running-catalog resolution exists anywhere.
   it('passes an alias-keyed map to native queries unchanged, without alias-specific options', async () => {
@@ -198,7 +198,7 @@ describe('shared bindings across harnesses (Issue #5679)', () => {
       agents: {
         assistant: {
           backend: 'claude', llm: 'shared', default: true,
-          claude: { models: { sonnet: 'group/hq-degrade' } },
+          claude: { modelMapping: { sonnet: 'group/hq-degrade' } },
         },
         research: { backend: 'dsh', llm: 'shared', mode: 'minimal' },
       },

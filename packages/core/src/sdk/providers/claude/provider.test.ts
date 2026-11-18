@@ -1736,8 +1736,8 @@ describe('tier-declaration parameter mapping (Issue #5422)', () => {
       events.push('host-input-pulled');
       yield { role: 'user', content: 'hi' } as UserInput;
     })(), {
-      // Exactly what resolved-agents compiles from the claude.models
-      // claude.models: { opus: kimi-k3, sonnet: kimi-k3-flash, haiku: kimi-k3-air }.
+      // Exactly what resolved-agents compiles from the claude.modelMapping
+      // claude.modelMapping: { opus: kimi-k3, sonnet: kimi-k3-flash, haiku: kimi-k3-air }.
       settingSources: [],
       modelOverrides: { opus: 'kimi-k3', sonnet: 'kimi-k3-flash', haiku: 'kimi-k3-air' },
       model: 'kimi-k3',
@@ -1780,14 +1780,14 @@ describe('tier-declaration parameter mapping (Issue #5422)', () => {
   it('serves whatever mapping config compiled to every fresh session — only a mapping change alters it', async () => {
     // The r2 "simulated upgrade" replacement: the runtime no longer
     // re-resolves a bare alias against a running catalog. Behavior changes
-    // exactly when agents.<name>.claude.models changes (config recompile),
+    // exactly when agents.<name>.claude.modelMapping changes (config recompile),
     // so the provider serves map A to session 1 and the re-mapped B to
     // session 2 verbatim, with zero catalog consultation in between.
     const events: string[] = [];
     const captured: Array<Record<string, string> | undefined> = [];
     staticSession(captured, events);
     const provider = new ClaudeSDKProvider();
-    // claude.models omitted — no parameter mapping is derived here; this
+    // claude.modelMapping omitted — no parameter mapping is derived here; this
     // fixture mirrors a partial declaration, tiers deriving from defaultModel.
     await drain(provider.queryStream((async function* () {
       yield { role: 'user', content: 'hi' } as UserInput;
@@ -1796,7 +1796,7 @@ describe('tier-declaration parameter mapping (Issue #5422)', () => {
       modelOverrides: { opus: 'glm-5.3', sonnet: 'glm-5.3', haiku: 'glm-5.3' },
       model: 'glm-5.3',
     }));
-    // The operator redeclares claude.models: the derived mapping now points
+    // The operator redeclares claude.modelMapping: the derived mapping now points
     // the tiers onto different provider models.
     await drain(provider.queryStream((async function* () {
       yield { role: 'user', content: 'hi again' } as UserInput;

@@ -11,7 +11,7 @@ export function assumedContextWindow(claudeModelId: string): 1_000_000 | 200_000
 /**
  * Full Claude model IDs as modelOverrides keys (Issue #5410). A bare alias
  * key reaches the provider only as the config-compiled three-tier mapping
- * (Issue #5422): the user-declared `agents.<name>.claude.models` mapping is
+ * (Issue #5422): the user-declared `agents.<name>.claude.modelMapping` mapping is
  * the single capability-slot source and is compiled into the parameter
  * mapping at config time, so the Claude runtime receives only static
  * entries — no live-catalog resolution and no first-use resolution path

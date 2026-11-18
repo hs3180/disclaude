@@ -36,9 +36,9 @@ agents:
       # the provider's models pretends to be opus / sonnet / haiku (subagents
       # and background tasks resolve through these tiers). Every tier key is
       # optional; an omitted tier falls back to the provider defaultModel
-      # below — so you can skip `models` entirely and configure only
+      # below — so you can skip `modelMapping` entirely and configure only
       # defaultModel: all three tiers then point at that one model.
-      models:
+      modelMapping:
         opus: kimi-k3 # heavyweight tier
         sonnet: kimi-k3-flash # default tier
         haiku: kimi-k3-air # fast/background tier
@@ -51,7 +51,7 @@ agents:
       # Claude catalog identity everywhere. Claude Code resolves each tier
       # alias against its current catalog, so the binding follows CLI
       # upgrades. A stale `behavesAs` key is a config error pointing here.
-      # Alternative (mutually exclusive with models): map several full Claude
+      # Alternative (mutually exclusive with modelMapping): map several full Claude
       # model IDs to provider IDs, e.g. a multi-model gateway:
       # modelOverrides:
       #   claude-opus-5: kimi-k3
@@ -59,7 +59,7 @@ agents:
       #   claude-haiku-4-5: kimi-k3-flash
       # Other Claude-only environment. The three tier variables above are
       # derived from `models`/defaultModel — set a tier in ONE place; setting
-      # e.g. ANTHROPIC_DEFAULT_HAIKU_MODEL here together with models.haiku is
+      # e.g. ANTHROPIC_DEFAULT_HAIKU_MODEL here together with modelMapping.haiku is
       # rejected (an explicit env entry still overrides a computed default).
       # env:
       #   ANTHROPIC_SMALL_FAST_MODEL: your-small-model
@@ -77,7 +77,7 @@ agents:
 
   # Second runtime on the SAME provider: DSH sends llms.shared-gateway.defaultModel
   # verbatim, so changing the deployment default model means editing that one
-  # line. Claude-only keys (claude.models/behavesAs/modelOverrides/env) belong
+  # line. Claude-only keys (claude.modelMapping/behavesAs/modelOverrides/env) belong
   # to the Claude agent above and are rejected here.
   research:
     backend: dsh
@@ -164,7 +164,7 @@ llms:
   # internally while dsh/pi/codex would put the literal string on the wire, so
   # the loader rejects e.g. `defaultModel: sonnet` on shared-gateway and asks
   # for exactly the shape above: pin the wire model here and map the Claude
-  # tiers via agents.<name>.claude.models (capability slot: behavesAs).
+  # tiers via agents.<name>.claude.modelMapping (capability slot: behavesAs).
 
 channels:
   # Personal WeChat via Tencent iLink. First run: disclaude wechat login

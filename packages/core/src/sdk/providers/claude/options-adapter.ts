@@ -141,7 +141,7 @@ export function adaptOptions(
   // Issue #5410: gateway model IDs ride Claude Code's modelOverrides so the
   // pinned catalog entry's window and capability defaults apply to them.
   // Issue #5422 (r3): modelOverrides arrives fully static — the three-tier
-  // `agents.<name>.claude.models` declaration is compiled into the
+  // `agents.<name>.claude.modelMapping` declaration is compiled into the
   // tier-alias-keyed parameter mapping at config time, so the runtime needs
   // no alias resolution or catalog lookup. An empty mapping writes nothing.
   if (options.modelOverrides && Object.keys(options.modelOverrides).length) {

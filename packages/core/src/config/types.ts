@@ -84,7 +84,7 @@ export interface MiniSweAgentConfig {
  * `defaultModel`, so configuring only the provider default points all three
  * tiers at that one model.
  */
-export interface ClaudeModelTiers {
+export interface ClaudeModelMapping {
   /** Model serving the opus (heavyweight) tier. */
   opus?: string;
   /** Model serving the sonnet (default) tier. */
@@ -97,7 +97,7 @@ export interface ClaudeAgentConfig {
   /**
    * Claude model names (including Opus/Sonnet/Haiku slots) mapped to provider
    * IDs: a raw Claude Code `modelOverrides` map (full Claude model ID →
-   * provider ID) for multi-slot gateways. Mutually exclusive with `models` —
+   * provider ID) for multi-slot gateways. Mutually exclusive with `modelMapping` —
    * the three-tier declaration is the derived form for the common case.
    */
   modelOverrides?: Record<string, string>;
@@ -106,14 +106,14 @@ export interface ClaudeAgentConfig {
    * capability-slot binding (Issue #5422): no separate `behavesAs` key
    * exists. Config compiles the declaration itself into the
    * `modelOverrides` parameter mapping at config time — every tier alias
-   * key maps to `models.<tier>`, an omitted tier deriving from the provider
-   * `defaultModel` — so editing `models` changes the applied Claude catalog
+   * key maps to `modelMapping.<tier>`, an omitted tier deriving from the provider
+   * `defaultModel` — so editing `modelMapping` changes the applied Claude catalog
    * identity everywhere at once. Claude Code resolves each tier alias
    * against its current catalog, so the binding follows CLI upgrades
    * instead of pinning a full ID. A stale `behavesAs` key is a config
    * error pointing here, never a silent no-op.
    */
-  models?: ClaudeModelTiers;
+  modelMapping?: ClaudeModelMapping;
   /** Claude-specific environment, including ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL. */
   env?: Record<string, string>;
 }

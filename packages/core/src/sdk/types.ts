@@ -418,7 +418,7 @@ export interface AgentQueryOptions {
    * provider ID on the wire. Injected via the per-query private settings file;
    * requires Claude Code ≥ 2.1.200. Keys are either full Claude model IDs
    * (Issue #5410) or the bare tier aliases compiled at config time from the
-   * three-tier `agents.<name>.claude.models` declaration (Issue #5422),
+   * three-tier `agents.<name>.claude.modelMapping` declaration (Issue #5422),
    * which Claude Code resolves against its current catalog before the wire.
    */
   modelOverrides?: Record<string, string>;

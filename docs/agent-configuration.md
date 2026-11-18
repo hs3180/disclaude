@@ -127,7 +127,7 @@ For Codex an explicit LLM cap replaces the legacy process session cap, while
 Claude accepts its native model aliases or full model IDs. Claude Code's
 multi-agent capability resolves three model tiers — opus, sonnet and haiku
 (subagents, background tasks, `/model` alias switching). Configure which of
-the provider's models play those roles with `agents.<name>.claude.models`
+the provider's models play those roles with `agents.<name>.claude.modelMapping`
 (only with `backend: claude`):
 
 ```yaml
@@ -136,7 +136,7 @@ agents:
     backend: claude
     llm: shared-gateway
     claude:
-      models:
+      modelMapping:
         opus: kimi-k3          # pretends to be the heavyweight tier
         sonnet: kimi-k3-flash  # pretends to be the default tier
         haiku: kimi-k3-air     # pretends to be the fast tier
@@ -159,19 +159,19 @@ See [Claude model configuration](https://code.claude.com/docs/en/model-config).
 
 For a gateway or provider-specific model ID Claude Code does not know
 (`kimi-k3`, a Bedrock inference profile, …), bind its client-side identity
-with the three-tier `agents.<name>.claude.models` declaration (Issue #5422):
+with the three-tier `agents.<name>.claude.modelMapping` declaration (Issue #5422):
 no separate `behavesAs` key exists. Config compiles the declaration itself
 into the `modelOverrides` parameter mapping at config time — every tier alias
-key (`opus`, `sonnet`, `haiku`) maps to `models.<tier>`, an omitted tier
+key (`opus`, `sonnet`, `haiku`) maps to `modelMapping.<tier>`, an omitted tier
 deriving from the provider `defaultModel` — and Claude Code applies the
 tier's catalog entry — context window, capability and effort defaults — to
 the provider ID while still sending it on the wire. Because the keys are tier
 aliases rather than pinned full IDs, the binding follows Claude Code catalog
 upgrades instead of silently going stale. The compile shares one source with
-the tier environment, so editing `agents.<name>.claude.models` changes the
+the tier environment, so editing `agents.<name>.claude.modelMapping` changes the
 applied identity everywhere at once. A stale `behavesAs` key is an explicit
-config-time error pointing at `models` — never a silent no-op.
-`models: {opus: kimi-k3, sonnet: kimi-k3-flash, haiku: kimi-k3-air}` with the
+config-time error pointing at `modelMapping` — never a silent no-op.
+`modelMapping: {opus: kimi-k3, sonnet: kimi-k3-flash, haiku: kimi-k3-air}` with the
 provider default `defaultModel: kimi-k3-flash` generates
 `modelOverrides: {"opus": "kimi-k3", "sonnet": "kimi-k3-flash",
 "haiku": "kimi-k3-air"}` in the per-query private settings file; no user
@@ -187,7 +187,7 @@ Code ≥ v2.1.200; agent startup fails with a clear error when the bundled CLI
 is older. For multi-slot mappings pinned to explicit catalog IDs set
 `agents.<name>.claude.modelOverrides` directly — a raw Claude Code
 `modelOverrides` map (full Claude model ID → provider ID), mutually exclusive
-with `models`.
+with `modelMapping`.
 
 One binding can serve several harnesses (Issue #5679): bind both
 `backend: claude` and `backend: dsh` (or `pi`) agents to the same `llms` entry
@@ -201,7 +201,7 @@ wire models honest: a bare Claude alias (`sonnet`, `opus`, …) as `defaultModel
 rejected when the binding is shared with DSH/Pi/Codex, because Claude Code
 resolves aliases internally while the other harnesses would put the alias
 string itself on the wire — pin the wire model and map the Claude tiers via
-`agents.<name>.claude.models`; and
+`agents.<name>.claude.modelMapping`; and
 `agents.<name>.claude` requires `backend: claude`, so native Codex cannot
 reference Claude model-name configuration. A provider default model is
 optional — set it when agents sharing the provider should use one deployment
@@ -242,7 +242,7 @@ refused while the chat has a busy session so no turn is interrupted.
 Move the old singleton runtime's settings into a named `agents` entry, its API
 connection and optional default model into a named `llms` entry, and platform
 settings into `channels`. Replace capability-tier settings with the Claude
-agent's `claude.models` tier mapping (or `claude.env` alias variables).
+agent's `claude.modelMapping` tier mapping (or `claude.env` alias variables).
 Replace `agent.codex.model` with the bound `llms.<name>.defaultModel`. Old
 provider and top-level platform sections are rejected with migration guidance.
 Configuration files are never rewritten automatically; keep a backup when
@@ -253,7 +253,7 @@ migrating deployments. For earlier #5294 previews, move
 For the provider-ownership rework of Issue #5679, `llms.<name>.behavesAs`,
 `modelOverrides` and the `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL` variables
 have moved to `agents.<claude-name>.claude` (`behavesAs`, `modelOverrides`,
-`models`, `env`); old locations fail validation with field-path migration
+`modelMapping`, `env`); old locations fail validation with field-path migration
 guidance. The 2026-11-06 review additionally renamed the provider default key:
 `llms.<name>.model` is now `llms.<name>.defaultModel` — agents can use any
 model of the provider, the key only sets the default, and the old name fails
