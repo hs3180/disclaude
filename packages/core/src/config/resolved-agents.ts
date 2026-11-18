@@ -8,7 +8,7 @@ import type {
   LlmConfig,
 } from './types.js';
 import { validateAgentPresets } from './agent-presets.js';
-import { isCodexReasoningEffort } from './codex-settings.js';
+import { isReasoningEffort } from './codex-settings.js';
 import { apiCredentialEnvName, credentialEnvName } from './env-reference.js';
 import { modelSecretReferences, secretConfigurationErrors, resolveLlmEnvironment, hasUrlCredential } from './secret-references.js';
 
@@ -142,7 +142,7 @@ export function resolveConfiguredAgents(
     if (llm.defaultModel !== undefined && (typeof llm.defaultModel !== 'string' || !llm.defaultModel.trim())) {
       errors.push(`${field}.defaultModel must be a non-empty string when set`);
     }
-    if (llm.reasoningEffort !== undefined && !isCodexReasoningEffort(llm.reasoningEffort)) {
+    if (llm.reasoningEffort !== undefined && !isReasoningEffort(llm.reasoningEffort)) {
       errors.push(`${field}.reasoningEffort is invalid`);
     }
     if (

@@ -26,7 +26,7 @@ import type { UserInput } from '../../types.js';
 import { createInterface } from 'node:readline';
 
 import { createLogger } from '../../../utils/logger.js';
-import type { CodexReasoningEffort } from '../../../config/types.js';
+import type { ReasoningEffort } from '../../../config/types.js';
 import type { CodexSandboxLevel } from './sandbox-policy.js';
 import type { CodexThreadEvent } from './exec-adapter.js';
 
@@ -67,7 +67,7 @@ export interface CodexExecRunOptions {
   /** Model passthrough (`-m`). */
   model?: string;
   /** Explicit model-specific reasoning effort (`-c model_reasoning_effort=...`). */
-  reasoningEffort?: CodexReasoningEffort;
+  reasoningEffort?: ReasoningEffort;
   /**
    * Resume an existing codex session instead of starting a new one
    * (Issue #4628, S3): argv becomes `codex exec resume <id> -- <prompt>`.

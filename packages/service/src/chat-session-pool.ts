@@ -164,7 +164,7 @@ export interface ActiveAgentPreset {
   model: string;
   /** Where the binding came from, for status responses (#4913). */
   origin?: 'creation' | 'command';
-  /** Effective reasoning effort when one applies (codex runtimes, #4913/#4914). */
+  /** Effective reasoning effort when one applies (effort-capable runtimes, #4913/#4914). */
   reasoningEffort?: AgentPreset['reasoningEffort'];
 }
 

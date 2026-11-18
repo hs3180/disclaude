@@ -1,9 +1,11 @@
 /** Runtime profile declarations for chat creation (Issue #4913). */
 
-import type { AgentPreset, AgentPresets, CodexReasoningEffort } from './types.js';
-import { isCodexReasoningEffort } from './codex-settings.js';
+import type { AgentPreset, AgentPresets, ReasoningEffort } from './types.js';
+import { isReasoningEffort } from './codex-settings.js';
 
 const VALID_BACKENDS = new Set<AgentPreset['agentBackend']>(['claude', 'pi', 'codex', 'dsh']);
+/** Harnesses whose runtimes can apply a reasoning effort; a capability list, not a codex special case. */
+const EFFORT_CAPABLE_HARNESSES = new Set<string>(['codex']);
 const CODEX_MODEL_PATTERN = /^gpt-\d+(?:[.-].+)/i;
 const DECLARATION_KEYS = new Set(['harness', 'model', 'reasoningEffort']);
 const REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
@@ -20,7 +22,7 @@ export type RuntimeProfileResolution =
       ok: true;
       /** Internal credential/store base; never part of the declaration API. */
       base: { presetName: string; preset: AgentPreset };
-      overrides: { model: string; reasoningEffort?: CodexReasoningEffort };
+      overrides: { model: string; reasoningEffort?: ReasoningEffort };
     }
   | { ok: false; error: string; options?: string[] };
 
@@ -68,10 +70,10 @@ export function resolveRuntimeProfile(
     return { ok: false, error: `Model ${model} is not a Codex/ChatGPT model identifier` };
   }
   if (reasoningEffort !== undefined) {
-    if (harness !== 'codex') {
-      return { ok: false, error: `Harness ${harness} does not support a reasoning effort; only codex applies one`, options: ['codex'] };
+    if (!EFFORT_CAPABLE_HARNESSES.has(harness)) {
+      return { ok: false, error: `Harness ${harness} does not support a reasoning effort; supported harnesses: ${[...EFFORT_CAPABLE_HARNESSES].join(', ')}`, options: [...EFFORT_CAPABLE_HARNESSES] };
     }
-    if (!isCodexReasoningEffort(reasoningEffort)) {
+    if (!isReasoningEffort(reasoningEffort)) {
       return { ok: false, error: `Invalid reasoning effort: ${reasoningEffort}`, options: REASONING_EFFORTS };
     }
   }
@@ -89,7 +91,7 @@ export function resolveRuntimeProfile(
     base: { presetName: base, preset: agents[base] },
     overrides: {
       model,
-      ...(reasoningEffort !== undefined && isCodexReasoningEffort(reasoningEffort) ? { reasoningEffort } : {}),
+      ...(reasoningEffort !== undefined && isReasoningEffort(reasoningEffort) ? { reasoningEffort } : {}),
     },
   };
 }

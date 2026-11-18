@@ -2,7 +2,7 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { isCodexReasoningEffort, type CodexReasoningEffort } from '@disclaude/core';
+import { isReasoningEffort, type ReasoningEffort } from '@disclaude/core';
 
 /**
  * Creation-time overrides stored alongside a preset binding (#4913): an
@@ -11,7 +11,7 @@ import { isCodexReasoningEffort, type CodexReasoningEffort } from '@disclaude/co
  */
 export interface AgentSelectionOverrides {
   model?: string;
-  reasoningEffort?: CodexReasoningEffort;
+  reasoningEffort?: ReasoningEffort;
 }
 
 export interface AgentSelection {
@@ -40,7 +40,7 @@ function validSelection(value: AgentSelection, chatId: string): boolean {
     const { model, reasoningEffort } = value.overrides;
     if (typeof value.overrides !== 'object'
       || (model !== undefined && (typeof model !== 'string' || !model.trim()))
-      || (reasoningEffort !== undefined && !isCodexReasoningEffort(reasoningEffort))) {
+      || (reasoningEffort !== undefined && !isReasoningEffort(reasoningEffort))) {
       return false;
     }
   }
