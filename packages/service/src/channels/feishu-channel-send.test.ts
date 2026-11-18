@@ -209,7 +209,9 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
       'new_msg_001',
       'feishu:personal:oc_same',
       'reply',
-      'text'
+      'text',
+      undefined,
+      'feishu:personal:new_msg_001'
     );
   });
 
@@ -232,7 +234,14 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
           content: JSON.stringify({ text: 'brief help' }),
         },
       });
-      expect(mockLogOutgoingMessage).toHaveBeenCalledWith('welcome', chatId, 'brief help', 'text');
+      expect(mockLogOutgoingMessage).toHaveBeenCalledWith(
+        'welcome',
+        chatId,
+        'brief help',
+        'text',
+        undefined,
+        'welcome'
+      );
     }
   );
 
@@ -1603,7 +1612,9 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
         'new_msg_001',
         'chat_123',
         'Hello',
-        'text'
+        'text',
+        undefined,
+        'new_msg_001'
       );
     });
 
@@ -1622,7 +1633,9 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
         'new_msg_001',
         'chat_123',
         'Hello @Alice',
-        'post'
+        'post',
+        undefined,
+        'new_msg_001'
       );
     });
 
@@ -1641,7 +1654,9 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
         'new_msg_001',
         'chat_123',
         'Test card',
-        'interactive'
+        'interactive',
+        undefined,
+        'new_msg_001'
       );
     });
 
@@ -1689,7 +1704,9 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
         'new_msg_001',
         'chat_123',
         expect.stringContaining('Status Update'),
-        'interactive'
+        'interactive',
+        undefined,
+        'new_msg_001'
       );
     });
 
@@ -1709,7 +1726,9 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
         'new_msg_001',
         'chat_123',
         expect.stringMatching(/^A{197}\.\.\.$/),
-        'interactive'
+        'interactive',
+        undefined,
+        'new_msg_001'
       );
     });
   });
