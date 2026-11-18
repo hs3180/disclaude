@@ -64,6 +64,56 @@ describe('DSH bound LLM API overlay', () => {
     }
   });
 
+  it('routes built-in skills through skill-filesystem, merging an existing plugin config', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-profile-test-'));
+    const file = join(dir, 'cordis.patch.yml');
+    writeFileSync(
+      file,
+      '- id: skill-filesystem\n' +
+        '  name: "@deepseek-ai/dsh-skill-filesystem"\n' +
+        '  config:\n    customSkillDirs: ["/user/skills"]\n'
+    );
+    const overlay = createDshNativeProfileOverlay(
+      undefined,
+      [file],
+      undefined,
+      undefined,
+      { bundledSkillDir: '/builtins/skills' }
+    );
+    try {
+      const patch = JSON.parse(readFileSync(overlay.path, 'utf8'));
+      const entry = patch.find((e: { id?: string }) => e.id === 'skill-filesystem');
+      expect(entry.config).toEqual({
+        customSkillDirs: ['/user/skills'],
+        bundledSkillDir: '/builtins/skills',
+      });
+    } finally {
+      overlay.dispose();
+      rmSync(dir, { recursive: true });
+    }
+  });
+
+  it('inserts the skill-filesystem plugin when the profile omits it', () => {
+    const overlay = createDshNativeProfileOverlay(
+      undefined,
+      [],
+      undefined,
+      undefined,
+      { bundledSkillDir: '/builtins/skills' }
+    );
+    try {
+      const patch = JSON.parse(readFileSync(overlay.path, 'utf8'));
+      const inserted = patch.find((entry: { insert?: unknown[] }) => entry.insert).insert;
+      const entry = inserted.find(
+        (e: { id?: string }) => e.id === 'disclaude-dsh-skill-filesystem'
+      );
+      expect(entry.config).toEqual({ bundledSkillDir: '/builtins/skills' });
+      expect(patch.some((e: { id?: string }) => e.id === 'skill-filesystem')).toBe(false);
+    } finally {
+      overlay.dispose();
+    }
+  });
+
   it('keeps protocol, endpoint and model routes distinct across persisted sessions', () => {
     const selected = {
       protocol: 'openai' as const,
