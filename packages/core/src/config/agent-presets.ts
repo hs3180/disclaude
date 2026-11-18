@@ -107,13 +107,18 @@ export function validateAgentPresets(
 /**
  * Resolve a requested preset name, or the validated default when omitted.
  *
+ * When no name is requested the configured `defaultHarness` wins; without one,
+ * the legacy default-flag/first-entry selection applies (a single-entry map
+ * resolves to that entry — 唯一条目回落).
+ *
  * This deliberately does not revalidate the map: callers that accept user
  * configuration should run validateAgentPresets first, while runtime command
  * handlers can use this helper without duplicating selection semantics.
  */
 export function resolveAgentPreset<T extends Pick<AgentPreset, 'agentBackend' | 'model' | 'default'>>(
   agents: Record<string, T>,
-  requestedName?: string
+  requestedName?: string,
+  defaultHarness?: string
 ): AgentPresetResolution<T> {
   const name = requestedName?.trim();
   if (name) {
@@ -121,6 +126,15 @@ export function resolveAgentPreset<T extends Pick<AgentPreset, 'agentBackend' | 
     return preset
       ? { ok: true, name, preset }
       : { ok: false, error: `Unknown agent preset: ${name}` };
+  }
+
+  const harness = defaultHarness?.trim();
+  if (harness) {
+    const preset = agents[harness];
+    if (!preset) {
+      return { ok: false, error: `defaultHarness must reference a defined agents entry: ${harness}` };
+    }
+    return { ok: true, name: harness, preset };
   }
 
   const entries = Object.entries(agents);

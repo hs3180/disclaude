@@ -819,7 +819,9 @@ export async function main(): Promise<void> {
     runtimeOptions: (source) => {
       const presets = Config.getAgentPresets();
       const selected = agentPool.getActiveAgentPreset(source.chatId, source.threadRootId);
-      const resolved = presets ? resolveAgentPreset(presets, selected?.name) : undefined;
+      const resolved = presets
+      ? resolveAgentPreset(presets, selected?.name, Config.getRawConfig().defaultHarness)
+      : undefined;
       if (resolved && !resolved.ok) {
         throw new Error('Selected Goal runtime is unavailable');
       }
@@ -867,7 +869,9 @@ export async function main(): Promise<void> {
   }): AgentCreateOptions => {
     const presets = Config.getAgentPresets();
     const selected = agentPool.getActiveAgentPreset(input.chatId, input.threadRootId);
-    const resolved = presets ? resolveAgentPreset(presets, selected?.name) : undefined;
+    const resolved = presets
+      ? resolveAgentPreset(presets, selected?.name, Config.getRawConfig().defaultHarness)
+      : undefined;
     if (resolved && !resolved.ok) {
       throw new Error('Selected subtask runtime is unavailable');
     }

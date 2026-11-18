@@ -161,6 +161,38 @@ describe('resolveAgentPreset', () => {
       preset: unmarked.fast,
     });
   });
+
+  it('prefers the configured defaultHarness over the reserved default', () => {
+    expect(resolveAgentPreset(agents, undefined, 'codex')).toEqual({
+      ok: true,
+      name: 'codex',
+      preset: agents.codex,
+    });
+  });
+
+  it('keeps an explicit request ahead of defaultHarness', () => {
+    expect(resolveAgentPreset(agents, 'default', 'codex')).toEqual({
+      ok: true,
+      name: 'default',
+      preset: agents.default,
+    });
+  });
+
+  it('rejects a dangling defaultHarness instead of silently reordering', () => {
+    expect(resolveAgentPreset(agents, undefined, 'missing')).toEqual({
+      ok: false,
+      error: 'defaultHarness must reference a defined agents entry: missing',
+    });
+  });
+
+  it('resolves a single-entry map without defaultHarness', () => {
+    const solo = { claude: { agentBackend: 'claude' as const, model: 'claude-sonnet' } };
+    expect(resolveAgentPreset(solo, undefined, '  ')).toEqual({
+      ok: true,
+      name: 'claude',
+      preset: solo.claude,
+    });
+  });
 });
 
 describe('orthogonal dimension switching helpers (Issue #5255)', () => {

@@ -162,7 +162,9 @@ export function validateConfig(config: DisclaudeConfig): boolean {
     logger.error({ errors: resolved.errors }, 'Invalid agent configuration');
     return false;
   }
-  const selected = Object.keys(resolved.presets).length ? resolveAgentPreset(resolved.presets) : undefined;
+  const selected = Object.keys(resolved.presets).length
+    ? resolveAgentPreset(resolved.presets, undefined, config.defaultHarness)
+    : undefined;
   if (selected?.ok && selected.preset.agentBackend === 'codex') {
     const model = process.env.CODEX_MODEL?.trim() || config.env?.CODEX_MODEL;
     const effort = process.env.CODEX_REASONING_EFFORT?.trim() || config.env?.CODEX_REASONING_EFFORT;
@@ -199,7 +201,7 @@ export function validateRequiredConfig(config: DisclaudeConfig): {
   if (!resolved.ok) {
     return { valid: false, errors: resolved.errors.map(message => ({ field: 'agents/llms', message })) };
   }
-  const selected = resolveAgentPreset(resolved.presets);
+  const selected = resolveAgentPreset(resolved.presets, undefined, config.defaultHarness);
   const error = selected.ok ? validateResolvedAgent(selected.preset) : selected.error;
   return { valid: !error, errors: error ? [{ field: 'agents/llms', message: error }] : [] };
 }
