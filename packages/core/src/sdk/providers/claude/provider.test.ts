@@ -1737,17 +1737,17 @@ describe('tier-declaration parameter mapping (Issue #5422)', () => {
       yield { role: 'user', content: 'hi' } as UserInput;
     })(), {
       // Exactly what resolved-agents compiles from the claude.modelMapping
-      // claude.modelMapping: { opus: kimi-k3, sonnet: kimi-k3-flash, haiku: kimi-k3-air }.
+      // claude.modelMapping: { opus: kimi-k3.1-pro, sonnet: glm-5.3, haiku: deepseek-flash }.
       settingSources: [],
-      modelOverrides: { opus: 'kimi-k3', sonnet: 'kimi-k3-flash', haiku: 'kimi-k3-air' },
-      model: 'kimi-k3',
+      modelOverrides: { opus: 'kimi-k3.1-pro', sonnet: 'glm-5.3', haiku: 'deepseek-flash' },
+      model: 'kimi-k3.1-pro',
     });
     const messages = await drain(stream);
     expect(messages.map((message) => message.type)).toContain('text');
     // No resolution step gates the input: the host input flows straight
     // through, and the catalog / flag-settings channels stay untouched.
     expect(events).toEqual(['host-input-pulled', 'input-forwarded']);
-    expect(captured[0]).toEqual({ opus: 'kimi-k3', sonnet: 'kimi-k3-flash', haiku: 'kimi-k3-air' });
+    expect(captured[0]).toEqual({ opus: 'kimi-k3.1-pro', sonnet: 'glm-5.3', haiku: 'deepseek-flash' });
     provider.dispose();
   });
 
@@ -1758,10 +1758,10 @@ describe('tier-declaration parameter mapping (Issue #5422)', () => {
     const stream = provider.queryStream((async function* () {
       yield { role: 'user', content: 'hi' } as UserInput;
     })(), {
-      settingSources: [], modelOverrides: { 'claude-opus-5': 'kimi-k3' }, model: 'kimi-k3',
+      settingSources: [], modelOverrides: { 'claude-opus-5': 'kimi-k3.1-pro' }, model: 'kimi-k3.1-pro',
     });
     await drain(stream);
-    expect(captured[0]).toEqual({ 'claude-opus-5': 'kimi-k3' });
+    expect(captured[0]).toEqual({ 'claude-opus-5': 'kimi-k3.1-pro' });
     provider.dispose();
   });
 
@@ -1771,7 +1771,7 @@ describe('tier-declaration parameter mapping (Issue #5422)', () => {
     const provider = new ClaudeSDKProvider();
     const stream = provider.queryStream((async function* () {
       yield { role: 'user', content: 'hi' } as UserInput;
-    })(), { settingSources: [], model: 'kimi-k3' });
+    })(), { settingSources: [], model: 'kimi-k3.1-pro' });
     await drain(stream);
     expect(captured[0]).toBeUndefined();
     provider.dispose();
@@ -1802,12 +1802,12 @@ describe('tier-declaration parameter mapping (Issue #5422)', () => {
       yield { role: 'user', content: 'hi again' } as UserInput;
     })(), {
       settingSources: [],
-      modelOverrides: { opus: 'kimi-k3', sonnet: 'kimi-k3-flash', haiku: 'kimi-k3-air' },
-      model: 'kimi-k3',
+      modelOverrides: { opus: 'kimi-k3.1-pro', sonnet: 'glm-5.3', haiku: 'deepseek-flash' },
+      model: 'kimi-k3.1-pro',
     }));
     expect(captured).toEqual([
       { opus: 'glm-5.3', sonnet: 'glm-5.3', haiku: 'glm-5.3' },
-      { opus: 'kimi-k3', sonnet: 'kimi-k3-flash', haiku: 'kimi-k3-air' },
+      { opus: 'kimi-k3.1-pro', sonnet: 'glm-5.3', haiku: 'deepseek-flash' },
     ]);
     expect(events).toEqual(['input-forwarded', 'input-forwarded']);
     provider.dispose();

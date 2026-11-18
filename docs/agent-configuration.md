@@ -137,12 +137,12 @@ agents:
     llm: shared-gateway
     claude:
       modelMapping:
-        opus: kimi-k3          # pretends to be the heavyweight tier
-        sonnet: kimi-k3-flash  # pretends to be the default tier
-        haiku: kimi-k3-air     # pretends to be the fast tier
+        opus: kimi-k3.1-pro          # pretends to be the heavyweight tier
+        sonnet: glm-5.3  # pretends to be the default tier
+        haiku: deepseek-flash     # pretends to be the fast tier
 llms:
   shared-gateway:
-    defaultModel: kimi-k3-flash
+    defaultModel: glm-5.3
 ```
 
 Each tier key is optional; an omitted tier falls back to the provider's
@@ -158,7 +158,7 @@ through unchanged.
 See [Claude model configuration](https://code.claude.com/docs/en/model-config).
 
 For a gateway or provider-specific model ID Claude Code does not know
-(`kimi-k3`, a Bedrock inference profile, …), bind its client-side identity
+(`kimi-k3.1-pro`, a Bedrock inference profile, …), bind its client-side identity
 with the three-tier `agents.<name>.claude.modelMapping` declaration (Issue #5422):
 no separate `behavesAs` key exists. Config compiles the declaration itself
 into the `modelOverrides` parameter mapping at config time — every tier alias
@@ -171,10 +171,10 @@ upgrades instead of silently going stale. The compile shares one source with
 the tier environment, so editing `agents.<name>.claude.modelMapping` changes the
 applied identity everywhere at once. A stale `behavesAs` key is an explicit
 config-time error pointing at `modelMapping` — never a silent no-op.
-`modelMapping: {opus: kimi-k3, sonnet: kimi-k3-flash, haiku: kimi-k3-air}` with the
-provider default `defaultModel: kimi-k3-flash` generates
-`modelOverrides: {"opus": "kimi-k3", "sonnet": "kimi-k3-flash",
-"haiku": "kimi-k3-air"}` in the per-query private settings file; no user
+`modelMapping: {opus: kimi-k3.1-pro, sonnet: glm-5.3, haiku: deepseek-flash}` with the
+provider default `defaultModel: glm-5.3` generates
+`modelOverrides: {"opus": "kimi-k3.1-pro", "sonnet": "glm-5.3",
+"haiku": "deepseek-flash"}` in the per-query private settings file; no user
 `~/.claude/settings.json` is written. Overrides also apply on the
 `ANTHROPIC_DEFAULT_*_MODEL` env-pin path. Window rules: Opus-line IDs
 (`claude-opus-5`, `claude-opus-4-8`, `claude-opus-4-7`) are the only 1M

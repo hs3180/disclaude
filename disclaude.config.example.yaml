@@ -39,9 +39,9 @@ agents:
       # below — so you can skip `modelMapping` entirely and configure only
       # defaultModel: all three tiers then point at that one model.
       modelMapping:
-        opus: kimi-k3 # heavyweight tier
-        sonnet: kimi-k3-flash # default tier
-        haiku: kimi-k3-air # fast/background tier
+        opus: kimi-k3.1-pro # heavyweight tier
+        sonnet: glm-5.3 # default tier
+        haiku: deepseek-flash # fast/background tier
       # Capability slot for the provider defaultModel when it is a gateway ID
       # Claude Code does not know: there is no separate `behavesAs` key
       # (Issue #5422). The three tier mappings above (opus, sonnet, haiku) ARE
@@ -54,9 +54,9 @@ agents:
       # Alternative (mutually exclusive with modelMapping): map several full Claude
       # model IDs to provider IDs, e.g. a multi-model gateway:
       # modelOverrides:
-      #   claude-opus-5: kimi-k3
-      #   claude-sonnet-4-5: kimi-k3-flash
-      #   claude-haiku-4-5: kimi-k3-flash
+      #   claude-opus-5: kimi-k3.1-pro
+      #   claude-sonnet-4-5: glm-5.3
+      #   claude-haiku-4-5: glm-5.3
       # Other Claude-only environment. The three tier variables above are
       # derived from `models`/defaultModel — set a tier in ONE place; setting
       # e.g. ANTHROPIC_DEFAULT_HAIKU_MODEL here together with modelMapping.haiku is

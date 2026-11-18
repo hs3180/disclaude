@@ -120,11 +120,11 @@ describe('Claude native model aliases', () => {
 
 describe('Claude modelOverrides identity (Issue #5410)', () => {
   it('passes the resolved map to native queries with the current bundled CLI', async () => {
-    const options = await selectedOptions('kimi-k3', undefined, undefined, {
-      'claude-opus-5': 'kimi-k3',
+    const options = await selectedOptions('kimi-k3.1-pro', undefined, undefined, {
+      'claude-opus-5': 'kimi-k3.1-pro',
     });
-    expect(options.modelOverrides).toEqual({ 'claude-opus-5': 'kimi-k3' });
-    expect(options.model).toBe('kimi-k3');
+    expect(options.modelOverrides).toEqual({ 'claude-opus-5': 'kimi-k3.1-pro' });
+    expect(options.model).toBe('kimi-k3.1-pro');
   });
   it('fails agent startup when the bundled Claude Code predates modelOverrides', async () => {
     vi.doMock('../sdk/providers/claude/version.js', async (importOriginal) => ({
@@ -138,9 +138,9 @@ describe('Claude modelOverrides identity (Issue #5410)', () => {
     expect(() => new GateAgent({
       apiKey: 'selected-key',
       apiProtocol: 'anthropic',
-      model: 'kimi-k3',
+      model: 'kimi-k3.1-pro',
       llm: 'gateway',
-      modelOverrides: { 'claude-opus-5': 'kimi-k3' },
+      modelOverrides: { 'claude-opus-5': 'kimi-k3.1-pro' },
       agentBackend: 'claude',
     })).toThrow(/requires Claude Code >= 2\.1\.200.*claude\.modelOverrides/);
   });
@@ -149,10 +149,10 @@ describe('Claude modelOverrides identity (Issue #5410)', () => {
       ...(await importOriginal<Record<string, unknown>>()),
       bundledClaudeCodeVersion: () => undefined,
     }));
-    const options = await selectedOptions('kimi-k3', undefined, undefined, {
-      'claude-opus-4-7': 'kimi-k3',
+    const options = await selectedOptions('kimi-k3.1-pro', undefined, undefined, {
+      'claude-opus-4-7': 'kimi-k3.1-pro',
     });
-    expect(options.modelOverrides).toEqual({ 'claude-opus-4-7': 'kimi-k3' });
+    expect(options.modelOverrides).toEqual({ 'claude-opus-4-7': 'kimi-k3.1-pro' });
   });
 });
 
@@ -162,8 +162,8 @@ describe('Claude tier-alias parameter mapping (Issue #5422)', () => {
   // no behavesAs key exists) flows through the standard passthrough and
   // startup floor — no running-catalog resolution exists anywhere.
   it('passes an alias-keyed map to native queries unchanged, without alias-specific options', async () => {
-    const options = await selectedOptions('kimi-k3', undefined, undefined, { opus: 'kimi-k3' });
-    expect(options.modelOverrides).toEqual({ opus: 'kimi-k3' });
+    const options = await selectedOptions('kimi-k3.1-pro', undefined, undefined, { opus: 'kimi-k3.1-pro' });
+    expect(options.modelOverrides).toEqual({ opus: 'kimi-k3.1-pro' });
     // The generic query options carry no alias concept of their own.
     const raw = options as unknown as Record<string, unknown>;
     expect(raw.behavesAsAlias).toBeUndefined();
@@ -181,9 +181,9 @@ describe('Claude tier-alias parameter mapping (Issue #5422)', () => {
     expect(() => new GateAliasAgent({
       apiKey: 'selected-key',
       apiProtocol: 'anthropic',
-      model: 'kimi-k3',
+      model: 'kimi-k3.1-pro',
       llm: 'gateway',
-      modelOverrides: { opus: 'kimi-k3' },
+      modelOverrides: { opus: 'kimi-k3.1-pro' },
       agentBackend: 'claude',
     })).toThrow(/requires Claude Code >= 2\.1\.200/);
   });

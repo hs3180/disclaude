@@ -51,7 +51,7 @@ const miniSweLlm = (): LlmConfig => ({
   api: { protocol: 'openai', baseUrl: 'https://litellm.example/v1', apiKey: '$MINISWE_KEY' },
 });
 const nonDshLlmBinding = (backend: string) => (backend === 'codex' ? 'daily' : 'proxy');
-const kimiTierOverrides = { 'claude-opus-5': 'kimi-k3', 'claude-sonnet-4-5': 'kimi-k3-flash' };
+const kimiTierOverrides = { 'claude-opus-5': 'kimi-k3.1-pro', 'claude-sonnet-4-5': 'glm-5.3' };
 const tierEnv = (opus: string, sonnet = opus, haiku = opus) => ({
   ANTHROPIC_DEFAULT_OPUS_MODEL: opus,
   ANTHROPIC_DEFAULT_SONNET_MODEL: sonnet,
@@ -553,10 +553,10 @@ describe('named runtime and LLM configuration', () => {
       c.agents!.assistant.claude = staleBehavesAs('');
     },
     (c: DisclaudeConfig) => {
-      c.agents!.assistant.claude = { ...staleBehavesAs('claude-opus-5'), modelOverrides: { 'claude-opus-5': 'kimi-k3' } };
+      c.agents!.assistant.claude = { ...staleBehavesAs('claude-opus-5'), modelOverrides: { 'claude-opus-5': 'kimi-k3.1-pro' } };
     },
     (c: DisclaudeConfig) => {
-      c.agents!.assistant.claude = { modelOverrides: { opus: 'kimi-k3' } };
+      c.agents!.assistant.claude = { modelOverrides: { opus: 'kimi-k3.1-pro' } };
     },
     (c: DisclaudeConfig) => {
       c.agents!.assistant.claude = { modelOverrides: { 'claude-opus-5': '  ' } };
@@ -584,7 +584,7 @@ describe('named runtime and LLM configuration', () => {
   it('compiles the declared three tiers into the tier-alias parameter mapping (Issue #5422 r3)', () => {
     const config = configuration();
     config.agents!.assistant.claude = {
-      modelMapping: { opus: 'kimi-k3', sonnet: 'kimi-k3-flash', haiku: 'kimi-k3-air' },
+      modelMapping: { opus: 'kimi-k3.1-pro', sonnet: 'glm-5.3', haiku: 'deepseek-flash' },
     };
     const result = resolveConfiguredAgents(config);
     expect(result.ok).toBe(true);
@@ -595,28 +595,28 @@ describe('named runtime and LLM configuration', () => {
     // slot source, compiled at config time — the runtime never resolves
     // against a running Claude catalog.
     expect(result.presets.assistant.modelOverrides).toEqual({
-      opus: 'kimi-k3', sonnet: 'kimi-k3-flash', haiku: 'kimi-k3-air',
+      opus: 'kimi-k3.1-pro', sonnet: 'glm-5.3', haiku: 'deepseek-flash',
     });
     // The same declaration the tier environment builds from — one source of
     // truth, so redeclaring the mapping moves both together.
-    expect(result.presets.assistant.env).toEqual(tierEnv('kimi-k3', 'kimi-k3-flash', 'kimi-k3-air'));
+    expect(result.presets.assistant.env).toEqual(tierEnv('kimi-k3.1-pro', 'glm-5.3', 'deepseek-flash'));
   });
   it('fills tiers omitted from claude.modelMapping with the provider default in the compiled mapping', () => {
     const config = configuration();
-    config.agents!.assistant.claude = { modelMapping: { sonnet: 'kimi-k3-flash' } };
+    config.agents!.assistant.claude = { modelMapping: { sonnet: 'deepseek-flash' } };
     const result = resolveConfiguredAgents(config);
     expect(result.ok).toBe(true);
     if (!result.ok) {
       return;
     }
     expect(result.presets.assistant.modelOverrides).toEqual({
-      opus: 'glm-5.3', sonnet: 'kimi-k3-flash', haiku: 'glm-5.3',
+      opus: 'glm-5.3', sonnet: 'deepseek-flash', haiku: 'glm-5.3',
     });
   });
   it('rejects claude.modelMapping declared together with a raw modelOverrides map', () => {
     const config = configuration();
     config.agents!.assistant.claude = {
-      modelMapping: { sonnet: 'kimi-k3-flash' },
+      modelMapping: { sonnet: 'glm-5.3' },
       modelOverrides: { ...kimiTierOverrides },
     };
     const result = resolveConfiguredAgents(config);
@@ -891,7 +891,7 @@ describe('named runtime and LLM configuration', () => {
       expect(malformed.errors.join('\n')).toContain('agents.assistant.claude must be a mapping');
 
       const unknown = configuration();
-      unknown.agents!.assistant.claude = { tiers: { opus: 'kimi-k3' } } as never;
+      unknown.agents!.assistant.claude = { tiers: { opus: 'kimi-k3.1-pro' } } as never;
       const rejected = resolveConfiguredAgents(unknown);
       expect(rejected.ok).toBe(false);
       if (rejected.ok) {
@@ -903,8 +903,8 @@ describe('named runtime and LLM configuration', () => {
     it('rejects malformed tier declarations and raw mappings', () => {
       const config = configuration();
       config.agents!.assistant.claude = {
-        modelMapping: { sonnet: 'kimi-k3-flash' },
-        modelOverrides: { 'claude-opus-5': 'kimi-k3' },
+        modelMapping: { sonnet: 'glm-5.3' },
+        modelOverrides: { 'claude-opus-5': 'kimi-k3.1-pro' },
       };
       const result = resolveConfiguredAgents(config);
       expect(result.ok).toBe(false);
@@ -916,7 +916,7 @@ describe('named runtime and LLM configuration', () => {
       );
 
       const aliased = configuration();
-      aliased.agents!.assistant.claude = { modelOverrides: { sonnet: 'kimi-k3' } };
+      aliased.agents!.assistant.claude = { modelOverrides: { sonnet: 'kimi-k3.1-pro' } };
       const aliasResult = resolveConfiguredAgents(aliased);
       expect(aliasResult.ok).toBe(false);
       if (aliasResult.ok) {
@@ -931,7 +931,7 @@ describe('named runtime and LLM configuration', () => {
       const config = configuration();
       delete config.llms!.proxy.defaultModel;
       config.agents!.assistant.claude = {
-        modelMapping: { opus: 'kimi-k3', sonnet: 'kimi-k3-flash', haiku: 'kimi-k3-air' },
+        modelMapping: { opus: 'kimi-k3.1-pro', sonnet: 'glm-5.3', haiku: 'deepseek-flash' },
       };
       const result = resolveConfiguredAgents(config);
       expect(result.ok).toBe(true);
@@ -939,7 +939,7 @@ describe('named runtime and LLM configuration', () => {
         return;
       }
       expect(result.presets.assistant.modelOverrides).toEqual({
-        opus: 'kimi-k3', sonnet: 'kimi-k3-flash', haiku: 'kimi-k3-air',
+        opus: 'kimi-k3.1-pro', sonnet: 'glm-5.3', haiku: 'deepseek-flash',
       });
     });
   });
@@ -948,7 +948,7 @@ describe('named runtime and LLM configuration', () => {
     it('compiles explicit tiers into the native tier environment', () => {
       const config = configuration();
       config.agents!.assistant.claude = {
-        modelMapping: { opus: 'kimi-k3', sonnet: 'kimi-k3-flash', haiku: 'kimi-k3-air' },
+        modelMapping: { opus: 'kimi-k3.1-pro', sonnet: 'glm-5.3', haiku: 'deepseek-flash' },
       };
       config.agents!.research = { backend: 'dsh', llm: 'proxy' };
       const result = resolveConfiguredAgents(config);
@@ -956,7 +956,7 @@ describe('named runtime and LLM configuration', () => {
       if (!result.ok) {
         return;
       }
-      expect(result.presets.assistant.env).toEqual(tierEnv('kimi-k3', 'kimi-k3-flash', 'kimi-k3-air'));
+      expect(result.presets.assistant.env).toEqual(tierEnv('kimi-k3.1-pro', 'glm-5.3', 'deepseek-flash'));
       // Tier metadata rides the Claude preset only; the DSH agent sharing the
       // binding keeps the wire model without Claude environment.
       expect(result.presets.research.env?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
@@ -964,13 +964,13 @@ describe('named runtime and LLM configuration', () => {
 
     it('falls back to the provider default for omitted tiers', () => {
       const config = configuration();
-      config.agents!.assistant.claude = { modelMapping: { haiku: 'kimi-k3-air' } };
+      config.agents!.assistant.claude = { modelMapping: { haiku: 'deepseek-flash' } };
       const result = resolveConfiguredAgents(config);
       expect(result.ok).toBe(true);
       if (!result.ok) {
         return;
       }
-      expect(result.presets.assistant.env).toEqual(tierEnv('glm-5.3', 'glm-5.3', 'kimi-k3-air'));
+      expect(result.presets.assistant.env).toEqual(tierEnv('glm-5.3', 'glm-5.3', 'deepseek-flash'));
     });
 
     it('points all three tiers at the only configured model by default', () => {
@@ -1012,7 +1012,7 @@ describe('named runtime and LLM configuration', () => {
     it('rejects double-configuring one tier in models and env', () => {
       const config = configuration();
       config.agents!.assistant.claude = {
-        modelMapping: { haiku: 'kimi-k3-air' },
+        modelMapping: { haiku: 'deepseek-flash' },
         env: { ANTHROPIC_DEFAULT_HAIKU_MODEL: 'small-model' },
       };
       const result = resolveConfiguredAgents(config);
@@ -1029,8 +1029,8 @@ describe('named runtime and LLM configuration', () => {
       {},
       { opus: '' },
       { sonnet: '   ' },
-      { turbo: 'kimi-k3' },
-      'kimi-k3',
+      { turbo: 'kimi-k3.1-pro' },
+      'kimi-k3.1-pro',
     ])('rejects malformed tier declarations (%j)', (models) => {
       const config = configuration();
       config.agents!.assistant.claude = { modelMapping: models as never };
@@ -1213,7 +1213,7 @@ describe('named runtime and LLM configuration', () => {
       const config = configuration();
       config.agents!.apicodex = { backend: 'codex', llm: 'gateway' };
       config.llms!.gateway = {
-        defaultModel: 'kimi-k3',
+        defaultModel: 'kimi-k3.1-pro',
         api: { protocol: 'openai', baseUrl: 'https://api.example/v1', apiKey: '$API_KEY' },
       };
       expect(resolveConfiguredAgents(config).ok).toBe(true);

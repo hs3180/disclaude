@@ -20,12 +20,12 @@ describe('privateSdkSettings', () => {
 
   it('routes modelOverrides into the private file without an API key (Issue #5410)', () => {
     const { options, cleanup } = privateSdkSettings({
-      settings: { modelOverrides: { 'claude-opus-5': 'kimi-k3' } },
+      settings: { modelOverrides: { 'claude-opus-5': 'kimi-k3.1-pro' } },
     });
     try {
       expect(typeof options.settings).toBe('string');
       expect(JSON.parse(readFileSync(options.settings as string, 'utf8'))).toEqual({
-        modelOverrides: { 'claude-opus-5': 'kimi-k3' },
+        modelOverrides: { 'claude-opus-5': 'kimi-k3.1-pro' },
       });
       expect(statSync(options.settings as string).mode & 0o777).toBe(0o600);
       cleanup();
@@ -44,8 +44,8 @@ describe('privateSdkSettings', () => {
   });
 
   it('leaves options without settings alone', () => {
-    const { options, cleanup } = privateSdkSettings({ model: 'kimi-k3' });
-    expect(options).toEqual({ model: 'kimi-k3' });
+    const { options, cleanup } = privateSdkSettings({ model: 'kimi-k3.1-pro' });
+    expect(options).toEqual({ model: 'kimi-k3.1-pro' });
     cleanup();
   });
 });
