@@ -58,6 +58,32 @@ describe('named runtime and LLM configuration', () => {
     const result = resolveConfiguredAgents(config);
     expect(result.ok && result.presets.assistant.autoCompactWindow).toBe('auto');
   });
+  it('accepts a defaultHarness that names a configured runtime', () => {
+    const config = configuration();
+    config.defaultHarness = 'assistant';
+    expect(validateConfig(config)).toBe(true);
+    expect(resolveConfiguredAgents(config).ok).toBe(true);
+  });
+  it('rejects a defaultHarness that names no configured runtime', () => {
+    const config = configuration();
+    config.defaultHarness = 'missing';
+    const result = resolveConfiguredAgents(config);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.errors).toContain('defaultHarness must reference a defined agents entry');
+  });
+  it('rejects an empty defaultHarness', () => {
+    const config = configuration();
+    config.defaultHarness = '  ';
+    const result = resolveConfiguredAgents(config);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.errors).toContain('defaultHarness must be a non-empty string when set');
+  });
   it.each(['openai', 'anthropic'] as const)(
     'resolves a DSH %s connection from its LLM',
     (protocol) => {

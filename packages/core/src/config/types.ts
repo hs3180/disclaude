@@ -532,6 +532,11 @@ export interface DisclaudeConfig {
   workspace?: WorkspaceConfig;
   /** Named runtimes and their LLM bindings. */
   agents?: Record<string, AgentDefinition>;
+  /**
+   * Default harness binding for chats that declare no runtime (r4 review
+   * 5948908832): names a configured `agents` key.
+   */
+  defaultHarness?: string;
   /** Named models and API connections. */
   llms?: Record<string, LlmConfig>;
   /** Channel settings. */

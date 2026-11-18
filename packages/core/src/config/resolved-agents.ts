@@ -15,6 +15,7 @@ import { modelSecretReferences, secretConfigurationErrors, resolveLlmEnvironment
 const CONFIG_KEYS = new Set([
   'workspace',
   'agents',
+  'defaultHarness',
   'llms',
   'channels',
   'logging',
@@ -90,6 +91,18 @@ export function resolveConfiguredAgents(
       ))
   ) {
     errors.push('env must map variable names to strings');
+  }
+  // Top-level default harness binding (r4 review 5948908832): names the
+  // agents entry used when a chat declares no runtime. Selection semantics
+  // arrive with the agents key-domain switch; the reference is validated now
+  // so the key cannot silently rot — including on the empty-config early
+  // return below, where a dangling defaultHarness is the only defect.
+  if (config.defaultHarness !== undefined) {
+    if (typeof config.defaultHarness !== 'string' || !config.defaultHarness.trim()) {
+      errors.push('defaultHarness must be a non-empty string when set');
+    } else if (!Object.hasOwn(config.agents ?? {}, config.defaultHarness)) {
+      errors.push('defaultHarness must reference a defined agents entry');
+    }
   }
   if (config.agents === undefined && config.llms === undefined) {
     return errors.length ? { ok: false, errors } : { ok: true, presets: {} };
