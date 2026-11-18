@@ -117,6 +117,56 @@ describe('extractCodexRateLimitReadings', () => {
     );
     expect(clamped?.usedPercent).toBe(100);
   });
+
+  it('extracts app-server 0.167 camelCase windows and normalizes them like snake_case (#5734)', () => {
+    const readings = extractCodexRateLimitReadings(
+      {
+        rate_limits: {
+          primary: { usedPercent: 36, windowDurationMins: WEEK_MINUTES, resetsAt: Math.floor(Date.UTC(2026, 10, 9) / 1000) },
+          secondary: { usedPercent: 8, windowDurationMins: 300, resetsAt: Math.floor(Date.UTC(2026, 10, 5, 14) / 1000) },
+        },
+      },
+      'app-server account/rateLimits/updated',
+      0,
+    );
+    expect(readings).toHaveLength(2);
+    expect(readings.find(r => r.windowMinutes === WEEK_MINUTES)).toMatchObject({
+      usedPercent: 36,
+      resetsAt: Date.UTC(2026, 10, 9),
+      source: 'app-server account/rateLimits/updated',
+    });
+    expect(readings.find(r => r.windowMinutes === 300)).toMatchObject({ usedPercent: 8 });
+  });
+
+  it('accepts camelCase windows with a null sibling and ignores camel-only partial fields (#5734)', () => {
+    // Either plan window may be absent (null) — the other still counts.
+    const [solo] = extractCodexRateLimitReadings(
+      { rate_limits: { primary: { usedPercent: 40, windowDurationMins: WEEK_MINUTES }, secondary: null } },
+      'app-server thread/tokenUsage/updated',
+      0,
+    );
+    expect(solo).toMatchObject({ usedPercent: 40, windowMinutes: WEEK_MINUTES });
+    expect(solo?.resetsAt).toBeUndefined();
+    // A used share without a span (or vice versa) is not a window, in either convention.
+    expect(extractCodexRateLimitReadings({ usedPercent: 50 }, 's', 0)).toEqual([]);
+    expect(extractCodexRateLimitReadings({ windowDurationMins: 300 }, 's', 0)).toEqual([]);
+  });
+
+  it('extracts a mixed-convention payload: snake_case primary + camelCase secondary', () => {
+    const readings = extractCodexRateLimitReadings(
+      {
+        rate_limits: {
+          primary: { used_percent: 44, window_minutes: WEEK_MINUTES, resets_at: Math.floor(Date.UTC(2026, 10, 9) / 1000) },
+          secondary: { usedPercent: 12, windowDurationMins: 300, resetsAt: Math.floor(Date.UTC(2026, 10, 5, 14) / 1000) },
+        },
+      },
+      'app-server account/rateLimits/updated',
+      0,
+    );
+    expect(readings).toHaveLength(2);
+    expect(readings.find(r => r.windowMinutes === WEEK_MINUTES)?.usedPercent).toBe(44);
+    expect(readings.find(r => r.windowMinutes === 300)?.usedPercent).toBe(12);
+  });
 });
 
 describe('weeklyProgress', () => {
@@ -287,6 +337,97 @@ describe('CodexWeeklyQuotaLedger — enforce mode progress rule', () => {
       expect(blocked.reason).toContain('周');
       expect(blocked.reason).toContain('实证');
     }
+  });
+});
+
+describe('CodexWeeklyQuotaLedger — app-server camelCase admission (#5734 four-quadrant regression)', () => {
+  // Issue #5734 repro table: the app-server (codex 0.167) sends camelCase
+  // windows that the extractor dropped, so enforce silently failed open.
+  // Fixed clock, weekly window half elapsed (time progress 0.5): the real
+  // 36% reading must admit and a simulated 80% must block — in BOTH
+  // field-name conventions, through the same ledger window.
+  const quadrant = (usedPercent: number, camel: boolean): Record<string, unknown> =>
+    camel
+      ? { usedPercent, windowDurationMins: WEEK_MINUTES, resetsAt: Date.UTC(2026, 10, 9) / 1000 }
+      : { used_percent: usedPercent, window_minutes: WEEK_MINUTES, resets_at: Date.UTC(2026, 10, 9) / 1000 };
+
+  for (const camel of [false, true]) {
+    const label = camel ? 'camelCase (app-server 0.167)' : 'snake_case (exec token_count)';
+    it(`enforce: real 36% reading admits — ${label}`, () => {
+      const { ledger } = ledgerWithClock({ weeklyQuotaAdmission: 'enforce' });
+      // Clock at 2026-11-05T12:00Z, reset 2026-11-09 → 4/8 days elapsed = 0.5.
+      ledger.recordRateLimits(quadrant(36, camel), camel ? 'app-server account/rateLimits/updated' : 'exec token_count');
+      expect(ledger.checkFreshSession()).toEqual({ decision: 'allow' });
+      expect(ledger.snapshot().usageProgress).toBeCloseTo(0.36, 6);
+    });
+
+    it(`enforce: simulated 80% reading blocks fresh sessions — ${label}`, () => {
+      const { ledger } = ledgerWithClock({ weeklyQuotaAdmission: 'enforce' });
+      ledger.recordRateLimits(quadrant(80, camel), camel ? 'app-server account/rateLimits/updated' : 'exec token_count');
+      const blocked = ledger.checkFreshSession();
+      expect(blocked.decision).toBe('block');
+      if (blocked.decision === 'block') {
+        expect(blocked.reason).toContain('80%');
+        expect(blocked.reason).toContain('50%');
+        expect(blocked.resetAt).toBe(Date.UTC(2026, 10, 9));
+      }
+    });
+  }
+
+  it('camel and snake observations of the same window land in ONE ledger window (latest wins)', () => {
+    const { ledger } = ledgerWithClock({ weeklyQuotaAdmission: 'enforce' });
+    ledger.recordRateLimits(
+      { used_percent: 20, window_minutes: WEEK_MINUTES, resets_at: Date.UTC(2026, 10, 9) / 1000 },
+      'exec token_count',
+    );
+    ledger.recordRateLimits(
+      { rate_limits: { primary: { usedPercent: 82, windowDurationMins: WEEK_MINUTES, resetsAt: Date.UTC(2026, 10, 9) / 1000 }, secondary: null } },
+      'app-server account/rateLimits/updated',
+    );
+    expect(ledger.checkFreshSession().decision).toBe('block');
+    expect(ledger.snapshot().weeklyReading).toMatchObject({ usedPercent: 82, windowMinutes: WEEK_MINUTES });
+  });
+
+  it('camel readings keep the boundary semantics: observe never blocks, no reset time fails open, rolled window expires, short window is context-only', () => {
+    // Observe mode: camel 80% would-block is reported, never gated.
+    const observe = ledgerWithClock();
+    observe.ledger.recordRateLimits(
+      { usedPercent: 80, windowDurationMins: WEEK_MINUTES, resetsAt: Date.UTC(2026, 10, 9) / 1000 },
+      'app-server account/rateLimits/updated',
+    );
+    expect(observe.ledger.checkFreshSession()).toEqual({ decision: 'allow' });
+    expect(observe.ledger.snapshot().verdict).toBe('block');
+
+    // Enforce + camel reading without resetsAt: insufficient data fails open.
+    const noReset = ledgerWithClock({ weeklyQuotaAdmission: 'enforce' });
+    noReset.ledger.recordRateLimits(
+      { usedPercent: 99, windowDurationMins: WEEK_MINUTES },
+      'app-server account/rateLimits/updated',
+    );
+    expect(noReset.ledger.checkFreshSession()).toEqual({ decision: 'allow' });
+    expect(noReset.ledger.snapshot().verdict).toBe('insufficient-data');
+
+    // Enforce + camel window that rolls: the reading dies with it. (100%
+    // used with 60s left barely outpaces ~99.99% time progress → blocks.)
+    const rolled = ledgerWithClock({ weeklyQuotaAdmission: 'enforce' });
+    rolled.ledger.recordRateLimits(
+      { usedPercent: 100, windowDurationMins: WEEK_MINUTES, resetsAt: (rolled.now() + 60_000) / 1000 },
+      'app-server account/rateLimits/updated',
+    );
+    expect(rolled.ledger.checkFreshSession().decision).toBe('block');
+    rolled.advance(61_000);
+    expect(rolled.ledger.checkFreshSession()).toEqual({ decision: 'allow' });
+    expect(rolled.ledger.snapshot().weeklyReading).toBeUndefined();
+
+    // Enforce + camel short window only: reference context, never admission input.
+    const shortOnly = ledgerWithClock({ weeklyQuotaAdmission: 'enforce' });
+    shortOnly.ledger.recordRateLimits(
+      { usedPercent: 95, windowDurationMins: 300, resetsAt: (shortOnly.now() + 60_000) / 1000 },
+      'app-server account/rateLimits/updated',
+    );
+    expect(shortOnly.ledger.checkFreshSession()).toEqual({ decision: 'allow' });
+    expect(shortOnly.ledger.snapshot().shortWindowReading?.usedPercent).toBe(95);
+    expect(shortOnly.ledger.snapshot().weeklyReading).toBeUndefined();
   });
 });
 

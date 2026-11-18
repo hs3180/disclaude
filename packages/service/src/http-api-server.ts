@@ -280,7 +280,7 @@ export type MarkChatRespondedHandler = (
  * credentials; the id is filtered from inbound processing so the echo
  * event is not fed back to the agent as a new user turn.
  */
-export type SelfSentRegistrar = (messageId: string) => void;
+export type SelfSentRegistrar = (messageId: string, channelName?: string) => void;
 
 /**
  * T-089 rework (#5197, review 6677596913): controller for the on-demand
@@ -1737,7 +1737,7 @@ export class HttpApiServer {
    * the send response lands first in practice.
    */
   private handleSelfSent(
-    _req: IncomingMessage,
+    req: IncomingMessage,
     res: ServerResponse,
     params: Record<string, string>
   ): Promise<void> {
@@ -1750,9 +1750,13 @@ export class HttpApiServer {
       this.sendJson(res, 400, { ok: false, message: 'Required: messageId path parameter' });
       return Promise.resolve();
     }
+    // T-106: optional `?channel=<name>` scopes the registration to a named channel
+    // so the echo is only filtered on the owning channel in multi-app deployments.
+    // Omitting it preserves the legacy bare-id (single-app) behavior.
+    const channelName = new URL(req.url ?? '/', `http://${req.headers.host}`).searchParams.get('channel')?.trim() || undefined;
     try {
-      this.selfSentRegistrar(messageId);
-      logger.debug({ messageId }, 'Registered self-sent message id');
+      this.selfSentRegistrar(messageId, channelName);
+      logger.debug({ messageId, channelName }, 'Registered self-sent message id');
       this.sendJson(res, 200, { ok: true, messageId });
     } catch (err) {
       logger.error({ err, messageId }, 'Self-sent registration error');
