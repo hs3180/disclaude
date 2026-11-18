@@ -19,8 +19,14 @@ export interface WeChatUploadPhaseDetail {
   writeMs?: number;
   /** Body written → receipt complete (undefined if it never got that far). */
   responseMs?: number;
-  /** Bytes confirmed handed to the transport: 0 until `finish`, then the ciphertext size. */
+  /**
+   * #5751: ciphertext bytes handed to the transport, updated per chunk while
+   * the write progresses (local handoff — NOT a CDN acknowledgement). `finish`
+   * no longer flips a zero to the full size.
+   */
   writtenBytes: number;
+  /** #5751: true only once response headers arrived (CDN-side acknowledgement). */
+  acknowledged?: boolean;
 }
 
 /** Only bounded allowlisted diagnostics survive into logs and the CLI error. */
@@ -56,6 +62,7 @@ export class WeChatMediaUploadError extends Error {
       ...detail, httpStatus, apiCode, elapsedMs, attempt,
       ...(phases ? {
         phase: phases.phase, writtenBytes: phases.writtenBytes,
+        ...(phases.acknowledged !== undefined ? { acknowledged: phases.acknowledged } : {}),
         ...(phases.connectMs !== undefined ? { connectMs: round(phases.connectMs) } : {}),
         ...(phases.writeMs !== undefined ? { writeMs: round(phases.writeMs) } : {}),
         ...(phases.responseMs !== undefined ? { responseMs: round(phases.responseMs) } : {}),

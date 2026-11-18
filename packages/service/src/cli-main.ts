@@ -1345,7 +1345,7 @@ export async function main(): Promise<void> {
       // Issue #5504: wire REST /api/self-sent/:messageId to the shared
       // message-logger self-sent registry so session-side tools can suppress
       // echoes of their own user-identity sends.
-      httpApiServer.setSelfSentRegistrar((messageId) => messageLogger.registerSelfSent(messageId));
+      httpApiServer.setSelfSentRegistrar((messageId, channelName) => messageLogger.registerSelfSent(messageId, channelName));
 
       await httpApiServer.start();
       const address = httpApiServer.getAddress();
@@ -1566,7 +1566,14 @@ export function resolveChannelConfigs(
   const feishuDeclarations = declarations.filter(
     (declaration) => declaration.type === 'feishu' && declaration.config.enabled !== false
   );
-  if (feishuEnabled && feishuDeclarations.length) {
+  // Named declarations register independently of the legacy `channels.feishu.enabled`
+  // switch: turning OFF the legacy single app (e.g. migrating to named multi-app
+  // declarations) must not silently drop the named declarations. Previously the gate
+  // was `feishuEnabled && feishuDeclarations.length`, so `enabled:false` + named
+  // declarations fell into the legacy else-branch and produced ZERO channels with no
+  // error. Now declarations win whenever present; the legacy single-app path only runs
+  // when there are no named declarations.
+  if (feishuDeclarations.length) {
     const seenAppIds = new Map<string, string>();
     for (const { name, config: declaration } of feishuDeclarations) {
       const appId = resolveFeishuChannelCredential(rawConfig, name, 'appId');
