@@ -467,6 +467,49 @@ describe('MessageLogger.logOutgoingMessage', () => {
   });
 });
 
+describe('MessageLogger self-sent ownership (T-106)', () => {
+  let tmpDir: string;
+  let logger: MessageLogger;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'message-logger-selfsent-'));
+    mockState.workspaceDir = tmpDir;
+    mockState.sessionConfig = { historyDays: 7, maxContextLength: 10000 };
+    logger = new MessageLogger();
+    await logger.init();
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('keys own bot sends by the routed id so a same-id echo on another channel is not dropped', async () => {
+    // App A sends om_X (registered under its routed key feishu:a:om_X).
+    await logger.logOutgoingMessage('om_X', 'feishu:a:oc_1', 'A reply', 'text', undefined, 'feishu:a:om_X');
+    // App A's own echo on channel A is filtered (routed key matches).
+    expect(logger.isSelfSentMessage('feishu:a:om_X')).toBe(true);
+    // App B receiving the same message_id @mention checks its OWN routed key → no match.
+    expect(logger.isSelfSentMessage('feishu:b:om_X')).toBe(false);
+  });
+
+  it('keeps single-app behavior bit-identical (no route prefix → bare id)', async () => {
+    await logger.logOutgoingMessage('om_single', 'oc_1', 'reply', 'text');
+    // No routedMessageId passed → registry stores the bare id, as before.
+    expect(logger.isSelfSentMessage('om_single')).toBe(true);
+  });
+
+  it('scopes external /api/self-sent registration by channel, defaulting to legacy bare id', () => {
+    // Legacy single-app: no channel → bare id (matches the identity toRoutedMessageId).
+    logger.registerSelfSent('om_legacy');
+    expect(logger.isSelfSentMessage('om_legacy')).toBe(true);
+    // Multi-app: channel-scoped registration only matches the owning channel's routed key.
+    logger.registerSelfSent('om_tool', 'work');
+    expect(logger.isSelfSentMessage('feishu:work:om_tool')).toBe(true);
+    expect(logger.isSelfSentMessage('feishu:personal:om_tool')).toBe(false);
+    expect(logger.isSelfSentMessage('om_tool')).toBe(false);
+  });
+});
+
 describe('MessageLogger.isMessageProcessed / clearCache', () => {
   let tmpDir: string;
   let logger: MessageLogger;

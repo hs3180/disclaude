@@ -40,6 +40,7 @@ import {
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
   buildRuntimeEnvironmentGuidance,
+  buildContextRecoveryGuidance,
 } from './guidance.js';
 
 /**
@@ -204,7 +205,10 @@ export class MessageBuilder {
     if (stableToolsSection && msg.includeStableContext !== false) {
       sections.push({ kind: 'tools', stability: 'stable', content: `\n---\n\n## Tools\n${stableToolsSection}` });
     }
-    for (const guidance of [nextStepGuidance, threadSelfServiceGuidance, outputFormatGuidance, locationAwarenessGuidance, buildRuntimeEnvironmentGuidance()]) {
+    // Issue #5746: context-recovery guidance is stable, so a fresh native
+    // session (preset switch, restart recovery) re-receives it with its first
+    // message via buildStableContext.
+    for (const guidance of [nextStepGuidance, threadSelfServiceGuidance, outputFormatGuidance, locationAwarenessGuidance, buildRuntimeEnvironmentGuidance(), buildContextRecoveryGuidance()]) {
       if (guidance && msg.includeStableContext !== false) {
         sections.push({ kind: 'guidance', stability: 'stable', content: guidance });
       }
