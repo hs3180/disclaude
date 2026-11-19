@@ -466,10 +466,11 @@ export async function main(): Promise<void> {
     process.exit(exitCode);
   }
 
-  // #5745: channel-type register/list/unregister — pure store operations,
-  // no service startup, no logger/PID lock (like history/research).
+  // #5745: channel-type register/list/unregister — store operations with a
+  // best-effort hot-notify of a running service (r2 S4b); no service
+  // startup, no logger/PID lock (like history/research).
   if (options.command === 'channel-type') {
-    const exitCode = runChannelTypeCommand(options.channelTypeArgs ?? [], {
+    const exitCode = await runChannelTypeCommand(options.channelTypeArgs ?? [], {
       configDir: Config.getWorkspaceDir(),
     });
     process.exit(exitCode);
