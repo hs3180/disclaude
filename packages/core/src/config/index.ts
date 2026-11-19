@@ -12,7 +12,7 @@ import { fileURLToPath } from 'url';
 import { createLogger } from '../utils/logger.js';
 import { loadConfigFile, getConfigFromFile, validateConfig, getPreloadedConfig } from './loader.js';
 import type { DisclaudeConfig, AgentPresets, DebugConfig, SessionTimeoutConfig } from './types.js';
-import { resolveAgentPreset } from './agent-presets.js';
+import { resolveDefaultAgentRuntime } from './agent-runtime.js';
 import { resolveConfiguredAgents, validateResolvedAgent } from './resolved-agents.js';
 import { resolveCodexModelSetting, resolveCodexReasoningEffort } from './codex-settings.js';
 import { channelCredentialErrors, resolveChannelCredential } from './channel-credentials.js';
@@ -44,7 +44,7 @@ channelCredentialErrors(fileConfigOnly);
 const resolvedAgents = resolveConfiguredAgents(fileConfigOnly);
 const agentPresets = resolvedAgents.ok ? resolvedAgents.presets : {};
 const defaultSelection = Object.keys(agentPresets).length
-  ? resolveAgentPreset(agentPresets, undefined, fileConfigOnly.defaultHarness)
+  ? resolveDefaultAgentRuntime(agentPresets, fileConfigOnly.defaultHarness)
   : undefined;
 const defaultAgent = defaultSelection?.ok ? defaultSelection.preset : undefined;
 const configLoaded = fileConfig._fromFile;
@@ -356,7 +356,7 @@ export class Config {
     if (!Object.keys(resolved.presets).length) {
       return undefined;
     }
-    const selected = resolveAgentPreset(resolved.presets, undefined, this.getRawConfig().defaultHarness);
+    const selected = resolveDefaultAgentRuntime(resolved.presets, this.getRawConfig().defaultHarness);
     if (selected.ok && selected.preset.agentBackend === 'codex') {
       resolved.presets[selected.name] = {
         ...selected.preset,
@@ -426,7 +426,7 @@ export class Config {
     if (!resolvedAgents.ok) {
       throw new Error(resolvedAgents.errors.join('\n'));
     }
-    const selected = resolveAgentPreset(this.getAgentPresets() ?? {}, undefined, this.getRawConfig().defaultHarness);
+    const selected = resolveDefaultAgentRuntime(this.getAgentPresets() ?? {}, this.getRawConfig().defaultHarness);
     if (!selected.ok) {
       throw new Error(selected.error);
     }

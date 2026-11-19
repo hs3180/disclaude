@@ -128,3 +128,52 @@ export function composeSessionRuntime(
     ...(agentBackend === 'claude' ? { modelOverrides } : {}),
   };
 }
+
+export type AgentRuntimeResolution<T = AgentPreset> =
+  | { ok: true; name: string; preset: T }
+  | { ok: false; error: string };
+
+/**
+ * Issue #5255: resolve the default agent runtime — the harness-keyed
+ * `defaultHarness` lookup first, then the single-entry fallback and the
+ * default-marker/declaration-order rules. Extracted from the retired
+ * named-preset resolver so config, loader and the CLI share one preset-free
+ * default-selection path; named lookups stay with the session-pool override
+ * chain. Like the resolver it replaces, this does not revalidate the map —
+ * callers that accept user configuration run validation first.
+ */
+export function resolveDefaultAgentRuntime<T extends Pick<AgentPreset, 'agentBackend' | 'model' | 'default'>>(
+  agents: Record<string, T>,
+  defaultHarness?: string
+): AgentRuntimeResolution<T> {
+  const harness = defaultHarness?.trim();
+  if (harness) {
+    const preset = agents[harness];
+    if (!preset) {
+      return { ok: false, error: `defaultHarness must reference a defined agents entry: ${harness}` };
+    }
+    return { ok: true, name: harness, preset };
+  }
+
+  const entries = Object.entries(agents);
+  if (entries.length === 0) {
+    return { ok: false, error: 'agents must contain at least one named preset' };
+  }
+  // Do not silently reorder integer-index keys, even when a caller resolves
+  // the default directly without first validating the map.
+  if (entries.some(([presetName]) => /^\d+$/.test(presetName))) {
+    return { ok: false, error: 'agents preset names must not be numeric' };
+  }
+  const defaults = entries.filter(
+    ([presetName, preset]) => presetName === 'default' || preset.default === true
+  );
+  if (defaults.length > 1) {
+    return {
+      ok: false,
+      error: `Unable to resolve default agent preset (found ${defaults.length})`,
+    };
+  }
+
+  const [defaultName, preset] = defaults[0] ?? entries[0];
+  return { ok: true, name: defaultName, preset };
+}
