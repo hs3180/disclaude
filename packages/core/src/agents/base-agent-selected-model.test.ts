@@ -142,7 +142,7 @@ describe('Claude modelOverrides identity (Issue #5410)', () => {
       llm: 'gateway',
       modelOverrides: { 'claude-opus-5': 'kimi-k3.1-pro' },
       agentBackend: 'claude',
-    })).toThrow(/requires Claude Code >= 2\.1\.200.*claude\.modelOverrides/);
+    })).toThrow(/requires Claude Code >= 2\.1\.200.*claude\.modelMapping/);
   });
   it('keeps overrides working when the bundled CLI version cannot be resolved', async () => {
     vi.doMock('../sdk/providers/claude/version.js', async (importOriginal) => ({
