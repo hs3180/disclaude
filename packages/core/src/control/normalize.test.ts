@@ -64,14 +64,14 @@ describe('normalizeCommandData', () => {
   });
 
   describe('agent command', () => {
-    it('should keep the plain use form on the preset argument', () => {
+    it('should keep the plain use form on the harness argument', () => {
       const result = normalizeCommandData('agent', { args: ['use', 'fast'] });
-      expect(result).toEqual({ subcommand: 'use', preset: 'fast' });
+      expect(result).toEqual({ subcommand: 'use', harness: 'fast' });
     });
 
-    it('should ignore extra tokens — the plain switch carries the persistence itself (#5476)', () => {
-      const result = normalizeCommandData('agent', { args: ['use', 'fast', '--bind', 'oc_target'] });
-      expect(result).toEqual({ subcommand: 'use', preset: 'fast' });
+    it('should take the second token as the optional model and ignore the rest (#5476)', () => {
+      const result = normalizeCommandData('agent', { args: ['use', 'fast', 'glm-5.3', '--bind', 'oc_target'] });
+      expect(result).toEqual({ subcommand: 'use', harness: 'fast', model: 'glm-5.3' });
     });
 
     it('should default to the current subcommand without arguments', () => {
@@ -79,9 +79,9 @@ describe('normalizeCommandData', () => {
       expect(result).toEqual({ subcommand: 'current' });
     });
 
-    it('should lowercase the subcommand while keeping the preset verbatim', () => {
+    it('should lowercase the subcommand while keeping the harness verbatim', () => {
       const result = normalizeCommandData('agent', { args: ['USE', 'Fast'] });
-      expect(result).toEqual({ subcommand: 'use', preset: 'Fast' });
+      expect(result).toEqual({ subcommand: 'use', harness: 'Fast' });
     });
   });
 
@@ -144,29 +144,29 @@ describe('createControlCommand', () => {
 describe('agent command normalization (Issue #5255)', () => {
   it('normalizes a backend switch with its free-form value', () => {
     expect(normalizeCommandData('agent', { args: ['backend', 'pi'] })).toEqual({
-      subcommand: 'backend', preset: 'pi', value: 'pi',
+      subcommand: 'backend', harness: 'pi', value: 'pi',
     });
   });
 
   it('keeps dotted model identifiers intact on the model dimension', () => {
     expect(normalizeCommandData('agent', { args: ['model', 'glm-5.3-air'] })).toEqual({
-      subcommand: 'model', preset: 'glm-5.3-air', value: 'glm-5.3-air',
+      subcommand: 'model', harness: 'glm-5.3-air', value: 'glm-5.3-air',
     });
     // extra tokens stay part of the value rather than being dropped
     expect(normalizeCommandData('agent', { args: ['model', 'gpt-5.6', 'x'] })).toEqual({
-      subcommand: 'model', preset: 'gpt-5.6', value: 'gpt-5.6 x',
+      subcommand: 'model', harness: 'gpt-5.6', value: 'gpt-5.6 x',
     });
   });
 
   it('lowercases the subcommand only', () => {
     expect(normalizeCommandData('agent', { args: ['BACKEND', 'Dsh'] })).toEqual({
-      subcommand: 'backend', preset: 'Dsh', value: 'Dsh',
+      subcommand: 'backend', harness: 'Dsh', value: 'Dsh',
     });
   });
 
-  it('keeps the use subcommand on its single-token preset surface (T-068 coexistence)', () => {
+  it('keeps the use subcommand on its harness surface (T-068 coexistence)', () => {
     expect(normalizeCommandData('agent', { args: ['use', 'fast'] })).toEqual({
-      subcommand: 'use', preset: 'fast',
+      subcommand: 'use', harness: 'fast',
     });
     expect(normalizeCommandData('agent', { args: ['use', 'fast'] })).not.toHaveProperty('value');
   });

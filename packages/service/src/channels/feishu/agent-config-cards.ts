@@ -423,7 +423,7 @@ export class FeishuAgentConfigCards {
       type: 'agent', chatId: p.chatId,
       ...(p.threadRootId ? { threadRootId: p.threadRootId } : {}),
       actorId: p.actorId,
-      data: { subcommand: 'use', ...(p.selection.preset ? { preset: p.selection.preset } : {}) },
+      data: { subcommand: 'use', ...(p.selection.preset ? { harness: p.selection.preset } : {}) },
     })) {
       p.phase = 'denied';
       this.pending.delete(token);

@@ -27,7 +27,7 @@ describe('/agent', () => {
   });
 
   it('reports the fresh-session boundary and the per-chat persistence after switching', async () => {
-    const result = await handleAgent({ type: 'agent', chatId: 'a', data: { subcommand: 'use', preset: 'fast' } }, context());
+    const result = await handleAgent({ type: 'agent', chatId: 'a', data: { subcommand: 'use', harness: 'fast' } }, context());
     expect(result).toMatchObject({ success: true });
     expect(result.message).toContain('pi / glm-fast');
     expect(result.message).toContain('context is not migrated');
@@ -37,7 +37,7 @@ describe('/agent', () => {
 
   it('gives an executable next step after a failed switch without claiming the selection changed', async () => {
     const result = await handleAgent(
-      { type: 'agent', chatId: 'a', data: { subcommand: 'use', preset: 'missing' } },
+      { type: 'agent', chatId: 'a', data: { subcommand: 'use', harness: 'missing' } },
       context({ switchAgentPreset: () => ({ ok: false, error: 'Unknown agent preset: missing' }) })
     );
     expect(result.success).toBe(false);
@@ -52,7 +52,7 @@ describe('/agent', () => {
     const ctx = context({ switchAgentPreset: () => ({ ok: false, error: 'Unknown agent preset: missing' }) });
     ctx.agentConfigUi = { openConfigCard: vi.fn() };
     const result = await handleAgent(
-      { type: 'agent', chatId: 'a', actorId: 'ou_actor', data: { subcommand: 'use', preset: 'missing' } }, ctx);
+      { type: 'agent', chatId: 'a', actorId: 'ou_actor', data: { subcommand: 'use', harness: 'missing' } }, ctx);
     expect(result.success).toBe(false);
     // The card is the zero-recall recovery (no preset names to remember)…
     expect(result.message).toContain('`/agent config`');
@@ -66,7 +66,7 @@ describe('/agent', () => {
     ctx.isCommandAllowed = vi.fn(command => command.data?.subcommand !== 'list');
     const result = await handleAgent({
       type: 'agent', chatId: 'a', actorId: 'restricted-user', threadRootId: 'topic', chatType: 'topic',
-      data: { subcommand: 'use', preset: 'missing' },
+      data: { subcommand: 'use', harness: 'missing' },
     }, ctx);
     expect(ctx.isCommandAllowed).toHaveBeenCalledWith(expect.objectContaining({
       type: 'agent', chatId: 'a', actorId: 'restricted-user', threadRootId: 'topic', chatType: 'topic',
@@ -151,7 +151,7 @@ describe('/agent', () => {
     const ctx = context({ switchAgentPreset: switchPreset });
     const result = await handleAgent({
       type: 'agent', chatId: 'a', actorId: 'ou_user', threadRootId: 'om_topic',
-      data: { subcommand: 'use', preset: 'fast' },
+      data: { subcommand: 'use', harness: 'fast' },
     }, ctx);
     expect(result.success).toBe(true);
     expect(switchPreset).toHaveBeenCalledWith('a', 'fast', undefined, 'om_topic', 'ou_user');
@@ -177,7 +177,7 @@ describe('/agent orthogonal dimension switches (Issue #5255)', () => {
       sessionBoundary: 'new-session',
     });
     const result = await handleAgent(
-      { type: 'agent', chatId: 'a', data: { subcommand: 'backend', preset: 'pi', value: 'pi' } },
+      { type: 'agent', chatId: 'a', data: { subcommand: 'backend', harness: 'pi', value: 'pi' } },
       context({ switchAgentBackend })
     );
     expect(switchAgentBackend).toHaveBeenCalledExactlyOnceWith('a', 'pi', undefined);
@@ -195,7 +195,7 @@ describe('/agent orthogonal dimension switches (Issue #5255)', () => {
       sessionBoundary: 'new-session',
     });
     const result = await handleAgent(
-      { type: 'agent', chatId: 'a', threadRootId: 'topic', data: { subcommand: 'model', preset: 'glm-5.3', value: 'glm-5.3' } },
+      { type: 'agent', chatId: 'a', threadRootId: 'topic', data: { subcommand: 'model', harness: 'glm-5.3', value: 'glm-5.3' } },
       context({ switchAgentModel })
     );
     expect(switchAgentModel).toHaveBeenCalledExactlyOnceWith('a', 'glm-5.3', 'topic');
@@ -205,7 +205,7 @@ describe('/agent orthogonal dimension switches (Issue #5255)', () => {
 
   it('answers an incompatible switch with the dimension options instead of a dead end', async () => {
     const result = await handleAgent(
-      { type: 'agent', chatId: 'a', data: { subcommand: 'backend', preset: 'claude', value: 'claude' } },
+      { type: 'agent', chatId: 'a', data: { subcommand: 'backend', harness: 'claude', value: 'claude' } },
       context({
         switchAgentBackend: () => ({
           ok: false,
@@ -223,7 +223,7 @@ describe('/agent orthogonal dimension switches (Issue #5255)', () => {
 
   it('lists usable models after a rejected model switch', async () => {
     const result = await handleAgent(
-      { type: 'agent', chatId: 'a', data: { subcommand: 'model', preset: 'claude-sonnet', value: 'claude-sonnet' } },
+      { type: 'agent', chatId: 'a', data: { subcommand: 'model', harness: 'claude-sonnet', value: 'claude-sonnet' } },
       context({
         switchAgentModel: () => ({
           ok: false,
@@ -243,10 +243,10 @@ describe('/agent orthogonal dimension switches (Issue #5255)', () => {
       sessionBoundary: 'new-session',
     });
     const ctx = context({ switchAgentPreset });
-    const use = await handleAgent({ type: 'agent', chatId: 'a', data: { subcommand: 'use', preset: 'fast' } }, ctx);
+    const use = await handleAgent({ type: 'agent', chatId: 'a', data: { subcommand: 'use', harness: 'fast' } }, ctx);
     expect(use).toMatchObject({ success: true });
     expect(use.message).toContain('pi / glm-flash');
-    expect(use.message).not.toContain('Overrides on top of the preset');
+    expect(use.message).not.toContain('Overrides on top of the runtime');
     // T-068 coexistence: `use` keeps its single-token argument surface while
     // backend/model dispatch independently on the same command.
     expect(ctx.agentPool.switchAgentPreset).toHaveBeenCalledExactlyOnceWith('a', 'fast', undefined, undefined, undefined);
@@ -254,13 +254,13 @@ describe('/agent orthogonal dimension switches (Issue #5255)', () => {
 
   it('degrades with a clear message when a dimension switcher is not wired', async () => {
     const missing = await handleAgent(
-      { type: 'agent', chatId: 'a', data: { subcommand: 'backend', preset: 'pi', value: 'pi' } },
+      { type: 'agent', chatId: 'a', data: { subcommand: 'backend', harness: 'pi', value: 'pi' } },
       context({ switchAgentBackend: undefined })
     );
     expect(missing).toMatchObject({ success: false });
     expect(missing.message).toContain('Switching the backend dimension is not available on this node.');
     const missingModel = await handleAgent(
-      { type: 'agent', chatId: 'a', data: { subcommand: 'model', preset: 'x', value: 'x' } },
+      { type: 'agent', chatId: 'a', data: { subcommand: 'model', harness: 'x', value: 'x' } },
       context({ switchAgentModel: undefined })
     );
     expect(missingModel.message).toContain('Switching the model dimension is not available on this node.');
@@ -283,7 +283,7 @@ describe('/agent orthogonal dimension switches (Issue #5255)', () => {
     }));
     expect(result).toMatchObject({ success: true });
     expect(result.message).toContain('🤖 Active agent: **default** — pi / glm-5.3');
-    expect(result.message).toContain('Overrides on top of the preset: backend=pi, model=glm-5.3.');
+    expect(result.message).toContain('Overrides on top of the runtime: backend=pi, model=glm-5.3.');
     expect(result.message).toContain('`/agent backend <name>`');
     expect(result.message).toContain('`/agent model <id>`');
   });
@@ -291,6 +291,6 @@ describe('/agent orthogonal dimension switches (Issue #5255)', () => {
   it('keeps every subcommand in the usage line for unknown input', async () => {
     const result = await handleAgent({ type: 'agent', chatId: 'a', data: { subcommand: 'bogus' } }, context());
     expect(result).toMatchObject({ success: false });
-    expect(result.message).toContain('`/agent [current|list|use <preset>|backend <name>|model <id>|config]`');
+    expect(result.message).toContain('`/agent [current|list|use <harness> [model]|backend <name>|model <id>|config]`');
   });
 });

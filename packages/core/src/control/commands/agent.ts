@@ -3,11 +3,11 @@ import type { AgentDimensionSwitchResult, CommandHandler, ControlHandlerContext 
 
 type AgentCommand = ControlCommand<'agent'>;
 
-function formatPreset(preset: { name: string; agentBackend: string; model: string }): string {
+function formatRuntime(preset: { name: string; agentBackend: string; model: string }): string {
   return `**${preset.name}** — ${preset.agentBackend} / ${preset.model}`;
 }
 
-/** Issue #5255: summarize which dimensions diverge from the selected preset. */
+/** Issue #5255: summarize which dimensions diverge from the selected runtime. */
 function formatOverrides(active: {
   agentBackend: string;
   model: string;
@@ -17,7 +17,7 @@ function formatOverrides(active: {
   const parts: string[] = [];
   if (active.backendOverride) { parts.push(`backend=${active.backendOverride}`); }
   if (active.modelOverride) { parts.push(`model=${active.modelOverride}`); }
-  return parts.length ? `\n\nOverrides on top of the preset: ${parts.join(', ')}.` : '';
+  return parts.length ? `\n\nOverrides on top of the runtime: ${parts.join(', ')}.` : '';
 }
 
 const SESSION_BOUNDARY_NOTE =
@@ -29,32 +29,33 @@ export const handleAgent: CommandHandler<'agent'> = async (
 ): Promise<ControlResponse> => {
   const api = context.agentPool;
   if (!api.listAgentPresets || !api.getActiveAgentPreset || !api.switchAgentPreset) {
-    return { success: false, message: 'Agent presets are not available on this node.' };
+    return { success: false, message: 'Agent runtimes are not available on this node.' };
   }
 
   const subcommand = command.data?.subcommand ?? 'current';
   if (subcommand === 'list') {
     const presets = api.listAgentPresets();
     if (presets.length === 0) {
-      return { success: false, message: 'No named agent presets are configured (add an `agents:` map).' };
+      return { success: false, message: 'No named agent runtimes are configured (add an `agents:` map).' };
     }
     const active = api.getActiveAgentPreset(command.chatId, command.threadRootId);
     return {
       success: true,
-      message: ['🤖 **Agent presets**', '', ...presets.map((preset) =>
-        `${preset.name === active?.name ? '→ ' : '- '}${formatPreset(preset)}`
+      message: ['🤖 **Agent runtimes**', '', ...presets.map((preset) =>
+        `${preset.name === active?.name ? '→ ' : '- '}${formatRuntime(preset)}`
       )].join('\n'),
     };
   }
 
   if (subcommand === 'use') {
-    const name = command.data?.preset?.trim();
-    if (!name) {
-      return { success: false, message: 'Usage: `/agent use <preset>`' };
+    const harness = command.data?.harness?.trim();
+    const model = command.data?.model?.trim() || undefined;
+    if (!harness) {
+      return { success: false, message: 'Usage: `/agent use <harness> [model]`' };
     }
-    // The switch also saves the choice for the chat, so the same preset is
+    // The switch also saves the choice for the chat, so the same runtime is
     // reused by this chat's next messages and after service restarts (#5476).
-    const result = api.switchAgentPreset(command.chatId, name, undefined, command.threadRootId, command.actorId);
+    const result = api.switchAgentPreset(command.chatId, harness, model, command.threadRootId, command.actorId);
     if (!result.ok) {
       const canList = !context.isCommandAllowed || context.isCommandAllowed({
         ...command, data: { subcommand: 'list' },
@@ -63,14 +64,14 @@ export const handleAgent: CommandHandler<'agent'> = async (
       // restricted picker is the easier path — it lists valid names for you.
       const recovery = canList
         ? (context.agentConfigUi
-          ? 'Send `/agent config` to pick from the configured options in a card (no preset names to remember), or `/agent list` + `/agent use <name>`.'
-          : 'Use `/agent list` to find a configured preset, then `/agent use <name>` to switch.')
-        : 'Contact the service maintainer to confirm which presets are available.';
+          ? 'Send `/agent config` to pick from the configured options in a card (no runtime names to remember), or `/agent list` + `/agent use <name>`.'
+          : 'Use `/agent list` to find a configured runtime, then `/agent use <name>` to switch.')
+        : 'Contact the service maintainer to confirm which runtimes are available.';
       return { success: false, message: `${result.error}\n\nThe current selection is unchanged. ${recovery}` };
     }
     return {
       success: true,
-      message: `✅ Active agent: ${formatPreset(result.active)}\n\nA new native session will be used; context is not migrated across presets. The choice is saved for this chat and survives service restarts.`,
+      message: `✅ Active agent: ${formatRuntime(result.active)}\n\nA new native session will be used; context is not migrated across selections. The choice is saved for this chat and survives service restarts.`,
     };
   }
 
@@ -81,7 +82,7 @@ export const handleAgent: CommandHandler<'agent'> = async (
       return { success: false, message: '无法识别操作者，未打开配置卡片。请从聊天消息发起 `/agent config`。' };
     }
     if (!context.agentConfigUi) {
-      return { success: false, message: '此渠道没有原生配置卡片。用 `/agent list` 查看预设，`/agent use <name>` 切换。' };
+      return { success: false, message: '此渠道没有原生配置卡片。用 `/agent list` 查看运行时，`/agent use <name>` 切换。' };
     }
     try {
       const sent = await context.agentConfigUi.openConfigCard({
@@ -111,7 +112,7 @@ export const handleAgent: CommandHandler<'agent'> = async (
   // session's agent and keeps the other at its current value; incompatible
   // targets answer with that dimension's selectable options, not a dead end.
   if (subcommand === 'backend' || subcommand === 'model') {
-    const value = (command.data?.value ?? command.data?.preset ?? '').trim();
+    const value = (command.data?.value ?? command.data?.harness ?? '').trim();
     if (!value) {
       return {
         success: false,
@@ -139,12 +140,12 @@ export const handleAgent: CommandHandler<'agent'> = async (
     }
     return {
       success: true,
-      message: `✅ Active agent: ${formatPreset(result.active)}${formatOverrides(result.active)}\n\n${SESSION_BOUNDARY_NOTE}`,
+      message: `✅ Active agent: ${formatRuntime(result.active)}${formatOverrides(result.active)}\n\n${SESSION_BOUNDARY_NOTE}`,
     };
   }
 
   if (subcommand !== 'current') {
-    return { success: false, message: 'Usage: `/agent [current|list|use <preset>|backend <name>|model <id>|config]`' };
+    return { success: false, message: 'Usage: `/agent [current|list|use <harness> [model]|backend <name>|model <id>|config]`' };
   }
 
   const active = api.getActiveAgentPreset(command.chatId, command.threadRootId);
@@ -156,7 +157,7 @@ export const handleAgent: CommandHandler<'agent'> = async (
   return active
     ? {
         success: true,
-        message: `🤖 Active agent: ${formatPreset(active)}${formatOverrides(active)}\n\nBackend and model can be switched independently with \`/agent backend <name>\` and \`/agent model <id>\`.\n\nSelection precedence: this session's switches (/agent use, backend, model) > the chat's saved /agent use choice > per-app default > global default. Dimension switches last until the next /agent use or service restart.${cardHint}`,
+        message: `🤖 Active agent: ${formatRuntime(active)}${formatOverrides(active)}\n\nBackend and model can be switched independently with \`/agent backend <name>\` and \`/agent model <id>\`.\n\nSelection precedence: this session's switches (/agent use, backend, model) > the chat's saved /agent use choice > per-app default > global default. Dimension switches last until the next /agent use or service restart.${cardHint}`,
       }
     : { success: false, message: 'No agent selection is available on this node (no `agents:` map and no resolvable default agent).' };
 };

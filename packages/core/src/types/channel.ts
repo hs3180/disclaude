@@ -159,12 +159,12 @@ export interface CommandDataMap {
   /** /reset — reset agent, optionally skip history loading (Issue #3696) */
   reset: { skipContext?: boolean };
   /**
-   * /agent — inspect/select presets or switch one dimension orthogonally
-   * (Issue #5255: backend/model). A `use <preset>` switch is saved for the
-   * chat and survives service restarts (#5476); dimension switches are
-   * session-scoped until the next `use` or service restart.
+   * /agent — inspect/select runtimes or switch one dimension orthogonally
+   * (Issue #5255: backend/model). A `use <harness> [model]` switch is saved
+   * for the chat and survives service restarts (#5476); dimension switches
+   * are session-scoped until the next `use` or service restart.
    */
-  agent: { subcommand: string; preset?: string; value?: string };
+  agent: { subcommand: string; harness?: string; model?: string; value?: string };
   steer: { prompt?: string };
   /** Explicit Goal record commands; execution is a separate capability. */
   goal: { args?: string[] };
