@@ -54,6 +54,7 @@ import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 // Issue #5745 Part 2: channel type catalog lives in the unified extension
 // registry (built-ins pre-registered; runtime-registered types enumerate too).
 import { channelTypeRegistry } from './channels/wired-descriptors.js';
+import { applyChannelTypesForConfigDir } from './extensions/channel-type-apply.js';
 // #5519: bounded DNS/connection readiness wait before the startup sequence
 // reports the Feishu channel as available.
 import { waitForStartupReadiness } from './channels/feishu/dns-readiness.js';
@@ -943,6 +944,16 @@ export async function main(): Promise<void> {
     ...channelSetupContext,
     // Issue #3329: Pass InputMessageRouter so channels route through unified path
     inputMessageRouter: service.getInputMessageRouter(),
+  });
+
+  // #5745 r2 S3: cold-path apply of durably registered external channel types
+  // (`disclaude channel-type register`) into channelTypeRegistry. Must run
+  // before the enumeration below so config `channels.<name>: { type }` can
+  // create instances of external types. Per-record error isolation lives in
+  // applyChannelTypesForConfigDir: one bad module never blocks the remaining
+  // records, the built-ins, or startup.
+  await applyChannelTypesForConfigDir(Config.getWorkspaceDir(), {
+    warn: (message) => logger.warn(message),
   });
 
   // Register all channel type descriptors (Issue #1594 Phase 3; Issue #5745 Part 2)
