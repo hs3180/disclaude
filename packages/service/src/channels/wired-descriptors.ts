@@ -306,8 +306,8 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       config.agentConfigAccess = {
         listPresets: () => agentPoolPorts.listAgentPresets?.() ?? [],
         getActivePreset: (chatId, threadRootId) => agentPoolPorts.getActiveAgentPreset?.(chatId, threadRootId),
-        switchAgentPreset: (chatId, presetName, threadRootId, actorId) =>
-          agentPoolPorts.switchAgentPreset?.(chatId, presetName, threadRootId, actorId)
+        switchAgentPreset: (chatId, backend, model, threadRootId, actorId) =>
+          agentPoolPorts.switchAgentPreset?.(chatId, backend, model, threadRootId, actorId)
           ?? { ok: false, error: 'Agent preset switching is no longer available on this node' },
         ...(context.controlHandlerContext.isCommandAllowed
           ? { isCommandAllowed: context.controlHandlerContext.isCommandAllowed }

@@ -94,11 +94,14 @@ export interface ControlHandlerContext {
     getActiveAgentPreset?(chatId: string, threadRootId?: string):
       { name: string; agentBackend: string; model: string; backendOverride?: string; modelOverride?: string; reasoningEffort?: CodexReasoningEffort } | undefined;
     /**
-     * Switch the session's preset and durably save the choice for the chat
-     * (#5476). `actorId` records who switched in the persisted selection.
-     * The switch supersedes any orthogonal dimension override (Issue #5255).
+     * Switch the session's runtime and durably save the choice for the chat
+     * (#5476). `backend` names an `agents:` harness entry; the optional
+     * `model` rides as a session-scoped override when it differs from the
+     * harness's own model (Issue #5255 r4 two-parameter form). `actorId`
+     * records who switched in the persisted selection. The switch supersedes
+     * any orthogonal dimension override.
      */
-    switchAgentPreset?(chatId: string, presetName: string, threadRootId?: string, actorId?: string):
+    switchAgentPreset?(chatId: string, backend: string, model?: string, threadRootId?: string, actorId?: string):
       AgentDimensionSwitchResult;
     /**
      * Issue #5255: switch only the backend dimension of this session's agent,

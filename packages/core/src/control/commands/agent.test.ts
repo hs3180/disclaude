@@ -154,7 +154,7 @@ describe('/agent', () => {
       data: { subcommand: 'use', preset: 'fast' },
     }, ctx);
     expect(result.success).toBe(true);
-    expect(switchPreset).toHaveBeenCalledWith('a', 'fast', 'om_topic', 'ou_user');
+    expect(switchPreset).toHaveBeenCalledWith('a', 'fast', undefined, 'om_topic', 'ou_user');
   });
 
   it('documents the selection precedence chain on /agent current (#5476)', async () => {
@@ -249,7 +249,7 @@ describe('/agent orthogonal dimension switches (Issue #5255)', () => {
     expect(use.message).not.toContain('Overrides on top of the preset');
     // T-068 coexistence: `use` keeps its single-token argument surface while
     // backend/model dispatch independently on the same command.
-    expect(ctx.agentPool.switchAgentPreset).toHaveBeenCalledExactlyOnceWith('a', 'fast', undefined, undefined);
+    expect(ctx.agentPool.switchAgentPreset).toHaveBeenCalledExactlyOnceWith('a', 'fast', undefined, undefined, undefined);
   });
 
   it('degrades with a clear message when a dimension switcher is not wired', async () => {

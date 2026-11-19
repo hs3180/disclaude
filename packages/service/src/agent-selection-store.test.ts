@@ -43,7 +43,7 @@ describe('durable per-chat agent selections from /agent use (#5476)', () => {
     });
     expect(pool.getActiveAgentPreset('wechat-chat')).toMatchObject({ name: 'app', model: 'app-model' });
     expect(pool.getActiveAgentPreset('feishu-chat')).toMatchObject({ name: 'global', model: 'global-model' });
-    expect(pool.switchAgentPreset('wechat-chat', 'saved', undefined, 'ou_user')).toMatchObject({ ok: true });
+    expect(pool.switchAgentPreset('wechat-chat', 'saved', undefined, undefined, 'ou_user')).toMatchObject({ ok: true });
     expect(pool.getActiveAgentPreset('wechat-chat')).toMatchObject({ name: 'saved', model: 'gpt-6.1-sol' });
     pool.disposeAll();
 
@@ -73,10 +73,10 @@ describe('durable per-chat agent selections from /agent use (#5476)', () => {
     });
     const busy = pool.getOrCreateChatAgent('chat', callbacks());
     (busy as unknown as { isBusy: boolean }).isBusy = true;
-    expect(pool.switchAgentPreset('chat', 'saved', undefined, 'ou_user')).toMatchObject({ ok: false });
+    expect(pool.switchAgentPreset('chat', 'saved', undefined, undefined, 'ou_user')).toMatchObject({ ok: false });
     expect(store.get('chat')).toBeUndefined();
     (busy as unknown as { isBusy: boolean }).isBusy = false;
-    expect(pool.switchAgentPreset('chat', 'saved', undefined, 'ou_user')).toMatchObject({ ok: true });
+    expect(pool.switchAgentPreset('chat', 'saved', undefined, undefined, 'ou_user')).toMatchObject({ ok: true });
     expect(busy.dispose).toHaveBeenCalled();
     pool.getOrCreateChatAgent('chat', callbacks());
     expect(vi.mocked(AgentFactory.createChatAgent).mock.calls.at(-1)![3]).toMatchObject({ model: 'gpt-6.1-sol' });
@@ -90,10 +90,10 @@ describe('durable per-chat agent selections from /agent use (#5476)', () => {
       validatePresetBackend: () => ({ available: true }),
     });
     pool.getOrCreateChatAgent('chat', callbacks(), 'om_topic');
-    expect(pool.switchAgentPreset('chat', 'explicit', 'om_topic', 'ou_thread')).toMatchObject({ ok: true });
+    expect(pool.switchAgentPreset('chat', 'explicit', undefined, 'om_topic', 'ou_thread')).toMatchObject({ ok: true });
     const thread = pool.get('chat', 'om_topic')!;
     const main = pool.getOrCreateChatAgent('chat', callbacks());
-    expect(pool.switchAgentPreset('chat', 'saved', undefined, 'ou_main')).toMatchObject({ ok: true });
+    expect(pool.switchAgentPreset('chat', 'saved', undefined, undefined, 'ou_main')).toMatchObject({ ok: true });
     // The thread's own explicit switch outranks the chat-wide saved choice.
     expect(pool.getActiveAgentPreset('chat', 'om_topic')).toMatchObject({ name: 'explicit', model: 'explicit-model' });
     expect(pool.getActiveAgentPreset('chat')).toMatchObject({ name: 'saved', model: 'gpt-6.1-sol' });
@@ -111,7 +111,7 @@ describe('durable per-chat agent selections from /agent use (#5476)', () => {
       validatePresetBackend: () => ({ available: true }),
     });
     const agent = pool.getOrCreateChatAgent('chat', callbacks());
-    const result = pool.switchAgentPreset('chat', 'saved', undefined, 'ou_user');
+    const result = pool.switchAgentPreset('chat', 'saved', undefined, undefined, 'ou_user');
     expect(result).toMatchObject({ ok: false, error: expect.stringContaining('Could not save the agent selection') });
     expect(agent.dispose).not.toHaveBeenCalled();
     expect(pool.getActiveAgentPreset('chat')).toMatchObject({ name: 'global', model: 'global-model' });

@@ -16,6 +16,7 @@ export {
   switchableBackendsFor,
   isValidModelForBackend,
   composeSessionRuntime,
+  resolveDefaultAgentRuntime,
 } from './agent-runtime.js';
 export type { SessionAgentOverride, AgentBackend } from './agent-runtime.js';
 export { composeSessionRuntime as composeSessionPreset } from './agent-runtime.js';

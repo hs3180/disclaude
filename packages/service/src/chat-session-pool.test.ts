@@ -496,7 +496,7 @@ describe('ChatSessionPool', () => {
       const callbacks = createMockCallbacks();
       const oldA = pool.getOrCreateChatAgent('chat-topic', callbacks, 'thread-a');
       const oldB = pool.getOrCreateChatAgent('chat-topic', callbacks, 'thread-b');
-      expect(pool.switchAgentPreset('chat-topic', 'fast', 'thread-a')).toMatchObject({ ok: true });
+      expect(pool.switchAgentPreset('chat-topic', 'fast', undefined, 'thread-a')).toMatchObject({ ok: true });
       expect(oldA.dispose).toHaveBeenCalledOnce();
       expect(oldB.dispose).not.toHaveBeenCalled();
       expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith(
@@ -527,7 +527,7 @@ describe('ChatSessionPool', () => {
           })
         ).toThrow('already owns');
         expect(original.updateCallbacks).not.toHaveBeenCalled();
-        expect(pool.switchAgentPreset('chat-project', 'fast', scope)).toMatchObject({ ok: true });
+        expect(pool.switchAgentPreset('chat-project', 'fast', undefined, scope)).toMatchObject({ ok: true });
         const lastCall = vi.mocked(AgentFactory.createChatAgent).mock.calls.at(-1);
         expect(lastCall?.[2]).toBe(accepted);
       } finally {
@@ -1841,7 +1841,7 @@ describe('ChatSessionPool orthogonal dimension switches (Issue #5255)', () => {
     try {
       // A saved `fast` (pi / glm-flash) choice is the base for a NEW session
       // of the same chat, and the backend override composes onto it.
-      expect(pool.switchAgentPreset('chat-saved', 'fast', undefined, 'ou_op')).toMatchObject({ ok: true });
+      expect(pool.switchAgentPreset('chat-saved', 'fast', undefined, undefined, 'ou_op')).toMatchObject({ ok: true });
       expect(saved.get('chat-saved')?.presetName).toBe('fast');
       expect(pool.switchAgentModel('chat-saved', 'glm-5.3')).toMatchObject({
         ok: true,

@@ -51,7 +51,8 @@ export interface FeishuAgentConfigAccess {
   getActivePreset(chatId: string, threadRootId?: string): AgentConfigPresetOption | undefined;
   switchAgentPreset(
     chatId: string,
-    presetName: string,
+    backend: string,
+    model?: string,
     threadRootId?: string,
     actorId?: string
   ): { ok: true; active: AgentConfigPresetOption } | { ok: false; error: string };
@@ -490,7 +491,7 @@ export class FeishuAgentConfigCards {
       await this.paint(p).catch(() => {});
       // #5476: forward the operator so the persisted chat selection records
       // who switched — the card path and `/agent use` stay semantically equal.
-      const result = access.switchAgentPreset(p.chatId, preset.name, p.threadRootId, p.actorId);
+      const result = access.switchAgentPreset(p.chatId, preset.name, undefined, p.threadRootId, p.actorId);
       if (result.ok) {
         p.phase = 'applied';
         p.active = result.active;

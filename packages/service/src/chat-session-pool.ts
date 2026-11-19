@@ -27,8 +27,8 @@ import {
   createLogger,
   getProvider,
   Config,
-  resolveAgentPreset,
-  composeSessionPreset,
+  resolveDefaultAgentRuntime,
+  composeSessionRuntime,
   backendLlmCompatibility,
   switchableBackendsFor,
   isValidModelForBackend,
@@ -292,7 +292,21 @@ export class ChatSessionPool {
     const requested = this.selectedPresetBySession.get(sessionKey)
       ?? this.options.agentSelections?.get(chatId)?.presetName
       ?? this.options.defaultAgentPresetForChat?.(chatId);
-    return resolveAgentPreset(this.presets, requested);
+    const harness = requested?.trim();
+    if (harness) { return this.resolveHarness(harness); }
+    // Issue #5255 r4: the default branch follows the same selection as the
+    // loader/CLI (configured defaultHarness, then marker/declaration order).
+    // The pool previously dropped defaultHarness here, silently diverging
+    // from cli-main's explicit passes — this closes that behavior gap.
+    return resolveDefaultAgentRuntime(this.presets, Config.getRawConfig().defaultHarness);
+  }
+
+  /** Issue #5255 r4: a named selection is a plain harness-key read. */
+  private resolveHarness(name: string) {
+    const preset = this.presets?.[name];
+    return preset
+      ? { ok: true as const, name, preset }
+      : { ok: false as const, error: `Unknown agent preset: ${name}` };
   }
 
   getActiveAgentPreset(chatId: string, threadRootId?: string): ActiveAgentPreset | undefined {
@@ -344,7 +358,7 @@ export class ChatSessionPool {
       ...(override?.modelOverride ? { modelOverride: override.modelOverride } : {}),
     };
     if (base.preset) {
-      const effective = composeSessionPreset(base.preset, override);
+      const effective = composeSessionRuntime(base.preset, override);
       return {
         name: base.name,
         agentBackend: effective.agentBackend,
@@ -505,14 +519,18 @@ export class ChatSessionPool {
    */
   switchAgentPreset(
     chatId: string,
-    presetName: string,
+    backend: string,
+    model?: string,
     threadRootId?: string,
     actorId?: string
   ): AgentPresetSwitchResult {
     if (!this.presets) {
       return { ok: false, error: 'No named agent presets are configured (add an agents: map)' };
     }
-    const resolved = resolveAgentPreset(this.presets, presetName);
+    const harness = backend.trim();
+    const resolved = harness
+      ? this.resolveHarness(harness)
+      : resolveDefaultAgentRuntime(this.presets, Config.getRawConfig().defaultHarness);
     if (!resolved.ok) {
       return resolved;
     }
@@ -530,12 +548,28 @@ export class ChatSessionPool {
       return { ok: false, error: 'Another session of this chat is busy; wait for the response or use /stop before switching presets' };
     }
 
+    // `/agent use <harness> [model]` sets both dimensions at once: the named
+    // harness is the durable base; a differing model rides as a session-scoped
+    // override (persisted selection keeps only the harness, so a restart
+    // reverts to the base — Issue #5255 r4 two-parameter form).
+    const modelOverride = model?.trim() || undefined;
+    if (modelOverride !== undefined && !isValidModelForBackend(resolved.preset.agentBackend, modelOverride)) {
+      return {
+        ok: false,
+        error: `Model "${modelOverride}" is not a valid ${resolved.preset.agentBackend} model identifier.`,
+        options: this.modelOptions(chatId, sessionKey),
+      };
+    }
+    const effective: AgentPreset = modelOverride && modelOverride !== resolved.preset.model
+      ? composeSessionRuntime(resolved.preset, { modelOverride })
+      : resolved.preset;
+
     let info: { available: boolean; unavailableReason?: string };
     try {
-      const config = AgentFactory.resolveConfig({ ...resolved.preset, settings: resolved.preset });
+      const config = AgentFactory.resolveConfig({ ...effective, settings: effective });
       info = this.options.validatePresetBackend
-        ? this.options.validatePresetBackend(resolved.preset.agentBackend, config)
-        : getProvider(resolved.preset.agentBackend, resolved.preset).getInfo(config);
+        ? this.options.validatePresetBackend(effective.agentBackend, config)
+        : getProvider(effective.agentBackend, effective).getInfo(config);
     } catch {
       return {
         ok: false,
@@ -553,7 +587,7 @@ export class ChatSessionPool {
     let candidate: ChatAgent | undefined;
     if (callbacks && previous) {
       try {
-        candidate = this.createAgent(chatId, callbacks, resolved.preset, true, sessionKey);
+        candidate = this.createAgent(chatId, callbacks, effective, true, sessionKey);
       } catch (error) {
         return {
           ok: false,
@@ -581,7 +615,7 @@ export class ChatSessionPool {
       // session. Forget the selected backend only after construction succeeds,
       // so a failed switch leaves the currently active session untouched.
       try {
-        getProvider(resolved.preset.agentBackend, resolved.preset).forgetSession?.(sessionKey);
+        getProvider(effective.agentBackend, effective).forgetSession?.(sessionKey);
       } catch (error) {
         candidate.dispose();
         return {
@@ -599,8 +633,13 @@ export class ChatSessionPool {
     }
     this.selectedPresetBySession.set(sessionKey, resolved.name);
     // `/agent use` sets both dimensions at once: any orthogonal override on
-    // the previous selection is superseded (Issue #5255).
-    this.agentOverrideBySession.delete(sessionKey);
+    // the previous selection is superseded; a differing model immediately
+    // becomes the session's new override (Issue #5255).
+    if (modelOverride && modelOverride !== resolved.preset.model) {
+      this.setSessionOverride(sessionKey, { backendOverride: undefined, modelOverride });
+    } else {
+      this.agentOverrideBySession.delete(sessionKey);
+    }
     // The issuing session now owns an explicit selection, so the sweep below
     // only resets the chat's other selection-following sessions (#5476).
     if (this.options.agentSelections) { this.resetSelectionFollowingSessions(chatId); }
@@ -608,9 +647,9 @@ export class ChatSessionPool {
       ok: true,
       active: {
         name: resolved.name,
-        agentBackend: resolved.preset.agentBackend,
-        model: resolved.preset.model,
-        ...(resolved.preset.reasoningEffort ? { reasoningEffort: resolved.preset.reasoningEffort } : {}),
+        agentBackend: effective.agentBackend,
+        model: effective.model,
+        ...(effective.reasoningEffort ? { reasoningEffort: effective.reasoningEffort } : {}),
       },
       sessionBoundary: 'new-session',
     };
@@ -663,7 +702,7 @@ export class ChatSessionPool {
       sessionKey,
       `backend "${target}" on ${base.preset ? `preset "${base.name}"` : 'the default agent'}`,
       base.preset
-        ? { preset: composeSessionPreset(base.preset, { backendOverride: target }) }
+        ? { preset: composeSessionRuntime(base.preset, { backendOverride: target }) }
         : { preset: this.singletonPreset(target, base) }
     );
     if (!result.ok) { return result; }
@@ -712,7 +751,7 @@ export class ChatSessionPool {
       sessionKey,
       `model "${target}" on ${base.preset ? `preset "${base.name}"` : 'the default agent'}`,
       base.preset
-        ? { preset: composeSessionPreset(base.preset, { backendOverride: override?.backendOverride, modelOverride: target }) }
+        ? { preset: composeSessionRuntime(base.preset, { backendOverride: override?.backendOverride, modelOverride: target }) }
         : override?.backendOverride
           ? { preset: this.singletonPreset(override.backendOverride, base), modelOverride: target }
           : { modelOverride: target }
@@ -762,7 +801,7 @@ export class ChatSessionPool {
     if (!this.presets) {
       throw new Error(`Unknown scheduled harness "${harness}": no named agent presets are configured (add an agents: map)`);
     }
-    const resolved = resolveAgentPreset(this.presets, harness);
+    const resolved = this.resolveHarness(harness);
     if (!resolved.ok) {
       throw new Error(`Unknown scheduled harness "${harness}": ${resolved.error}`);
     }
@@ -978,7 +1017,7 @@ export class ChatSessionPool {
         if (this.presets) {
           const base = this.sessionBase(chatId, sessionKey);
           if (base.ok && base.preset) {
-            preset = composeSessionPreset(base.preset, override);
+            preset = composeSessionRuntime(base.preset, override);
           }
         } else if (override?.backendOverride) {
           // No agents: map — carry the singleton default's llm binding onto the
@@ -1113,7 +1152,7 @@ export class ChatSessionPool {
     const base = this.sessionBase(chatId, sessionKey);
     const effectiveOverride = this.agentOverrideBySession.get(sessionKey);
     if (base.ok && base.preset) {
-      const effective = composeSessionPreset(base.preset, effectiveOverride);
+      const effective = composeSessionRuntime(base.preset, effectiveOverride);
       getProvider(effective.agentBackend, effective).forgetSession?.(sessionKey);
     } else {
       this.forgetProviderSession(sessionKey);

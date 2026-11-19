@@ -54,7 +54,7 @@ export const handleAgent: CommandHandler<'agent'> = async (
     }
     // The switch also saves the choice for the chat, so the same preset is
     // reused by this chat's next messages and after service restarts (#5476).
-    const result = api.switchAgentPreset(command.chatId, name, command.threadRootId, command.actorId);
+    const result = api.switchAgentPreset(command.chatId, name, undefined, command.threadRootId, command.actorId);
     if (!result.ok) {
       const canList = !context.isCommandAllowed || context.isCommandAllowed({
         ...command, data: { subcommand: 'list' },
