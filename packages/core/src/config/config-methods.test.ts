@@ -45,7 +45,7 @@ const { mockGetConfigFromFile, mockGetPreloadedConfig } = vi.hoisted(() => ({
         displayName: '读书助手',
       },
     },
-    agents: { default: { backend: 'claude', llm: 'default', enableAgentTeams: true } },
+    agents: { claude: { llm: 'default', enableAgentTeams: true } },
     llms: {
       default: {
         defaultModel: 'glm-4',
