@@ -184,16 +184,18 @@ Once an override applies, `CLAUDE_CODE_MAX_CONTEXT_TOKENS` stops applying
 while the slot inherits the target's effort defaults (override with
 `CLAUDE_EFFORT`). Requires Claude
 Code ≥ v2.1.200; agent startup fails with a clear error when the bundled CLI
-is older. For multi-slot mappings pinned to explicit catalog IDs set
-`agents.<name>.claude.modelOverrides` directly — a raw Claude Code
-`modelOverrides` map (full Claude model ID → provider ID), mutually exclusive
-with `modelMapping`.
+is older. `modelMapping` is the only configuration source for these overrides:
+there is no raw full-Claude-ID configuration key, and a stale
+`agents.<name>.claude.modelOverrides` key fails validation with guidance back
+to `modelMapping`. Multi-slot gateways express their identities through the
+three tiers; explicit full provider model IDs keep passing through
+`defaultModel` and explicit model selection unchanged.
 
 One binding can serve several harnesses (Issue #5679): bind both
 `backend: claude` and `backend: dsh` (or `pi`) agents to the same `llms` entry
 and `defaultModel` is the wire model for every one of them — the deployment-level
-alias is configured once. `models`/`behavesAs`/`modelOverrides` live under
-`agents.<claude-name>.claude` and are capability metadata for that Claude
+alias is configured once. The tier mapping lives under
+`agents.<claude-name>.claude` and is capability metadata for that Claude
 runtime only; DSH/Pi send `defaultModel` verbatim.
 Changing the provider default model means editing `llms.<name>.defaultModel` in that
 one place. Two boundaries keep the
@@ -250,11 +252,14 @@ migrating deployments. For earlier #5294 previews, move
 `agents.<name>.codex.reasoningEffort` to its bound LLM and replace
 `apiKeyEnv: NAME` with `apiKey: $NAME`.
 
-For the provider-ownership rework of Issue #5679, `llms.<name>.behavesAs`,
-`modelOverrides` and the `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL` variables
-have moved to `agents.<claude-name>.claude` (`behavesAs`, `modelOverrides`,
-`modelMapping`, `env`); old locations fail validation with field-path migration
-guidance. The 2026-11-06 review additionally renamed the provider default key:
+For the provider-ownership rework of Issue #5679, `llms.<name>.behavesAs`
+and the `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL` variables
+have moved to `agents.<claude-name>.claude` (`modelMapping`, `env`); old
+locations fail validation with field-path migration guidance. The separate
+`modelOverrides` configuration key (provider-level and agent-level) is gone
+with the Issue #5422 rework: the three-tier `modelMapping` declaration is the
+only configuration source, and stale `modelOverrides` keys fail validation
+with guidance to `modelMapping`. The 2026-11-06 review additionally renamed the provider default key:
 `llms.<name>.model` is now `llms.<name>.defaultModel` — agents can use any
 model of the provider, the key only sets the default, and the old name fails
 validation with rename guidance. A provider default model remains optional;

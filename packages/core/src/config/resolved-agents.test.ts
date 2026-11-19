@@ -535,15 +535,19 @@ describe('named runtime and LLM configuration', () => {
       + 'agents.assistant.claude.modelMapping instead — the tier declaration itself is compiled into the capability-slot mapping'
     );
   });
-  it('projects a raw multi-slot modelOverrides map verbatim', () => {
+  it('rejects the removed raw modelOverrides key with migration guidance (Issue #5422)', () => {
     const config = configuration();
-    config.agents!.assistant.claude = { ...config.agents!.assistant.claude, modelOverrides: { ...kimiTierOverrides } };
+    config.agents!.assistant.claude = { modelOverrides: { ...kimiTierOverrides } };
     const result = resolveConfiguredAgents(config);
-    expect(result.ok).toBe(true);
-    if (!result.ok) {
+    expect(result.ok).toBe(false);
+    if (result.ok) {
       return;
     }
-    expect(result.presets.assistant.modelOverrides).toEqual(kimiTierOverrides);
+    expect(result.errors.length).toBe(1);
+    expect(result.errors.join('\n')).toBe(
+      'agents.assistant.claude.modelOverrides was removed (Issue #5422): declare the three tiers under '
+      + 'agents.assistant.claude.modelMapping instead — the tier declaration itself is compiled into the capability-slot parameter mapping'
+    );
   });
   it.each([
     (c: DisclaudeConfig) => {
@@ -553,13 +557,7 @@ describe('named runtime and LLM configuration', () => {
       c.agents!.assistant.claude = staleBehavesAs('');
     },
     (c: DisclaudeConfig) => {
-      c.agents!.assistant.claude = { ...staleBehavesAs('claude-opus-5'), modelOverrides: { 'claude-opus-5': 'kimi-k3.1-pro' } };
-    },
-    (c: DisclaudeConfig) => {
       c.agents!.assistant.claude = { modelOverrides: { opus: 'kimi-k3.1-pro' } };
-    },
-    (c: DisclaudeConfig) => {
-      c.agents!.assistant.claude = { modelOverrides: { 'claude-opus-5': '  ' } };
     },
     (c: DisclaudeConfig) => {
       c.agents!.assistant.claude = { modelOverrides: {} };
@@ -569,6 +567,9 @@ describe('named runtime and LLM configuration', () => {
     },
     (c: DisclaudeConfig) => {
       (c.llms!.daily as unknown as Record<string, unknown>).behavesAs = 'claude-opus-5';
+    },
+    (c: DisclaudeConfig) => {
+      (c.llms!.daily as unknown as Record<string, unknown>).modelOverrides = { 'claude-opus-5': 'kimi-k3.1-pro' };
     },
   ])('rejects malformed or mis-scoped model override declarations', (mutate) => {
     const config = configuration();

@@ -28,8 +28,6 @@ const CONFIG_KEYS = new Set([
 ]);
 const BACKENDS = new Set(['claude', 'pi', 'codex', 'dsh', 'miniswe']);
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
-/** Full Claude model IDs as modelOverrides keys (Issue #5410); the three-tier `modelMapping` declaration compiles bare tier alias keys at config time (Issue #5422). */
-const CLAUDE_MODEL_ID = /^claude-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 /**
  * Bare Claude Code model aliases (Issue #5679). Claude resolves these to its
  * current catalog ID before the wire; DSH/Pi/Codex send `model` verbatim, so a
@@ -116,7 +114,7 @@ export function resolveConfiguredAgents(
       if (key === 'behavesAs') {
         errors.push(`${field}.behavesAs was removed (Issue #5422); configure the three tiers under agents.<name>.claude.modelMapping`);
       } else if (key === 'modelOverrides') {
-        errors.push(`${field}.modelOverrides has moved to agents.<name>.claude.modelOverrides; llms contains provider settings only`);
+        errors.push(`${field}.modelOverrides was removed (Issue #5422); configure the three tiers under agents.<name>.claude.modelMapping`);
       } else if (key === 'model') {
         errors.push(`${field}.model has been renamed to ${field}.defaultModel; agents can use any model of this provider and defaultModel only sets the default`);
       } else if (!['via', 'defaultModel', 'reasoningEffort', 'maxConcurrentSessions', 'api', 'env'].includes(key)) {
@@ -393,18 +391,11 @@ export function resolveConfiguredAgents(
         for (const key of Object.keys(agent.claude)) {
           if (key === 'behavesAs') {
             errors.push(`${field}.claude.behavesAs was removed (Issue #5422): declare the three tiers under ${field}.claude.modelMapping instead — the tier declaration itself is compiled into the capability-slot mapping`);
-          } else if (!['modelOverrides', 'modelMapping', 'env'].includes(key)) {
+          } else if (key === 'modelOverrides') {
+            errors.push(`${field}.claude.modelOverrides was removed (Issue #5422): declare the three tiers under ${field}.claude.modelMapping instead — the tier declaration itself is compiled into the capability-slot parameter mapping`);
+          } else if (!['modelMapping', 'env'].includes(key)) {
             errors.push(`${field}.claude.${key} is unsupported`);
           }
-        }
-        if (agent.claude.modelOverrides !== undefined && agent.claude.modelMapping !== undefined) {
-          errors.push(`${field}.claude.modelMapping and modelOverrides are mutually exclusive: declare the three tiers (modelMapping) or a raw full-Claude-ID map (modelOverrides), not both`);
-        }
-        if (agent.claude.modelOverrides !== undefined &&
-          (!mapping(agent.claude.modelOverrides) || !Object.keys(agent.claude.modelOverrides).length ||
-            Object.entries(agent.claude.modelOverrides).some(([key, value]) =>
-              !CLAUDE_MODEL_ID.test(key) || typeof value !== 'string' || !value.trim()))) {
-          errors.push(`${field}.claude.modelOverrides must map full Claude model IDs to non-empty provider model IDs`);
         }
         // Three-tier opus/sonnet/haiku mapping (review 2026-11-06): each tier
         // names a provider model; omitted tiers fall back to the provider
@@ -492,20 +483,18 @@ export function resolveConfiguredAgents(
       ...(backend === 'claude' ? agent.claude?.env : {}),
     });
     const tierEnv = backend === 'claude' ? claudeTierEnvironment(agent.claude, defaultModel) : undefined;
-    // Issue #5422 (r3): no separate `behavesAs` key exists — the three-tier
-    // `modelMapping` declaration is the single capability-slot source. Config
-    // compiles it into the parameter mapping from the same source the tier
-    // environment builds from: every tier alias key maps to `modelMapping.<tier>`,
-    // an omitted tier deriving from the provider `defaultModel`, so editing
-    // `modelMapping` changes the applied catalog identity everywhere at once. A
-    // raw full-ID `modelOverrides` map stays the escape hatch for
-    // multi-slot gateways (mutually exclusive with `modelMapping` above).
+    // Issue #5422 (r3/r6): no separate `behavesAs` or raw full-ID
+    // `modelOverrides` configuration key exists — the three-tier `modelMapping`
+    // declaration is the single capability-slot source and the only
+    // configuration source. Config compiles it into the parameter mapping from
+    // the same source the tier environment builds from: every tier alias key
+    // maps to `modelMapping.<tier>`, an omitted tier deriving from the provider
+    // `defaultModel`, so editing `modelMapping` changes the applied catalog
+    // identity everywhere at once. Multi-slot gateway / full-ID scenarios are
+    // expressed through these tiers or an explicit full provider model ID.
     const tierOverrides = (): Record<string, string> | undefined => {
       if (backend !== 'claude') {
         return undefined;
-      }
-      if (agent.claude?.modelMapping === undefined) {
-        return agent.claude?.modelOverrides;
       }
       const overrides = Object.fromEntries(
         (Object.keys(CLAUDE_TIER_ENV) as ClaudeTier[])

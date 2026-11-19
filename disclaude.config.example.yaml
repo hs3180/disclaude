@@ -50,13 +50,10 @@ agents:
       # defaultModel), so editing the tier models above changes the applied
       # Claude catalog identity everywhere. Claude Code resolves each tier
       # alias against its current catalog, so the binding follows CLI
-      # upgrades. A stale `behavesAs` key is a config error pointing here.
-      # Alternative (mutually exclusive with modelMapping): map several full Claude
-      # model IDs to provider IDs, e.g. a multi-model gateway:
-      # modelOverrides:
-      #   claude-opus-5: kimi-k3.1-pro
-      #   claude-sonnet-4-5: glm-5.3
-      #   claude-haiku-4-5: glm-5.3
+      # upgrades. A stale `behavesAs` or `modelOverrides` key is a config
+      # error pointing here: this declaration is the ONLY configuration
+      # source — multi-slot gateways express their identities through the
+      # three tiers above.
       # Other Claude-only environment. The three tier variables above are
       # derived from `models`/defaultModel — set a tier in ONE place; setting
       # e.g. ANTHROPIC_DEFAULT_HAIKU_MODEL here together with modelMapping.haiku is
@@ -77,7 +74,7 @@ agents:
 
   # Second runtime on the SAME provider: DSH sends llms.shared-gateway.defaultModel
   # verbatim, so changing the deployment default model means editing that one
-  # line. Claude-only keys (claude.modelMapping/behavesAs/modelOverrides/env) belong
+  # line. Claude-only keys (claude.modelMapping/env) belong
   # to the Claude agent above and are rejected here.
   research:
     backend: dsh

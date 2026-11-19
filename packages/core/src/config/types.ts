@@ -95,23 +95,19 @@ export interface ClaudeModelMapping {
 
 export interface ClaudeAgentConfig {
   /**
-   * Claude model names (including Opus/Sonnet/Haiku slots) mapped to provider
-   * IDs: a raw Claude Code `modelOverrides` map (full Claude model ID →
-   * provider ID) for multi-slot gateways. Mutually exclusive with `modelMapping` —
-   * the three-tier declaration is the derived form for the common case.
-   */
-  modelOverrides?: Record<string, string>;
-  /**
    * Three-tier opus/sonnet/haiku model mapping, and the single source of the
-   * capability-slot binding (Issue #5422): no separate `behavesAs` key
-   * exists. Config compiles the declaration itself into the
-   * `modelOverrides` parameter mapping at config time — every tier alias
-   * key maps to `modelMapping.<tier>`, an omitted tier deriving from the provider
-   * `defaultModel` — so editing `modelMapping` changes the applied Claude catalog
-   * identity everywhere at once. Claude Code resolves each tier alias
-   * against its current catalog, so the binding follows CLI upgrades
-   * instead of pinning a full ID. A stale `behavesAs` key is a config
-   * error pointing here, never a silent no-op.
+   * capability-slot binding (Issue #5422): no separate `behavesAs` or raw
+   * full-Claude-ID `modelOverrides` configuration key exists — this
+   * declaration is the only configuration source. Config compiles the
+   * declaration itself into the `modelOverrides` parameter mapping at config
+   * time — every tier alias key maps to `modelMapping.<tier>`, an omitted
+   * tier deriving from the provider `defaultModel` — so editing
+   * `modelMapping` changes the applied Claude catalog identity everywhere at
+   * once. Claude Code resolves each tier alias against its current catalog,
+   * so the binding follows CLI upgrades instead of pinning a full ID.
+   * Multi-slot gateway needs are expressed through these tiers; a stale
+   * `behavesAs` or `modelOverrides` key is a config error pointing here,
+   * never a silent no-op.
    */
   modelMapping?: ClaudeModelMapping;
   /** Claude-specific environment, including ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL. */
@@ -259,7 +255,7 @@ export interface AgentPreset extends AgentConfig {
   llm: string;
   reasoningEffort?: CodexReasoningEffort;
   maxConcurrentSessions?: number;
-  /** Resolved Claude Code modelOverrides map (Issues #5410, #5679); compiled for every preset sharing the binding, applied by Claude runtimes only. */
+  /** Claude Code `modelOverrides` parameter map (Issue #5410) compiled at config time from the agent's `claude.modelMapping` declaration — the only configuration source (Issue #5422); applied by Claude runtimes only. */
   modelOverrides?: Record<string, string>;
 }
 export type AgentPresets = Record<string, AgentPreset>;
