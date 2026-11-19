@@ -550,7 +550,7 @@ describe('ChatSessionPool', () => {
       expect(pool.switchAgentPreset('chat-busy', 'fast')).toEqual({
         ok: false,
         error:
-          'The current chat is busy; wait for the response or use /stop before switching presets',
+          'The current chat is busy; wait for the response or use /stop before switching runtimes',
       });
       expect(old.dispose).not.toHaveBeenCalled();
       expect(pool.get('chat-busy')).toBe(old);
@@ -565,7 +565,7 @@ describe('ChatSessionPool', () => {
       const old = pool.getOrCreateChatAgent('chat-unavailable', createMockCallbacks());
       expect(pool.switchAgentPreset('chat-unavailable', 'fast')).toEqual({
         ok: false,
-        error: 'Agent preset "fast" is unavailable: login required',
+        error: 'Agent runtime "fast" is unavailable: login required',
       });
       expect(pool.get('chat-unavailable')).toBe(old);
       expect(old.dispose).not.toHaveBeenCalled();
@@ -601,7 +601,7 @@ describe('ChatSessionPool', () => {
 
       expect(pool.switchAgentPreset('chat-fail', 'fast')).toEqual({
         ok: false,
-        error: 'Could not activate agent preset "fast": candidate rejected',
+        error: 'Could not activate agent runtime "fast": candidate rejected',
       });
       expect(old.dispose).not.toHaveBeenCalled();
       expect(pool.get('chat-fail')).toBe(old);
@@ -815,7 +815,7 @@ describe('ChatSessionPool', () => {
 
         expect(() => pool.getOrCreateChatAgent('chat-model-only', callbacks, undefined, {
           id: 'execution:bad-model', model: 'claude-sonnet-4-5', releaseAfterTurn: true,
-        })).toThrow(/Invalid scheduled model override for agent preset "native": .*Codex\/ChatGPT model identifier/);
+        })).toThrow(/Invalid scheduled model override for agent runtime "native": .*Codex\/ChatGPT model identifier/);
         expect(AgentFactory.createChatAgent).not.toHaveBeenCalled();
         expect(pool.get('chat-model-only', 'execution:bad-model')).toBeUndefined();
         expect(selections.get('chat-model-only')?.presetName).toBe('native');
@@ -2092,7 +2092,7 @@ describe('ChatSessionPool orthogonal dimension switches (Issue #5255)', () => {
             // /agent use keeps requiring a configured preset map
             expect(pool.switchAgentPreset('solo-codex', 'fast')).toMatchObject({
               ok: false,
-              error: expect.stringContaining('No named agent presets are configured'),
+              error: expect.stringContaining('No named agent runtimes are configured'),
             });
           } finally { pool.disposeAll(); }
         }

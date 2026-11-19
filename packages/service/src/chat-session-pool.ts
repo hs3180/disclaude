@@ -306,7 +306,7 @@ export class ChatSessionPool {
     const preset = this.presets?.[name];
     return preset
       ? { ok: true as const, name, preset }
-      : { ok: false as const, error: `Unknown agent preset: ${name}` };
+      : { ok: false as const, error: `Unknown agent runtime: ${name}` };
   }
 
   getActiveAgentPreset(chatId: string, threadRootId?: string): ActiveAgentPreset | undefined {
@@ -327,7 +327,7 @@ export class ChatSessionPool {
       if (resolved && resolved.ok) {
         return { ok: true, name: resolved.name, preset: resolved.preset, binding: resolved.preset };
       }
-      return resolved ?? { ok: false, error: 'No named agent presets are configured' };
+      return resolved ?? { ok: false, error: 'No named agent runtimes are configured' };
     }
     try {
       const singleton = AgentFactory.resolveConfig({});
@@ -340,7 +340,7 @@ export class ChatSessionPool {
     } catch (error) {
       return {
         ok: false,
-        error: `No named agent presets are configured and the default agent could not be resolved (${error instanceof Error ? error.message : String(error)})`,
+        error: `No named agent runtimes are configured and the default agent could not be resolved (${error instanceof Error ? error.message : String(error)})`,
       };
     }
   }
@@ -425,7 +425,7 @@ export class ChatSessionPool {
   ): { ok: true } | { ok: false; error: string } {
     const previous = this.agents.get(sessionKey);
     if (previous?.isBusy) {
-      return { ok: false, error: 'The current chat is busy; wait for the response or use /stop before switching presets' };
+      return { ok: false, error: 'The current chat is busy; wait for the response or use /stop before switching runtimes' };
     }
 
     let info: { available: boolean; unavailableReason?: string };
@@ -525,7 +525,7 @@ export class ChatSessionPool {
     actorId?: string
   ): AgentPresetSwitchResult {
     if (!this.presets) {
-      return { ok: false, error: 'No named agent presets are configured (add an agents: map)' };
+      return { ok: false, error: 'No named agent runtimes are configured (add an agents: map)' };
     }
     const harness = backend.trim();
     const resolved = harness
@@ -541,11 +541,11 @@ export class ChatSessionPool {
       return {
         ok: false,
         error:
-          'The current chat is busy; wait for the response or use /stop before switching presets',
+          'The current chat is busy; wait for the response or use /stop before switching runtimes',
       };
     }
     if (this.options.agentSelections && this.selectionChangeBusy(chatId)) {
-      return { ok: false, error: 'Another session of this chat is busy; wait for the response or use /stop before switching presets' };
+      return { ok: false, error: 'Another session of this chat is busy; wait for the response or use /stop before switching runtimes' };
     }
 
     // `/agent use <harness> [model]` sets both dimensions at once: the named
@@ -573,13 +573,13 @@ export class ChatSessionPool {
     } catch {
       return {
         ok: false,
-        error: `Could not validate agent preset "${resolved.name}". Check backend configuration and availability; the current session is unchanged.`,
+        error: `Could not validate agent runtime "${resolved.name}". Check backend configuration and availability; the current session is unchanged.`,
       };
     }
     if (!info.available) {
       return {
         ok: false,
-        error: `Agent preset "${resolved.name}" is unavailable: ${info.unavailableReason ?? 'backend unavailable'}`,
+        error: `Agent runtime "${resolved.name}" is unavailable: ${info.unavailableReason ?? 'backend unavailable'}`,
       };
     }
 
@@ -591,7 +591,7 @@ export class ChatSessionPool {
       } catch (error) {
         return {
           ok: false,
-          error: `Could not activate agent preset "${resolved.name}": ${error instanceof Error ? error.message : String(error)}`,
+          error: `Could not activate agent runtime "${resolved.name}": ${error instanceof Error ? error.message : String(error)}`,
         };
       }
     }
@@ -620,7 +620,7 @@ export class ChatSessionPool {
         candidate.dispose();
         return {
           ok: false,
-          error: `Could not start a fresh session for preset "${resolved.name}": ${error instanceof Error ? error.message : String(error)}`,
+          error: `Could not start a fresh session for runtime "${resolved.name}": ${error instanceof Error ? error.message : String(error)}`,
         };
       }
       this.agents.set(sessionKey, candidate);
@@ -700,7 +700,7 @@ export class ChatSessionPool {
     const result = this.activateAgentSelection(
       chatId,
       sessionKey,
-      `backend "${target}" on ${base.preset ? `preset "${base.name}"` : 'the default agent'}`,
+      `backend "${target}" on ${base.preset ? `runtime "${base.name}"` : 'the default agent'}`,
       base.preset
         ? { preset: composeSessionRuntime(base.preset, { backendOverride: target }) }
         : { preset: this.singletonPreset(target, base) }
@@ -749,7 +749,7 @@ export class ChatSessionPool {
     const result = this.activateAgentSelection(
       chatId,
       sessionKey,
-      `model "${target}" on ${base.preset ? `preset "${base.name}"` : 'the default agent'}`,
+      `model "${target}" on ${base.preset ? `runtime "${base.name}"` : 'the default agent'}`,
       base.preset
         ? { preset: composeSessionRuntime(base.preset, { backendOverride: override?.backendOverride, modelOverride: target }) }
         : override?.backendOverride
@@ -794,12 +794,12 @@ export class ChatSessionPool {
       // never the borrowed/other backend's, and fails loudly instead of
       // silently running the chat's default model.
       const effective: AgentPreset = { ...selected.preset, model: modelOverride };
-      this.validateScheduledPreset(selected.name, effective, 'Invalid scheduled model override for agent preset');
+      this.validateScheduledPreset(selected.name, effective, 'Invalid scheduled model override for agent runtime');
       return effective;
     }
 
     if (!this.presets) {
-      throw new Error(`Unknown scheduled harness "${harness}": no named agent presets are configured (add an agents: map)`);
+      throw new Error(`Unknown scheduled harness "${harness}": no named agent runtimes are configured (add an agents: map)`);
     }
     const resolved = this.resolveHarness(harness);
     if (!resolved.ok) {
