@@ -17,7 +17,7 @@ describe('scheduled provider failure through the real agent and routing boundary
       const config = join(root, 'config.json');
       writeFileSync(config, JSON.stringify({
         workspace: { dir: root },
-        agents: { default: { backend: 'codex', llm: 'default' } },
+        agents: { codex: { llm: 'default' } },
         llms: { default: { defaultModel: 'gpt-6-luna' } },
       }));
       const script = `

@@ -14,7 +14,7 @@ describe('Project commands with persistent chat and topic queries', () => {
       const configPath = join(root, 'config.json');
       writeFileSync(configPath, JSON.stringify({
         workspace: { dir: root },
-        agents: { default: { backend: 'claude', llm: 'default' } },
+        agents: { claude: { llm: 'default' } },
         llms: {
           default: {
             defaultModel: 'test-model',

@@ -12,7 +12,7 @@ it.each(['succeeded', 'failed', 'stream-error', 'stop', 'close', 'unknown-ack', 
     try {
       const config = join(directory, 'config.json');
       writeFileSync(config, JSON.stringify({ workspace: { dir: directory },
-        agents: { default: { backend: 'claude', llm: 'default' } },
+        agents: { claude: { llm: 'default' } },
         llms: { default: { defaultModel: 'offline', api: { protocol: 'anthropic', apiKey: '$TEST_LLM_DEFAULT_KEY' } } } }));
       const script = `
         import assert from 'node:assert/strict';
