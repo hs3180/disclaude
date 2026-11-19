@@ -1188,6 +1188,15 @@ export async function main(): Promise<void> {
         httpApiServer.setWeChatRegistrationHealthProvider(() => registrationRuntime.getHealth());
       }
       httpApiServer.setBrowserIpcStatusProvider(() => service.getBrowserIpcStatus());
+      // #5745 r2 S4: hot-apply endpoint — POST /api/channel-types/apply re-runs
+      // the extensions-store apply against the same config dir as the cold
+      // path above, so `disclaude channel-type register` from another process
+      // reaches the running channelTypeRegistry without a restart.
+      httpApiServer.setChannelTypeApplyHandler(() =>
+        applyChannelTypesForConfigDir(Config.getWorkspaceDir(), {
+          warn: (message) => logger.warn(message),
+        })
+      );
       httpApiServer.setChannelCapabilitiesProvider((chatId) =>
         service
           .getChannels()
