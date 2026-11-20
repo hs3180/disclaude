@@ -200,6 +200,9 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
       const initialized = requests.find((request) => request.method === 'initialize');
       expect(initialized.params.systemPrompt).toBe('Original context');
       expect(initialized.params.skills).toEqual({ bundledSkillDir: expect.any(String) });
+      // The overlay points at the builtins skills/ subtree itself, not the
+      // builtins root (skill-filesystem expects the <name>/SKILL.md layout).
+      expect(String(initialized.params.skills.bundledSkillDir).split(/[\\/]/).pop()).toBe('skills');
       for (const request of requests) {
         expect(JSON.stringify(request)).not.toContain('Disclaude skills');
         expect(JSON.stringify(request)).not.toContain('diagnose-logs');

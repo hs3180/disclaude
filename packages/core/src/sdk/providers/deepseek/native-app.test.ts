@@ -2,12 +2,19 @@ import type { Context } from '@deepseek-ai/cordis';
 import type { CreateAgentOptions } from '@deepseek-ai/dsh-agent';
 import type { JsonRpcTransportPeer } from '@deepseek-ai/dsh-sdk-protocol';
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { DshNativeApp } from './native-app.js';
-import type { DshSkillRegistryLike } from './dsh-skills.js';
+
+/**
+ * Structural `ctx.skills` face (dsh-skill SkillRegistry), kept so the tests
+ * can prove the controller never touches the profile's registry: skills ride
+ * the profile composition's skill-filesystem overlay (#5717 r3).
+ */
+interface DshSkillRegistryLike {
+  readonly registerProvider: (
+    create: (control: { signal: AbortSignal; invalidate: () => void }) => unknown
+  ) => () => void;
+}
 
 function fixture(attachments?: AttachmentStore, skills?: DshSkillRegistryLike) {
   const tools = {
@@ -138,38 +145,7 @@ describe('DSH native controller skill registration (#5717)', () => {
     return { registry, providers, dispose };
   }
 
-  it('registers the Disclaude provider when the profile exposes ctx.skills', async () => {
-    const builtins = await mkdtemp(join(tmpdir(), 'dsh-skills-'));
-    const { registry, providers } = skillsRegistryFixture();
-    const f = fixture(undefined, registry);
-    try {
-      const initialized = await f.app.handleRequest('initialize', {
-        cwd: '/project',
-        skills: { builtinRoot: builtins, projectRoot: '/project' },
-      });
-      expect(initialized).toMatchObject({ capabilities: { skills: true } });
-      expect(providers).toHaveLength(1);
-      expect(providers[0].name).toBe('disclaude');
-      await f.app.shutdown();
-      // Teardown releases the registration back to the profile registry.
-      expect(f.logger.info).toHaveBeenCalledWith(expect.stringMatching(/registered \d+ Disclaude skill/));
-    } finally {
-      await rm(builtins, { recursive: true, force: true });
-    }
-  });
-
-  it('reports skills: false without registration when the profile has no ctx.skills', async () => {
-    const f = fixture();
-    const initialized = await f.app.handleRequest('initialize', {
-      cwd: '/project',
-      skills: { builtinRoot: '/builtins' },
-    });
-    expect(initialized).toMatchObject({ capabilities: { skills: false } });
-    expect(f.logger.warn).not.toHaveBeenCalled();
-    await f.app.shutdown();
-  });
-
-  it('reports skills: false when no skills plan was supplied at all', async () => {
+  it('reports skills: false when no skills binding was supplied at all', async () => {
     const { registry, providers } = skillsRegistryFixture();
     const f = fixture(undefined, registry);
     const initialized = await f.app.handleRequest('initialize', { cwd: '/project' });
@@ -204,30 +180,14 @@ describe('DSH native controller skill registration (#5717)', () => {
     await f.app.shutdown();
   });
 
-  it('fails initialize loudly when registration itself throws', async () => {
-    const registry: DshSkillRegistryLike = {
-      registerProvider: () => {
-        throw new Error('a skill provider named "disclaude" is already registered');
-      },
-    };
-    const f = fixture(undefined, registry);
-    await expect(
-      f.app.handleRequest('initialize', { cwd: '/project', skills: { builtinRoot: '/builtins' } })
-    ).rejects.toThrow(
-      'Disclaude skills could not be registered on the DSH skills registry: ' +
-        'a skill provider named "disclaude" is already registered. ' +
-        'Fix the reported skill source, or boot a profile whose skills registry is intact. ' +
-        'No prompt manifest was injected and no model turn was submitted.'
-    );
-    await f.app.shutdown();
-  });
-
-  it('rejects a malformed skills plan before touching the profile registry', async () => {
+  it('rejects a plan-shaped skills payload: only an overlay binding is accepted', async () => {
     const { registry, providers } = skillsRegistryFixture();
     const f = fixture(undefined, registry);
+    // #5717 r3 removed the in-process registration plan; a payload shaped
+    // like the old plan must fail loudly instead of silently registering.
     await expect(
-      f.app.handleRequest('initialize', { cwd: '/project', skills: { builtinRoot: '' } })
-    ).rejects.toThrow('skills.builtinRoot must be a non-empty string');
+      f.app.handleRequest('initialize', { cwd: '/project', skills: { builtinRoot: '/builtins' } })
+    ).rejects.toThrow('skills.bundledSkillDir must be a non-empty string');
     expect(providers).toHaveLength(0);
     await f.app.shutdown();
   });

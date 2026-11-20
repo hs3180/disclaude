@@ -167,11 +167,11 @@ export interface SkillDocument {
 /**
  * Split one SKILL.md into its strict frontmatter metadata and instruction
  * body. The same single parser serves discovery and body loading so a skill
- * cannot validate one way and load another. Harness-native channels (DSH
- * `ctx.skills`, #5717) reuse this instead of re-implementing frontmatter
- * rules; the Pi adapter can consume it the same way (shared layer, T-100).
+ * cannot validate one way and load another. DSH delivers skill files through
+ * its own native discovery (#5717 r3), so this stays internal to the
+ * host-side registry; the Pi adapter can consume it the same way (T-100).
  */
-export function parseSkillDocument(source: string, directoryName?: string): SkillDocument {
+function parseSkillDocument(source: string, directoryName?: string): SkillDocument {
   const match = source.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!match) {throw new Error('missing strict frontmatter');}
   const fields = new Map<string, string>();

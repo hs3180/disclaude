@@ -8,12 +8,6 @@ import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { assertToolOptions, type ToolDefinition } from '../../tools.js';
 import { registerDshTools } from './tool-adapter.js';
-import {
-  dshSkillPlan,
-  registerDisclaudeSkills,
-  type DshSkillRegistryLike,
-  type DisclaudeDshSkillPlan,
-} from './dsh-skills.js';
 
 export const name = 'disclaude-dsh-native-app';
 export const inject = ['agents', 'tools', 'systemPrompt', 'sdkAppStartup'];
@@ -49,9 +43,7 @@ export class DshNativeApp {
   private options: AgentOptions = {};
   private descriptors: ToolDescriptor[] = [];
   private prompt?: string;
-  private skillPlan?: DisclaudeDshSkillPlan;
   private skillOverlay?: { bundledSkillDir: string };
-  private disposeSkills?: () => void;
   private readonly sessions = new Map<string, AgentHandle>();
   private readonly openings = new Map<string, Promise<unknown>>();
   private readonly disposers: (() => void)[];
@@ -173,22 +165,18 @@ export class DshNativeApp {
       if (!params.skills || typeof params.skills !== 'object' || Array.isArray(params.skills)) {
         throw new TypeError('skills must be an object');
       }
-      const record = params.skills as Record<string, unknown>;
-      const bundledSkillDir = optionalString(record.bundledSkillDir, 'skills.bundledSkillDir');
-      if (bundledSkillDir !== undefined) {
-        // #5717 r3 flip: the binding declares that the controller already
-        // injected the built-in skills directory into the booted profile as a
-        // skill-filesystem bundledSkillDir overlay. The harness's own
-        // discovery delivers those skills; nothing registers in-process here.
-        this.skillOverlay = { bundledSkillDir };
-      } else {
-        const builtinRoot = optionalString(record.builtinRoot, 'skills.builtinRoot');
-        const projectRoot = optionalString(record.projectRoot, 'skills.projectRoot');
-        if (!builtinRoot) {
-          throw new TypeError('skills.builtinRoot must be a non-empty string');
-        }
-        this.skillPlan = dshSkillPlan(projectRoot, builtinRoot);
+      // #5717 r3: the binding declares that the controller already injected
+      // the built-in skills directory into the booted profile as a
+      // skill-filesystem bundledSkillDir overlay. The harness's own discovery
+      // delivers those skills; nothing registers in-process here.
+      const bundledSkillDir = optionalString(
+        (params.skills as Record<string, unknown>).bundledSkillDir,
+        'skills.bundledSkillDir'
+      );
+      if (!bundledSkillDir) {
+        throw new TypeError('skills.bundledSkillDir must be a non-empty string');
       }
+      this.skillOverlay = { bundledSkillDir };
     }
     this.initialized = true;
     return {
@@ -201,56 +189,11 @@ export class DshNativeApp {
         // Whether Disclaude skills are deliverable on the booted profile
         // (#5717 r3): an overlay binding means the built-in directory already
         // ships through the profile's skill-filesystem discovery; otherwise
-        // false means the profile provides no ctx.skills service (e.g.
-        // sdk-minimal) and no in-process registration happened.
-        skills: this.registerSkills(),
+        // false means the profile carries no skills overlay (e.g. sdk-minimal)
+        // and no skill is deliverable.
+        skills: this.skillOverlay !== undefined,
       },
     };
-  }
-
-  /**
-   * Register the Disclaude provider on the profile's native skills registry.
-   * The registration happens here — not in a separate composition plugin —
-   * so a load or registration failure fails initialize loudly instead of a
-   * silently never-starting plugin, and the host can act on the capability.
-   */
-  private registerSkills(): boolean {
-    if (this.skillOverlay) {
-      // Overlay-injected semantics (#5717 r3): the binding was applied to the
-      // profile composition before this app booted, so the skills ship through
-      // the harness's own discovery — report them as deliverable.
-      return true;
-    }
-    if (!this.skillPlan) {
-      return false;
-    }
-    // `skills` is the cordis service name of dsh-skill's SkillRegistry
-    // (`super(ctx, "skills")`, dsh CLI 0.1.2-rc.1). Read it through the
-    // optional-service accessor: property access without `inject` throws
-    // ("cannot get property \"skills\" without inject"), while declaring it
-    // in `inject` would defer this plugin until the service exists and so
-    // break skill-less profiles like sdk-minimal — both verified against
-    // real `dsh --profile sdk` / `sdk-minimal` boots.
-    const registry = this.ctx.get('skills') as DshSkillRegistryLike | undefined;
-    if (!registry || typeof registry.registerProvider !== 'function') {
-      return false;
-    }
-    const warn = (message: string) => this.ctx.logger.warn(message);
-    try {
-      const registration = registerDisclaudeSkills(registry, this.skillPlan, warn);
-      this.disposeSkills = registration.dispose;
-      this.ctx.logger.info(
-        `registered ${registration.skills} Disclaude skill(s) on the DSH skills registry`
-      );
-      return true;
-    } catch (error) {
-      throw new Error(
-        `Disclaude skills could not be registered on the DSH skills registry: ${
-          error instanceof Error ? error.message : String(error)
-        }. Fix the reported skill source, or boot a profile whose skills registry is intact. ` +
-          'No prompt manifest was injected and no model turn was submitted.'
-      );
-    }
   }
 
   private async open(
@@ -352,8 +295,6 @@ export class DshNativeApp {
   async shutdown(): Promise<Record<string, never>> {
     this.closing = true;
     await Promise.allSettled(this.openings.values());
-    this.disposeSkills?.();
-    this.disposeSkills = undefined;
     const handles = [...this.sessions.values()];
     this.sessions.clear();
     for (const dispose of this.disposers.splice(0)) {
