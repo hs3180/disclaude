@@ -7,6 +7,18 @@ import { MAX_MEDIA_INBOX, validMediaInbox, type MediaInboxEntry } from './media-
 
 const logger = createLogger('WeChatMediaInbox');
 const MAX_FAILURES = 3;
+
+/** Names the undelivered media in the failure notice (#5754); only file names, ordinals and send time — never private CDN references. */
+function describeFailedMedia(update: WeChatUpdate): string {
+  const parts: string[] = [];
+  const sentAt = update.create_time !== undefined ? `(消息时间 ${new Date(update.create_time * 1000).toISOString()})` : '';
+  let images = 0;
+  for (const item of update.item_list ?? []) {
+    if (item.type === 4) { parts.push(`文件「${item.file_item.file_name ?? '未命名文件'}」`); }
+    else if (item.type === 2) { parts.push(`第 ${++images} 张图片${sentAt}`); }
+  }
+  return parts.length ? `\n[未送达附件: ${parts.join('、')}]` : '';
+}
 const RETRY_MS = 5_000;
 const RETENTION_MS = 24 * 60 * 60_000;
 type Attachments = NonNullable<IncomingMessage['attachments']>;
@@ -104,7 +116,7 @@ export class WeChatMediaInbox {
           if (!peer) { throw new Error('WeChat media recovery has no bound peer'); }
           await this.accept({ messageId: `media-failure:${entry.recoveryId}`, chatId: peer, userId: peer,
             messageType: 'text', timestamp: now,
-            content: '[Attachment processing failed; automatic recovery stopped. The original attachment was not delivered. Do not treat the original request as completed.]',
+            content: `[Attachment processing failed; automatic recovery stopped. The original attachment was not delivered. Do not treat the original request as completed.]${describeFailedMedia(entry.update)}`,
             metadata: { attachmentRecovery: { state: 'failed', originalMessageId: entry.id, failures: entry.failures, recoveryId: entry.recoveryId } } });
           continue;
         }
