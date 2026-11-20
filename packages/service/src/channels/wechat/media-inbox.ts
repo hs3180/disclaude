@@ -29,6 +29,15 @@ export class WeChatMediaInbox {
   }
   snapshot(): MediaInboxEntry[] { return structuredClone([...this.entries.values()]); }
   has(id: string): boolean { return this.entries.has(id); }
+  /** Read-only peer view (#5754): media still queued, downloading, or dispatching for this peer. */
+  pendingSummary(peer: string): { count: number; states: { pending: number; dispatching: number; uncertain: number } } | undefined {
+    const states = { pending: 0, dispatching: 0, uncertain: 0 };
+    for (const entry of this.entries.values()) {
+      if (entry.update.from_user_id === peer && (entry.state === 'pending' || entry.state === 'dispatching' || entry.state === 'uncertain')) { states[entry.state]++; }
+    }
+    const count = states.pending + states.dispatching + states.uncertain;
+    return count ? { count, states } : undefined;
+  }
   /** Called when the owner finishes draining (or its grace expires). */
   invalidate(): void { this.generation++; }
 
