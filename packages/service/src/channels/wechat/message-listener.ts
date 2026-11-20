@@ -309,6 +309,12 @@ export class WeChatMessageListener {
     // #5754: same-peer media still queued in the inbox is surfaced as one bounded
     // status line appended to this text turn. No timing promise; no change without entries.
     const queuedMedia = this.mediaInbox.pendingSummary(update.from_user_id);
+    if (queuedMedia) {
+      // #5754: remember this latest text on the peer's queued media, so the recovery turn
+      // can resume the original request instead of delivering bare attachments.
+      await this.mediaInbox.recordPendingRequest(update.from_user_id,
+        { text: message.content, messageId: id, timestamp: message.timestamp ?? Date.now() });
+    }
     const deliver = queuedMedia
       ? { ...message, content: `${message.content}\n[系统注记: 此前发送的 ${queuedMedia.count} 条图片/文件消息仍在处理中(排队/下载中),暂无法读取;无需重新发送]` }
       : message;

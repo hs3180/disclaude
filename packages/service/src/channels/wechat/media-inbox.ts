@@ -3,7 +3,7 @@ import { stat } from 'node:fs/promises';
 import { createLogger, type IncomingMessage } from '@disclaude/core';
 import type { WeChatUpdate } from './types.js';
 import { WeChatMediaError } from './media-error.js';
-import { MAX_MEDIA_INBOX, validMediaInbox, type MediaInboxEntry } from './media-inbox-state.js';
+import { MAX_MEDIA_INBOX, validMediaInbox, type MediaInboxEntry, type PendingMediaRequest } from './media-inbox-state.js';
 
 const logger = createLogger('WeChatMediaInbox');
 const MAX_FAILURES = 3;
@@ -49,6 +49,18 @@ export class WeChatMediaInbox {
     }
     const count = states.pending + states.dispatching + states.uncertain;
     return count ? { count, states } : undefined;
+  }
+  /** #5754: single per-peer slot, last-wins — the latest text sent while media was queued is
+   * attached to that peer's newest still-running entry and replayed once on accept. */
+  async recordPendingRequest(peer: string, request: PendingMediaRequest): Promise<void> {
+    let touched = false;
+    for (const entry of this.entries.values()) {
+      if (entry.update.from_user_id === peer && entry.pendingRequest) { entry.pendingRequest = undefined; touched = true; }
+    }
+    const latest = [...this.entries.values()]
+      .filter(e => e.update.from_user_id === peer && (e.state === 'pending' || e.state === 'dispatching')).pop();
+    if (latest) { latest.pendingRequest = { ...request }; touched = true; }
+    if (touched) { await this.persist(); }
   }
   /** Called when the owner finishes draining (or its grace expires). */
   invalidate(): void { this.generation++; }
@@ -146,10 +158,16 @@ export class WeChatMediaInbox {
         if (!active()) { return; }
         if (signal.aborted) { entry.state = 'pending'; await this.persist(); return; }
         try {
+          // #5754: with a remembered same-peer request, one turn resumes the original text
+          // together with the now-available media; without it the generic prefix is unchanged.
+          const pending = entry.pendingRequest;
           await this.accept({ ...message,
-            content: `[Attachments from an earlier message are now available. Later user instructions take precedence; do not restart or repeat already completed work.]\n\n${message.content}`,
+            content: pending
+              ? `[系统注记: 此前发送的附件已就绪,现连同您稍后发送的最新文字一并送达,请按该文字处理附件]\n\n${pending.text}\n\n${message.content}`
+              : `[Attachments from an earlier message are now available. Later user instructions take precedence; do not restart or repeat already completed work.]\n\n${message.content}`,
             metadata: { ...message.metadata, attachmentRecovery: { state: 'completed', failures: entry.failures,
-              recoveryId: entry.recoveryId, originalMessageId: entry.id, originalTimestamp: message.timestamp } } });
+              recoveryId: entry.recoveryId, originalMessageId: entry.id, originalTimestamp: message.timestamp,
+              ...(pending ? { resumedRequest: true, resumedFromMessageId: pending.messageId } : {}) } } });
         } catch {
           if (!active()) { return; }
           entry.state = 'uncertain'; await this.persist(); continue;

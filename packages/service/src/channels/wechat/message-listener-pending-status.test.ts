@@ -23,6 +23,7 @@ afterEach(async () => {
 const imageA: WeChatUpdate = { message_id: 'image-a', from_user_id: 'peer-a',
   item_list: [{ type: 2, image_item: { media: { encrypt_query_param: 'private-ref', aes_key: 'private-key' } } }] };
 const textA: WeChatUpdate = { message_id: 'text-a', from_user_id: 'peer-a', item_list: [{ type: 1, text_item: { text: 'compare with the photo I sent' } }] };
+const textA2: WeChatUpdate = { message_id: 'text-a2', from_user_id: 'peer-a', item_list: [{ type: 1, text_item: { text: 'second instruction wins' } }] };
 const textB: WeChatUpdate = { message_id: 'text-b', from_user_id: 'peer-b', item_list: [{ type: 1, text_item: { text: 'unrelated question' } }] };
 
 /** Real listener wiring: controllable resolver, real private account store, recorded processor. */
@@ -66,7 +67,7 @@ describe('text turns see same-peer queued media status (#5754)', () => {
     const f = await fixture([[imageA, textA]], hangingDownload(), processor);
     f.listener.start();
     await vi.waitFor(() => expect(processor).toHaveBeenCalledOnce());
-    const delivered: IncomingMessage = processor.mock.calls[0][0];
+    const delivered = processor.mock.calls[0]!.at(0) as IncomingMessage;
     expect(delivered.messageId).toBe('text-a');
     expect(delivered.content.startsWith('compare with the photo I sent\n[系统注记: 此前发送的 1 条图片/文件消息仍在处理中')).toBe(true);
     expect(delivered.content.endsWith('暂无法读取;无需重新发送]')).toBe(true);
@@ -115,5 +116,41 @@ describe('text turns see same-peer queued media status (#5754)', () => {
     expect(aTurn.content).toContain('[系统注记:');
     expect(bTurn.messageId).toBe('text-b');
     expect(bTurn.content).toBe('unrelated question');
+  });
+
+  it('resumes the queued comparison text inside the single recovery turn once media arrives (#5754)', async () => {
+    const processor = vi.fn().mockResolvedValue(undefined);
+    let releaseDownload!: () => void;
+    const gate = new Promise<void>(resolve => { releaseDownload = resolve; });
+    const resolve = vi.fn().mockImplementation(() =>
+      gate.then(() => ({ fileName: 'image-a.png', filePath: join(tmpdir(), 'image-a.png') })));
+    const f = await fixture([[imageA, textA]], resolve, processor);
+    f.listener.start();
+    await vi.waitFor(() => expect(processor).toHaveBeenCalledOnce()); // text turn with the status note
+    releaseDownload();
+    await vi.waitFor(() => expect(processor).toHaveBeenCalledTimes(2));
+    const resumed = processor.mock.calls[1][0] as IncomingMessage;
+    expect(resumed.messageId).toBe('image-a');
+    expect(resumed.content).toContain('[系统注记: 此前发送的附件已就绪');
+    expect(resumed.content).toContain('compare with the photo I sent');
+    expect(resumed.metadata?.attachmentRecovery).toMatchObject({ state: 'completed', resumedRequest: true, resumedFromMessageId: 'text-a' });
+    await vi.waitFor(async () => expect((await f.store.loadSession('bot')).mediaInbox).toBeUndefined());
+  });
+
+  it('replays only the latest queued text (last-wins), never both (#5754)', async () => {
+    const processor = vi.fn().mockResolvedValue(undefined);
+    let releaseDownload!: () => void;
+    const gate = new Promise<void>(resolve => { releaseDownload = resolve; });
+    const resolve = vi.fn().mockImplementation(() =>
+      gate.then(() => ({ fileName: 'image-a.png', filePath: join(tmpdir(), 'image-a.png') })));
+    const f = await fixture([[imageA, textA, textA2]], resolve, processor);
+    f.listener.start();
+    await vi.waitFor(() => expect(processor).toHaveBeenCalledTimes(2)); // both text turns, image still queued
+    releaseDownload();
+    await vi.waitFor(() => expect(processor).toHaveBeenCalledTimes(3));
+    const resumed = processor.mock.calls[2][0] as IncomingMessage;
+    expect(resumed.messageId).toBe('image-a');
+    expect(resumed.content).toContain('second instruction wins');
+    expect(resumed.content).not.toContain('compare with the photo');
   });
 });
