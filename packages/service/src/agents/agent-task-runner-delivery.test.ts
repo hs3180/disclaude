@@ -12,7 +12,7 @@ it.each(['stop', 'close', 'stop-delivery-fails', 'rpc-stop', 'rpc-close', 'norma
     try {
       const config = join(root, 'config.json');
       writeFileSync(config, JSON.stringify({ workspace: { dir: root },
-        agents: { default: { backend: 'claude', llm: 'default' } },
+        agents: { claude: { llm: 'default' } },
         llms: { default: { defaultModel: 'offline-task-delivery', api: { protocol: 'anthropic', apiKey: '$TEST_LLM_DEFAULT_KEY' } } },
       }));
       const script = `

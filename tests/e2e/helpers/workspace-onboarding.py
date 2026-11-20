@@ -58,7 +58,7 @@ with tempfile.TemporaryDirectory(prefix='disclaude-workspace-e2e-') as tmp:
         probe.bind(('127.0.0.1',0));port=probe.getsockname()[1]
     env['WORKSPACE_SMOKE_API_KEY']='offline-workspace-test'
     payload={'workspace':{'dir':str(custom)},
-             'agents':{'default':{'backend':'claude','llm':'workspace-smoke'}},
+             'agents':{'claude':{'llm':'workspace-smoke'}},
              'llms':{'workspace-smoke':{'defaultModel':'claude-sonnet-4','api':{'protocol':'anthropic','apiKey':'$WORKSPACE_SMOKE_API_KEY'}}},'channels':{'feishu':{'enabled':False},'rest':{'enabled':True,'host':'127.0.0.1','port':port,'fileStorageDir':str(custom/'files')}},'logging':{'level':'info'}}
     config.write_text(json.dumps(payload))
     for attempt in range(2):

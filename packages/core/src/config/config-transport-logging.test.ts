@@ -38,7 +38,7 @@ const { mockGetConfigFromFile } = vi.hoisted(() => ({
         // Only enabled is set, others should use defaults
       },
     },
-    agents: { default: { backend: 'claude', llm: 'default', sdkTimeoutMs: 600_000 } },
+    agents: { claude: { llm: 'default', sdkTimeoutMs: 600_000 } },
     llms: {
       default: {
         defaultModel: 'glm-4',

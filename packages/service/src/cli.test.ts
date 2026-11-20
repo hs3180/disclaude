@@ -48,7 +48,7 @@ vi.mock('@disclaude/core', async (importOriginal) => {
     createControlHandler: vi.fn(),
     ProcessLock: vi.fn(),
     ProjectManager: vi.fn(),
-    resolveAgentPreset: vi.fn(),
+    resolveAgentRuntime: vi.fn(),
     getProvider: vi.fn(),
     TaskResultOutbox: vi.fn(),
   };

@@ -42,7 +42,7 @@ describe('disclaude service CLI config bootstrap (Issue #4654)', () => {
       writeFileSync(
         join(root, 'disclaude.config.yaml'),
         JSON.stringify({
-          agents: { default: { backend: 'codex', llm: 'daily' } },
+          agents: { codex: { llm: 'daily' } },
           llms: { daily: { defaultModel: 'gpt-6-luna' } },
         }),
       );
@@ -50,7 +50,7 @@ describe('disclaude service CLI config bootstrap (Issue #4654)', () => {
         explicitPath,
         JSON.stringify({
           workspace: { dir: '/tmp/bootstrap-test-workspace' },
-          agents: { default: { backend: 'pi', llm: 'explicit' } },
+          agents: { pi: { llm: 'explicit' } },
           llms: { explicit: { defaultModel: 'explicit-model', api: { protocol: 'anthropic' } } },
         }),
       );

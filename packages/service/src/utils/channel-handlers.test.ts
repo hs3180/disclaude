@@ -276,7 +276,7 @@ describe('createDefaultMessageHandler', () => {
     }));
     expect(controlHandler).toHaveBeenCalledWith(expect.objectContaining({
       type: 'agent', chatId: 'peer@im.wechat', actorId: 'user@im.wechat', sourceMessageId: 'wx-1',
-      threadRootId: 'wx-topic', data: { subcommand: 'use', preset: 'assistant' },
+      threadRootId: 'wx-topic', data: { subcommand: 'use', harness: 'assistant' },
     }));
     expect(channel.sendMessage).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
       chatId: 'peer@im.wechat', threadId: 'wx-topic', text: 'switched',
