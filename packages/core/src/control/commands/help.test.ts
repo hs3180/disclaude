@@ -99,7 +99,7 @@ describe('handleHelp', () => {
   it('appends the one-line config entry to the welcome only when a real choice exists (#4914)', () => {
     const withChoice = buildWelcomeMessage('feishu', { agentConfigCard: true });
     expect(withChoice).toContain('/agent config');
-    expect(withChoice).toContain('模型预设');
+    expect(withChoice).toContain('模型runtime');
     // One appended line, task examples and /help pointer stay intact.
     expect(withChoice.match(/「[^」]+」/g)).toHaveLength(3);
     expect(withChoice.endsWith('切换。')).toBe(true);

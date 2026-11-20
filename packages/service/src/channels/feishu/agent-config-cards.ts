@@ -1,11 +1,11 @@
 /**
  * Feishu native configuration card for the chat's agent profile
  * (Issue #4914 / T-088): step-wise harness → model → thinking restricted
- * selectors over the configured preset catalog.
+ * selectors over the configured runtime catalog.
  *
  * `/agent config` → the control command delegates here through the channel
  * hook (`agentConfigUi`). The card is only a presenter: every option comes
- * from the same preset catalog as `/agent list` (`listAgentRuntimes`) and the
+ * from the same runtime catalog as `/agent list` (`listAgentRuntimes`) and the
  * confirm step applies through the same chat-level selection service as
  * `/agent use` (`switchAgentRuntime`) — no parallel selection state exists.
  * Card callbacks are handled DIRECTLY (never routed through the LLM agent),
@@ -31,14 +31,14 @@ import type { ControlCommand } from '@disclaude/core';
 
 const PREFIX = 'agent-config:';
 const SELECT_NAME = 'agent_config_select';
-/** Sentinel select value for presets whose LLM pins no reasoning effort. */
+/** Sentinel select value for runtimes whose LLM pins no reasoning effort. */
 export const THINKING_DEFAULT = 'default';
 /** A card that receives no callback within this window reads as expired. */
 const TTL_MS = 10 * 60 * 1000;
 /** Upper bound on tracked cards; finished ones are evicted first. */
 const MAX_PENDING = 64;
 
-export interface AgentConfigPresetOption {
+export interface AgentRuntimeOption {
   name: string;
   agentBackend: string;
   model: string;
@@ -47,27 +47,27 @@ export interface AgentConfigPresetOption {
 
 /** Ports to the SAME catalog and chat-level selection service as /agent. */
 export interface FeishuAgentConfigAccess {
-  listPresets(): AgentConfigPresetOption[];
-  getActivePreset(chatId: string, threadRootId?: string): AgentConfigPresetOption | undefined;
+  listRuntimes(): AgentRuntimeOption[];
+  getActiveRuntime(chatId: string, threadRootId?: string): AgentRuntimeOption | undefined;
   switchAgentRuntime(
     chatId: string,
     backend: string,
     model?: string,
     threadRootId?: string,
     actorId?: string
-  ): { ok: true; active: AgentConfigPresetOption } | { ok: false; error: string };
+  ): { ok: true; active: AgentRuntimeOption } | { ok: false; error: string };
   /** Host access policy, re-checked at callback time; absent = same openness as commands. */
   isCommandAllowed?(command: ControlCommand<'agent'>): boolean;
 }
 
-type Step = 'harness' | 'model' | 'thinking' | 'preset' | 'confirm';
+type Step = 'harness' | 'model' | 'thinking' | 'runtime' | 'confirm';
 type Phase = 'active' | 'applying' | 'applied' | 'cancelled' | 'denied' | 'failed' | 'superseded' | 'expired';
 
 interface Selection {
   backend?: string;
   model?: string;
   effort?: string;
-  preset?: string;
+  runtime?: string;
 }
 
 interface Pending {
@@ -81,7 +81,7 @@ interface Pending {
   step: Step;
   selection: Selection;
   error?: string;
-  active?: AgentConfigPresetOption;
+  active?: AgentRuntimeOption;
   updates?: Promise<void>;
 }
 
@@ -91,32 +91,32 @@ const object = (value: unknown): Record<string, unknown> =>
 
 // ---------------------------------------------------------------------------
 // Pure cascade helpers (exported for tests): every option set is derived
-// from the validated preset catalog, so only configured combinations exist.
+// from the validated runtime catalog, so only configured combinations exist.
 // ---------------------------------------------------------------------------
 
-/** Distinct harnesses (agent backends) that actually have presets. */
-export function harnessChoices(presets: readonly AgentConfigPresetOption[]): string[] {
-  return [...new Set(presets.map(p => p.agentBackend))];
+/** Distinct harnesses (agent backends) that actually have runtimes. */
+export function harnessChoices(runtimes: readonly AgentRuntimeOption[]): string[] {
+  return [...new Set(runtimes.map(p => p.agentBackend))];
 }
 
 /** Distinct model identifiers offered for one harness. */
-export function modelChoices(presets: readonly AgentConfigPresetOption[], backend: string): string[] {
-  return [...new Set(presets.filter(p => p.agentBackend === backend).map(p => p.model))];
+export function modelChoices(runtimes: readonly AgentRuntimeOption[], backend: string): string[] {
+  return [...new Set(runtimes.filter(p => p.agentBackend === backend).map(p => p.model))];
 }
 
 /** Distinct thinking options for one harness+model; `default` = no pinned effort. */
-export function thinkingChoices(presets: readonly AgentConfigPresetOption[], backend: string, model: string): string[] {
-  const matches = presets.filter(p => p.agentBackend === backend && p.model === model);
+export function thinkingChoices(runtimes: readonly AgentRuntimeOption[], backend: string, model: string): string[] {
+  const matches = runtimes.filter(p => p.agentBackend === backend && p.model === model);
   const efforts = [...new Set(matches.flatMap(p => (p.reasoningEffort ? [p.reasoningEffort] : [])))];
   return matches.some(p => !p.reasoningEffort) ? [THINKING_DEFAULT, ...efforts] : efforts;
 }
 
-/** Presets matching the partial selection (undefined dimension = any). */
-export function presetsMatching(
-  presets: readonly AgentConfigPresetOption[],
+/** Runtimes matching the partial selection (undefined dimension = any). */
+export function runtimesMatching(
+  runtimes: readonly AgentRuntimeOption[],
   selection: Readonly<Selection>
-): AgentConfigPresetOption[] {
-  return presets.filter(p =>
+): AgentRuntimeOption[] {
+  return runtimes.filter(p =>
     (selection.backend === undefined || p.agentBackend === selection.backend) &&
     (selection.model === undefined || p.model === selection.model) &&
     (selection.effort === undefined ||
@@ -127,16 +127,16 @@ export function presetsMatching(
 const effortLabel = (effort: string | undefined): string => (effort === undefined ? '默认' : effort);
 
 /** One-line profile summary reused by every card state. */
-export function profileLine(preset: { name: string; agentBackend: string; model: string; reasoningEffort?: string }): string {
-  return `**${preset.name}** — ${preset.agentBackend} / ${preset.model} / thinking: ${effortLabel(preset.reasoningEffort)}`;
+export function profileLine(runtime: { name: string; agentBackend: string; model: string; reasoningEffort?: string }): string {
+  return `**${runtime.name}** — ${runtime.agentBackend} / ${runtime.model} / thinking: ${effortLabel(runtime.reasoningEffort)}`;
 }
 
 /**
  * The step to render for a selection, auto-skipping dimensions that offer no
- * real choice (single model, single thinking option, unambiguous preset).
+ * real choice (single model, single thinking option, unambiguous runtime).
  */
 export function resolveStep(
-  presets: readonly AgentConfigPresetOption[],
+  runtimes: readonly AgentRuntimeOption[],
   selection: Readonly<Selection>
 ): { step: Step; selection: Selection } {
   const sel: Selection = { ...selection };
@@ -144,7 +144,7 @@ export function resolveStep(
     return { step: 'harness', selection: sel };
   }
   if (sel.model === undefined) {
-    const models = modelChoices(presets, sel.backend);
+    const models = modelChoices(runtimes, sel.backend);
     if (models.length !== 1) {
       // 0 models means a stale backend (catalog changed); restart from step 1.
       return { step: models.length === 0 ? 'harness' : 'model', selection: models.length === 0 ? {} : { ...sel, model: undefined } };
@@ -153,18 +153,18 @@ export function resolveStep(
     sel.model = onlyModel;
   }
   if (sel.effort === undefined) {
-    const efforts = thinkingChoices(presets, sel.backend, sel.model);
+    const efforts = thinkingChoices(runtimes, sel.backend, sel.model);
     if (efforts.length > 1) {
       return { step: 'thinking', selection: sel };
     }
     const [onlyEffort] = efforts;
     sel.effort = onlyEffort;
   }
-  const matches = presetsMatching(presets, sel);
+  const matches = runtimesMatching(runtimes, sel);
   if (matches.length > 1) {
-    return { step: 'preset', selection: { ...sel, preset: undefined } };
+    return { step: 'runtime', selection: { ...sel, runtime: undefined } };
   }
-  sel.preset = matches[0]?.name;
+  sel.runtime = matches[0]?.name;
   return { step: 'confirm', selection: sel };
 }
 
@@ -176,7 +176,7 @@ const STEP_LABEL: Record<Step, string> = {
   harness: '第 1 步 · 选择 harness',
   model: '第 2 步 · 选择 model',
   thinking: '第 3 步 · 选择 thinking',
-  preset: '第 4 步 · 选择预设（同参数存在多个命名预设）',
+  runtime: '第 4 步 · 选择runtime（同参数存在多个命名runtime）',
   confirm: '最后一步 · 确认生效',
 };
 
@@ -184,25 +184,25 @@ export interface CardView {
   phase: Phase;
   step: Step;
   selection: Readonly<Selection>;
-  presets: readonly AgentConfigPresetOption[];
-  active?: AgentConfigPresetOption;
+  runtimes: readonly AgentRuntimeOption[];
+  active?: AgentRuntimeOption;
   error?: string;
 }
 
 function stepOptions(view: CardView): Array<{ label: string; value: string }> {
-  const { step, selection, presets } = view;
+  const { step, selection, runtimes } = view;
   if (step === 'harness') {
-    return harnessChoices(presets).map(b => ({ label: b, value: b }));
+    return harnessChoices(runtimes).map(b => ({ label: b, value: b }));
   }
   if (step === 'model') {
-    return modelChoices(presets, selection.backend as string).map(m => ({ label: m, value: m }));
+    return modelChoices(runtimes, selection.backend as string).map(m => ({ label: m, value: m }));
   }
   if (step === 'thinking') {
-    return thinkingChoices(presets, selection.backend as string, selection.model as string)
+    return thinkingChoices(runtimes, selection.backend as string, selection.model as string)
       .map(e => ({ label: e === THINKING_DEFAULT ? '默认（不指定）' : e, value: e }));
   }
-  // 'preset': disambiguate presets sharing the same harness/model/thinking.
-  return presetsMatching(presets, selection).map(p => ({ label: p.name, value: p.name }));
+  // 'runtime': disambiguate runtimes sharing the same harness/model/thinking.
+  return runtimesMatching(runtimes, selection).map(p => ({ label: p.name, value: p.name }));
 }
 
 /** Build the card JSON for a view. Restricted options only — no free input. */
@@ -210,15 +210,15 @@ export function buildAgentConfigCard(token: string, view: CardView): Record<stri
   const elements: Record<string, unknown>[] = [];
   elements.push({
     tag: 'markdown',
-    content: `当前配置：${view.active ? profileLine(view.active) : '未配置命名预设（legacy `agent:` 配置）'}`,
+    content: `当前配置：${view.active ? profileLine(view.active) : '未配置命名runtime（legacy `agent:` 配置）'}`,
   });
 
   if (view.phase === 'applied') {
-    const applied = view.active ?? view.presets.find(p => p.name === view.selection.preset);
+    const applied = view.active ?? view.runtimes.find(p => p.name === view.selection.runtime);
     elements.push(
       { tag: 'div', text: plain('✅ 已生效') },
       ...(applied ? [{ tag: 'markdown', content: profileLine(applied) }] : []),
-      { tag: 'div', text: plain('将开始新的原生会话；上下文不跨预设迁移。切换按聊天保存，服务重启后仍生效。') }
+      { tag: 'div', text: plain('将开始新的原生会话；上下文不跨runtime迁移。切换按聊天保存，服务重启后仍生效。') }
     );
     return finishCard(elements, 'green');
   }
@@ -255,14 +255,14 @@ export function buildAgentConfigCard(token: string, view: CardView): Record<stri
   // Phase 'active': render the current wizard step.
   const options = stepOptions(view);
   if (options.length === 0) {
-    elements.push({ tag: 'div', text: plain('没有可选的预设，请联系服务维护者核对 agents/llms 配置。') });
+    elements.push({ tag: 'div', text: plain('没有可选的runtime，请联系服务维护者核对 agents/llms 配置。') });
     return finishCard(elements, 'grey');
   }
   if (view.step === 'confirm') {
-    const preset = view.presets.find(p => p.name === view.selection.preset);
+    const runtime = view.runtimes.find(p => p.name === view.selection.runtime);
     elements.push(
-      { tag: 'markdown', content: `${STEP_LABEL.confirm}：将切换到 ${preset ? profileLine(preset) : view.selection.preset ?? ''}` },
-      { tag: 'div', text: plain('确认后开始新的原生会话；上下文不跨预设迁移；切换按聊天保存，服务重启后仍生效（与 `/agent use` 相同）。') },
+      { tag: 'markdown', content: `${STEP_LABEL.confirm}：将切换到 ${runtime ? profileLine(runtime) : view.selection.runtime ?? ''}` },
+      { tag: 'div', text: plain('确认后开始新的原生会话；上下文不跨runtime迁移；切换按聊天保存，服务重启后仍生效（与 `/agent use` 相同）。') },
       { tag: 'button', name: `${PREFIX}${token}`, type: 'primary_filled', text: plain('确认生效'), value: { op: 'apply' } },
       { tag: 'button', name: `${PREFIX}${token}`, type: 'default', text: plain('重新选择'), value: { op: 'restart' } },
       { tag: 'button', name: `${PREFIX}${token}`, type: 'danger', text: plain('取消'), value: { op: 'cancel' } }
@@ -326,11 +326,11 @@ export class FeishuAgentConfigCards {
   async open(target: { chatId: string; threadRootId?: string; actorId?: string }): Promise<{ ok: true } | { ok: false; error: string }> {
     if (this.closed) { return { ok: false, error: '配置卡片服务正在关闭' }; }
     const access = this.getAccess();
-    if (!access) { return { ok: false, error: '配置服务不可用（agent 预设端口未接入）' }; }
+    if (!access) { return { ok: false, error: '配置服务不可用（agent runtime端口未接入）' }; }
     if (!target.actorId) { return { ok: false, error: '无法识别操作者；请从飞书聊天中发起' }; }
-    const presets = access.listPresets();
-    if (presets.length === 0) {
-      return { ok: false, error: 'No named agent presets are configured (add an `agents:` map)' };
+    const runtimes = access.listRuntimes();
+    if (runtimes.length === 0) {
+      return { ok: false, error: 'No named agent runtimes are configured (add an `agents:` map)' };
     }
     // One live card per actor+chat: supersede the previous one explicitly.
     for (const [token, p] of this.pending) {
@@ -347,7 +347,7 @@ export class FeishuAgentConfigCards {
       }
     }
     const token = randomUUID();
-    const resolved = resolveStep(presets, {});
+    const resolved = resolveStep(runtimes, {});
     const p: Pending = {
       token,
       chatId: target.chatId,
@@ -423,7 +423,7 @@ export class FeishuAgentConfigCards {
       type: 'agent', chatId: p.chatId,
       ...(p.threadRootId ? { threadRootId: p.threadRootId } : {}),
       actorId: p.actorId,
-      data: { subcommand: 'use', ...(p.selection.preset ? { harness: p.selection.preset } : {}) },
+      data: { subcommand: 'use', ...(p.selection.runtime ? { harness: p.selection.runtime } : {}) },
     })) {
       p.phase = 'denied';
       this.pending.delete(token);
@@ -440,7 +440,7 @@ export class FeishuAgentConfigCards {
     if (op === 'restart') {
       p.phase = 'active';
       p.error = undefined;
-      const resolved = resolveStep(access.listPresets(), {});
+      const resolved = resolveStep(access.listRuntimes(), {});
       p.step = resolved.step;
       p.selection = resolved.selection;
       await this.paint(p).catch(() => {});
@@ -453,7 +453,7 @@ export class FeishuAgentConfigCards {
       p.selection = p.step === 'model' ? {}
         : p.step === 'thinking' ? { backend: p.selection.backend }
           : { backend: p.selection.backend, model: p.selection.model };
-      const resolved = resolveStep(access.listPresets(), p.selection);
+      const resolved = resolveStep(access.listRuntimes(), p.selection);
       p.step = resolved.step;
       p.selection = resolved.selection;
       await this.paint(p).catch(() => {});
@@ -462,18 +462,18 @@ export class FeishuAgentConfigCards {
     if (op === 'next') {
       const value = form[SELECT_NAME];
       if (typeof value !== 'string' || !value) { await this.paint(p).catch(() => {}); return; }
-      const presets = access.listPresets();
-      const valid = p.step === 'harness' ? harnessChoices(presets)
-        : p.step === 'model' ? modelChoices(presets, p.selection.backend as string)
-          : p.step === 'thinking' ? thinkingChoices(presets, p.selection.backend as string, p.selection.model as string)
-            : presetsMatching(presets, p.selection).map(x => x.name);
+      const runtimes = access.listRuntimes();
+      const valid = p.step === 'harness' ? harnessChoices(runtimes)
+        : p.step === 'model' ? modelChoices(runtimes, p.selection.backend as string)
+          : p.step === 'thinking' ? thinkingChoices(runtimes, p.selection.backend as string, p.selection.model as string)
+            : runtimesMatching(runtimes, p.selection).map(x => x.name);
       if (!valid.includes(value)) { await this.paint(p).catch(() => {}); return; }
       const next: Selection =
         p.step === 'harness' ? { backend: value }
           : p.step === 'model' ? { backend: p.selection.backend, model: value }
             : p.step === 'thinking' ? { backend: p.selection.backend, model: p.selection.model, effort: value }
-              : { ...p.selection, preset: value };
-      const resolved = resolveStep(presets, next);
+              : { ...p.selection, runtime: value };
+      const resolved = resolveStep(runtimes, next);
       p.phase = 'active';
       p.error = undefined;
       p.step = resolved.step;
@@ -482,16 +482,16 @@ export class FeishuAgentConfigCards {
       return;
     }
     if (op === 'apply') {
-      const presetName = p.selection.preset;
-      const preset = presetName ? access.listPresets().find(x => x.name === presetName) : undefined;
-      if (!preset) { await this.paint(p).catch(() => {}); return; }
+      const runtimeName = p.selection.runtime;
+      const runtime = runtimeName ? access.listRuntimes().find(x => x.name === runtimeName) : undefined;
+      if (!runtime) { await this.paint(p).catch(() => {}); return; }
       p.phase = 'applying';
       p.error = undefined;
       // Failure to repaint must not turn an explicit apply into a retry loop.
       await this.paint(p).catch(() => {});
       // #5476: forward the operator so the persisted chat selection records
       // who switched — the card path and `/agent use` stay semantically equal.
-      const result = access.switchAgentRuntime(p.chatId, preset.name, undefined, p.threadRootId, p.actorId);
+      const result = access.switchAgentRuntime(p.chatId, runtime.name, undefined, p.threadRootId, p.actorId);
       if (result.ok) {
         p.phase = 'applied';
         p.active = result.active;
@@ -516,8 +516,8 @@ export class FeishuAgentConfigCards {
       phase: p.phase,
       step: p.step,
       selection: p.selection,
-      presets: access.listPresets(),
-      active: p.active ?? access.getActivePreset(p.chatId, p.threadRootId),
+      runtimes: access.listRuntimes(),
+      active: p.active ?? access.getActiveRuntime(p.chatId, p.threadRootId),
       ...(p.error ? { error: p.error } : {}),
     };
   }

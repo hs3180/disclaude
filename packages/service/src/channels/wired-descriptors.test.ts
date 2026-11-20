@@ -271,8 +271,8 @@ describe('WiredChannelDescriptors', () => {
 
       // The injected access ports route to the SAME services as /agent.
       const access = config.agentConfigAccess!;
-      expect(access.listPresets()).toEqual([{ name: 'default', agentBackend: 'claude', model: 'claude-sonnet' }]);
-      expect(access.getActivePreset('oc_1')).toMatchObject({ name: 'default' });
+      expect(access.listRuntimes()).toEqual([{ name: 'default', agentBackend: 'claude', model: 'claude-sonnet' }]);
+      expect(access.getActiveRuntime('oc_1')).toMatchObject({ name: 'default' });
       access.switchAgentRuntime('oc_1', 'default', undefined, undefined, 'ou_actor');
       expect(switchAgentRuntime).toHaveBeenCalledExactlyOnceWith('oc_1', 'default', undefined, undefined, 'ou_actor');
       expect(access.isCommandAllowed?.({ type: 'agent', chatId: 'oc_1', data: { subcommand: 'use' } })).toBe(true);
@@ -287,12 +287,12 @@ describe('WiredChannelDescriptors', () => {
       expect(requestAgentConfigCard).toHaveBeenCalledWith({ chatId: 'oc_1', actorId: 'ou_actor' });
     });
 
-    it('gates the contextual config hint on a model-class failure and a real preset choice (#4914)', () => {
-      const twoPresets = [
+    it('gates the contextual config hint on a model-class failure and a real runtime choice (#4914)', () => {
+      const twoRuntimes = [
         { name: 'default', agentBackend: 'claude', model: 'claude-sonnet' },
         { name: 'fast', agentBackend: 'pi', model: 'glm-fast' },
       ];
-      const listAgentRuntimes = vi.fn().mockReturnValue(twoPresets);
+      const listAgentRuntimes = vi.fn().mockReturnValue(twoRuntimes);
       const context = createMockContext({
         controlHandlerContext: { agentPool: { reset: vi.fn(), stop: vi.fn(), listAgentRuntimes } },
       });
@@ -305,8 +305,8 @@ describe('WiredChannelDescriptors', () => {
       // Unrelated failures stay untouched.
       expect(suggest('oc_1', 'upstream request failed: overloaded_error (529)')).toBeUndefined();
       expect(suggest('oc_1', 'workspace routing discovery failed: connect ETIMEDOUT')).toBeUndefined();
-      // A model failure without a real choice (single preset) stays silent.
-      listAgentRuntimes.mockReturnValueOnce([twoPresets[0]]);
+      // A model failure without a real choice (single runtime) stays silent.
+      listAgentRuntimes.mockReturnValueOnce([twoRuntimes[0]]);
       expect(suggest('oc_1', 'model not found: glm-4.7')).toBeUndefined();
       // Channels without the card never wire the hint.
       const restCallbacks = REST_WIRED_DESCRIPTOR.createCallbacks(createMockChannel('rest'), createMockContext())('c1');
@@ -314,7 +314,7 @@ describe('WiredChannelDescriptors', () => {
     });
 
     it('adds the one-line config entry to first-contact welcomes only when a real choice exists (#4914)', async () => {
-      const welcomeForPresets = async (presets: Array<{ name: string; agentBackend: string; model: string }>) => {
+      const welcomeForRuntimes = async (runtimes: Array<{ name: string; agentBackend: string; model: string }>) => {
         const mockChannel = Object.assign(createMockChannel('feishu'), {
           getTriggerModeManager: () => ({ getMode: vi.fn(), setMode: vi.fn() }),
           setWelcomeService: vi.fn(),
@@ -326,8 +326,8 @@ describe('WiredChannelDescriptors', () => {
           controlHandlerContext: {
             agentPool: {
               reset: vi.fn(), stop: vi.fn(),
-              listAgentRuntimes: vi.fn().mockReturnValue(presets),
-              getActiveAgentRuntime: vi.fn().mockReturnValue(presets[0]),
+              listAgentRuntimes: vi.fn().mockReturnValue(runtimes),
+              getActiveAgentRuntime: vi.fn().mockReturnValue(runtimes[0]),
               switchAgentRuntime: vi.fn(),
             },
           },
@@ -343,16 +343,16 @@ describe('WiredChannelDescriptors', () => {
         return [...sent, ...native];
       };
 
-      const twoPresets = [
+      const twoRuntimes = [
         { name: 'default', agentBackend: 'claude', model: 'claude-sonnet' },
         { name: 'fast', agentBackend: 'pi', model: 'glm-fast' },
       ];
-      const welcomedWithChoice = await welcomeForPresets(twoPresets);
-      expect(welcomedWithChoice.some(t => t.includes('/agent config') && t.includes('模型预设'))).toBe(true);
+      const welcomedWithChoice = await welcomeForRuntimes(twoRuntimes);
+      expect(welcomedWithChoice.some(t => t.includes('/agent config') && t.includes('模型runtime'))).toBe(true);
       // Task examples stay intact — the config line is appended, not a replacement.
       expect(welcomedWithChoice.some(t => (t.match(/「[^」]+」/g) ?? []).length === 3)).toBe(true);
 
-      const welcomedWithoutChoice = await welcomeForPresets([twoPresets[0]]);
+      const welcomedWithoutChoice = await welcomeForRuntimes([twoRuntimes[0]]);
       expect(welcomedWithoutChoice.some(t => t.includes('/agent config'))).toBe(false);
     });
   });

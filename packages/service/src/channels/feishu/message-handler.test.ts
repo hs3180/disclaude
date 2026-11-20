@@ -275,8 +275,8 @@ describe('MessageHandler', () => {
       });
       const { handler } = createHandler({
         agentConfigAccess: () => ({
-          listPresets: () => [{ name: 'solo', agentBackend: 'pi', model: 'm1' }],
-          getActivePreset: () => ({ name: 'solo', agentBackend: 'pi', model: 'm1' }),
+          listRuntimes: () => [{ name: 'solo', agentBackend: 'pi', model: 'm1' }],
+          getActiveRuntime: () => ({ name: 'solo', agentBackend: 'pi', model: 'm1' }),
           switchAgentRuntime,
         }),
       });

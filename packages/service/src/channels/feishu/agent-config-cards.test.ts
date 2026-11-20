@@ -16,16 +16,16 @@ import {
   buildAgentConfigCard,
   harnessChoices,
   modelChoices,
-  presetsMatching,
+  runtimesMatching,
   resolveStep,
   thinkingChoices,
   THINKING_DEFAULT,
-  type AgentConfigPresetOption,
+  type AgentRuntimeOption,
   type FeishuAgentConfigAccess,
 } from './agent-config-cards.js';
 
 const TOKEN = '11111111-1111-4111-8111-111111111111';
-const PRESETS: AgentConfigPresetOption[] = [
+const PRESETS: AgentRuntimeOption[] = [
   { name: 'claude-main', agentBackend: 'claude', model: 'claude-opus-5' },
   { name: 'codex-fast', agentBackend: 'codex', model: 'gpt-5.1', reasoningEffort: 'low' },
   { name: 'codex-deep', agentBackend: 'codex', model: 'gpt-5.1', reasoningEffort: 'high' },
@@ -34,8 +34,8 @@ const PRESETS: AgentConfigPresetOption[] = [
 
 function access(overrides: Partial<FeishuAgentConfigAccess> = {}): FeishuAgentConfigAccess {
   return {
-    listPresets: () => PRESETS,
-    getActivePreset: () => PRESETS[0],
+    listRuntimes: () => PRESETS,
+    getActiveRuntime: () => PRESETS[0],
     switchAgentRuntime: vi.fn().mockReturnValue({ ok: true, active: PRESETS[2] }),
     ...overrides,
   };
@@ -134,32 +134,32 @@ describe('cascade helpers (restricted options from the catalog only)', () => {
     expect(thinkingChoices(PRESETS, 'claude', 'claude-opus-5')).toEqual([THINKING_DEFAULT]);
   });
 
-  it('matches presets by partial selection with the default sentinel meaning "no pinned effort"', () => {
-    expect(presetsMatching(PRESETS, { backend: 'codex', model: 'gpt-5.1', effort: 'high' }).map(p => p.name))
+  it('matches runtimes by partial selection with the default sentinel meaning "no pinned effort"', () => {
+    expect(runtimesMatching(PRESETS, { backend: 'codex', model: 'gpt-5.1', effort: 'high' }).map(p => p.name))
       .toEqual(['codex-deep']);
-    expect(presetsMatching(PRESETS, { backend: 'codex', model: 'gpt-5-mini', effort: THINKING_DEFAULT }).map(p => p.name))
+    expect(runtimesMatching(PRESETS, { backend: 'codex', model: 'gpt-5-mini', effort: THINKING_DEFAULT }).map(p => p.name))
       .toEqual(['codex-lite']);
   });
 
   it('auto-skips dimensions without a real choice', () => {
     const solo = [{ name: 'solo', agentBackend: 'pi', model: 'm1' }];
     expect(resolveStep(solo, { backend: 'pi' })).toEqual({
-      step: 'confirm', selection: { backend: 'pi', model: 'm1', effort: THINKING_DEFAULT, preset: 'solo' },
+      step: 'confirm', selection: { backend: 'pi', model: 'm1', effort: THINKING_DEFAULT, runtime: 'solo' },
     });
     expect(resolveStep(PRESETS, { backend: 'codex' }).step).toBe('model');
     expect(resolveStep(PRESETS, { backend: 'codex', model: 'gpt-5.1' }).step).toBe('thinking');
   });
 
-  it('offers a preset disambiguation step when parameters map to several named presets', () => {
+  it('offers a runtime disambiguation step when parameters map to several named runtimes', () => {
     const twins = [...PRESETS, { name: 'codex-deep-2', agentBackend: 'codex', model: 'gpt-5.1', reasoningEffort: 'high' }];
     const resolved = resolveStep(twins, { backend: 'codex', model: 'gpt-5.1', effort: 'high' });
-    expect(resolved.step).toBe('preset');
-    expect(resolved.selection.preset).toBeUndefined();
+    expect(resolved.step).toBe('runtime');
+    expect(resolved.selection.runtime).toBeUndefined();
   });
 });
 
 describe('buildAgentConfigCard', () => {
-  const base = { phase: 'active' as const, presets: PRESETS, active: PRESETS[0] };
+  const base = { phase: 'active' as const, runtimes: PRESETS, active: PRESETS[0] };
 
   it('renders restricted selectors only — no free-text input anywhere', () => {
     const card = buildAgentConfigCard(TOKEN, { ...base, step: 'model', selection: { backend: 'codex' } });
@@ -178,17 +178,17 @@ describe('buildAgentConfigCard', () => {
   });
 
   it('marks empty catalogs and terminal states without interactive controls', () => {
-    const empty = buildAgentConfigCard(TOKEN, { phase: 'active', step: 'harness', selection: {}, presets: [], active: undefined });
-    expect(JSON.stringify(empty)).toContain('没有可选的预设');
+    const empty = buildAgentConfigCard(TOKEN, { phase: 'active', step: 'harness', selection: {}, runtimes: [], active: undefined });
+    expect(JSON.stringify(empty)).toContain('没有可选的runtime');
     const cancelled = buildAgentConfigCard(TOKEN, { ...base, step: 'confirm', selection: {}, phase: 'cancelled' });
     expect(JSON.stringify(cancelled)).toContain('已取消');
     expect(JSON.stringify(cancelled)).not.toContain('"tag":"button"');
   });
 
-  it('confirm step names the resolved preset and keeps apply/restart/cancel callbacks', () => {
+  it('confirm step names the resolved runtime and keeps apply/restart/cancel callbacks', () => {
     const card = buildAgentConfigCard(TOKEN, {
       ...base, step: 'confirm',
-      selection: { backend: 'codex', model: 'gpt-5.1', effort: 'high', preset: 'codex-deep' },
+      selection: { backend: 'codex', model: 'gpt-5.1', effort: 'high', runtime: 'codex-deep' },
     });
     const json = JSON.stringify(card);
     expect(json).toContain('codex-deep');
@@ -234,7 +234,7 @@ describe('FeishuAgentConfigCards flow', () => {
     expect(result).toEqual({ ok: true });
     expect(client.calls.reply).toHaveLength(1);
     const token = tokenOf(client.calls.reply[0].data?.content);
-    // Single-preset harness (claude) auto-advances to confirm after the pick.
+    // Single-runtime harness (claude) auto-advances to confirm after the pick.
     await cards.submit(click({ token, op: 'next', formValue: { agent_config_select: 'claude' }, messageId: 'om_1' }));
     await cards.submit(click({ token, op: 'apply', messageId: 'om_1' }));
     expect(sw).toHaveBeenCalledWith('oc_chat', 'claude-main', undefined, 'om_topic', 'ou_actor');
@@ -300,7 +300,7 @@ describe('FeishuAgentConfigCards flow', () => {
 
   it('paints a failed state with recovery when the shared switch service rejects', async () => {
     const client = fakeClient();
-    const sw = vi.fn().mockReturnValue({ ok: false, error: 'The current chat is busy; wait for the response or use /stop before switching presets' });
+    const sw = vi.fn().mockReturnValue({ ok: false, error: 'The current chat is busy; wait for the response or use /stop before switching runtimes' });
     const ports = access({ switchAgentRuntime: sw });
     const { cards, token, messageId } = await openedCard(ports, client);
     await cards.submit(click({ token, op: 'next', formValue: { agent_config_select: 'claude' }, messageId }));
@@ -350,11 +350,11 @@ describe('FeishuAgentConfigCards flow', () => {
     expect(client.calls.patch).toHaveLength(1);
   });
 
-  it('refuses to open without presets or without an identified actor', async () => {
+  it('refuses to open without runtimes or without an identified actor', async () => {
     const client = fakeClient();
-    const empty = new FeishuAgentConfigCards(client, () => access({ listPresets: () => [] }));
+    const empty = new FeishuAgentConfigCards(client, () => access({ listRuntimes: () => [] }));
     await expect(empty.open({ chatId: 'oc_chat', actorId: 'ou_actor' })).resolves.toMatchObject({
-      ok: false, error: expect.stringContaining('No named agent presets'),
+      ok: false, error: expect.stringContaining('No named agent runtimes'),
     });
     const cards = new FeishuAgentConfigCards(client, () => access());
     await expect(cards.open({ chatId: 'oc_chat' })).resolves.toMatchObject({

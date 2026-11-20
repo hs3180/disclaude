@@ -257,7 +257,7 @@ export interface FeishuChannelConfig {
    */
   issueReportingClient?: import('@disclaude/core').GitHubIssueClient;
   /**
-   * #4914: preset catalog and chat-level selection ports backing the native
+   * #4914: runtime catalog and chat-level selection ports backing the native
    * agent config card. Injected by the wired-descriptor setup (same services
    * the /agent command consumes); undefined disables `/agent config` cards.
    */
