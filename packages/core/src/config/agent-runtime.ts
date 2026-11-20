@@ -6,7 +6,7 @@
  * surface no longer depends on preset concepts.
  */
 
-import type { AgentConfig, AgentPreset, AgentPresets } from './types.js';
+import type { AgentConfig, AgentRuntime, AgentRuntimes } from './types.js';
 
 /** Harness runtimes selectable through the orthogonal `/agent backend` dimension. */
 export type AgentBackend = NonNullable<AgentConfig['agentBackend']>;
@@ -48,7 +48,7 @@ const CODEX_MODEL_ID = /^gpt-\d+(?:[.-].+)/i;
  */
 export function backendLlmCompatibility(
   backend: AgentBackend,
-  binding: Pick<AgentPreset, 'apiProtocol' | 'apiBaseUrl'>
+  binding: Pick<AgentRuntime, 'apiProtocol' | 'apiBaseUrl'>
 ): { ok: true } | { ok: false; reason: string } {
   switch (backend) {
     case 'claude':
@@ -84,7 +84,7 @@ export function backendLlmCompatibility(
  * options" reply for a rejected orthogonal backend switch.
  */
 export function switchableBackendsFor(
-  binding: Pick<AgentPreset, 'apiProtocol' | 'apiBaseUrl'>
+  binding: Pick<AgentRuntime, 'apiProtocol' | 'apiBaseUrl'>
 ): AgentBackend[] {
   return SWITCHABLE_BACKENDS.filter((backend) => backendLlmCompatibility(backend, binding).ok);
 }
@@ -113,9 +113,9 @@ export function isValidModelForBackend(
  * resolveConfiguredAgents compiles it for claude runtimes only.
  */
 export function composeSessionRuntime(
-  base: AgentPreset,
+  base: AgentRuntime,
   override?: SessionAgentOverride
-): AgentPreset {
+): AgentRuntime {
   if (!override?.backendOverride && !override?.modelOverride) {
     return base;
   }
@@ -130,7 +130,7 @@ export function composeSessionRuntime(
   };
 }
 
-export type AgentRuntimeResolution<T = AgentPreset> =
+export type AgentRuntimeResolution<T = AgentRuntime> =
   | { ok: true; name: string; preset: T }
   | { ok: false; error: string };
 
@@ -143,7 +143,7 @@ export type AgentRuntimeResolution<T = AgentPreset> =
  * revalidate the map — callers that accept user configuration run validation
  * first.
  */
-export function resolveDefaultAgentRuntime<T extends Pick<AgentPreset, 'agentBackend' | 'model' | 'default'>>(
+export function resolveDefaultAgentRuntime<T extends Pick<AgentRuntime, 'agentBackend' | 'model' | 'default'>>(
   agents: Record<string, T>,
   defaultHarness?: string
 ): AgentRuntimeResolution<T> {
@@ -189,7 +189,7 @@ export function resolveDefaultAgentRuntime<T extends Pick<AgentPreset, 'agentBac
  * configuration should run validateAgentRuntimes first, while runtime command
  * handlers can use this helper without duplicating selection semantics.
  */
-export function resolveSessionAgentRuntime<T extends Pick<AgentPreset, 'agentBackend' | 'model' | 'default'>>(
+export function resolveSessionAgentRuntime<T extends Pick<AgentRuntime, 'agentBackend' | 'model' | 'default'>>(
   agents: Record<string, T>,
   selectedName?: string,
   defaultHarness?: string
@@ -205,7 +205,7 @@ export function resolveSessionAgentRuntime<T extends Pick<AgentPreset, 'agentBac
 }
 
 export type AgentRuntimeValidation =
-  | { ok: true; name: string; preset: AgentPreset }
+  | { ok: true; name: string; preset: AgentRuntime }
   | { ok: false; errors: string[] };
 
 const VALID_BACKENDS = new Set<AgentBackend>(SWITCHABLE_BACKENDS);
@@ -246,7 +246,7 @@ export function validateAgentRuntimes(
       errors.push(`agents.${name} must be a mapping`);
       continue;
     }
-    const preset = raw as Partial<AgentPreset>;
+    const preset = raw as Partial<AgentRuntime>;
     if (!VALID_BACKENDS.has(preset.agentBackend as AgentBackend)) {
       errors.push(`agents.${name}.agentBackend must be one of: claude, pi, codex, dsh, miniswe`);
     }
@@ -282,5 +282,5 @@ export function validateAgentRuntimes(
   }
 
   const name = defaults[0] ?? entries[0][0];
-  return { ok: true, name, preset: (agents as AgentPresets)[name] };
+  return { ok: true, name, preset: (agents as AgentRuntimes)[name] };
 }

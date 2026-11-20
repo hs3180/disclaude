@@ -73,7 +73,7 @@ describe('Claude native model aliases', () => {
       protected getAgentName() { return 'BoundAgent'; }
       options() { return this.createSdkOptions(); }
     }
-    const presets = Config.getAgentPresets()!;
+    const presets = Config.getAgentRuntimes()!;
     for (const [name, llm, effort, cap] of [
       ['codex', 'default', 'max', 3], ['pi', 'other', 'low', 1],
     ] as const) {
@@ -192,7 +192,7 @@ describe('shared bindings across harnesses (Issue #5679)', () => {
         return this.createSdkOptions();
       }
     }
-    const presets = Config.getAgentPresets()!;
+    const presets = Config.getAgentRuntimes()!;
     // Claude gets the wire model plus the capability mapping.
     const claude = new BoundAgent({ ...presets.claude, settings: presets.claude }).options();
     expect(claude.model).toBe('group/hq-degrade');

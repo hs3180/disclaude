@@ -5,9 +5,9 @@
  *
  * `/agent config` → the control command delegates here through the channel
  * hook (`agentConfigUi`). The card is only a presenter: every option comes
- * from the same preset catalog as `/agent list` (`listAgentPresets`) and the
+ * from the same preset catalog as `/agent list` (`listAgentRuntimes`) and the
  * confirm step applies through the same chat-level selection service as
- * `/agent use` (`switchAgentPreset`) — no parallel selection state exists.
+ * `/agent use` (`switchAgentRuntime`) — no parallel selection state exists.
  * Card callbacks are handled DIRECTLY (never routed through the LLM agent),
  * following the /issue confirmation-card pattern.
  *
@@ -49,7 +49,7 @@ export interface AgentConfigPresetOption {
 export interface FeishuAgentConfigAccess {
   listPresets(): AgentConfigPresetOption[];
   getActivePreset(chatId: string, threadRootId?: string): AgentConfigPresetOption | undefined;
-  switchAgentPreset(
+  switchAgentRuntime(
     chatId: string,
     backend: string,
     model?: string,
@@ -491,7 +491,7 @@ export class FeishuAgentConfigCards {
       await this.paint(p).catch(() => {});
       // #5476: forward the operator so the persisted chat selection records
       // who switched — the card path and `/agent use` stay semantically equal.
-      const result = access.switchAgentPreset(p.chatId, preset.name, undefined, p.threadRootId, p.actorId);
+      const result = access.switchAgentRuntime(p.chatId, preset.name, undefined, p.threadRootId, p.actorId);
       if (result.ok) {
         p.phase = 'applied';
         p.active = result.active;

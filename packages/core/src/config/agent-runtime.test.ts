@@ -8,10 +8,10 @@ import {
   switchableBackendsFor,
   validateAgentRuntimes,
 } from './agent-runtime.js';
-import type { AgentPreset } from './types.js';
+import type { AgentRuntime } from './types.js';
 
-const claude: AgentPreset = { agentBackend: 'claude', model: 'claude-sonnet', apiKey: 'sk-test', llm: 'direct' };
-const codex: AgentPreset = { agentBackend: 'codex', model: 'gpt-5.6', apiKey: 'sk-test', llm: 'direct' };
+const claude: AgentRuntime = { agentBackend: 'claude', model: 'claude-sonnet', apiKey: 'sk-test', llm: 'direct' };
+const codex: AgentRuntime = { agentBackend: 'codex', model: 'gpt-5.6', apiKey: 'sk-test', llm: 'direct' };
 
 describe('resolveDefaultAgentRuntime', () => {
   it('prefers the defaultHarness entry when it is defined', () => {
@@ -347,7 +347,7 @@ describe('orthogonal dimension switching helpers (Issue #5255)', () => {
   });
 
   describe('composeSessionRuntime', () => {
-    const base: AgentPreset = {
+    const base: AgentRuntime = {
       agentBackend: 'claude',
       llm: 'direct',
       model: 'claude-sonnet',
@@ -370,7 +370,7 @@ describe('orthogonal dimension switching helpers (Issue #5255)', () => {
         agentBackend: 'pi',
         // claude-only model metadata must not leak onto another runtime
         modelOverrides: undefined,
-      } as AgentPreset);
+      } as AgentRuntime);
       expect(composed.model).toBe('claude-sonnet');
     });
 

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AgentPreset } from '../config/types.js';
+import type { AgentRuntime } from '../config/types.js';
 import type { DeepSeekHarnessProviderOptions } from './providers/deepseek/provider.js';
 
 const state = vi.hoisted(() => ({
@@ -35,7 +35,7 @@ vi.mock('./providers/index.js', () => {
 });
 import { clearProviderCache, getProvider, setDefaultProvider } from './factory.js';
 
-const preset = (): AgentPreset => ({
+const preset = (): AgentRuntime => ({
   agentBackend: 'dsh',
   llm: 'glm-openai',
   model: 'glm-5.3',
@@ -104,7 +104,7 @@ describe('DSH connections resolved from named LLMs', () => {
 
   it('shares equivalent default and named bindings for reset routing', () => {
     setDefaultProvider('dsh');
-    expect(getProvider('dsh', state.defaults as AgentPreset)).toBe(getProvider());
+    expect(getProvider('dsh', state.defaults as AgentRuntime)).toBe(getProvider());
   });
 
   it('clears every DSH connection without clearing another backend', () => {

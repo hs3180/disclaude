@@ -16,9 +16,9 @@ import {
   type MessageBuilderOptions,
   type CwdProvider,
   type CwdResolution,
-  type AgentPreset,
+  type AgentRuntime,
   type AgentSessionOptions,
-  type AgentPresets,
+  type AgentRuntimes,
   type BaseAgentConfig,
   type ChatFailureRecord,
   type SessionAgentOverride,
@@ -52,8 +52,8 @@ import type { AgentSelectionStore } from './agent-selection-store.js';
 export interface ChatSessionPoolOptions {
   /** Host-owned tools for a chat; providers keep their own transport hooks. */
   configureQueryOptions?: (options: AgentQueryOptions, chatId: string) => AgentQueryOptions;
-  /** Named runtime presets. Defaults to Config.getAgentPresets(). */
-  agentPresets?: AgentPresets;
+  /** Named runtime presets. Defaults to Config.getAgentRuntimes(). */
+  agentRuntimes?: AgentRuntimes;
   /**
    * Durable per-chat agent selections recorded by `/agent use` (#5476).
    * Below this session's own explicit switch, above the per-app default.
@@ -64,10 +64,10 @@ export interface ChatSessionPoolOptions {
    * (`channels.feishu.agent` / `channels.<name>.agent`, #5254). Below the
    * chat's saved /agent use choice and above the global default.
    */
-  defaultAgentPresetForChat?: (chatId: string) => string | undefined;
+  defaultAgentRuntimeForChat?: (chatId: string) => string | undefined;
   /** Backend availability probe; injectable for deterministic tests. */
-  validatePresetBackend?: (
-    backend: AgentPreset['agentBackend'],
+  validateRuntimeBackend?: (
+    backend: AgentRuntime['agentBackend'],
     config: BaseAgentConfig
   ) => { available: boolean; unavailableReason?: string };
   /**
@@ -162,23 +162,23 @@ export interface AgentPoolStats {
   totalEvictions: number;
 }
 
-export interface ActiveAgentPreset {
+export interface ActiveAgentRuntime {
   name: string;
-  agentBackend: AgentPreset['agentBackend'];
+  agentBackend: AgentRuntime['agentBackend'];
   model: string;
   /**
    * Issue #5255: orthogonal dimension(s) currently overriding the selected
    * preset. Present only when that dimension diverges from the preset.
    */
-  backendOverride?: AgentPreset['agentBackend'];
+  backendOverride?: AgentRuntime['agentBackend'];
   /** Issue #5255: model diverging from the selected preset. */
   modelOverride?: string;
   /** Thinking/reasoning effort when the preset's LLM pins one (#4914 card display). */
-  reasoningEffort?: AgentPreset['reasoningEffort'];
+  reasoningEffort?: AgentRuntime['reasoningEffort'];
 }
 
-export type AgentPresetSwitchResult =
-  | { ok: true; active: ActiveAgentPreset; sessionBoundary: 'new-session' }
+export type AgentRuntimeSwitchResult =
+  | { ok: true; active: ActiveAgentRuntime; sessionBoundary: 'new-session' }
   /** Issue #5255: failures may carry the rejected dimension's selectable options. */
   | { ok: false; error: string; options?: string[] };
 
@@ -188,7 +188,7 @@ export type AgentPresetSwitchResult =
  * process-wide default agent used when no `agents:` map exists.
  */
 type SessionBase =
-  | { ok: true; name: string; preset?: AgentPreset; singleton?: BaseAgentConfig; binding: Pick<AgentPreset, 'apiProtocol' | 'apiBaseUrl'> }
+  | { ok: true; name: string; preset?: AgentRuntime; singleton?: BaseAgentConfig; binding: Pick<AgentRuntime, 'apiProtocol' | 'apiBaseUrl'> }
   | { ok: false; error: string };
 
 /**
@@ -235,7 +235,7 @@ export class ChatSessionPool {
    * (getOrCreateChatAgent applies them at creation).
    */
   private readonly agentOverrideBySession = new Map<string, SessionAgentOverride>();
-  private readonly presets?: AgentPresets;
+  private readonly presets?: AgentRuntimes;
   private readonly options: ChatSessionPoolOptions;
   /**
    * Issue #3696: session keys that should skip history loading on next agent
@@ -270,10 +270,10 @@ export class ChatSessionPool {
       ((chatId: string): void => {
         getProvider().forgetSession?.(chatId);
       });
-    this.presets = options.agentPresets ?? Config.getAgentPresets();
+    this.presets = options.agentRuntimes ?? Config.getAgentRuntimes();
   }
 
-  listAgentPresets(): ActiveAgentPreset[] {
+  listAgentRuntimes(): ActiveAgentRuntime[] {
     return Object.entries(this.presets ?? {}).map(([name, preset]) => ({
       name,
       agentBackend: preset.agentBackend,
@@ -291,7 +291,7 @@ export class ChatSessionPool {
     if (!this.presets) { return undefined; }
     const requested = this.selectedPresetBySession.get(sessionKey)
       ?? this.options.agentSelections?.get(chatId)?.presetName
-      ?? this.options.defaultAgentPresetForChat?.(chatId);
+      ?? this.options.defaultAgentRuntimeForChat?.(chatId);
     const harness = requested?.trim();
     if (harness) { return this.resolveHarness(harness); }
     // Issue #5255 r4: the default branch follows the same selection as the
@@ -309,7 +309,7 @@ export class ChatSessionPool {
       : { ok: false as const, error: `Unknown agent runtime: ${name}` };
   }
 
-  getActiveAgentPreset(chatId: string, threadRootId?: string): ActiveAgentPreset | undefined {
+  getActiveAgentRuntime(chatId: string, threadRootId?: string): ActiveAgentRuntime | undefined {
     const sessionKey = this.sessionKeyOf(chatId, threadRootId);
     return this.activeDimensions(chatId, sessionKey);
   }
@@ -346,13 +346,13 @@ export class ChatSessionPool {
   }
 
   /** Issue #5255: effective two-dimension view of a session's base + overrides. */
-  private activeDimensions(chatId: string, sessionKey: string): ActiveAgentPreset | undefined {
+  private activeDimensions(chatId: string, sessionKey: string): ActiveAgentRuntime | undefined {
     const base = this.sessionBase(chatId, sessionKey);
     if (!base.ok) { return undefined; }
     return this.composeActive(base, this.agentOverrideBySession.get(sessionKey));
   }
 
-  private composeActive(base: Extract<SessionBase, { ok: true }>, override?: SessionAgentOverride): ActiveAgentPreset | undefined {
+  private composeActive(base: Extract<SessionBase, { ok: true }>, override?: SessionAgentOverride): ActiveAgentRuntime | undefined {
     const overrideFields = {
       ...(override?.backendOverride ? { backendOverride: override.backendOverride } : {}),
       ...(override?.modelOverride ? { modelOverride: override.modelOverride } : {}),
@@ -374,7 +374,7 @@ export class ChatSessionPool {
   }
 
   /** Issue #5255: synthesize a preset for a backend override on the singleton default. */
-  private singletonPreset(agentBackend: AgentPreset['agentBackend'], base: Extract<SessionBase, { ok: true }>): AgentPreset {
+  private singletonPreset(agentBackend: AgentRuntime['agentBackend'], base: Extract<SessionBase, { ok: true }>): AgentRuntime {
     const singleton: Partial<BaseAgentConfig> = base.singleton ?? {};
     return {
       agentBackend,
@@ -383,7 +383,7 @@ export class ChatSessionPool {
       apiKey: singleton.apiKey ?? '',
       ...(singleton.apiProtocol ? { apiProtocol: singleton.apiProtocol } : {}),
       ...(singleton.apiBaseUrl ? { apiBaseUrl: singleton.apiBaseUrl } : {}),
-      ...(singleton.reasoningEffort !== undefined ? { reasoningEffort: singleton.reasoningEffort as AgentPreset['reasoningEffort'] } : {}),
+      ...(singleton.reasoningEffort !== undefined ? { reasoningEffort: singleton.reasoningEffort as AgentRuntime['reasoningEffort'] } : {}),
       ...(singleton.maxConcurrentSessions !== undefined ? { maxConcurrentSessions: singleton.maxConcurrentSessions } : {}),
       ...(singleton.env ? { env: singleton.env } : {}),
       ...(singleton.credentialEnvKeys ? { credentialEnvKeys: singleton.credentialEnvKeys } : {}),
@@ -421,7 +421,7 @@ export class ChatSessionPool {
     chatId: string,
     sessionKey: string,
     label: string,
-    candidate: { preset?: AgentPreset; modelOverride?: string },
+    candidate: { preset?: AgentRuntime; modelOverride?: string },
   ): { ok: true } | { ok: false; error: string } {
     const previous = this.agents.get(sessionKey);
     if (previous?.isBusy) {
@@ -429,7 +429,7 @@ export class ChatSessionPool {
     }
 
     let info: { available: boolean; unavailableReason?: string };
-    let backend: AgentPreset['agentBackend'] | undefined;
+    let backend: AgentRuntime['agentBackend'] | undefined;
     try {
       const config = candidate.preset
         ? AgentFactory.resolveConfig({ ...candidate.preset, settings: candidate.preset })
@@ -438,8 +438,8 @@ export class ChatSessionPool {
       if (!backend) {
         return { ok: false, error: `Could not validate agent ${label}: no agent backend is configured. Check backend configuration and availability; the current session is unchanged.` };
       }
-      info = this.options.validatePresetBackend
-        ? this.options.validatePresetBackend(backend, config)
+      info = this.options.validateRuntimeBackend
+        ? this.options.validateRuntimeBackend(backend, config)
         : getProvider(backend, candidate.preset).getInfo(config);
     } catch {
       return { ok: false, error: `Could not validate agent ${label}. Check backend configuration and availability; the current session is unchanged.` };
@@ -517,13 +517,13 @@ export class ChatSessionPool {
    * Other sessions of the same chat that follow the chat-wide selection are
    * reset to pick it up on their next message.
    */
-  switchAgentPreset(
+  switchAgentRuntime(
     chatId: string,
     backend: string,
     model?: string,
     threadRootId?: string,
     actorId?: string
-  ): AgentPresetSwitchResult {
+  ): AgentRuntimeSwitchResult {
     if (!this.presets) {
       return { ok: false, error: 'No named agent runtimes are configured (add an agents: map)' };
     }
@@ -560,15 +560,15 @@ export class ChatSessionPool {
         options: this.modelOptions(chatId, sessionKey),
       };
     }
-    const effective: AgentPreset = modelOverride && modelOverride !== resolved.preset.model
+    const effective: AgentRuntime = modelOverride && modelOverride !== resolved.preset.model
       ? composeSessionRuntime(resolved.preset, { modelOverride })
       : resolved.preset;
 
     let info: { available: boolean; unavailableReason?: string };
     try {
       const config = AgentFactory.resolveConfig({ ...effective, settings: effective });
-      info = this.options.validatePresetBackend
-        ? this.options.validatePresetBackend(effective.agentBackend, config)
+      info = this.options.validateRuntimeBackend
+        ? this.options.validateRuntimeBackend(effective.agentBackend, config)
         : getProvider(effective.agentBackend, effective).getInfo(config);
     } catch {
       return {
@@ -666,8 +666,8 @@ export class ChatSessionPool {
     chatId: string,
     backend: string,
     threadRootId?: string
-  ): AgentPresetSwitchResult {
-    const target = backend.trim().toLowerCase() as AgentPreset['agentBackend'];
+  ): AgentRuntimeSwitchResult {
+    const target = backend.trim().toLowerCase() as AgentRuntime['agentBackend'];
     const sessionKey = this.sessionKeyOf(chatId, threadRootId);
     const base = this.sessionBase(chatId, sessionKey);
     if (!base.ok) { return base; }
@@ -719,7 +719,7 @@ export class ChatSessionPool {
     chatId: string,
     model: string,
     threadRootId?: string
-  ): AgentPresetSwitchResult {
+  ): AgentRuntimeSwitchResult {
     const target = model.trim();
     const sessionKey = this.sessionKeyOf(chatId, threadRootId);
     if (!target) {
@@ -771,7 +771,7 @@ export class ChatSessionPool {
    * runtime exactly as before, and a model-only override is validated under
    * that resolved runtime's own rules.
    */
-  private resolveSessionPreset(session: AgentSessionOptions | undefined, chatId: string, sessionKey: string): AgentPreset | undefined {
+  private resolveSessionPreset(session: AgentSessionOptions | undefined, chatId: string, sessionKey: string): AgentRuntime | undefined {
     const harness = session?.harness?.trim();
     if (!harness) {
       if (session?.harness !== undefined) {
@@ -793,7 +793,7 @@ export class ChatSessionPool {
       // RESOLVED runtime's rules (e.g. Codex requires a GPT identifier),
       // never the borrowed/other backend's, and fails loudly instead of
       // silently running the chat's default model.
-      const effective: AgentPreset = { ...selected.preset, model: modelOverride };
+      const effective: AgentRuntime = { ...selected.preset, model: modelOverride };
       this.validateScheduledPreset(selected.name, effective, 'Invalid scheduled model override for agent runtime');
       return effective;
     }
@@ -810,7 +810,7 @@ export class ChatSessionPool {
     if (session?.model !== undefined && !modelOverride) {
       throw new Error(`Scheduled harness "${resolved.name}" requires a non-empty model override`);
     }
-    const preset: AgentPreset = modelOverride === undefined
+    const preset: AgentRuntime = modelOverride === undefined
       ? resolved.preset
       : { ...resolved.preset, model: modelOverride };
 
@@ -825,8 +825,8 @@ export class ChatSessionPool {
     let info: { available: boolean; unavailableReason?: string };
     try {
       const config = AgentFactory.resolveConfig({ ...preset, settings: preset });
-      info = this.options.validatePresetBackend
-        ? this.options.validatePresetBackend(preset.agentBackend, config)
+      info = this.options.validateRuntimeBackend
+        ? this.options.validateRuntimeBackend(preset.agentBackend, config)
         : getProvider(preset.agentBackend, preset).getInfo(config);
     } catch (error) {
       logger.error(
@@ -849,7 +849,7 @@ export class ChatSessionPool {
    * (notably Codex requires a GPT identifier), instead of silently adopting
    * the model of the chat's binding or the global default.
    */
-  private validateScheduledPreset(name: string, preset: AgentPreset, label: string): void {
+  private validateScheduledPreset(name: string, preset: AgentRuntime, label: string): void {
     const validation = validateAgentRuntimes({ [name]: preset }, { allowUnconfiguredModel: true });
     if (!validation.ok) {
       throw new Error(`${label} "${name}": ${validation.errors.join('; ')}`);
@@ -859,7 +859,7 @@ export class ChatSessionPool {
   private createAgent(
     chatId: string,
     callbacks: ChatAgentCallbacks,
-    preset?: AgentPreset,
+    preset?: AgentRuntime,
     skipHistory = false,
     sdkSessionKey = chatId,
     modelOverride?: string,
@@ -1005,7 +1005,7 @@ export class ChatSessionPool {
       // creation, so a rebuilt agent — after reset or idle eviction — keeps
       // the same dimensions (#5255).
       const scoped = session?.harness !== undefined || session?.model !== undefined;
-      let preset: AgentPreset | undefined;
+      let preset: AgentRuntime | undefined;
       let modelArg: string | undefined;
       if (scoped) {
         preset = this.resolveSessionPreset(session, chatId, sessionKey);

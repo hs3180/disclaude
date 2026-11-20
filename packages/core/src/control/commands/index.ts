@@ -31,8 +31,8 @@ export const commandRegistry: CommandDefinition[] = [
     // Issue #5255: with the orthogonal dimension switches wired, /agent is
     // useful even before any `agents:` map exists — the singleton default
     // provides the initial value for backend/model switches.
-    isAvailable: c => !!c.agentPool?.listAgentPresets && !!c.agentPool.getActiveAgentPreset && !!c.agentPool.switchAgentPreset
-      && (c.agentPool.listAgentPresets().length > 0 || !!c.agentPool.switchAgentBackend || !!c.agentPool.switchAgentModel) },
+    isAvailable: c => !!c.agentPool?.listAgentRuntimes && !!c.agentPool.getActiveAgentRuntime && !!c.agentPool.switchAgentRuntime
+      && (c.agentPool.listAgentRuntimes().length > 0 || !!c.agentPool.switchAgentBackend || !!c.agentPool.switchAgentModel) },
   { type: 'steer', handler: handleSteer as CommandDefinition['handler'], description: '运行中纠偏（需原生 turn/steer 支持）', usage: '/steer <instruction>',
     isAvailable: c => !!c.agentPool?.steer,
     showInHelp: (c, command) => c.agentPool.canSteer?.(command.chatId, command.threadRootId) === true },

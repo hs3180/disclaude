@@ -248,12 +248,12 @@ describe('WiredChannelDescriptors', () => {
         setWelcomeService: vi.fn(),
         requestAgentConfigCard,
       });
-      const listAgentPresets = vi.fn().mockReturnValue([
+      const listAgentRuntimes = vi.fn().mockReturnValue([
         { name: 'default', agentBackend: 'claude', model: 'claude-sonnet' },
       ]);
-      const getActiveAgentPreset = vi.fn().mockReturnValue(
+      const getActiveAgentRuntime = vi.fn().mockReturnValue(
         { name: 'default', agentBackend: 'claude', model: 'claude-sonnet' });
-      const switchAgentPreset = vi.fn().mockReturnValue({
+      const switchAgentRuntime = vi.fn().mockReturnValue({
         ok: true, active: { name: 'default', agentBackend: 'claude', model: 'claude-sonnet' }, sessionBoundary: 'new-session' as const,
       });
       const isCommandAllowed = vi.fn().mockReturnValue(true);
@@ -261,7 +261,7 @@ describe('WiredChannelDescriptors', () => {
         controlHandlerContext: {
           agentPool: {
             reset: vi.fn(), stop: vi.fn(),
-            listAgentPresets, getActiveAgentPreset, switchAgentPreset,
+            listAgentRuntimes, getActiveAgentRuntime, switchAgentRuntime,
           },
           isCommandAllowed,
         },
@@ -273,8 +273,8 @@ describe('WiredChannelDescriptors', () => {
       const access = config.agentConfigAccess!;
       expect(access.listPresets()).toEqual([{ name: 'default', agentBackend: 'claude', model: 'claude-sonnet' }]);
       expect(access.getActivePreset('oc_1')).toMatchObject({ name: 'default' });
-      access.switchAgentPreset('oc_1', 'default', undefined, undefined, 'ou_actor');
-      expect(switchAgentPreset).toHaveBeenCalledExactlyOnceWith('oc_1', 'default', undefined, undefined, 'ou_actor');
+      access.switchAgentRuntime('oc_1', 'default', undefined, undefined, 'ou_actor');
+      expect(switchAgentRuntime).toHaveBeenCalledExactlyOnceWith('oc_1', 'default', undefined, undefined, 'ou_actor');
       expect(access.isCommandAllowed?.({ type: 'agent', chatId: 'oc_1', data: { subcommand: 'use' } })).toBe(true);
       expect(isCommandAllowed).toHaveBeenCalled();
 
@@ -292,9 +292,9 @@ describe('WiredChannelDescriptors', () => {
         { name: 'default', agentBackend: 'claude', model: 'claude-sonnet' },
         { name: 'fast', agentBackend: 'pi', model: 'glm-fast' },
       ];
-      const listAgentPresets = vi.fn().mockReturnValue(twoPresets);
+      const listAgentRuntimes = vi.fn().mockReturnValue(twoPresets);
       const context = createMockContext({
-        controlHandlerContext: { agentPool: { reset: vi.fn(), stop: vi.fn(), listAgentPresets } },
+        controlHandlerContext: { agentPool: { reset: vi.fn(), stop: vi.fn(), listAgentRuntimes } },
       });
       const callbacks = FEISHU_WIRED_DESCRIPTOR.createCallbacks(createMockChannel('feishu'), context)('oc_1');
       const suggest = callbacks.suggestAgentConfig!;
@@ -306,7 +306,7 @@ describe('WiredChannelDescriptors', () => {
       expect(suggest('oc_1', 'upstream request failed: overloaded_error (529)')).toBeUndefined();
       expect(suggest('oc_1', 'workspace routing discovery failed: connect ETIMEDOUT')).toBeUndefined();
       // A model failure without a real choice (single preset) stays silent.
-      listAgentPresets.mockReturnValueOnce([twoPresets[0]]);
+      listAgentRuntimes.mockReturnValueOnce([twoPresets[0]]);
       expect(suggest('oc_1', 'model not found: glm-4.7')).toBeUndefined();
       // Channels without the card never wire the hint.
       const restCallbacks = REST_WIRED_DESCRIPTOR.createCallbacks(createMockChannel('rest'), createMockContext())('c1');
@@ -326,9 +326,9 @@ describe('WiredChannelDescriptors', () => {
           controlHandlerContext: {
             agentPool: {
               reset: vi.fn(), stop: vi.fn(),
-              listAgentPresets: vi.fn().mockReturnValue(presets),
-              getActiveAgentPreset: vi.fn().mockReturnValue(presets[0]),
-              switchAgentPreset: vi.fn(),
+              listAgentRuntimes: vi.fn().mockReturnValue(presets),
+              getActiveAgentRuntime: vi.fn().mockReturnValue(presets[0]),
+              switchAgentRuntime: vi.fn(),
             },
           },
         });

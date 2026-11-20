@@ -2,8 +2,8 @@
 import type {
   AgentConfig,
   AgentDefinition,
-  AgentPreset,
-  AgentPresets,
+  AgentRuntime,
+  AgentRuntimes,
   ClaudeAgentConfig,
   DisclaudeConfig,
   LlmConfig,
@@ -75,7 +75,7 @@ function claudeTierEnvironment(
 
 export function resolveConfiguredAgents(
   config: DisclaudeConfig
-): { ok: true; presets: AgentPresets } | { ok: false; errors: string[] } {
+): { ok: true; presets: AgentRuntimes } | { ok: false; errors: string[] } {
   const errors: string[] = secretConfigurationErrors(config);
   for (const key of Object.keys(config)) {
     if (!CONFIG_KEYS.has(key)) {
@@ -221,7 +221,7 @@ export function resolveConfiguredAgents(
   if (errors.length) {
     return { ok: false, errors };
   }
-  const presets: AgentPresets = {};
+  const presets: AgentRuntimes = {};
   // Issue #5679: backends referencing each binding, for cross-harness checks.
   const backendsByLlm = new Map<string, Set<string>>();
   // Bindings pinning their own model (r4 schema step); their validation errors
@@ -595,7 +595,7 @@ export function resolveConfiguredAgents(
 }
 
 /** Validate only the selected runtime's secrets; dormant entries need no credentials. */
-export function validateResolvedAgent(preset: AgentPreset): string | undefined {
+export function validateResolvedAgent(preset: AgentRuntime): string | undefined {
   if (typeof preset.model !== 'string') {
     return `llms.${preset.llm}.defaultModel must be a string when set`;
   }

@@ -230,7 +230,7 @@ export interface AgentDefinition extends Omit<AgentConfig, 'agentBackend'> {
 }
 
 /** Internal resolved preset shared by validation and agent construction. */
-export interface AgentPreset extends AgentConfig {
+export interface AgentRuntime extends AgentConfig {
   agentBackend: NonNullable<AgentConfig['agentBackend']>;
   /**
    * Resolved access method of the bound llms entry (Issue #5338). Always set
@@ -253,7 +253,7 @@ export interface AgentPreset extends AgentConfig {
   /** Resolved Claude Code modelOverrides map (Issues #5410, #5679); compiled for every preset sharing the binding, applied by Claude runtimes only. */
   modelOverrides?: Record<string, string>;
 }
-export type AgentPresets = Record<string, AgentPreset>;
+export type AgentRuntimes = Record<string, AgentRuntime>;
 
 /**
  * A user-declared channel: a `channels.<name>` entry carrying an explicit

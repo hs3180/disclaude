@@ -63,9 +63,9 @@ describe('runtime help and recovery guidance', () => {
 describe('/agent availability without configured presets (Issue #5255)', () => {
   const presetlessPool = (switchers: boolean) => ({
     reset: vi.fn(), stop: vi.fn(),
-    listAgentPresets: () => [],
-    getActiveAgentPreset: () => undefined,
-    switchAgentPreset: () => ({ ok: false as const, error: 'no presets' }),
+    listAgentRuntimes: () => [],
+    getActiveAgentRuntime: () => undefined,
+    switchAgentRuntime: () => ({ ok: false as const, error: 'no presets' }),
     ...(switchers ? { switchAgentBackend: vi.fn(), switchAgentModel: vi.fn() } : {}),
   });
 

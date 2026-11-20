@@ -11,8 +11,8 @@ describe('handleHelp', () => {
   const mockContext: ControlHandlerContext = {
     agentPool: {
       reset: vi.fn(), stop: vi.fn(), steer: vi.fn(),
-      listAgentPresets: () => [{ name: 'default', agentBackend: 'codex', model: 'gpt-6-luna' }],
-      getActiveAgentPreset: vi.fn(), switchAgentPreset: vi.fn(),
+      listAgentRuntimes: () => [{ name: 'default', agentBackend: 'codex', model: 'gpt-6-luna' }],
+      getActiveAgentRuntime: vi.fn(), switchAgentRuntime: vi.fn(),
     },
     debugGroups: { getDebugGroup: () => null, setDebugGroup: vi.fn(), clearDebugGroup: () => null },
     triggerMode: { getMode: () => 'mention', setMode: vi.fn() },

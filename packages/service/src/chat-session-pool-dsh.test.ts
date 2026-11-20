@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AgentPreset } from '@disclaude/core';
+import type { AgentRuntime } from '@disclaude/core';
 
 const native = vi.hoisted(() => ({
   getProvider: vi.fn(),
@@ -12,7 +12,7 @@ vi.mock('@disclaude/core', async (importOriginal) => {
     ...actual,
     getProvider: native.getProvider,
     Config: class extends actual.Config {
-      static getAgentPresets() {
+      static getAgentRuntimes() {
         return undefined;
       }
     },
@@ -26,7 +26,7 @@ import { ChatSessionPool } from './chat-session-pool.js';
 
 describe('named DSH pool routing', () => {
   it('uses the selected DSH connection for both switch preflight and reset', () => {
-    const selected: AgentPreset = {
+    const selected: AgentRuntime = {
       agentBackend: 'dsh',
       llm: 'glm-native',
       model: 'glm-5.3',
@@ -43,7 +43,7 @@ describe('named DSH pool routing', () => {
       return { getInfo: native.getInfo, forgetSession: native.forgetSession };
     });
     const pool = new ChatSessionPool({
-      agentPresets: {
+      agentRuntimes: {
         codex: {
           agentBackend: 'codex',
           llm: 'daily',
@@ -54,7 +54,7 @@ describe('named DSH pool routing', () => {
         dsh: selected,
       },
     });
-    expect(pool.switchAgentPreset('test-chat', 'dsh')).toMatchObject({ ok: true });
+    expect(pool.switchAgentRuntime('test-chat', 'dsh')).toMatchObject({ ok: true });
     expect(native.getInfo).toHaveBeenCalledWith(expect.objectContaining({ settings: selected }));
     pool.reset('test-chat');
     expect(native.forgetSession).toHaveBeenCalledWith('test-chat');
@@ -63,7 +63,7 @@ describe('named DSH pool routing', () => {
 
   it('switches a chat onto a DSH preset that shares its binding with Claude (Issue #5679)', () => {
     const shared = 'group/hq-degrade';
-    const worker: AgentPreset = {
+    const worker: AgentRuntime = {
       agentBackend: 'dsh',
       llm: 'shared',
       model: shared,
@@ -78,7 +78,7 @@ describe('named DSH pool routing', () => {
       return { getInfo: native.getInfo, forgetSession: native.forgetSession };
     });
     const pool = new ChatSessionPool({
-      agentPresets: {
+      agentRuntimes: {
         assistant: {
           agentBackend: 'claude',
           llm: 'shared',
@@ -93,11 +93,11 @@ describe('named DSH pool routing', () => {
     });
     // The switch preflight validates the shared binding's DSH shape before
     // any session is replaced; both presets carry the same wire model.
-    expect(pool.switchAgentPreset('test-chat', 'worker')).toMatchObject({
+    expect(pool.switchAgentRuntime('test-chat', 'worker')).toMatchObject({
       ok: true,
       active: { model: shared, agentBackend: 'dsh' },
     });
     expect(seen.at(-1)).toEqual({ backend: 'dsh', model: shared });
-    expect(pool.getActiveAgentPreset('test-chat')).toMatchObject({ model: shared });
+    expect(pool.getActiveAgentRuntime('test-chat')).toMatchObject({ model: shared });
   });
 });

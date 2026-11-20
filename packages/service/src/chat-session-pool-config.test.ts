@@ -73,7 +73,7 @@ describe('preset switching with real configuration and providers', () => {
         const callbacks = { sendMessage: async () => {}, sendCard: async () => {}, sendFile: async () => {} };
         try {
           if (Config.AGENT_BACKEND === 'dsh') {
-            const preset = Config.getAgentPresets().dsh;
+            const preset = Config.getAgentRuntimes().dsh;
             assert.equal(preset.mode, 'minimal');
             assert.equal(Config.DSH_MODE, 'minimal');
             assert.equal(Config.DSH_HOME, preset.dshHome);
@@ -88,12 +88,12 @@ describe('preset switching with real configuration and providers', () => {
           assert.equal(Config.getAgentConfig().reasoningEffort, 'max');
           assert.equal(Config.getAgentConfig().maxConcurrentSessions, 3);
           assert.equal(Config.getAgentConfig().llm, 'native');
-          assert.equal(pool.getActiveAgentPreset('test-chat').name, Config.AGENT_BACKEND);
-          const rejected = pool.switchAgentPreset('test-chat', 'miniswe');
+          assert.equal(pool.getActiveAgentRuntime('test-chat').name, Config.AGENT_BACKEND);
+          const rejected = pool.switchAgentRuntime('test-chat', 'miniswe');
           assert.equal(rejected.ok, false);
           assert.match(rejected.error, /credential/);
           assert.equal(pool.getOrCreateChatAgent('test-chat', callbacks), original);
-          assert.equal(pool.getActiveAgentPreset('test-chat').name, Config.AGENT_BACKEND);
+          assert.equal(pool.getActiveAgentRuntime('test-chat').name, Config.AGENT_BACKEND);
           // Binding resolution of every harness key is provider-independent
           // and asserted for all entries; only claude is positively SWITCHED,
           // because pi/dsh/miniswe availability depends on harness binaries
@@ -102,21 +102,21 @@ describe('preset switching with real configuration and providers', () => {
             ['claude', 'selected-proxy-key', 'http://127.0.0.1:1'],
             ['pi', 'selected-direct-key', 'http://127.0.0.1:2'],
           ]) {
-            const selected = AgentFactory.resolveConfig(Config.getAgentPresets()[name]);
+            const selected = AgentFactory.resolveConfig(Config.getAgentRuntimes()[name]);
             assert.equal(selected.apiKey, key);
             assert.equal(selected.apiBaseUrl, endpoint);
           }
           assert.equal(getProvider('claude').getInfo(
-            AgentFactory.resolveConfig(Config.getAgentPresets().claude)
+            AgentFactory.resolveConfig(Config.getAgentRuntimes().claude)
           ).available, true);
-          assert.equal(pool.switchAgentPreset('test-chat', 'claude').ok, true);
-          assert.equal(pool.getActiveAgentPreset('test-chat').name, 'claude');
+          assert.equal(pool.switchAgentRuntime('test-chat', 'claude').ok, true);
+          assert.equal(pool.getActiveAgentRuntime('test-chat').name, 'claude');
           const current = pool.getOrCreateChatAgent('test-chat', callbacks);
-          const missingKey = pool.switchAgentPreset('test-chat', 'miniswe');
+          const missingKey = pool.switchAgentRuntime('test-chat', 'miniswe');
           assert.equal(missingKey.ok, false);
           assert.match(missingKey.error, /credential/);
           assert.equal(pool.getOrCreateChatAgent('test-chat', callbacks), current);
-          assert.equal(pool.getActiveAgentPreset('test-chat').name, 'claude');
+          assert.equal(pool.getActiveAgentRuntime('test-chat').name, 'claude');
           console.log('target-config-and-session-preservation: passed');
         } finally { pool.disposeAll(); }
       `;

@@ -36,7 +36,7 @@ function access(overrides: Partial<FeishuAgentConfigAccess> = {}): FeishuAgentCo
   return {
     listPresets: () => PRESETS,
     getActivePreset: () => PRESETS[0],
-    switchAgentPreset: vi.fn().mockReturnValue({ ok: true, active: PRESETS[2] }),
+    switchAgentRuntime: vi.fn().mockReturnValue({ ok: true, active: PRESETS[2] }),
     ...overrides,
   };
 }
@@ -202,7 +202,7 @@ describe('FeishuAgentConfigCards flow', () => {
   it('delivers a card and walks harness → model → thinking → confirm → apply through the shared selection service', async () => {
     const client = fakeClient();
     const sw = vi.fn().mockReturnValue({ ok: true, active: PRESETS[2] });
-    const ports = access({ switchAgentPreset: sw });
+    const ports = access({ switchAgentRuntime: sw });
     const { cards, token, messageId } = await openedCard(ports, client);
 
     expect(client.calls.create).toHaveLength(1);
@@ -228,7 +228,7 @@ describe('FeishuAgentConfigCards flow', () => {
   it('replies in-thread when opened from a topic thread and scopes the switch to it', async () => {
     const client = fakeClient();
     const sw = vi.fn().mockReturnValue({ ok: true, active: PRESETS[1] });
-    const ports = access({ switchAgentPreset: sw });
+    const ports = access({ switchAgentRuntime: sw });
     const cards = new FeishuAgentConfigCards(client, () => ports);
     const result = await cards.open({ chatId: 'oc_chat', threadRootId: 'om_topic', actorId: 'ou_actor' });
     expect(result).toEqual({ ok: true });
@@ -259,7 +259,7 @@ describe('FeishuAgentConfigCards flow', () => {
   it('ignores callbacks from anyone but the requesting actor (group bystander)', async () => {
     const client = fakeClient();
     const sw = vi.fn().mockReturnValue({ ok: true, active: PRESETS[0] });
-    const ports = access({ switchAgentPreset: sw });
+    const ports = access({ switchAgentRuntime: sw });
     const { cards, token, messageId } = await openedCard(ports, client);
     const patchesBefore = client.calls.patch.length;
     await cards.submit(click({ token, op: 'next', formValue: { agent_config_select: 'codex' }, actor: 'ou_bystander', messageId }));
@@ -275,7 +275,7 @@ describe('FeishuAgentConfigCards flow', () => {
     const client = fakeClient();
     const isCommandAllowed = vi.fn().mockReturnValue(true);
     const sw = vi.fn().mockReturnValue({ ok: true, active: PRESETS[0] });
-    const ports = access({ switchAgentPreset: sw, isCommandAllowed });
+    const ports = access({ switchAgentRuntime: sw, isCommandAllowed });
     const { cards, token, messageId } = await openedCard(ports, client);
     await cards.submit(click({ token, op: 'next', formValue: { agent_config_select: 'claude' }, messageId }));
     expect(isCommandAllowed).toHaveBeenCalledTimes(1);
@@ -288,7 +288,7 @@ describe('FeishuAgentConfigCards flow', () => {
   it('applies exactly once for replayed apply events (idempotent terminal state)', async () => {
     const client = fakeClient();
     const sw = vi.fn().mockReturnValue({ ok: true, active: PRESETS[0] });
-    const ports = access({ switchAgentPreset: sw });
+    const ports = access({ switchAgentRuntime: sw });
     const { cards, token, messageId } = await openedCard(ports, client);
     await cards.submit(click({ token, op: 'next', formValue: { agent_config_select: 'claude' }, messageId }));
     await cards.submit(click({ token, op: 'apply', messageId }));
@@ -301,7 +301,7 @@ describe('FeishuAgentConfigCards flow', () => {
   it('paints a failed state with recovery when the shared switch service rejects', async () => {
     const client = fakeClient();
     const sw = vi.fn().mockReturnValue({ ok: false, error: 'The current chat is busy; wait for the response or use /stop before switching presets' });
-    const ports = access({ switchAgentPreset: sw });
+    const ports = access({ switchAgentRuntime: sw });
     const { cards, token, messageId } = await openedCard(ports, client);
     await cards.submit(click({ token, op: 'next', formValue: { agent_config_select: 'claude' }, messageId }));
     await cards.submit(click({ token, op: 'apply', messageId }));
@@ -316,7 +316,7 @@ describe('FeishuAgentConfigCards flow', () => {
   it('rejects select values outside the current step catalog (no forged selections)', async () => {
     const client = fakeClient();
     const sw = vi.fn().mockReturnValue({ ok: true, active: PRESETS[0] });
-    const ports = access({ switchAgentPreset: sw });
+    const ports = access({ switchAgentRuntime: sw });
     const { cards, token, messageId } = await openedCard(ports, client);
     // gpt-5.1 is a model, not a harness — the harness step must not advance.
     await cards.submit(click({ token, op: 'next', formValue: { agent_config_select: 'gpt-5.1' }, messageId }));

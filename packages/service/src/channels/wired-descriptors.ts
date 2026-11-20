@@ -196,7 +196,7 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       // presets behind the same selection service as /agent use.
       suggestAgentConfig: (_chatId: string, failureText: string) => {
         if (!isModelSwitchFailure(failureText)) { return undefined; }
-        const presets = context.controlHandlerContext.agentPool?.listAgentPresets?.() ?? [];
+        const presets = context.controlHandlerContext.agentPool?.listAgentRuntimes?.() ?? [];
         return presets.length >= 2
           ? '💡 如需换一个模型：发送 /agent config 打开配置卡片，在受限选项中选择。'
           : undefined;
@@ -265,7 +265,7 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       // First contact is the one moment a proactive config note is welcome —
       // mention the card only when a real choice exists (two or more named
       // presets); otherwise the welcome stays task-focused.
-      const presets = agentPoolPorts?.listAgentPresets?.() ?? [];
+      const presets = agentPoolPorts?.listAgentRuntimes?.() ?? [];
       return buildWelcomeMessage('feishu', {
         agentConfigCard: presets.length >= 2 && !!helpContext.agentConfigUi,
       });
@@ -302,12 +302,12 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
     // catalog and chat-level selection service the /agent command uses;
     // Feishu is only the presenter. Callbacks re-check the host access
     // policy at click time, so a policy change takes effect immediately.
-    if (agentPoolPorts?.listAgentPresets && agentPoolPorts.getActiveAgentPreset && agentPoolPorts.switchAgentPreset) {
+    if (agentPoolPorts?.listAgentRuntimes && agentPoolPorts.getActiveAgentRuntime && agentPoolPorts.switchAgentRuntime) {
       config.agentConfigAccess = {
-        listPresets: () => agentPoolPorts.listAgentPresets?.() ?? [],
-        getActivePreset: (chatId, threadRootId) => agentPoolPorts.getActiveAgentPreset?.(chatId, threadRootId),
-        switchAgentPreset: (chatId, backend, model, threadRootId, actorId) =>
-          agentPoolPorts.switchAgentPreset?.(chatId, backend, model, threadRootId, actorId)
+        listPresets: () => agentPoolPorts.listAgentRuntimes?.() ?? [],
+        getActivePreset: (chatId, threadRootId) => agentPoolPorts.getActiveAgentRuntime?.(chatId, threadRootId),
+        switchAgentRuntime: (chatId, backend, model, threadRootId, actorId) =>
+          agentPoolPorts.switchAgentRuntime?.(chatId, backend, model, threadRootId, actorId)
           ?? { ok: false, error: 'Agent preset switching is no longer available on this node' },
         ...(context.controlHandlerContext.isCommandAllowed
           ? { isCommandAllowed: context.controlHandlerContext.isCommandAllowed }

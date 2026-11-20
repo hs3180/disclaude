@@ -674,9 +674,9 @@ export async function main(): Promise<void> {
     return typeof value === 'string' && value.trim() ? value : undefined;
   };
   const agentPool = new ChatSessionPool({
-    agentPresets: Config.getAgentPresets(),
+    agentRuntimes: Config.getAgentRuntimes(),
     agentSelections,
-    defaultAgentPresetForChat: perAppAgent,
+    defaultAgentRuntimeForChat: perAppAgent,
     turnRecovery,
     // Issue #5400: per-chat last-failure registry backing the /feedback entry.
     failureRecorder: (failure) => failureRegistry.record(failure),
@@ -723,11 +723,11 @@ export async function main(): Promise<void> {
           parentStopped = agentPool.stop(chatId, threadRootId);
         return parentStopped || childStopped;
       },
-      listAgentPresets: () => agentPool.listAgentPresets(),
-      getActiveAgentPreset: (chatId, threadRootId) =>
-        agentPool.getActiveAgentPreset(chatId, threadRootId),
-      switchAgentPreset: (chatId, backend, model, threadRootId, actorId) =>
-        agentPool.switchAgentPreset(chatId, backend, model, threadRootId, actorId),
+      listAgentRuntimes: () => agentPool.listAgentRuntimes(),
+      getActiveAgentRuntime: (chatId, threadRootId) =>
+        agentPool.getActiveAgentRuntime(chatId, threadRootId),
+      switchAgentRuntime: (chatId, backend, model, threadRootId, actorId) =>
+        agentPool.switchAgentRuntime(chatId, backend, model, threadRootId, actorId),
       // Issue #5255: orthogonal backend/model dimension switches.
       switchAgentBackend: (chatId, backend, threadRootId) =>
         agentPool.switchAgentBackend(chatId, backend, threadRootId),
@@ -810,8 +810,8 @@ export async function main(): Promise<void> {
     source: { chatId: string; threadRootId?: string },
     unavailableMessage: string
   ): AgentCreateOptions => {
-    const presets = Config.getAgentPresets();
-    const selected = agentPool.getActiveAgentPreset(source.chatId, source.threadRootId);
+    const presets = Config.getAgentRuntimes();
+    const selected = agentPool.getActiveAgentRuntime(source.chatId, source.threadRootId);
     const resolved = presets
       ? resolveSessionAgentRuntime(presets, selected?.name, Config.getRawConfig().defaultHarness)
       : undefined;

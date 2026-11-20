@@ -35,7 +35,7 @@ import {
   type MessageBuilderOptions,
   type CwdProvider,
   type CwdResolution,
-  type AgentPreset,
+  type AgentRuntime,
 } from '@disclaude/core';
 import type { ChatAgent } from './chat-agent.js';
 import { createChatAgent } from './create-chat-agent.js';
@@ -90,7 +90,7 @@ export interface AgentCreateOptions extends Partial<BaseAgentConfig> {
   /** Compose host-owned tools/options through the selected provider's chat hook. */
   configureQueryOptions?: ChatAgentConfig['configureQueryOptions'];
   /** Agent SDK runtime override (normally supplied by a named runtime). */
-  agentBackend?: AgentPreset['agentBackend'];
+  agentBackend?: AgentRuntime['agentBackend'];
   /** Native provider identity; defaults to the delivery chat ID. */
   sdkSessionKey?: string;
   /** Override API key */

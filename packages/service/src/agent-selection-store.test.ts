@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import type { AgentPresets } from '@disclaude/core';
+import type { AgentRuntimes } from '@disclaude/core';
 import type { ChatAgentCallbacks } from './agents/types.js';
 import { AgentSelectionStore } from './agent-selection-store.js';
 import { AgentFactory } from './agents/factory.js';
@@ -18,7 +18,7 @@ vi.mock('./agents/factory.js', () => ({
   },
 }));
 
-const presets: AgentPresets = {
+const presets: AgentRuntimes = {
   global: { agentBackend: 'claude', model: 'global-model', apiKey: 'k', llm: 'g' },
   app: { agentBackend: 'pi', model: 'app-model', apiKey: 'k', llm: 'a' },
   saved: { agentBackend: 'codex', model: 'gpt-6.1-sol', apiKey: '', llm: 'b' },
@@ -36,23 +36,23 @@ describe('durable per-chat agent selections from /agent use (#5476)', () => {
   it('saves the switch per chat, resolves it above per-app, and recovers after restart', () => {
     const file = join(dir, 'agent-selections.json');
     const pool = new ChatSessionPool({
-      agentPresets: presets,
+      agentRuntimes: presets,
       agentSelections: new AgentSelectionStore(file),
-      defaultAgentPresetForChat: chatId => chatId === 'wechat-chat' ? 'app' : undefined,
-      validatePresetBackend: () => ({ available: true }),
+      defaultAgentRuntimeForChat: chatId => chatId === 'wechat-chat' ? 'app' : undefined,
+      validateRuntimeBackend: () => ({ available: true }),
     });
-    expect(pool.getActiveAgentPreset('wechat-chat')).toMatchObject({ name: 'app', model: 'app-model' });
-    expect(pool.getActiveAgentPreset('feishu-chat')).toMatchObject({ name: 'global', model: 'global-model' });
-    expect(pool.switchAgentPreset('wechat-chat', 'saved', undefined, undefined, 'ou_user')).toMatchObject({ ok: true });
-    expect(pool.getActiveAgentPreset('wechat-chat')).toMatchObject({ name: 'saved', model: 'gpt-6.1-sol' });
+    expect(pool.getActiveAgentRuntime('wechat-chat')).toMatchObject({ name: 'app', model: 'app-model' });
+    expect(pool.getActiveAgentRuntime('feishu-chat')).toMatchObject({ name: 'global', model: 'global-model' });
+    expect(pool.switchAgentRuntime('wechat-chat', 'saved', undefined, undefined, 'ou_user')).toMatchObject({ ok: true });
+    expect(pool.getActiveAgentRuntime('wechat-chat')).toMatchObject({ name: 'saved', model: 'gpt-6.1-sol' });
     pool.disposeAll();
 
     const restarted = new ChatSessionPool({
-      agentPresets: presets,
+      agentRuntimes: presets,
       agentSelections: new AgentSelectionStore(file),
-      defaultAgentPresetForChat: chatId => chatId === 'wechat-chat' ? 'app' : undefined,
+      defaultAgentRuntimeForChat: chatId => chatId === 'wechat-chat' ? 'app' : undefined,
     });
-    expect(restarted.getActiveAgentPreset('wechat-chat')).toMatchObject({ name: 'saved', model: 'gpt-6.1-sol' });
+    expect(restarted.getActiveAgentRuntime('wechat-chat')).toMatchObject({ name: 'saved', model: 'gpt-6.1-sol' });
     // The next message after the restart reuses the saved choice without a
     // new /agent use (the created agent runs the saved preset).
     restarted.getOrCreateChatAgent('wechat-chat', callbacks());
@@ -67,16 +67,16 @@ describe('durable per-chat agent selections from /agent use (#5476)', () => {
   it('refuses the switch while a session is busy and persists nothing', () => {
     const store = new AgentSelectionStore(join(dir, 'agent-selections.json'));
     const pool = new ChatSessionPool({
-      agentPresets: presets,
+      agentRuntimes: presets,
       agentSelections: store,
-      validatePresetBackend: () => ({ available: true }),
+      validateRuntimeBackend: () => ({ available: true }),
     });
     const busy = pool.getOrCreateChatAgent('chat', callbacks());
     (busy as unknown as { isBusy: boolean }).isBusy = true;
-    expect(pool.switchAgentPreset('chat', 'saved', undefined, undefined, 'ou_user')).toMatchObject({ ok: false });
+    expect(pool.switchAgentRuntime('chat', 'saved', undefined, undefined, 'ou_user')).toMatchObject({ ok: false });
     expect(store.get('chat')).toBeUndefined();
     (busy as unknown as { isBusy: boolean }).isBusy = false;
-    expect(pool.switchAgentPreset('chat', 'saved', undefined, undefined, 'ou_user')).toMatchObject({ ok: true });
+    expect(pool.switchAgentRuntime('chat', 'saved', undefined, undefined, 'ou_user')).toMatchObject({ ok: true });
     expect(busy.dispose).toHaveBeenCalled();
     pool.getOrCreateChatAgent('chat', callbacks());
     expect(vi.mocked(AgentFactory.createChatAgent).mock.calls.at(-1)![3]).toMatchObject({ model: 'gpt-6.1-sol' });
@@ -85,18 +85,18 @@ describe('durable per-chat agent selections from /agent use (#5476)', () => {
 
   it('keeps a sibling thread own switch above the chat-wide save and resets selection-following sessions', () => {
     const pool = new ChatSessionPool({
-      agentPresets: presets,
+      agentRuntimes: presets,
       agentSelections: new AgentSelectionStore(join(dir, 'agent-selections.json')),
-      validatePresetBackend: () => ({ available: true }),
+      validateRuntimeBackend: () => ({ available: true }),
     });
     pool.getOrCreateChatAgent('chat', callbacks(), 'om_topic');
-    expect(pool.switchAgentPreset('chat', 'explicit', undefined, 'om_topic', 'ou_thread')).toMatchObject({ ok: true });
+    expect(pool.switchAgentRuntime('chat', 'explicit', undefined, 'om_topic', 'ou_thread')).toMatchObject({ ok: true });
     const thread = pool.get('chat', 'om_topic')!;
     const main = pool.getOrCreateChatAgent('chat', callbacks());
-    expect(pool.switchAgentPreset('chat', 'saved', undefined, undefined, 'ou_main')).toMatchObject({ ok: true });
+    expect(pool.switchAgentRuntime('chat', 'saved', undefined, undefined, 'ou_main')).toMatchObject({ ok: true });
     // The thread's own explicit switch outranks the chat-wide saved choice.
-    expect(pool.getActiveAgentPreset('chat', 'om_topic')).toMatchObject({ name: 'explicit', model: 'explicit-model' });
-    expect(pool.getActiveAgentPreset('chat')).toMatchObject({ name: 'saved', model: 'gpt-6.1-sol' });
+    expect(pool.getActiveAgentRuntime('chat', 'om_topic')).toMatchObject({ name: 'explicit', model: 'explicit-model' });
+    expect(pool.getActiveAgentRuntime('chat')).toMatchObject({ name: 'saved', model: 'gpt-6.1-sol' });
     expect(thread.dispose).not.toHaveBeenCalled();
     expect(main.dispose).toHaveBeenCalled();
     pool.disposeAll();
@@ -106,15 +106,15 @@ describe('durable per-chat agent selections from /agent use (#5476)', () => {
     const store = new AgentSelectionStore(join(dir, 'agent-selections.json'));
     store.set = () => { throw new Error('disk full'); };
     const pool = new ChatSessionPool({
-      agentPresets: presets,
+      agentRuntimes: presets,
       agentSelections: store,
-      validatePresetBackend: () => ({ available: true }),
+      validateRuntimeBackend: () => ({ available: true }),
     });
     const agent = pool.getOrCreateChatAgent('chat', callbacks());
-    const result = pool.switchAgentPreset('chat', 'saved', undefined, undefined, 'ou_user');
+    const result = pool.switchAgentRuntime('chat', 'saved', undefined, undefined, 'ou_user');
     expect(result).toMatchObject({ ok: false, error: expect.stringContaining('Could not save the agent selection') });
     expect(agent.dispose).not.toHaveBeenCalled();
-    expect(pool.getActiveAgentPreset('chat')).toMatchObject({ name: 'global', model: 'global-model' });
+    expect(pool.getActiveAgentRuntime('chat')).toMatchObject({ name: 'global', model: 'global-model' });
     pool.disposeAll();
   });
 

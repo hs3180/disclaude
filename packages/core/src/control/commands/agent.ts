@@ -28,17 +28,17 @@ export const handleAgent: CommandHandler<'agent'> = async (
   context: ControlHandlerContext
 ): Promise<ControlResponse> => {
   const api = context.agentPool;
-  if (!api.listAgentPresets || !api.getActiveAgentPreset || !api.switchAgentPreset) {
+  if (!api.listAgentRuntimes || !api.getActiveAgentRuntime || !api.switchAgentRuntime) {
     return { success: false, message: 'Agent runtimes are not available on this node.' };
   }
 
   const subcommand = command.data?.subcommand ?? 'current';
   if (subcommand === 'list') {
-    const presets = api.listAgentPresets();
+    const presets = api.listAgentRuntimes();
     if (presets.length === 0) {
       return { success: false, message: 'No named agent runtimes are configured (add an `agents:` map).' };
     }
-    const active = api.getActiveAgentPreset(command.chatId, command.threadRootId);
+    const active = api.getActiveAgentRuntime(command.chatId, command.threadRootId);
     return {
       success: true,
       message: ['🤖 **Agent runtimes**', '', ...presets.map((preset) =>
@@ -55,7 +55,7 @@ export const handleAgent: CommandHandler<'agent'> = async (
     }
     // The switch also saves the choice for the chat, so the same runtime is
     // reused by this chat's next messages and after service restarts (#5476).
-    const result = api.switchAgentPreset(command.chatId, harness, model, command.threadRootId, command.actorId);
+    const result = api.switchAgentRuntime(command.chatId, harness, model, command.threadRootId, command.actorId);
     if (!result.ok) {
       const canList = !context.isCommandAllowed || context.isCommandAllowed({
         ...command, data: { subcommand: 'list' },
@@ -148,7 +148,7 @@ export const handleAgent: CommandHandler<'agent'> = async (
     return { success: false, message: 'Usage: `/agent [current|list|use <harness> [model]|backend <name>|model <id>|config]`' };
   }
 
-  const active = api.getActiveAgentPreset(command.chatId, command.threadRootId);
+  const active = api.getActiveAgentRuntime(command.chatId, command.threadRootId);
   // Asking `/agent` at all is the strongest config-intent signal; when a
   // native card exists, point at it right here (#4914 contextual discovery).
   const cardHint = context.agentConfigUi
