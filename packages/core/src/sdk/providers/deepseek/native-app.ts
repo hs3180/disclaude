@@ -50,6 +50,7 @@ export class DshNativeApp {
   private descriptors: ToolDescriptor[] = [];
   private prompt?: string;
   private skillPlan?: DisclaudeDshSkillPlan;
+  private skillOverlay?: { bundledSkillDir: string };
   private disposeSkills?: () => void;
   private readonly sessions = new Map<string, AgentHandle>();
   private readonly openings = new Map<string, Promise<unknown>>();
@@ -172,15 +173,22 @@ export class DshNativeApp {
       if (!params.skills || typeof params.skills !== 'object' || Array.isArray(params.skills)) {
         throw new TypeError('skills must be an object');
       }
-      const builtinRoot = optionalString((params.skills as Record<string, unknown>).builtinRoot, 'skills.builtinRoot');
-      const projectRoot = optionalString(
-        (params.skills as Record<string, unknown>).projectRoot,
-        'skills.projectRoot'
-      );
-      if (!builtinRoot) {
-        throw new TypeError('skills.builtinRoot must be a non-empty string');
+      const record = params.skills as Record<string, unknown>;
+      const bundledSkillDir = optionalString(record.bundledSkillDir, 'skills.bundledSkillDir');
+      if (bundledSkillDir !== undefined) {
+        // #5717 r3 flip: the binding declares that the controller already
+        // injected the built-in skills directory into the booted profile as a
+        // skill-filesystem bundledSkillDir overlay. The harness's own
+        // discovery delivers those skills; nothing registers in-process here.
+        this.skillOverlay = { bundledSkillDir };
+      } else {
+        const builtinRoot = optionalString(record.builtinRoot, 'skills.builtinRoot');
+        const projectRoot = optionalString(record.projectRoot, 'skills.projectRoot');
+        if (!builtinRoot) {
+          throw new TypeError('skills.builtinRoot must be a non-empty string');
+        }
+        this.skillPlan = dshSkillPlan(projectRoot, builtinRoot);
       }
-      this.skillPlan = dshSkillPlan(projectRoot, builtinRoot);
     }
     this.initialized = true;
     return {
@@ -190,9 +198,11 @@ export class DshNativeApp {
         resume: true,
         cancel: true,
         images: !!this.ctx.get('attachments'),
-        // Whether Disclaude skills were registered on the profile's native
-        // skills registry (#5717): false means the booted profile provides no
-        // ctx.skills service (e.g. sdk-minimal) and no skill is deliverable.
+        // Whether Disclaude skills are deliverable on the booted profile
+        // (#5717 r3): an overlay binding means the built-in directory already
+        // ships through the profile's skill-filesystem discovery; otherwise
+        // false means the profile provides no ctx.skills service (e.g.
+        // sdk-minimal) and no in-process registration happened.
         skills: this.registerSkills(),
       },
     };
@@ -205,6 +215,12 @@ export class DshNativeApp {
    * silently never-starting plugin, and the host can act on the capability.
    */
   private registerSkills(): boolean {
+    if (this.skillOverlay) {
+      // Overlay-injected semantics (#5717 r3): the binding was applied to the
+      // profile composition before this app booted, so the skills ship through
+      // the harness's own discovery — report them as deliverable.
+      return true;
+    }
     if (!this.skillPlan) {
       return false;
     }

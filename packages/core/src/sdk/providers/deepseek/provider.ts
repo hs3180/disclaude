@@ -26,7 +26,6 @@ import {
 } from './native-profile.js';
 import { DshSessionBindings } from './session-bindings.js';
 import { resolveDshCompaction } from './compaction.js';
-import { dshSkillPlan } from './dsh-skills.js';
 import { undeliverableSkillSourceError, type NativeSkillChannel } from '../../../skills/native-skill-channel.js';
 
 const logger = createLogger('DeepSeekHarnessProvider');
@@ -247,12 +246,12 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
     const descriptors = prepareTools(options.tools);
     const tools = new Map(descriptors.map((tool) => [tool.name, tool]));
     const cwd = resolve(options.cwd ?? process.cwd());
-    // Native skill discovery (#5717 rework): built-in and explicitly installed
-    // skills are registered on DSH's own ctx.skills registry by the in-process
-    // plugin (dsh-skills.ts), and DSH authors the model-facing catalog. No
-    // Disclaude-fabricated manifest enters any prompt layer. The explicit
-    // diagnostics install boundary is re-validated inside DSH from the same
-    // root the previous manifest resolution used (projectRoot ?? cwd).
+    // Native skill discovery (#5717 r3): the built-in skills directory ships
+    // through the profile overlay as a skill-filesystem bundledSkillDir root
+    // (the harness's own discovery, rank below project/user roots), and DSH
+    // authors the model-facing catalog. No Disclaude-fabricated manifest
+    // enters any prompt layer. The explicit diagnostics install boundary is
+    // still checked here so an undeliverable installation fails before spawn.
     const projectRoot = resolve(options.projectRoot ?? cwd);
     const diagnosticsRoot = installedDiagnosticsPlugin(projectRoot);
     if (
@@ -265,7 +264,6 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
       // judged by the initialize capability probe below.
       throw undeliverableSkillSourceError(DSH_PROFILE_WITHOUT_SKILLS);
     }
-    const skills = dshSkillPlan(projectRoot, Config.getBuiltinsDir());
     const binding = this.bindings.reserve(options.sessionKey, cwd);
     if (this.active.has(binding.sessionId)) {
       throw new Error('Native DSH conversation already has an active query');
@@ -348,10 +346,17 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
         const compaction = this.profile === 'sdk-minimal' ? undefined
           : await resolveDshCompaction(this.api, this.apiKey, options.autoCompactWindow, state.abort.signal);
         state.abort.signal.throwIfAborted();
+        // The verifiably skill-less minimal composition gets no overlay: an
+        // inserted skill-filesystem would float nothing there, and silently
+        // mounting an inert plugin would hide the actionable no-skills
+        // diagnostics (same gate as the pre-spawn fail-fast above).
+        const skills = this.profile === 'sdk-minimal' && this.processArgs === undefined
+          ? undefined
+          : { bundledSkillDir: join(Config.getBuiltinsDir(), 'skills') };
         state.overlay = createDshNativeProfileOverlay(this.api, [
           join(this.home, 'profiles', this.profile, 'cordis.yml'),
           join(this.home, 'profiles', this.profile, 'cordis.patch.yml'),
-        ], this.profile === 'sdk' ? 'llm-pi-ai' : undefined, compaction);
+        ], this.profile === 'sdk' ? 'llm-pi-ai' : undefined, compaction, skills);
         transport = this.pool.getOrCreate(state.runtimeId);
         logger.info({ sessionId: state.sessionId, source: compaction?.source ?? 'native-minimal',
           contextWindow: compaction?.contextWindow, thresholdRatio: compaction?.thresholdRatio, auto: compaction?.auto },
@@ -366,7 +371,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
               ? {}
               : { reasoningEffort: options.reasoningEffort }),
             ...(options.systemPrompt === undefined ? {} : { systemPrompt: options.systemPrompt }),
-            skills,
+            ...(skills === undefined ? {} : { skills }),
             tools: descriptors.map(({ name, description, inputSchema, outputSchema }) => ({
               name,
               description,

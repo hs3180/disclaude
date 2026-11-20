@@ -152,12 +152,12 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
       const options = { settingSources: [], cwd: fixture.dir, systemPrompt: 'Original context' };
       await collect(provider.queryStream(oneInput(), options).iterator);
       let requests = await readRequests();
-      // The captured harness input is the bare operator prompt plus the native
-      // registration plan: no fabricated manifest reaches initialize/open/
-      // prompt frames in any form.
+      // The captured harness input is the bare operator prompt: the skill-less
+      // minimal composition carries no skills payload and no fabricated
+      // manifest reaches initialize/open/prompt frames in any form.
       const initialized = requests.find((request) => request.method === 'initialize');
       expect(initialized.params.systemPrompt).toBe('Original context');
-      expect(initialized.params.skills).toEqual({ builtinRoot: expect.any(String), projectRoot: fixture.dir });
+      expect(initialized.params.skills).toBeUndefined();
       for (const request of requests) {
         expect(JSON.stringify(request)).not.toContain('Disclaude skills');
         expect(JSON.stringify(request)).not.toContain('SKILL.md');
@@ -190,16 +190,16 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
     try {
       manageDiagnosticsPlugin('install', project, resolve('.'));
       // The sdk profile reports its native skills capability: the explicit
-      // installation is deliverable through ctx.skills registration, so the
-      // query runs and the diagnostics skill reaches the harness only via the
-      // registration plan — never as a manifest in the prompt.
+      // installation is deliverable through the profile's skill-filesystem
+      // overlay, so the query runs and the diagnostics skill reaches the
+      // harness only via native discovery — never as a manifest in the prompt.
       await collect(provider.queryStream(oneInput(), {
         settingSources: [], cwd: project, projectRoot: project, systemPrompt: 'Original context',
       }).iterator);
       const requests = (await readFile(join(fixture.dir, 'requests.jsonl'), 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
       const initialized = requests.find((request) => request.method === 'initialize');
       expect(initialized.params.systemPrompt).toBe('Original context');
-      expect(initialized.params.skills).toEqual({ builtinRoot: expect.any(String), projectRoot: project });
+      expect(initialized.params.skills).toEqual({ bundledSkillDir: expect.any(String) });
       for (const request of requests) {
         expect(JSON.stringify(request)).not.toContain('Disclaude skills');
         expect(JSON.stringify(request)).not.toContain('diagnose-logs');

@@ -178,6 +178,32 @@ describe('DSH native controller skill registration (#5717)', () => {
     await f.app.shutdown();
   });
 
+  it('treats an overlay binding as overlay-injected and never touches ctx.skills (#5717 r3)', async () => {
+    const { registry, providers } = skillsRegistryFixture();
+    const f = fixture(undefined, registry);
+    const initialized = await f.app.handleRequest('initialize', {
+      cwd: '/project',
+      skills: { bundledSkillDir: '/builtins/skills' },
+    });
+    // The binding declares the profile overlay already carries the built-in
+    // directory through skill-filesystem discovery: skills are deliverable and
+    // no in-process provider registration may run (no double listing).
+    expect(initialized).toMatchObject({ capabilities: { skills: true } });
+    expect(providers).toHaveLength(0);
+    expect(f.logger.info).not.toHaveBeenCalledWith(expect.stringMatching(/registered \d+ Disclaude skill/));
+    await f.app.shutdown();
+  });
+
+  it('rejects a malformed overlay binding before any registration', async () => {
+    const { registry, providers } = skillsRegistryFixture();
+    const f = fixture(undefined, registry);
+    await expect(
+      f.app.handleRequest('initialize', { cwd: '/project', skills: { bundledSkillDir: '' } })
+    ).rejects.toThrow('skills.bundledSkillDir must be a non-empty string');
+    expect(providers).toHaveLength(0);
+    await f.app.shutdown();
+  });
+
   it('fails initialize loudly when registration itself throws', async () => {
     const registry: DshSkillRegistryLike = {
       registerProvider: () => {
