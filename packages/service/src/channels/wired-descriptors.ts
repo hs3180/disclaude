@@ -17,6 +17,7 @@ import {
   createControlHandler,
   buildWelcomeMessage,
   Config,
+  ExtensionSection,
   GitHubIssueClient,
   isModelSwitchFailure,
   resolveGitHubIssueTarget,
@@ -590,19 +591,45 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
 // ============================================================================
 
 /**
+ * Channel type extension registry (Issue #5745 Part 2).
+ *
+ * All wired channel *types* — built-in and third-party — register here through
+ * the same path; built-ins are pre-registered ordinary entries, eliminating the
+ * compile-time-only type catalog. Registration is keyed by the descriptor's
+ * `type` string; validation and error isolation semantics live in
+ * `@disclaude/core` `extensions/registry.ts`.
+ *
+ * Adding a built-in channel now requires:
+ * 1. Create WiredChannelDescriptor in this file
+ * 2. Register it below with `{ source: 'builtin' }`
+ *
+ * Third-party channel types register at runtime via
+ * `channelTypeRegistry.register(type, descriptor)` — startup wiring in
+ * cli-main.ts enumerates this registry, so a registered external type is
+ * config-creatable with zero core-code changes.
+ */
+export const channelTypeRegistry = new ExtensionSection<WiredChannelDescriptor>('channelType');
+
+channelTypeRegistry.register(REST_WIRED_DESCRIPTOR.type, REST_WIRED_DESCRIPTOR, {
+  source: 'builtin',
+});
+channelTypeRegistry.register(FEISHU_WIRED_DESCRIPTOR.type, FEISHU_WIRED_DESCRIPTOR, {
+  source: 'builtin',
+});
+channelTypeRegistry.register(WECHAT_WIRED_DESCRIPTOR.type, WECHAT_WIRED_DESCRIPTOR, {
+  source: 'builtin',
+});
+
+/**
  * All built-in wired channel descriptors.
  *
- * Register these with ChannelLifecycleManager to enable config-driven
- * channel creation via `createAndWireByType()`.
- *
- * Issue #1594 Phase 3: Adding a new channel only requires:
- * 1. Create WiredChannelDescriptor in this file
- * 2. Add it to this array
+ * @deprecated Derived migration-compat snapshot of `channelTypeRegistry` taken
+ * at module init (Issue #5745 Part 2). Prefer reading `channelTypeRegistry`
+ * directly — this array does not reflect runtime registrations made after
+ * module load.
  *
  * WeChat is config-driven when a saved private login is configured (#4889).
  */
 export const BUILTIN_WIRED_DESCRIPTORS: WiredChannelDescriptor[] = [
-  REST_WIRED_DESCRIPTOR,
-  FEISHU_WIRED_DESCRIPTOR,
-  WECHAT_WIRED_DESCRIPTOR,
+  ...channelTypeRegistry.descriptors(),
 ];

@@ -34,6 +34,7 @@ import { createLogger, type TopicGroupMessageEvent, type FeishuCard, type Channe
 import { SERVICE_VERSION } from './version.js';
 import type { DeliveryHealth } from './health-types.js';
 import type { WeChatRegistrationHealth } from './channels/wechat/runtime.js';
+import type { ApplyChannelTypesResult } from './extensions/channel-type-apply.js';
 import { channelError } from './channel-error.js';
 // T-089 rework (#5197): on-demand research doc comment watch session. Type-only:
 // the server stays dependency-free of the research runtime.
@@ -386,9 +387,21 @@ export class HttpApiServer {
   private wechatRegistrationHealthProvider?: () => WeChatRegistrationHealth;
   private browserIpcStatusProvider?: () => NonNullable<StatusResponse['browserIpc']>;
   private channelCapabilitiesProvider?: (chatId?: string) => ChannelCapabilitySnapshot[];
+  /** #5745 r2 S4: hot-apply hook; see setChannelTypeApplyHandler. */
+  private channelTypeApplyHandler?: () => Promise<ApplyChannelTypesResult>;
 
   setChannelCapabilitiesProvider(provider: (chatId?: string) => ChannelCapabilitySnapshot[]): void {
     this.channelCapabilitiesProvider = provider;
+  }
+
+  /**
+   * #5745 r2 S4: hot-apply hook for runtime channel-type registration. The
+   * wired handler re-runs the extensions-store apply into channelTypeRegistry
+   * so a `disclaude channel-type register` from another process reaches the
+   * running service without a restart.
+   */
+  setChannelTypeApplyHandler(handler: () => Promise<ApplyChannelTypesResult>): void {
+    this.channelTypeApplyHandler = handler;
   }
   /** Connected SSE clients for topic notifications (Issue #4031) */
   private readonly sseClients = new Set<ServerResponse>();
@@ -675,6 +688,9 @@ export class HttpApiServer {
    */
   private setupRoutes(): void {
     this.addRoute('POST', '/api/channel-capabilities', this.handleChannelCapabilities.bind(this));
+    // #5745 r2 S4: hot-apply registered external channel types into the
+    // running registry. POST (not GET) so the api-token gate applies.
+    this.addRoute('POST', '/api/channel-types/apply', this.handleChannelTypesApply.bind(this));
     this.addRoute('GET', '/api/status', this.handleStatus.bind(this));
     this.addRoute('GET', '/api/health/detailed', this.handleDetailedHealth.bind(this));
     // Issue #4279: REST parity with REST API uploadFile.
@@ -918,6 +934,28 @@ export class HttpApiServer {
       this.sendJson(res, 400, { ok: false, message: 'chatId must be a string' }); return;
     }
     this.sendJson(res, 200, { ok: true, channels: this.channelCapabilitiesProvider((body as { chatId?: string }).chatId) });
+  }
+
+  /**
+   * #5745 r2 S4: POST /api/channel-types/apply — re-run the channel-type
+   * store apply in the running process. Per-record error isolation lives in
+   * the apply path, so a partial failure is still a completed apply: the
+   * response reports the applied/failed split rather than failing wholesale.
+   * Empty or absent bodies are valid (the endpoint takes no parameters).
+   */
+  private async handleChannelTypesApply(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.channelTypeApplyHandler) {
+      this.sendJson(res, 503, { ok: false, message: 'Channel type apply is unavailable' });
+      return;
+    }
+    const body = await this.readOptionalJsonObject(req, res);
+    if (!body) { return; }
+    try {
+      const { applied, failed } = await this.channelTypeApplyHandler();
+      this.sendJson(res, 200, { ok: true, applied, failed });
+    } catch (error) {
+      this.sendJson(res, 500, { ok: false, message: `Channel type apply failed: ${error instanceof Error ? error.message : String(error)}` });
+    }
   }
 
   /**

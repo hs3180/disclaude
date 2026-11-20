@@ -51,7 +51,10 @@ import { ChatSessionPool } from './chat-session-pool.js';
 import { AgentSelectionStore } from './agent-selection-store.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
 import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
-import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
+// Issue #5745 Part 2: channel type catalog lives in the unified extension
+// registry (built-ins pre-registered; runtime-registered types enumerate too).
+import { channelTypeRegistry } from './channels/wired-descriptors.js';
+import { applyChannelTypesForConfigDir } from './extensions/channel-type-apply.js';
 // #5519: bounded DNS/connection readiness wait before the startup sequence
 // reports the Feishu channel as available.
 import { waitForStartupReadiness } from './channels/feishu/dns-readiness.js';
@@ -67,6 +70,8 @@ import { queryChatHistory } from './history/history-query.js';
 import { writeTaskReport } from './goals/task-report-inbox.js';
 // T-089 rework (#5197): on-demand research doc comment watch control client.
 import { runResearchWatchCli } from './research/watch-cli.js';
+// #5745: `disclaude channel-type` CLI — persists external channel-type registrations.
+import { runChannelTypeCommand } from './extensions/channel-type-cli.js';
 // T-089 rework (#5197): service-side host of the watch session (dormant until
 // `disclaude research watch start` arrives over REST).
 import { ResearchCommentWatchService, createResearchCommentDelivery } from './research/watch-service.js';
@@ -84,7 +89,7 @@ const logger = createLogger('DisclaudeServiceCLI');
  * Parse command line arguments.
  */
 interface CliOptions {
-  command: 'start' | 'help' | 'history' | 'board-report' | 'research';
+  command: 'start' | 'help' | 'history' | 'board-report' | 'research' | 'channel-type';
   configPath?: string;
   /** Issue #3857 Phase 2: HTTP API port for external tool access */
   apiPort?: number;
@@ -96,6 +101,7 @@ interface CliOptions {
   taskReport?: { write?: boolean; inbox?: string; kind?: string };
   /** T-089 rework (#5197): everything after `disclaude research` (watch subcommand owns its flags). */
   researchArgs?: string[];
+  channelTypeArgs?: string[];
 }
 
 /** Generate a fresh in-memory credential for each startup unless explicitly configured. */
@@ -148,6 +154,12 @@ export function parseArgs(args: string[]): CliOptions {
       // and stop parsing here.
       options.command = 'research';
       options.researchArgs = args.slice(i + 1);
+      return options;
+    } else if (arg === 'channel-type') {
+      // #5745: runtime channel-type registration via the CLI. The subcommand
+      // owns its own flags, so capture the rest verbatim (research precedent).
+      options.command = 'channel-type';
+      options.channelTypeArgs = args.slice(i + 1);
       return options;
     } else if (options.command === 'board-report' && arg === 'write') {
       options.taskReport = options.taskReport ?? {};
@@ -250,11 +262,13 @@ Usage:
   disclaude start [options]
   disclaude history query --chat <chatId> [--days N] [--limit N] [--format json|text]
   disclaude research watch start|stop|status|add|remove [options]
+  disclaude channel-type register|unregister|list [options]
 
 Commands:
   start           Start disclaude
   history query   Read locally available chat history (read-only, structured JSON; Issue #5603)
   research watch  On-demand research document comment watching (#5197; 'research watch --help')
+  channel-type    Register external channel types at runtime (#5745; 'channel-type --help')
 
 Options:
   --config, -c PATH       Path to configuration file
@@ -449,6 +463,16 @@ export async function main(): Promise<void> {
   // watch session; no service startup, no logger/PID lock (like history).
   if (options.command === 'research') {
     const exitCode = await runResearchWatchCli(options.researchArgs ?? []);
+    process.exit(exitCode);
+  }
+
+  // #5745: channel-type register/list/unregister — store operations with a
+  // best-effort hot-notify of a running service (r2 S4b); no service
+  // startup, no logger/PID lock (like history/research).
+  if (options.command === 'channel-type') {
+    const exitCode = await runChannelTypeCommand(options.channelTypeArgs ?? [], {
+      configDir: Config.getWorkspaceDir(),
+    });
     process.exit(exitCode);
   }
 
@@ -773,7 +797,8 @@ export async function main(): Promise<void> {
   // Issue #3801: Use descriptor-driven callback creation instead of hardcoded channel.id checks.
   // Each WiredChannelDescriptor declares its own callback options (e.g., sendDoneSignal),
   // so the routerCallbacksFactory looks up the descriptor by channel type.
-  const descriptorMap = new Map(BUILTIN_WIRED_DESCRIPTORS.map((d) => [d.type, d]));
+  // Issue #5745 Part 2: lookup goes through channelTypeRegistry (live — includes
+  // runtime-registered channel types, not just built-ins).
   const routerCallbacksFactory = (chatId: string, threadRootId?: string) => {
     // Issue #3824: Use resolveChannelForChatId for ownership query fallback.
     // After restart, chatIdChannelMap is empty. resolveChannelForChatId queries
@@ -787,7 +812,7 @@ export async function main(): Promise<void> {
       : channel.id.startsWith('feishu:')
         ? 'feishu'
         : channel.id;
-    const descriptor = descriptorMap.get(channelType);
+    const descriptor = channelTypeRegistry.get(channelType);
     if (descriptor) {
       return descriptor.createCallbacks(channel, channelSetupContext)(chatId, threadRootId);
     }
@@ -922,10 +947,22 @@ export async function main(): Promise<void> {
     inputMessageRouter: service.getInputMessageRouter(),
   });
 
-  // Register all built-in channel descriptors (Issue #1594 Phase 3)
+  // #5745 r2 S3: cold-path apply of durably registered external channel types
+  // (`disclaude channel-type register`) into channelTypeRegistry. Must run
+  // before the enumeration below so config `channels.<name>: { type }` can
+  // create instances of external types. Per-record error isolation lives in
+  // applyChannelTypesForConfigDir: one bad module never blocks the remaining
+  // records, the built-ins, or startup.
+  await applyChannelTypesForConfigDir(Config.getWorkspaceDir(), {
+    warn: (message) => logger.warn(message),
+  });
+
+  // Register all channel type descriptors (Issue #1594 Phase 3; Issue #5745 Part 2)
   // This enables config-driven creation via createAndWireByType().
-  // Adding a new channel only requires adding a descriptor to BUILTIN_WIRED_DESCRIPTORS.
-  for (const descriptor of BUILTIN_WIRED_DESCRIPTORS) {
+  // Enumeration covers built-ins plus any channel type registered into
+  // channelTypeRegistry before startup — adding a new channel no longer
+  // requires touching this loop.
+  for (const descriptor of channelTypeRegistry.descriptors()) {
     lifecycleManager.registerWiredDescriptor(descriptor);
   }
 
@@ -1152,6 +1189,15 @@ export async function main(): Promise<void> {
         httpApiServer.setWeChatRegistrationHealthProvider(() => registrationRuntime.getHealth());
       }
       httpApiServer.setBrowserIpcStatusProvider(() => service.getBrowserIpcStatus());
+      // #5745 r2 S4: hot-apply endpoint — POST /api/channel-types/apply re-runs
+      // the extensions-store apply against the same config dir as the cold
+      // path above, so `disclaude channel-type register` from another process
+      // reaches the running channelTypeRegistry without a restart.
+      httpApiServer.setChannelTypeApplyHandler(() =>
+        applyChannelTypesForConfigDir(Config.getWorkspaceDir(), {
+          warn: (message) => logger.warn(message),
+        })
+      );
       httpApiServer.setChannelCapabilitiesProvider((chatId) =>
         service
           .getChannels()

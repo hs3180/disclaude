@@ -1426,6 +1426,48 @@ describe('HttpApiServer', () => {
     });
   });
 
+  describe('POST /api/channel-types/apply (#5745 r2 S4)', () => {
+    it('answers 503 when unwired, delegates to the apply handler, and tolerates empty bodies', async () => {
+      expect((await dispatch(server, { method: 'POST', url: '/api/channel-types/apply' })).statusCode).toBe(503);
+
+      const handler = vi.fn().mockResolvedValue({
+        applied: ['demo'],
+        failed: [{ type: 'broken', reason: 'module not found' }],
+      });
+      server.setChannelTypeApplyHandler(handler);
+      const response = await dispatch(server, { method: 'POST', url: '/api/channel-types/apply' });
+      expect(response.statusCode).toBe(200);
+      // Partial failure stays a completed apply: the split is reported, not failed wholesale.
+      expect(JSON.parse(response.body)).toEqual({
+        ok: true,
+        applied: ['demo'],
+        failed: [{ type: 'broken', reason: 'module not found' }],
+      });
+      expect(handler).toHaveBeenCalledExactlyOnceWith();
+      // The endpoint takes no parameters; an explicit empty object body is fine, a non-object is not.
+      expect((await dispatch(server, { method: 'POST', url: '/api/channel-types/apply', body: JSON.stringify({}) })).statusCode).toBe(200);
+      expect((await dispatch(server, { method: 'POST', url: '/api/channel-types/apply', body: JSON.stringify([1]) })).statusCode).toBe(400);
+      expect((await dispatch(server, { method: 'POST', url: '/api/channel-types/apply', body: 'not json' })).statusCode).toBe(400);
+    });
+
+    it('is token-gated as a state-changing POST route', async () => {
+      server = new HttpApiServer({ port: 0, apiToken: 'agent-token' });
+      const handler = vi.fn().mockResolvedValue({ applied: [], failed: [] });
+      server.setChannelTypeApplyHandler(handler);
+      expect((await dispatch(server, { method: 'POST', url: '/api/channel-types/apply' })).statusCode).toBe(401);
+      expect(handler).not.toHaveBeenCalled();
+      const response = await dispatch(server, { method: 'POST', url: '/api/channel-types/apply', headers: { authorization: 'Bearer agent-token' } });
+      expect(response.statusCode).toBe(200);
+    });
+
+    it('maps a throwing handler to a 500 with the failure message', async () => {
+      server.setChannelTypeApplyHandler(vi.fn().mockRejectedValue(new Error('registry locked')));
+      const response = await dispatch(server, { method: 'POST', url: '/api/channel-types/apply' });
+      expect(response.statusCode).toBe(500);
+      expect(JSON.parse(response.body).message).toContain('registry locked');
+    });
+  });
+
   describe('research watch routes (T-089 rework, #5197)', () => {
     const statusPayload = { running: false, registrations: [], docs: {}, recentErrors: [] };
     function controller(overrides: Partial<import('./research/watch-service.js').ResearchCommentWatchService> = {}) {
