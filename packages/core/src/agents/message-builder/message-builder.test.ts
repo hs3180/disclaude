@@ -129,7 +129,7 @@ describe('MessageBuilder', () => {
 
     // Issue #5746: the history-query recovery rule must reach the agent-visible
     // prompt surface — both the full per-turn content and the stable prefix
-    // that a fresh native session (preset switch) re-receives on its first
+    // that a fresh native session (runtime switch) re-receives on its first
     // message, alongside the metadata that names the Chat ID it refers to.
     it('should include the missing-context recovery guidance for regular messages', () => {
       const input = { text: '改一下前面那篇文章', messageId: 'om_message_123' };
