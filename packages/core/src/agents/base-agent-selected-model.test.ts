@@ -39,7 +39,7 @@ async function selectedOptions(
   model: string,
   env?: Record<string, string>,
   settings?: AgentConfig,
-  modelOverrides?: Record<string, string>
+  modelMapping?: Record<string, string>
 ) {
   const { BaseAgent } = await import('./base-agent.js');
   class SelectedAgent extends BaseAgent {
@@ -56,7 +56,7 @@ async function selectedOptions(
     model,
     env,
     settings,
-    modelOverrides,
+    modelMapping,
     agentBackend: 'claude',
   }).options();
 }
@@ -118,15 +118,15 @@ describe('Claude native model aliases', () => {
 });
 
 
-describe('Claude modelOverrides identity (Issue #5410)', () => {
+describe('Claude modelMapping identity (Issue #5410)', () => {
   it('passes the resolved map to native queries with the current bundled CLI', async () => {
-    const options = await selectedOptions('kimi-k3', undefined, undefined, {
-      'claude-opus-5': 'kimi-k3',
+    const options = await selectedOptions('kimi-k3.1-pro', undefined, undefined, {
+      'claude-opus-5': 'kimi-k3.1-pro',
     });
-    expect(options.modelOverrides).toEqual({ 'claude-opus-5': 'kimi-k3' });
-    expect(options.model).toBe('kimi-k3');
+    expect(options.modelMapping).toEqual({ 'claude-opus-5': 'kimi-k3.1-pro' });
+    expect(options.model).toBe('kimi-k3.1-pro');
   });
-  it('fails agent startup when the bundled Claude Code predates modelOverrides', async () => {
+  it('fails agent startup when the bundled Claude Code predates the model-mapping feature', async () => {
     vi.doMock('../sdk/providers/claude/version.js', async (importOriginal) => ({
       ...(await importOriginal<Record<string, unknown>>()),
       bundledClaudeCodeVersion: () => '2.1.199',
@@ -138,21 +138,54 @@ describe('Claude modelOverrides identity (Issue #5410)', () => {
     expect(() => new GateAgent({
       apiKey: 'selected-key',
       apiProtocol: 'anthropic',
-      model: 'kimi-k3',
+      model: 'kimi-k3.1-pro',
       llm: 'gateway',
-      modelOverrides: { 'claude-opus-5': 'kimi-k3' },
+      modelMapping: { 'claude-opus-5': 'kimi-k3.1-pro' },
       agentBackend: 'claude',
-    })).toThrow(/requires Claude Code >= 2\.1\.200.*claude\.modelOverrides/);
+    })).toThrow(/requires Claude Code >= 2\.1\.200.*claude\.modelMapping/);
   });
   it('keeps overrides working when the bundled CLI version cannot be resolved', async () => {
     vi.doMock('../sdk/providers/claude/version.js', async (importOriginal) => ({
       ...(await importOriginal<Record<string, unknown>>()),
       bundledClaudeCodeVersion: () => undefined,
     }));
-    const options = await selectedOptions('kimi-k3', undefined, undefined, {
-      'claude-opus-4-7': 'kimi-k3',
+    const options = await selectedOptions('kimi-k3.1-pro', undefined, undefined, {
+      'claude-opus-4-7': 'kimi-k3.1-pro',
     });
-    expect(options.modelOverrides).toEqual({ 'claude-opus-4-7': 'kimi-k3' });
+    expect(options.modelMapping).toEqual({ 'claude-opus-4-7': 'kimi-k3.1-pro' });
+  });
+});
+
+describe('Claude tier-alias parameter mapping (Issue #5422)', () => {
+  // The generic agent layer is alias-agnostic: the config-compiled
+  // tier-keyed modelMapping mapping (from the `claude.modelMapping` declaration;
+  // no behavesAs key exists) flows through the standard passthrough and
+  // startup floor — no running-catalog resolution exists anywhere.
+  it('passes an alias-keyed map to native queries unchanged, without alias-specific options', async () => {
+    const options = await selectedOptions('kimi-k3.1-pro', undefined, undefined, { opus: 'kimi-k3.1-pro' });
+    expect(options.modelMapping).toEqual({ opus: 'kimi-k3.1-pro' });
+    // The generic query options carry no alias concept of their own.
+    const raw = options as unknown as Record<string, unknown>;
+    expect(raw.behavesAsAlias).toBeUndefined();
+    expect(raw.llm).toBeUndefined();
+  });
+  it('fails agent startup when the bundled Claude Code predates the model-mapping feature with an alias key', async () => {
+    vi.doMock('../sdk/providers/claude/version.js', async (importOriginal) => ({
+      ...(await importOriginal<Record<string, unknown>>()),
+      bundledClaudeCodeVersion: () => '2.1.199',
+    }));
+    const { BaseAgent } = await import('./base-agent.js');
+    class GateAliasAgent extends BaseAgent {
+      protected getAgentName() { return 'GateAliasAgent'; }
+    }
+    expect(() => new GateAliasAgent({
+      apiKey: 'selected-key',
+      apiProtocol: 'anthropic',
+      model: 'kimi-k3.1-pro',
+      llm: 'gateway',
+      modelMapping: { opus: 'kimi-k3.1-pro' },
+      agentBackend: 'claude',
+    })).toThrow(/requires Claude Code >= 2\.1\.200/);
   });
 });
 
@@ -165,7 +198,7 @@ describe('shared bindings across harnesses (Issue #5679)', () => {
       agents: {
         assistant: {
           backend: 'claude', llm: 'shared', default: true,
-          claude: { behavesAs: 'claude-sonnet-4-5' },
+          claude: { modelMapping: { sonnet: 'group/hq-degrade' } },
         },
         research: { backend: 'dsh', llm: 'shared', mode: 'minimal' },
       },
@@ -197,10 +230,14 @@ describe('shared bindings across harnesses (Issue #5679)', () => {
     // Claude gets the wire model plus the capability mapping.
     const claude = new BoundAgent({ ...presets.assistant, settings: presets.assistant }).options();
     expect(claude.model).toBe('group/hq-degrade');
-    expect(claude.modelOverrides).toEqual({ 'claude-sonnet-4-5': 'group/hq-degrade' });
+    // The tier declaration compiles to the tier-alias parameter mapping
+    // (Issue #5422 r3); omitted tiers derive from the wire model.
+    expect(claude.modelMapping).toEqual({
+      opus: 'group/hq-degrade', sonnet: 'group/hq-degrade', haiku: 'group/hq-degrade',
+    });
     // DSH gets the same wire model verbatim and no Claude-side mapping.
     const dsh = new BoundAgent({ ...presets.research, settings: presets.research }).options();
     expect(dsh.model).toBe('group/hq-degrade');
-    expect(dsh.modelOverrides).toBeUndefined();
+    expect(dsh.modelMapping).toBeUndefined();
   });
 });

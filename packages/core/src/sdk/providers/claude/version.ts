@@ -2,8 +2,8 @@ import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
-/** modelOverrides shipped in Claude Code 2.1.200 (Issue #5410). */
-const MODEL_OVERRIDES_MIN_VERSION = [2, 1, 200] as const;
+/** The Claude Code settings capability that applies the compiled model mapping shipped in 2.1.200 (Issue #5410). */
+const MODEL_MAPPING_MIN_VERSION = [2, 1, 200] as const;
 
 let probed = false;
 let cached: string | undefined;
@@ -35,14 +35,14 @@ export function bundledClaudeCodeVersion(): string | undefined {
 }
 
 /** True only when the version parsed and is older than the feature's release. */
-export function lacksModelOverrides(version: string): boolean {
+export function lacksModelMapping(version: string): boolean {
   const parts = version.split('.').map(Number);
   if (parts.length < 3 || parts.some((part) => !Number.isSafeInteger(part) || part < 0)) {
     return false;
   }
-  for (let index = 0; index < MODEL_OVERRIDES_MIN_VERSION.length; index++) {
+  for (let index = 0; index < MODEL_MAPPING_MIN_VERSION.length; index++) {
     const part = parts[index] ?? 0;
-    const minimum = MODEL_OVERRIDES_MIN_VERSION[index] ?? 0;
+    const minimum = MODEL_MAPPING_MIN_VERSION[index] ?? 0;
     if (part < minimum) {
       return true;
     }
