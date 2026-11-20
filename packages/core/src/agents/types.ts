@@ -282,8 +282,8 @@ export interface BaseAgentConfig {
   llm?: string;
   reasoningEffort?: string;
   maxConcurrentSessions?: number;
-  /** Claude Code `modelOverrides` parameter map (Issue #5410) compiled at config time from the agent's `claude.modelMapping` declaration — the only configuration source (Issue #5422); applied by Claude runtimes only. */
-  modelOverrides?: Record<string, string>;
+  /** Compiled three-tier `modelMapping` (Issue #5422): the agent's `claude.modelMapping` declaration completed at config time, omitted tiers deriving from the provider `defaultModel`; applied by Claude runtimes only. */
+  modelMapping?: Record<string, string>;
   /** API wire format of the selected LLM. */
   apiProtocol?: ApiProtocol;
   /** Access method of the selected LLM: Codex ChatGPT login vs API (Issue #5338). */

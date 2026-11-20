@@ -412,16 +412,16 @@ export interface AgentQueryOptions {
   /** Claude unset uses SDK defaults; 'auto' discovers capacity, a number sets a trigger, 0 disables. DSH resolves its native policy. */
   autoCompactWindow?: number | 'auto';
   /**
-   * Claude Code modelOverrides map (Issue #5410): full Anthropic model ID →
-   * provider ID. Claude Code applies the key's catalog entry — context window,
-   * capabilities, effort defaults — to the provider ID while sending the
-   * provider ID on the wire. Injected via the per-query private settings file;
-   * requires Claude Code ≥ 2.1.200. Keys are either full Claude model IDs
-   * (Issue #5410) or the bare tier aliases compiled at config time from the
-   * three-tier `agents.<name>.claude.modelMapping` declaration (Issue #5422),
-   * which Claude Code resolves against its current catalog before the wire.
+   * Compiled three-tier model mapping (Issues #5410/#5422): tier alias (or
+   * full Claude model ID) → provider model ID. Claude Code applies the key's
+   * catalog entry — context window, capabilities, effort defaults — to the
+   * provider model while sending the provider model on the wire. Compiled at
+   * config time from the `agents.<name>.claude.modelMapping` declaration (the
+   * only configuration source) and injected via the per-query private
+   * settings file; requires Claude Code ≥ 2.1.200. Claude Code resolves each
+   * tier alias against its current catalog before the wire.
    */
-  modelOverrides?: Record<string, string>;
+  modelMapping?: Record<string, string>;
   /**
    * Enable partial (stream_event) messages (Issue #3706 GLM stall).
    * When true, the SDK yields stream_event messages (content_block_delta,

@@ -161,7 +161,7 @@ For a gateway or provider-specific model ID Claude Code does not know
 (`kimi-k3.1-pro`, a Bedrock inference profile, …), bind its client-side identity
 with the three-tier `agents.<name>.claude.modelMapping` declaration (Issue #5422):
 no separate `behavesAs` key exists. Config compiles the declaration itself
-into the `modelOverrides` parameter mapping at config time — every tier alias
+into the applied `modelMapping` at config time — every tier alias
 key (`opus`, `sonnet`, `haiku`) maps to `modelMapping.<tier>`, an omitted tier
 deriving from the provider `defaultModel` — and Claude Code applies the
 tier's catalog entry — context window, capability and effort defaults — to
@@ -172,8 +172,8 @@ the tier environment, so editing `agents.<name>.claude.modelMapping` changes the
 applied identity everywhere at once. A stale `behavesAs` key is an explicit
 config-time error pointing at `modelMapping` — never a silent no-op.
 `modelMapping: {opus: kimi-k3.1-pro, sonnet: glm-5.3, haiku: deepseek-flash}` with the
-provider default `defaultModel: glm-5.3` generates
-`modelOverrides: {"opus": "kimi-k3.1-pro", "sonnet": "glm-5.3",
+provider default `defaultModel: glm-5.3` completes to the same
+three keys `{"opus": "kimi-k3.1-pro", "sonnet": "glm-5.3",
 "haiku": "deepseek-flash"}` in the per-query private settings file; no user
 `~/.claude/settings.json` is written. Overrides also apply on the
 `ANTHROPIC_DEFAULT_*_MODEL` env-pin path. Window rules: Opus-line IDs

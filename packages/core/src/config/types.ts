@@ -97,16 +97,16 @@ export interface ClaudeAgentConfig {
   /**
    * Three-tier opus/sonnet/haiku model mapping, and the single source of the
    * capability-slot binding (Issue #5422): no separate `behavesAs` or raw
-   * full-Claude-ID `modelOverrides` configuration key exists — this
-   * declaration is the only configuration source. Config compiles the
-   * declaration itself into the `modelOverrides` parameter mapping at config
+   * full-Claude-ID override configuration key exists — this
+   * declaration is the only configuration source. Config completes the
+   * declaration itself into the applied model mapping at config
    * time — every tier alias key maps to `modelMapping.<tier>`, an omitted
    * tier deriving from the provider `defaultModel` — so editing
    * `modelMapping` changes the applied Claude catalog identity everywhere at
    * once. Claude Code resolves each tier alias against its current catalog,
    * so the binding follows CLI upgrades instead of pinning a full ID.
    * Multi-slot gateway needs are expressed through these tiers; a stale
-   * `behavesAs` or `modelOverrides` key is a config error pointing here,
+   * `behavesAs` or raw override key is a config error pointing here,
    * never a silent no-op.
    */
   modelMapping?: ClaudeModelMapping;
@@ -255,8 +255,8 @@ export interface AgentPreset extends AgentConfig {
   llm: string;
   reasoningEffort?: CodexReasoningEffort;
   maxConcurrentSessions?: number;
-  /** Claude Code `modelOverrides` parameter map (Issue #5410) compiled at config time from the agent's `claude.modelMapping` declaration — the only configuration source (Issue #5422); applied by Claude runtimes only. */
-  modelOverrides?: Record<string, string>;
+  /** Compiled three-tier `modelMapping` (Issue #5422): the agent's `claude.modelMapping` declaration completed at config time, omitted tiers deriving from the provider `defaultModel`; applied by Claude runtimes only. */
+  modelMapping?: Record<string, string>;
 }
 export type AgentPresets = Record<string, AgentPreset>;
 

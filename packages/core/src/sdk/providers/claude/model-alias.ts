@@ -9,7 +9,7 @@ export function assumedContextWindow(claudeModelId: string): 1_000_000 | 200_000
 }
 
 /**
- * Full Claude model IDs as modelOverrides keys (Issue #5410). A bare alias
+ * Full Claude model IDs as model mapping keys (Issue #5410). A bare alias
  * key reaches the provider only as the config-compiled three-tier mapping
  * (Issue #5422): the user-declared `agents.<name>.claude.modelMapping` mapping is
  * the single capability-slot source and is compiled into the parameter
@@ -20,7 +20,7 @@ export function assumedContextWindow(claudeModelId: string): 1_000_000 | 200_000
  */
 const FULL_CLAUDE_MODEL_ID = /^claude-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-/** Whether a modelOverrides key is a full Claude catalog ID rather than a bare alias (Issue #5422). */
+/** Whether a model mapping key is a full Claude catalog ID rather than a bare alias (Issue #5422). */
 export function isFullClaudeModelId(key: string): boolean {
   return FULL_CLAUDE_MODEL_ID.test(key.trim().toLowerCase());
 }

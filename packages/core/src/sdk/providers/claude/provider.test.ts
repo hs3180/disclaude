@@ -1694,7 +1694,7 @@ describe('tier-declaration parameter mapping (Issue #5422)', () => {
 
   /**
    * A mock session carrying the r1 catalog channels, so tests can prove r2
-   * never calls them. Captures the modelOverrides the SDK received at
+   * never calls them. Captures the model mapping the SDK received at
    * invocation time — #5410 routes them into a private settings file that is
    * removed once the stream settles.
    */
@@ -1739,7 +1739,7 @@ describe('tier-declaration parameter mapping (Issue #5422)', () => {
       // Exactly what resolved-agents compiles from the claude.modelMapping
       // claude.modelMapping: { opus: kimi-k3.1-pro, sonnet: glm-5.3, haiku: deepseek-flash }.
       settingSources: [],
-      modelOverrides: { opus: 'kimi-k3.1-pro', sonnet: 'glm-5.3', haiku: 'deepseek-flash' },
+      modelMapping: { opus: 'kimi-k3.1-pro', sonnet: 'glm-5.3', haiku: 'deepseek-flash' },
       model: 'kimi-k3.1-pro',
     });
     const messages = await drain(stream);
@@ -1758,7 +1758,7 @@ describe('tier-declaration parameter mapping (Issue #5422)', () => {
     const stream = provider.queryStream((async function* () {
       yield { role: 'user', content: 'hi' } as UserInput;
     })(), {
-      settingSources: [], modelOverrides: { 'claude-opus-5': 'kimi-k3.1-pro' }, model: 'kimi-k3.1-pro',
+      settingSources: [], modelMapping: { 'claude-opus-5': 'kimi-k3.1-pro' }, model: 'kimi-k3.1-pro',
     });
     await drain(stream);
     expect(captured[0]).toEqual({ 'claude-opus-5': 'kimi-k3.1-pro' });
@@ -1793,7 +1793,7 @@ describe('tier-declaration parameter mapping (Issue #5422)', () => {
       yield { role: 'user', content: 'hi' } as UserInput;
     })(), {
       settingSources: [],
-      modelOverrides: { opus: 'glm-5.3', sonnet: 'glm-5.3', haiku: 'glm-5.3' },
+      modelMapping: { opus: 'glm-5.3', sonnet: 'glm-5.3', haiku: 'glm-5.3' },
       model: 'glm-5.3',
     }));
     // The operator redeclares claude.modelMapping: the derived mapping now points
@@ -1802,7 +1802,7 @@ describe('tier-declaration parameter mapping (Issue #5422)', () => {
       yield { role: 'user', content: 'hi again' } as UserInput;
     })(), {
       settingSources: [],
-      modelOverrides: { opus: 'kimi-k3.1-pro', sonnet: 'glm-5.3', haiku: 'deepseek-flash' },
+      modelMapping: { opus: 'kimi-k3.1-pro', sonnet: 'glm-5.3', haiku: 'deepseek-flash' },
       model: 'kimi-k3.1-pro',
     }));
     expect(captured).toEqual([

@@ -600,7 +600,7 @@ describe('named runtime and LLM configuration', () => {
     // No behavesAs key exists: the tier declaration itself is the capability-
     // slot source, compiled at config time — the runtime never resolves
     // against a running Claude catalog.
-    expect(result.presets.assistant.modelOverrides).toEqual({
+    expect(result.presets.assistant.modelMapping).toEqual({
       opus: 'kimi-k3.1-pro', sonnet: 'glm-5.3', haiku: 'deepseek-flash',
     });
     // The same declaration the tier environment builds from — one source of
@@ -615,7 +615,7 @@ describe('named runtime and LLM configuration', () => {
     if (!result.ok) {
       return;
     }
-    expect(result.presets.assistant.modelOverrides).toEqual({
+    expect(result.presets.assistant.modelMapping).toEqual({
       opus: 'glm-5.3', sonnet: 'deepseek-flash', haiku: 'glm-5.3',
     });
   });
@@ -629,7 +629,7 @@ describe('named runtime and LLM configuration', () => {
     // With modelMapping as the sole config source, an agent that declares no
     // tiers still gets all three capability slots pinned to the provider
     // default — matching the tier environment compiled in the same pass.
-    expect(result.presets.assistant.modelOverrides).toEqual({
+    expect(result.presets.assistant.modelMapping).toEqual({
       opus: 'glm-5.3', sonnet: 'glm-5.3', haiku: 'glm-5.3',
     });
   });
@@ -756,7 +756,7 @@ describe('named runtime and LLM configuration', () => {
       expect(result.presets.assistant).toMatchObject({
         agentBackend: 'claude',
         model: 'group/hq-degrade',
-        modelOverrides: {
+        modelMapping: {
           opus: 'group/hq-degrade',
           sonnet: 'group/hq-degrade',
           haiku: 'group/hq-degrade',
@@ -779,7 +779,7 @@ describe('named runtime and LLM configuration', () => {
       expect(result.presets.other).toMatchObject({
         agentBackend: 'pi',
         model: 'other-model',
-        modelOverrides: undefined,
+        modelMapping: undefined,
       });
     });
 
@@ -810,10 +810,10 @@ describe('named runtime and LLM configuration', () => {
         return;
       }
       expect(result.presets.assistant).toMatchObject({
-        modelOverrides: { opus: 'kimi-k3.1-pro', sonnet: 'glm-5.3', haiku: 'glm-5.3' },
+        modelMapping: { opus: 'kimi-k3.1-pro', sonnet: 'glm-5.3', haiku: 'glm-5.3' },
         env: tierEnv('kimi-k3.1-pro', 'glm-5.3', 'endpoint-fast'),
       });
-      expect(result.presets.other.modelOverrides).toBeUndefined();
+      expect(result.presets.other.modelMapping).toBeUndefined();
     });
 
     it('rejects the old Claude alias environment placement with migration guidance', () => {
@@ -866,11 +866,11 @@ describe('named runtime and LLM configuration', () => {
       }
       expect(result.presets.assistant.model).toBe('claude-sonnet-4-5');
       // The canonical ID flows into every capability slot unchanged.
-      expect(result.presets.assistant.modelOverrides).toEqual({
+      expect(result.presets.assistant.modelMapping).toEqual({
         opus: 'claude-sonnet-4-5', sonnet: 'claude-sonnet-4-5', haiku: 'claude-sonnet-4-5',
       });
       expect(result.presets.research.model).toBe('claude-sonnet-4-5');
-      expect(result.presets.research.modelOverrides).toBeUndefined();
+      expect(result.presets.research.modelMapping).toBeUndefined();
     });
 
     it('rejects Claude model settings on a non-Claude agent', () => {
@@ -915,7 +915,7 @@ describe('named runtime and LLM configuration', () => {
       if (!result.ok) {
         return;
       }
-      expect(result.presets.assistant.modelOverrides).toEqual({
+      expect(result.presets.assistant.modelMapping).toEqual({
         opus: 'kimi-k3.1-pro', sonnet: 'glm-5.3', haiku: 'deepseek-flash',
       });
     });

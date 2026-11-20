@@ -483,10 +483,10 @@ export function resolveConfiguredAgents(
       ...(backend === 'claude' ? agent.claude?.env : {}),
     });
     const tierEnv = backend === 'claude' ? claudeTierEnvironment(agent.claude, defaultModel) : undefined;
-    // Issue #5422 (r3/r6): no separate `behavesAs` or raw full-ID
-    // `modelOverrides` configuration key exists — the three-tier `modelMapping`
+    // Issue #5422 (r3/r6/r7): no separate `behavesAs` or raw full-ID
+    // configuration key exists — the three-tier `modelMapping`
     // declaration is the single capability-slot source and the only
-    // configuration source. Config compiles it into the parameter mapping from
+    // configuration source. Config completes it into the applied mapping from
     // the same source the tier environment builds from: every tier alias key
     // maps to `modelMapping.<tier>`, an omitted tier deriving from the provider
     // `defaultModel`, so editing `modelMapping` changes the applied catalog
@@ -513,7 +513,7 @@ export function resolveConfiguredAgents(
       reasoningEffort: llm.reasoningEffort,
       maxConcurrentSessions: llm.maxConcurrentSessions,
       // Claude owns its model names; other runtimes never receive this metadata.
-      modelOverrides: tierOverrides(),
+      modelMapping: tierOverrides(),
       model: defaultModel,
       apiKey: keyEnv ? (process.env[keyEnv] ?? '') : '',
       apiProtocol: protocol,
