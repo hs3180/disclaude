@@ -10,8 +10,8 @@ const object = (value: unknown): Record<string, unknown> => value && typeof valu
  */
 export interface ChannelDeliveryDiagnostics {
   channel: 'wechat';
-  /** `delivery-rejected` = server answered with a business error; `delivery-outcome-unknown` = timeout/network, verify before retry; `login-expired` = credentials rejected. */
-  errorKind: 'delivery-rejected' | 'delivery-outcome-unknown' | 'login-expired';
+  /** `delivery-rejected` = server answered with a business error; `delivery-outcome-unknown` = timeout/network, verify before retry; `login-expired` = credentials rejected; `delivery-partial` = chunked text partially sent and the remaining parts failed (#5756). */
+  errorKind: 'delivery-rejected' | 'delivery-outcome-unknown' | 'login-expired' | 'delivery-partial';
   /** Only `login-expired` is conclusive; any other failure leaves the session unverified (#5478). */
   sessionState: 'login-expired' | 'unverified';
   endpoint?: string;
@@ -37,11 +37,16 @@ const AUTH_EXPIRED_CODES = new Set([-14, 401]);
  * Extract #5616 structured diagnostics from a channel failure's cause chain.
  * Detects the WeChat API error structurally (name + allowlisted detail) and
  * classifies only what the failure itself proves; returns undefined for
- * non-WeChat errors so the body stays as before.
+ * non-WeChat errors so the body stays as before. Also consumed by ChatAgent's
+ * `delivery_final` event (#5756): a partial chunked send (`delivery is partial`)
+ * stays `delivery-partial` even when the underlying cause is an API rejection,
+ * because earlier parts already reached the peer — the cause's ret/diagnostic
+ * ID is still surfaced for correlating the same API failure.
  */
-function wechatDeliveryDiagnostics(error: unknown): ChannelDeliveryDiagnostics | undefined {
+export function extractWechatDeliveryDiagnostics(error: unknown): ChannelDeliveryDiagnostics | undefined {
   const message = error instanceof Error ? error.message : '';
   if (!message.includes('WeChat')) { return undefined; }
+  const partial = message.includes('delivery is partial');
   let source: unknown = error;
   for (let depth = 0; depth < 4 && source instanceof Error; depth++) {
     const api = source as { name?: unknown; code?: unknown; authExpired?: unknown; detail?: unknown };
@@ -51,7 +56,7 @@ function wechatDeliveryDiagnostics(error: unknown): ChannelDeliveryDiagnostics |
       const errmsg = safeErrmsgText(detail.errmsg);
       return {
         channel: 'wechat',
-        errorKind: loginExpired ? 'login-expired' : 'delivery-rejected',
+        errorKind: partial ? 'delivery-partial' : loginExpired ? 'login-expired' : 'delivery-rejected',
         sessionState: loginExpired ? 'login-expired' : 'unverified',
         ...(typeof detail.endpoint === 'string' ? { endpoint: detail.endpoint } : {}),
         ...(typeof detail.httpStatus === 'number' ? { httpStatus: detail.httpStatus } : {}),
@@ -62,6 +67,11 @@ function wechatDeliveryDiagnostics(error: unknown): ChannelDeliveryDiagnostics |
       };
     }
     source = (source as { cause?: unknown }).cause;
+  }
+  if (partial) {
+    // Partial chunked send whose remaining parts failed without an API error
+    // (e.g. timeout): partial delivery, remainder outcome unknown.
+    return { channel: 'wechat', errorKind: 'delivery-partial', sessionState: 'unverified' };
   }
   // postMessage's fixed literal for timeout/network/refused responses: the
   // delivery outcome is unknown, not rejected — the only honest classification.
@@ -83,7 +93,7 @@ export function channelError(error: unknown, secrets: readonly string[] = []): {
     : typeof object(data.error).message === 'string' ? object(data.error).message as string
       : error instanceof Error ? error.message : 'Channel request failed';
   const diagnosticId = randomUUID();
-  const diagnostics = wechatDeliveryDiagnostics(error);
+  const diagnostics = extractWechatDeliveryDiagnostics(error);
   return { status: upstreamStatus ? upstreamStatus < 500 ? upstreamStatus : 502 : 500,
     body: { ok: false, diagnosticId, ...(upstreamStatus ? { upstreamStatus } : {}),
       ...(upstreamCode !== undefined ? { upstreamCode } : {}),

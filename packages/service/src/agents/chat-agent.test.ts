@@ -155,6 +155,7 @@ vi.mock('../services/debug-group-service.js', () => ({
 }));
 
 import { ChatAgent, HEARTBEAT_TIMER_SILENCE_MS, PROGRESS_HEARTBEAT_TICK_MS } from './chat-agent.js';
+import { WeChatApiError } from '../channels/wechat/api-client.js';
 import { createChannelCallbacksFactory, createDefaultMessageHandler } from '../utils/channel-handlers.js';
 import { registerFeishuInputSource, readVerifiedInputSource } from './input-provenance.js';
 import type { WiredContext } from '../channel-lifecycle-manager.js';
@@ -2573,6 +2574,100 @@ describe('ChatAgent (service)', () => {
           event: 'delivery_final', state: 'delivery_failed', errorCategory: 'target', user_visible: false,
         }));
       }, { timeout: 1000, interval: 20 });
+    });
+
+    // #5756: a failed delivery_final must carry a structured, allowlisted
+    // classification (rejected / outcome-unknown / login-expired / partial)
+    // with the channel diagnostic ID, not just a truncated errorCode string.
+    // The wrappings below are exactly what WeChatChannel/api-client produce.
+    async function deliverFailure(sendError: unknown): Promise<Record<string, any>> {
+      const { agent } = makeAgent([], () => Promise.reject(sendError));
+      try {
+        expect(await (agent as any).deliverUserVisible('oc_sendfail', 'text')).toBe(false);
+        let final: Record<string, any> | undefined;
+        await vi.waitFor(() => {
+          final = (agent as any).logger.info.mock.calls
+            .map((call: any[]) => call[0])
+            .find((e: any) => e?.event === 'delivery_final' && e.state === 'delivery_failed');
+          expect(final).toBeTruthy();
+        }, { timeout: 1000, interval: 20 });
+        return final!;
+      } finally { agent.dispose(); }
+    }
+
+    it('classifies a WeChat server rejection in delivery_final with ret, sessionState and the channel diag ID (#5756)', async () => {
+      const final = await deliverFailure(new Error(
+        'WeChat message NOT sent: the server rejected delivery (code -2, server said: prepare failed). The account check may still pass — this is a delivery rejection, not a confirmed login or configuration failure. [diag ab12cd34]',
+        { cause: new WeChatApiError(-2, { endpoint: '/ilink/bot/sendmessage', httpStatus: 200, ret: -2, errmsg: 'prepare failed', diagnosticId: 'ab12cd34' }) },
+      ));
+      expect(final.diagnostics).toEqual({
+        channel: 'wechat', errorKind: 'delivery-rejected', sessionState: 'unverified',
+        endpoint: '/ilink/bot/sendmessage', httpStatus: 200, ret: -2, errmsg: 'prepare failed',
+        channelDiagnosticId: 'ab12cd34',
+      });
+      // Acceptance ①: the existing fields stay — state/errorCode/turn linkage.
+      expect(final.errorCode).toEqual(expect.any(String));
+      expect(final.traceId).toBe('oc_sendfail:unknown');
+      expect(final.attempt).toBe(1);
+    });
+
+    it('classifies an expired WeChat login in delivery_final (#5756)', async () => {
+      const final = await deliverFailure(new Error(
+        "WeChat message NOT sent: this account's login expired. Next: run 'disclaude wechat login', then retry after the account is enabled again.",
+        { cause: new WeChatApiError(-14, { endpoint: '/ilink/bot/sendmessage', httpStatus: 401, ret: -14, diagnosticId: 'ff001122' }) },
+      ));
+      expect(final.diagnostics).toMatchObject({
+        channel: 'wechat', errorKind: 'login-expired', sessionState: 'login-expired',
+        ret: -14, channelDiagnosticId: 'ff001122',
+      });
+    });
+
+    it('classifies a timeout/network delivery as outcome-unknown without inventing a rejection (#5756)', async () => {
+      const final = await deliverFailure(
+        new Error('WeChat delivery outcome unknown after timeout, network or response failure; verify in WeChat before retrying'));
+      expect(final.diagnostics).toEqual({ channel: 'wechat', errorKind: 'delivery-outcome-unknown', sessionState: 'unverified' });
+    });
+
+    it('classifies a half-sent chunked delivery as delivery-partial, keeping the failing part\'s API detail (#5756)', async () => {
+      const final = await deliverFailure(new Error(
+        'WeChat delivery failed after 1/2 text parts; delivery is partial, verify before retrying',
+        { cause: new WeChatApiError(-2, { endpoint: '/ilink/bot/sendmessage', ret: -2, errmsg: 'prepare failed', diagnosticId: 'ab12cd34' }) },
+      ));
+      expect(final.diagnostics).toMatchObject({
+        channel: 'wechat', errorKind: 'delivery-partial', sessionState: 'unverified',
+        ret: -2, channelDiagnosticId: 'ab12cd34',
+      });
+    });
+
+    it('marks a circuit-open skip as failureClass circuit-skipped with no channel diagnostics (#5756)', async () => {
+      const { agent } = makeAgent([], () => Promise.resolve('om_x'));
+      (agent as any).sendCircuitOpen = true;
+      (agent as any).sendCircuitRetryAt = Number.POSITIVE_INFINITY;
+      try {
+        expect(await (agent as any).deliverUserVisible('oc_sendfail', 'queued reply')).toBe(false);
+        await vi.waitFor(() => {
+          const final = (agent as any).logger.info.mock.calls
+            .map((call: any[]) => call[0])
+            .find((e: any) => e?.event === 'delivery_final' && e.state === 'delivery_failed');
+          expect(final).toMatchObject({ failureClass: 'circuit-skipped', circuitState: 'open', queuedBacklog: 1 });
+          expect(final.diagnostics).toBeUndefined();
+        }, { timeout: 1000, interval: 20 });
+      } finally { agent.dispose(); }
+    });
+
+    it('keeps a successful delivery_final free of failure classification (#5756)', async () => {
+      const { agent } = makeAgent([], () => Promise.resolve('om_ok_1'));
+      try {
+        expect(await (agent as any).deliverUserVisible('oc_sendfail', 'text')).toBe(true);
+        await vi.waitFor(() => {
+          const final = (agent as any).logger.info.mock.calls
+            .map((call: any[]) => call[0])
+            .find((e: any) => e?.event === 'delivery_final' && e.state === 'final');
+          expect(final).toMatchObject({ messageId: 'om_ok_1', user_visible: true });
+          expect(final.diagnostics).toBeUndefined();
+          expect(final.failureClass).toBeUndefined();
+        }, { timeout: 1000, interval: 20 });
+      } finally { agent.dispose(); }
     });
 
     it('a transient (statusless) failure is counted but does not open the circuit; success resets the counter', async () => {
