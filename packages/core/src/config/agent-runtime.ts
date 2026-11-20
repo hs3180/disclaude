@@ -1,11 +1,12 @@
 /**
  * Preset-free agent runtime selection (Issue #5255, review 5948908832): the
- * orthogonal harness/model dimensions and the LLM-provider compatibility
- * matrix that gates them. Extracted from the retired named-preset module so
- * the selection surface no longer depends on preset concepts.
+ * orthogonal harness/model dimensions, the LLM-provider compatibility matrix
+ * that gates them, the `agents:` map validation and the default/named runtime
+ * resolution. Extracted from the retired named-preset module so the selection
+ * surface no longer depends on preset concepts.
  */
 
-import type { AgentConfig, AgentPreset } from './types.js';
+import type { AgentConfig, AgentPreset, AgentPresets } from './types.js';
 
 /** Harness runtimes selectable through the orthogonal `/agent backend` dimension. */
 export type AgentBackend = NonNullable<AgentConfig['agentBackend']>;
@@ -138,9 +139,9 @@ export type AgentRuntimeResolution<T = AgentPreset> =
  * `defaultHarness` lookup first, then the single-entry fallback and the
  * default-marker/declaration-order rules. Extracted from the retired
  * named-preset resolver so config, loader and the CLI share one preset-free
- * default-selection path; named lookups stay with the session-pool override
- * chain. Like the resolver it replaces, this does not revalidate the map —
- * callers that accept user configuration run validation first.
+ * default-selection path. Like the resolver it replaces, this does not
+ * revalidate the map — callers that accept user configuration run validation
+ * first.
  */
 export function resolveDefaultAgentRuntime<T extends Pick<AgentPreset, 'agentBackend' | 'model' | 'default'>>(
   agents: Record<string, T>,
@@ -157,12 +158,12 @@ export function resolveDefaultAgentRuntime<T extends Pick<AgentPreset, 'agentBac
 
   const entries = Object.entries(agents);
   if (entries.length === 0) {
-    return { ok: false, error: 'agents must contain at least one named preset' };
+    return { ok: false, error: 'agents must contain at least one named runtime' };
   }
   // Do not silently reorder integer-index keys, even when a caller resolves
   // the default directly without first validating the map.
   if (entries.some(([presetName]) => /^\d+$/.test(presetName))) {
-    return { ok: false, error: 'agents preset names must not be numeric' };
+    return { ok: false, error: 'agents runtime names must not be numeric' };
   }
   const defaults = entries.filter(
     ([presetName, preset]) => presetName === 'default' || preset.default === true
@@ -170,10 +171,116 @@ export function resolveDefaultAgentRuntime<T extends Pick<AgentPreset, 'agentBac
   if (defaults.length > 1) {
     return {
       ok: false,
-      error: `Unable to resolve default agent preset (found ${defaults.length})`,
+      error: `Unable to resolve default agent runtime (found ${defaults.length})`,
     };
   }
 
   const [defaultName, preset] = defaults[0] ?? entries[0];
   return { ok: true, name: defaultName, preset };
+}
+
+/**
+ * Issue #5255: resolve the runtime a session should run on — the pool's
+ * selected runtime name first (the session override domain), then the
+ * default-resolution chain. Named resolution moved here from the retired
+ * named-preset module so the whole selection surface is preset-free.
+ *
+ * This deliberately does not revalidate the map: callers that accept user
+ * configuration should run validateAgentRuntimes first, while runtime command
+ * handlers can use this helper without duplicating selection semantics.
+ */
+export function resolveSessionAgentRuntime<T extends Pick<AgentPreset, 'agentBackend' | 'model' | 'default'>>(
+  agents: Record<string, T>,
+  selectedName?: string,
+  defaultHarness?: string
+): AgentRuntimeResolution<T> {
+  const name = selectedName?.trim();
+  if (name) {
+    const preset = agents[name];
+    return preset
+      ? { ok: true, name, preset }
+      : { ok: false, error: `Unknown agent runtime: ${name}` };
+  }
+  return resolveDefaultAgentRuntime(agents, defaultHarness);
+}
+
+export type AgentRuntimeValidation =
+  | { ok: true; name: string; preset: AgentPreset }
+  | { ok: false; errors: string[] };
+
+const VALID_BACKENDS = new Set<AgentBackend>(SWITCHABLE_BACKENDS);
+
+/**
+ * Validate the public `agents:` map and resolve its effective default
+ * runtime. Moved from the retired named-preset module (Issue #5255 r4).
+ *
+ * The reserved `default` key is the compatibility-friendly default marker.
+ * A named runtime may instead set `default: true`, but the two forms may not
+ * be combined. With no marker, declaration order provides a stable fallback.
+ */
+export function validateAgentRuntimes(
+  agents: unknown,
+  options: { allowUnconfiguredModel?: boolean } = {}
+): AgentRuntimeValidation {
+  if (!agents || typeof agents !== 'object' || Array.isArray(agents)) {
+    return { ok: false, errors: ['agents must be a non-empty map of named runtimes'] };
+  }
+
+  const entries = Object.entries(agents as Record<string, unknown>);
+  if (entries.length === 0) {
+    return { ok: false, errors: ['agents must contain at least one named runtime'] };
+  }
+
+  const errors: string[] = [];
+  const defaults: string[] = [];
+  for (const [name, raw] of entries) {
+    if (!name.trim()) {
+      errors.push('agents runtime names must not be empty');
+    }
+    if (/^\d+$/.test(name)) {
+      errors.push(
+        `agents.${name}: runtime names must not be numeric; use a name such as agent-${name}`
+      );
+    }
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      errors.push(`agents.${name} must be a mapping`);
+      continue;
+    }
+    const preset = raw as Partial<AgentPreset>;
+    if (!VALID_BACKENDS.has(preset.agentBackend as AgentBackend)) {
+      errors.push(`agents.${name}.agentBackend must be one of: claude, pi, codex, dsh, miniswe`);
+    }
+    if (
+      typeof preset.model !== 'string' ||
+      (!options.allowUnconfiguredModel && !preset.model.trim())
+    ) {
+      errors.push(`agents.${name}.model must be a non-empty string`);
+    } else if (
+      preset.agentBackend === 'codex' &&
+      // Issue #5338: the ChatGPT-catalog shape only applies to the
+      // ChatGPT-subscription access method; an API binding serves whatever
+      // models the actual provider validates on the wire.
+      preset.llmVia !== 'api' &&
+      preset.model.trim() &&
+      !/^gpt-\d+(?:[.-].+)/i.test(preset.model.trim())
+    ) {
+      errors.push(`agents.${name}.model must be a Codex/ChatGPT model identifier`);
+    }
+    if (preset.default !== undefined && typeof preset.default !== 'boolean') {
+      errors.push(`agents.${name}.default must be a boolean`);
+    }
+    if (name === 'default' || preset.default === true) {
+      defaults.push(name);
+    }
+  }
+
+  if (defaults.length > 1) {
+    errors.push(`agents must not declare multiple default runtimes (found ${defaults.length})`);
+  }
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
+
+  const name = defaults[0] ?? entries[0][0];
+  return { ok: true, name, preset: (agents as AgentPresets)[name] };
 }

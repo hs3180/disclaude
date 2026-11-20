@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resolveConfiguredAgents, validateResolvedAgent } from './resolved-agents.js';
-import { resolveAgentPreset } from './agent-presets.js';
+import { resolveSessionAgentRuntime } from './agent-runtime.js';
 import { validateConfig, validateRequiredConfig } from './loader.js';
 import { buildSdkEnv } from '../utils/sdk.js';
 import type { DisclaudeConfig, LlmConfig } from './types.js';
@@ -327,7 +327,7 @@ describe('named runtime and LLM configuration', () => {
       reasoningEffort: 'max',
       maxConcurrentSessions: 3,
     });
-    expect(resolveAgentPreset(result.presets)).toMatchObject({ ok: true, name: 'codex' });
+    expect(resolveSessionAgentRuntime(result.presets)).toMatchObject({ ok: true, name: 'codex' });
   });
   it('validates only selected credentials and permits a native default with dormant API bindings', () => {
     vi.stubEnv('PROXY_KEY', '');
@@ -1137,7 +1137,7 @@ describe('named runtime and LLM configuration', () => {
       }
       expect(result.presets.codex.llmVia).toBe('chatgpt');
       expect(result.presets.claude.llmVia).toBe('api');
-      expect(resolveAgentPreset(result.presets)).toMatchObject({ ok: true, name: 'codex' });
+      expect(resolveSessionAgentRuntime(result.presets)).toMatchObject({ ok: true, name: 'codex' });
     });
 
     it('reports a missing API credential on codex as a credential error, never a login error', () => {

@@ -33,7 +33,7 @@ import {
   switchableBackendsFor,
   isValidModelForBackend,
   SWITCHABLE_BACKENDS,
-  validateAgentPresets,
+  validateAgentRuntimes,
   validateResolvedAgent,
 } from '@disclaude/core';
 import { statSync } from 'node:fs';
@@ -850,7 +850,7 @@ export class ChatSessionPool {
    * the model of the chat's binding or the global default.
    */
   private validateScheduledPreset(name: string, preset: AgentPreset, label: string): void {
-    const validation = validateAgentPresets({ [name]: preset }, { allowUnconfiguredModel: true });
+    const validation = validateAgentRuntimes({ [name]: preset }, { allowUnconfiguredModel: true });
     if (!validation.ok) {
       throw new Error(`${label} "${name}": ${validation.errors.join('; ')}`);
     }

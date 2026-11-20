@@ -8,7 +8,7 @@ import type {
   DisclaudeConfig,
   LlmConfig,
 } from './types.js';
-import { validateAgentPresets } from './agent-presets.js';
+import { validateAgentRuntimes } from './agent-runtime.js';
 import { isCodexReasoningEffort } from './codex-settings.js';
 import { apiCredentialEnvName, credentialEnvName } from './env-reference.js';
 import { modelSecretReferences, secretConfigurationErrors, resolveLlmEnvironment, hasUrlCredential } from './secret-references.js';
@@ -573,7 +573,7 @@ export function resolveConfiguredAgents(
     // llms.defaultModel is optional and was validated above; an empty preset
     // model is its internal representation for "use the runtime's native
     // default".
-    const validation = validateAgentPresets(presets, { allowUnconfiguredModel: true });
+    const validation = validateAgentRuntimes(presets, { allowUnconfiguredModel: true });
     if (!validation.ok) {
       errors.push(
         ...validation.errors.map((error) => {
