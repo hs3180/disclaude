@@ -89,7 +89,7 @@ export function toChatAgentCallbacks(callbacks: SchedulerCallbacks): ChatAgentCa
 export interface AgentCreateOptions extends Partial<BaseAgentConfig> {
   /** Compose host-owned tools/options through the selected provider's chat hook. */
   configureQueryOptions?: ChatAgentConfig['configureQueryOptions'];
-  /** Agent SDK runtime override (normally supplied by a named preset). */
+  /** Agent SDK runtime override (normally supplied by a named runtime). */
   agentBackend?: AgentPreset['agentBackend'];
   /** Native provider identity; defaults to the delivery chat ID. */
   sdkSessionKey?: string;
