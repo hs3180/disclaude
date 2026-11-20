@@ -64,4 +64,22 @@ describe('channelError WeChat delivery diagnostics (#5616)', () => {
     expect(channelError(feishu).body.diagnostics).toBeUndefined();
     expect(channelError(feishu).body.message).toContain('feishu send failed');
   });
+
+  it('classifies a partial chunked send as delivery-partial even when the failing part was an API rejection (#5756)', () => {
+    // The exact framing WeChatChannel.doSendMessage produces when chunk 2 of 2 fails.
+    const error = new Error('WeChat delivery failed after 1/2 text parts; delivery is partial, verify before retrying',
+      { cause: new WeChatApiError(-2, { endpoint: '/ilink/bot/sendmessage', httpStatus: 200, ret: -2, errmsg: 'prepare failed', diagnosticId: 'ab12cd34' }) });
+    const { body } = channelError(error);
+    expect(body.diagnostics).toMatchObject({
+      channel: 'wechat', errorKind: 'delivery-partial', sessionState: 'unverified',
+      ret: -2, errmsg: 'prepare failed', channelDiagnosticId: 'ab12cd34',
+    });
+  });
+
+  it('classifies a partial send whose remainder timed out without inventing API detail (#5756)', () => {
+    const error = new Error('WeChat delivery failed after 1/2 text parts; delivery is partial, verify before retrying',
+      { cause: new Error('WeChat delivery outcome unknown after timeout, network or response failure; verify in WeChat before retrying') });
+    const { body } = channelError(error);
+    expect(body.diagnostics).toEqual({ channel: 'wechat', errorKind: 'delivery-partial', sessionState: 'unverified' });
+  });
 });

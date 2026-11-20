@@ -36,6 +36,7 @@
  */
 
 import { addCompletionReaction } from './completion-reaction.js';
+import { extractWechatDeliveryDiagnostics } from '../channel-error.js';
 import { bindVerifiedInputContext } from './input-provenance.js';
 import { compactNarrationPayloads } from './narration-compaction.js';
 import {
@@ -2366,6 +2367,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       );
       recordDeliveryEvent('delivery_final', {
         state: 'delivery_failed',
+        // No send was attempted, so there is no channel error to parse — but
+        // the skip must be distinguishable from actual send failures (#5756).
+        failureClass: 'circuit-skipped',
         circuitState: 'open',
         queuedBacklog: this.sendCircuitBacklog.length,
       });
@@ -2405,10 +2409,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         httpStatus < 500 &&
         httpStatus !== 408 && httpStatus !== 429 &&
         !isOversizedFeishuMessageError(err);
+      // Structured, allowlisted classification for delivery_final (#5756):
+      // rejected / outcome-unknown / login-expired / partial, with the
+      // channel-layer diagnostic ID for correlating the same API failure.
+      const diagnostics = extractWechatDeliveryDiagnostics(err);
       // An old send/probe may settle after a new circuit or session exists.
       // Its receipt is real, but it cannot change that newer delivery policy.
       if (circuitEpoch !== this.sendCircuitEpoch) {
         recordDeliveryEvent('delivery_final', { state: 'delivery_failed', errorCategory: isPermanentTargetError ? 'target' : 'transport',
+          ...(diagnostics ? { diagnostics } : {}),
           circuitState: this.sendCircuitOpen ? 'open' : 'closed' });
         return false;
       }
@@ -2449,6 +2458,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         state: 'delivery_failed',
         errorCategory: isPermanentTargetError ? 'target' : 'transport',
         errorCode: sanitizeLifecycleReason(err),
+        ...(diagnostics ? { diagnostics } : {}),
         fallback: 'none',
         circuitState: this.sendCircuitOpen ? 'open' : 'closed',
       });
