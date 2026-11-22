@@ -451,6 +451,21 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // input (the supplement included) overwrites it with its own message id.
   private readonly turnStartAnchors = new Map<string, string | null | undefined>();
 
+  // #5758: busy-input supplements that arrived during the turn-start window —
+  // after the next turn's admission but before its first SDK event assigned
+  // activeTurnMessageId, when steer is not yet addressable and the supplement
+  // would otherwise queue as its own turn (the model then re-asks the question
+  // the supplement already answered). Each candidate IS the already-enqueued
+  // FIFO row, so a non-accepted retry keeps the exact queued-turn status quo;
+  // it gets exactly one steer retry when consumeTurnAnchor gives the turn
+  // receive capability. Bounded like every other per-session accounting map.
+  private readonly deferredLiveInputs = new Map<string, {
+    params: UserMessageParams;
+    content: string;
+    lifecycleContext: NonNullable<StreamingUserMessage['correlation']>;
+    generation: number;
+  }>();
+
   // Issue #3124: One-shot mode & task completion
   // When onceMode is true, processIterator closes the channel after the first
   // `result` message and resolves the completion promise, enabling blocking
@@ -810,6 +825,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   private rejectTurn(error: Error): void {
     this.busyMessageAdmissions.clear();
     this.turnsWithLiveInput.clear();
+    this.deferredLiveInputs.clear();
     for (const [messageId, entry] of this.turnCompletions) {
       if (!entry.settled) {
         this.completeRecoveryInput(messageId);
@@ -1666,6 +1682,29 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           .map(attachment => this.attachmentConsumptionKey(attachment));
         if (attachmentKeys.length > 0) { this.noteQueuedAttachmentInput(messageId, attachmentKeys); }
       }
+      // #5758: a text supplement that arrived while the next turn is admitted
+      // but has not yet produced its first SDK event cannot steer yet —
+      // activeTurnMessageId is only assigned at that first event, so the
+      // supplement queues as its own turn and the model re-asks the question
+      // it already answered. Register it for exactly one deferred steer retry
+      // at first-event capability (flushDeferredLiveInputs); the FIFO row
+      // stays, so any failure mode is exactly the queued-turn status quo.
+      if (busyBeforePush && !attachmentOnly && this.activeTurnMessageId === undefined &&
+          typeof this.queryHandle?.steer === 'function' && !this.queryHandle?.capacityQueued &&
+          this.pendingTurnMessageIds.length >= 2 && !this.deferredLiveInputs.has(messageId) &&
+          this.pendingTurnOwnsDeferredInput(params)) {
+        this.deferredLiveInputs.set(messageId, {
+          params, content: enhancedContent, lifecycleContext, generation: this.sessionGeneration,
+        });
+        while (this.deferredLiveInputs.size > MAX_TURN_COMPLETIONS) {
+          const oldest = this.deferredLiveInputs.keys().next().value;
+          if (oldest === undefined) { break; }
+          this.deferredLiveInputs.delete(oldest);
+        }
+        this.logger.info({ chatId, messageId,
+          queueHeadMessageId: this.pendingTurnMessageIds[0], generation: this.sessionGeneration,
+        }, 'Supplement arrived during turn start; deferring one steer retry to first-event capability (#5758)');
+      }
       if (!text.trimStart().startsWith('/')) {
         if (includeStableContext) {
           this.deliveredMessageContext = {
@@ -1734,6 +1773,21 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
     const inputKey = params.replyRootId !== undefined ? params.replyRootId ?? undefined : params.threadRootId;
     return inputKey === this.turnStartThreadKeys.get(sourceMessageId);
+  }
+
+  /**
+   * #5758: same explicit-identity ownership rule as activeTurnOwnsInput, but
+   * against the FIFO's head turn — the turn that will adopt the next anchor —
+   * because the deferral window precedes activeTurnMessageId assignment.
+   * Unknown head identity fails open to steer, matching #5464.
+   */
+  private pendingTurnOwnsDeferredInput(params: UserMessageParams): boolean {
+    const [headMessageId] = this.pendingTurnMessageIds;
+    if (headMessageId === undefined || !this.turnStartThreadKeys.has(headMessageId)) {
+      return true;
+    }
+    const inputKey = params.replyRootId !== undefined ? params.replyRootId ?? undefined : params.threadRootId;
+    return inputKey === this.turnStartThreadKeys.get(headMessageId);
   }
 
   /**
@@ -1977,6 +2031,56 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     void notify(this.buildBusyInputReceipt('supplement',
       this.pendingTurnMessageIds.length, params.attachments));
     return true;
+  }
+
+  /**
+   * #5758: retry the turn-start-window supplements exactly once, at the
+   * moment the running turn first becomes steerable (consumeTurnAnchor just
+   * assigned activeTurnMessageId on the turn's first SDK event — before the
+   * model's text can start the clarification the supplement already answers).
+   *
+   * Every candidate is ALSO a queued FIFO row. A non-accepted retry
+   * (LiveInputRejectedError) therefore keeps the exact status quo: the row
+   * stays and runs as its own turn. An accepted or settled-unknown retry must
+   * instead be removed from the FIFO and settled here — the #5434
+   * dequeue-guard template — so the backend never dequeues a second copy of
+   * an input that was already merged into the running turn. The user-visible
+   * confirmation is the same unified #5713 supplement receipt tryLiveInput
+   * already delivers; no second notice is sent here.
+   */
+  private async flushDeferredLiveInputs(): Promise<void> {
+    if (this.deferredLiveInputs.size === 0) { return; }
+    for (const [messageId, candidate] of [...this.deferredLiveInputs]) {
+      // One shot per candidate: drop it before attempting, so a superseded
+      // or failed attempt can never retrigger on a later anchor.
+      this.deferredLiveInputs.delete(messageId);
+      if (this.disposed || this.sessionGeneration !== candidate.generation ||
+          this.stoppedQueryGenerations.has(candidate.generation) ||
+          !!this.abortController?.signal.aborted || this.activeTurnMessageId === undefined) { continue; }
+      const steered = await this.tryLiveInput(candidate.params, candidate.content, candidate.lifecycleContext);
+      if (!steered) { continue; }
+      const entry = this.turnCompletions.get(messageId);
+      // Only a still-live completion is settled here: after a session
+      // replacement rejectTurn() already settled every queued row, and the
+      // FIFO row must simply not survive as a duplicate.
+      if (entry && !entry.settled) {
+        const anchorIndex = this.pendingTurnMessageIds.indexOf(messageId);
+        const anchor = anchorIndex >= 0 ? this.pendingTurnAnchors[anchorIndex] : undefined;
+        this.removePendingTurn(candidate.lifecycleContext.runId);
+        this.resolveTurn(messageId);
+        this.completeRecoveryInput(messageId);
+        try { await this.callbacks.onDone?.(candidate.lifecycleContext.chatId, anchor ?? messageId); }
+        catch (doneError) {
+          this.logger.error({ err: doneError, chatId: candidate.lifecycleContext.chatId, messageId },
+            'Failed to finish turn-start supplement steered into the running turn (#5758)');
+        }
+      } else {
+        this.removePendingTurn(candidate.lifecycleContext.runId);
+      }
+      this.logger.info({ event: 'agent_turn', state: 'completed', ...candidate.lifecycleContext,
+        activeTurnMessageId: this.activeTurnMessageId, user_visible: false,
+      }, 'Turn-start supplement merged into the running turn at first-event capability (#5758)');
+    }
   }
 
   /**
@@ -2272,6 +2376,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.pendingTurnMessageIds = [];
       this.pendingTurnAnchors = [];
       this.activeTurnMessageId = undefined;
+      this.deferredLiveInputs.clear();
       for (const transport of [this.channel, this.queryHandle]) {
         try { transport?.close(); }
         catch (closeError) {
@@ -2789,6 +2894,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         turnResultTruncated = false;
         this.activeTurnMessageId = currentTurnMessageId;
         this.activityThreadRootId = currentTurnAnchor ?? undefined;
+        // #5758: this turn just gained receive capability — its first SDK
+        // event adopted the FIFO anchor and activeTurnMessageId now names the
+        // steerable owner. Retry the turn-start-window supplements once each,
+        // before the model's text events can begin the clarification they
+        // already answered. No-op unless a supplement was registered.
+        void this.flushDeferredLiveInputs();
         // Issue #5470 remaining item ① (T-039): the moment a QUEUED input is
         // actually taken up by the next turn is user-visible. During long
         // waits the sender otherwise cannot tell whether their input was
@@ -3013,6 +3124,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.pendingTurnMessageIds = [];
       this.pendingTurnAnchors = [];
       this.activeTurnMessageId = undefined;
+      this.deferredLiveInputs.clear();
       const classification = tagErrorCategory(error);
       for (const { context, anchor } of affected) {
         const failure = failureContext(context, anchor, startupCategory ? 'startup-failure'
@@ -3601,6 +3713,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             this.isSessionActive = false;
             this.isProcessingMessage = false;
             this.activeTurnMessageId = undefined;
+            this.deferredLiveInputs.clear();
             this.resolveTurn(currentTurnMessageId);
             if (this.callbacks.onDone) {
               const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
@@ -4150,6 +4263,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             turnResultText = '';
             turnResultTruncated = false;
             this.activeTurnMessageId = undefined;
+            this.deferredLiveInputs.clear();
             // Turn boundary: events after this point belong to a later turn,
             // so a terminal task_notification here outranks any snapshot the
             // settled turn observed (#5330 same-turn bookend scoping).
@@ -4283,6 +4397,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         this.isSessionActive = false;
         this.isProcessingMessage = false;
         this.activeTurnMessageId = undefined;
+        this.deferredLiveInputs.clear();
         if (!interruptedByServiceRestart) {
           const delivered = await this.deliverUserVisible(chatId, stopReason ?? '⏹️ 本轮已停止。', threadRoot);
           for (const context of interruptedContexts.values()) {
@@ -4313,6 +4428,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         this.isSessionActive = false;
         this.isProcessingMessage = false;
         this.activeTurnMessageId = undefined;
+        this.deferredLiveInputs.clear();
       }
       this.logger.info(
         { chatId, messageCount, myGeneration, currentGeneration: this.sessionGeneration },
