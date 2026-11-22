@@ -1683,6 +1683,193 @@ describe('ChatAgent (service)', () => {
     });
   });
 
+  describe('turn-start-window supplements (#5758)', () => {
+    /** Next turn admitted (image turn queued at the FIFO head) but its first
+     * SDK event has not arrived: activeTurnMessageId is unassigned, so a text
+     * supplement in that window cannot steer yet and would queue as its own
+     * turn — the model then re-asks the question it already answered.
+     * `headThreadKey=null` leaves the head turn's thread identity unrecorded
+     * (legacy/unknown owner). */
+    function turnStartWindow(headThreadKey: string | null = 'root-B') {
+      const callbacks = createMockCallbacks();
+      const agent = new ChatAgent({ chatId: 'window-chat', callbacks, agentBackend: 'codex' as any, apiKey: 'test', model: 'test' });
+      const push = vi.fn().mockReturnValue(true);
+      const steer = vi.fn().mockResolvedValue({ turnId: 'native-A' });
+      Object.assign(agent as any, { channel: { push, close: vi.fn() }, queryHandle: { close: vi.fn(), cancel: vi.fn(), steer },
+        isSessionActive: true, isProcessingMessage: true, activeTurnMessageId: undefined,
+        isAgentTeamsEnabled: () => false,
+        lastTurnMessage: { chatId: 'window-chat', payload: 'image turn', messageId: 'img-turn' } });
+      (agent as any).historyManager.firstMessageHistoryLoaded = true;
+      (agent as any).createTurnCompletion('img-turn');
+      (agent as any).pendingTurnMessageIds = ['img-turn'];
+      (agent as any).pendingTurnAnchors = ['root-B'];
+      if (headThreadKey !== null) { (agent as any).turnStartThreadKeys.set('img-turn', headThreadKey); }
+      return { agent, callbacks, push, steer };
+    }
+    const input = (messageId = 'supp-1', threadRootId = 'root-B') =>
+      ({ chatId: 'window-chat', payload: messageId, messageId, threadRootId });
+    const dispose = (agent: ChatAgent) => ChatAgent.prototype.dispose.call(agent);
+    /** The head turn's first SDK event: consume its anchor, adopt its id. */
+    const firstEvent = (agent: ChatAgent): void => {
+      (agent as any).pendingTurnMessageIds.shift();
+      (agent as any).pendingTurnAnchors.shift();
+      (agent as any).activeTurnMessageId = 'img-turn';
+    };
+
+    it('steers a window supplement exactly once at first-event capability and settles its queued row', async () => {
+      const { agent, callbacks, push, steer } = turnStartWindow();
+      try {
+        await agent.processMessage(input());
+        // Registration: the supplement keeps its queued FIFO row (status quo
+        // on any failure) plus one deferred candidate; the user still gets the
+        // ordinary queue receipt.
+        expect((agent as any).deferredLiveInputs.has('supp-1')).toBe(true);
+        expect((agent as any).pendingTurnMessageIds).toEqual(['img-turn', 'supp-1']);
+        expect(push).toHaveBeenCalledTimes(1);
+        expect(steer).not.toHaveBeenCalled();
+        expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('已排队');
+        firstEvent(agent);
+        await (agent as any).flushDeferredLiveInputs();
+        expect(steer).toHaveBeenCalledExactlyOnceWith('supp-1');
+        expect((agent as any).deferredLiveInputs.size).toBe(0);
+        // The steered row never dequeues twice: removed from the FIFO and
+        // settled here, finishing with its own recorded anchor.
+        expect((agent as any).pendingTurnMessageIds).toEqual([]);
+        await agent.turnCompleteFor('supp-1');
+        expect(callbacks.onDone).toHaveBeenCalledExactlyOnceWith('window-chat', 'root-B');
+        // One shot per candidate: a later anchor must not steer it again.
+        await (agent as any).flushDeferredLiveInputs();
+        expect(steer).toHaveBeenCalledTimes(1);
+        // Receipts stay unified #5713: exactly one queue receipt at enqueue
+        // and one supplement receipt from the steered delivery.
+        const receipts = callbacks.sendMessage.mock.calls.map(call => call[1] as string);
+        expect(receipts.filter(text => text.includes('已排队'))).toHaveLength(1);
+        expect(receipts.filter(text => text.includes('已交给当前运行的回合'))).toHaveLength(1);
+      } finally { dispose(agent); }
+    });
+
+    it('keeps the queued-turn status quo when the deferred retry is explicitly rejected', async () => {
+      const { agent, callbacks, steer } = turnStartWindow();
+      steer.mockRejectedValue(new LiveInputRejectedError('backend cannot take live input now'));
+      try {
+        await agent.processMessage(input());
+        firstEvent(agent);
+        await (agent as any).flushDeferredLiveInputs();
+        expect(steer).toHaveBeenCalledTimes(1);
+        // Fail-closed retry: the FIFO row survives to run as its own turn.
+        expect((agent as any).pendingTurnMessageIds).toEqual(['supp-1']);
+        expect((agent as any).deferredLiveInputs.size).toBe(0);
+        let settled = false;
+        const completion = agent.turnCompleteFor('supp-1')!.then(() => { settled = true; });
+        await new Promise(resolve => { setTimeout(resolve, 0); });
+        expect(settled).toBe(false);
+        expect(callbacks.onDone).not.toHaveBeenCalled();
+        (agent as any).resolveTurn('supp-1');
+        await completion;
+      } finally { dispose(agent); }
+    });
+
+    it('does not defer without steer capability and stays a plain queued turn', async () => {
+      const { agent, push } = turnStartWindow();
+      (agent as any).queryHandle = { close: vi.fn(), cancel: vi.fn() };
+      try {
+        await agent.processMessage(input());
+        expect((agent as any).deferredLiveInputs.size).toBe(0);
+        expect(push).toHaveBeenCalledTimes(1);
+        firstEvent(agent);
+        await (agent as any).flushDeferredLiveInputs();
+        expect(push).toHaveBeenCalledTimes(1);
+      } finally { dispose(agent); }
+    });
+
+    it('keeps the direct steer path once the turn is already steerable', async () => {
+      const { agent, push, steer } = turnStartWindow();
+      (agent as any).activeTurnMessageId = 'img-turn';
+      try {
+        await agent.processMessage(input());
+        expect(steer).toHaveBeenCalledExactlyOnceWith('supp-1');
+        expect(push).not.toHaveBeenCalled();
+        expect((agent as any).deferredLiveInputs.size).toBe(0);
+      } finally { dispose(agent); }
+    });
+
+    it('never defers the attachment-only turn itself', async () => {
+      const { agent } = turnStartWindow();
+      try {
+        await agent.processMessage({ chatId: 'window-chat', payload: '用户上传了一个图片：image_k',
+          messageId: 'img-att', attachments: [{ id: 'att-image-k', fileName: 'image_k.png', source: 'user' as const,
+            localPath: '/tmp/image_k.png', createdAt: 1 }], attachmentOnly: true, threadRootId: 'root-B' });
+        expect((agent as any).deferredLiveInputs.size).toBe(0);
+        expect((agent as any).pendingTurnMessageIds).toEqual(['img-turn', 'img-att']);
+      } finally { dispose(agent); }
+    });
+
+    it('drops deferred candidates across reset and dispose', async () => {
+      const { agent, steer } = turnStartWindow();
+      try {
+        await agent.processMessage(input());
+        expect((agent as any).deferredLiveInputs.size).toBe(1);
+        agent.reset();
+        expect((agent as any).deferredLiveInputs.size).toBe(0);
+        firstEvent(agent);
+        await (agent as any).flushDeferredLiveInputs();
+        expect(steer).not.toHaveBeenCalled();
+      } finally { dispose(agent); }
+      const disposed = turnStartWindow();
+      await disposed.agent.processMessage(input());
+      ChatAgent.prototype.dispose.call(disposed.agent);
+      expect((disposed.agent as any).deferredLiveInputs.size).toBe(0);
+      firstEvent(disposed.agent);
+      await (disposed.agent as any).flushDeferredLiveInputs();
+      expect(disposed.steer).not.toHaveBeenCalled();
+    });
+
+    it('never defers a supplement from another topic, but fails open on an unknown head', async () => {
+      const other = turnStartWindow('root-A');
+      try {
+        await other.agent.processMessage(input('task-C', 'root-C'));
+        expect((other.agent as any).deferredLiveInputs.size).toBe(0);
+        expect((other.agent as any).pendingTurnMessageIds).toEqual(['img-turn', 'task-C']);
+      } finally { dispose(other.agent); }
+      const unknown = turnStartWindow(null);
+      try {
+        await unknown.agent.processMessage(input('task-C', 'root-C'));
+        expect((unknown.agent as any).deferredLiveInputs.has('task-C')).toBe(true);
+      } finally { dispose(unknown.agent); }
+    });
+
+    it('registers a redelivered duplicate event only once', async () => {
+      const { agent, steer } = turnStartWindow();
+      try {
+        const first = input();
+        await agent.processMessage(first);
+        await agent.processMessage(input());
+        expect((agent as any).deferredLiveInputs.size).toBe(1);
+        expect((agent as any).deferredLiveInputs.get('supp-1').params).toBe(first);
+        firstEvent(agent);
+        await (agent as any).flushDeferredLiveInputs();
+        expect(steer).toHaveBeenCalledTimes(1);
+      } finally { dispose(agent); }
+    });
+
+    it('settles an unconfirmed deferred retry as a failed turn without queue replay', async () => {
+      const { agent, callbacks, push, steer } = turnStartWindow();
+      steer.mockRejectedValue(new Error('Native ACK timed out'));
+      try {
+        await agent.processMessage(input());
+        firstEvent(agent);
+        await (agent as any).flushDeferredLiveInputs();
+        expect(steer).toHaveBeenCalledTimes(1);
+        await expect(agent.turnCompleteFor('supp-1')).rejects.toThrow('delivery is unconfirmed');
+        // The row never dequeues a second copy, and nothing is resubmitted.
+        expect((agent as any).pendingTurnMessageIds).toEqual([]);
+        expect(push).toHaveBeenCalledTimes(1);
+        expect(callbacks.onDone).not.toHaveBeenCalled();
+        expect(callbacks.sendMessage.mock.calls.some(call => (call[1] as string).includes('未收到后端确认'))).toBe(true);
+      } finally { dispose(agent); }
+    });
+  });
+
   describe('busy-input receipt topic routing (#5435)', () => {
     /** Running thread-less turn whose body replies into the chat's sticky topic root. */
     function stickyTopicTurn() {
