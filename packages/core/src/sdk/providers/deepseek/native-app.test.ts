@@ -5,7 +5,18 @@ import type { AttachmentStore } from '@deepseek-ai/dsh-attachment';
 import { describe, expect, it, vi } from 'vitest';
 import { DshNativeApp } from './native-app.js';
 
-function fixture(attachments?: AttachmentStore) {
+/**
+ * Structural `ctx.skills` face (dsh-skill SkillRegistry), kept so the tests
+ * can prove the controller never touches the profile's registry: skills ride
+ * the profile composition's skill-filesystem overlay (#5717 r3).
+ */
+interface DshSkillRegistryLike {
+  readonly registerProvider: (
+    create: (control: { signal: AbortSignal; invalidate: () => void }) => unknown
+  ) => () => void;
+}
+
+function fixture(attachments?: AttachmentStore, skills?: DshSkillRegistryLike) {
   const tools = {
     schemas: vi.fn().mockReturnValue([{ name: 'read' }, { name: 'bash' }]),
     restrict: vi.fn().mockReturnValue(() => {}),
@@ -19,12 +30,14 @@ function fixture(attachments?: AttachmentStore) {
     await options.setup?.(agentCtx);
     return { agent, dispose };
   });
-  const ctx = { on: () => () => {}, agents: { create },
-    get: (name: string) => name === 'attachments' ? attachments : undefined,
+  const logger = { warn: vi.fn(), info: vi.fn() };
+  const ctx = { on: () => () => {}, agents: { create }, logger,
+    get: (name: string) =>
+      name === 'attachments' ? attachments : name === 'skills' ? skills : undefined,
   } as unknown as Context;
   const peer = {} as JsonRpcTransportPeer;
   const app = new DshNativeApp(ctx, peer);
-  return { app, tools, create, dispose, agent };
+  return { app, tools, create, dispose, agent, logger };
 }
 
 const descriptor = {
@@ -116,4 +129,66 @@ describe('DSH native controller tool selection', () => {
       await f.app.shutdown();
     }
   );
+});
+
+describe('DSH native controller skill registration (#5717)', () => {
+  function skillsRegistryFixture() {
+    const dispose = vi.fn();
+    const providers: { name: string; list: (options: unknown) => Promise<unknown> }[] = [];
+    const registry: DshSkillRegistryLike = {
+      registerProvider: (create) => {
+        const provider = create({ signal: new AbortController().signal, invalidate: () => {} });
+        providers.push(provider as { name: string; list: (options: unknown) => Promise<unknown> });
+        return dispose;
+      },
+    };
+    return { registry, providers, dispose };
+  }
+
+  it('reports skills: false when no skills binding was supplied at all', async () => {
+    const { registry, providers } = skillsRegistryFixture();
+    const f = fixture(undefined, registry);
+    const initialized = await f.app.handleRequest('initialize', { cwd: '/project' });
+    expect(initialized).toMatchObject({ capabilities: { skills: false } });
+    expect(providers).toHaveLength(0);
+    await f.app.shutdown();
+  });
+
+  it('treats an overlay binding as overlay-injected and never touches ctx.skills (#5717 r3)', async () => {
+    const { registry, providers } = skillsRegistryFixture();
+    const f = fixture(undefined, registry);
+    const initialized = await f.app.handleRequest('initialize', {
+      cwd: '/project',
+      skills: { bundledSkillDir: '/builtins/skills' },
+    });
+    // The binding declares the profile overlay already carries the built-in
+    // directory through skill-filesystem discovery: skills are deliverable and
+    // no in-process provider registration may run (no double listing).
+    expect(initialized).toMatchObject({ capabilities: { skills: true } });
+    expect(providers).toHaveLength(0);
+    expect(f.logger.info).not.toHaveBeenCalledWith(expect.stringMatching(/registered \d+ Disclaude skill/));
+    await f.app.shutdown();
+  });
+
+  it('rejects a malformed overlay binding before any registration', async () => {
+    const { registry, providers } = skillsRegistryFixture();
+    const f = fixture(undefined, registry);
+    await expect(
+      f.app.handleRequest('initialize', { cwd: '/project', skills: { bundledSkillDir: '' } })
+    ).rejects.toThrow('skills.bundledSkillDir must be a non-empty string');
+    expect(providers).toHaveLength(0);
+    await f.app.shutdown();
+  });
+
+  it('rejects a plan-shaped skills payload: only an overlay binding is accepted', async () => {
+    const { registry, providers } = skillsRegistryFixture();
+    const f = fixture(undefined, registry);
+    // #5717 r3 removed the in-process registration plan; a payload shaped
+    // like the old plan must fail loudly instead of silently registering.
+    await expect(
+      f.app.handleRequest('initialize', { cwd: '/project', skills: { builtinRoot: '/builtins' } })
+    ).rejects.toThrow('skills.bundledSkillDir must be a non-empty string');
+    expect(providers).toHaveLength(0);
+    await f.app.shutdown();
+  });
 });

@@ -43,6 +43,7 @@ export class DshNativeApp {
   private options: AgentOptions = {};
   private descriptors: ToolDescriptor[] = [];
   private prompt?: string;
+  private skillOverlay?: { bundledSkillDir: string };
   private readonly sessions = new Map<string, AgentHandle>();
   private readonly openings = new Map<string, Promise<unknown>>();
   private readonly disposers: (() => void)[];
@@ -160,10 +161,38 @@ export class DshNativeApp {
     };
     assertToolOptions(params);
     this.prompt = optionalString(params.systemPrompt, 'systemPrompt');
+    if (params.skills !== undefined) {
+      if (!params.skills || typeof params.skills !== 'object' || Array.isArray(params.skills)) {
+        throw new TypeError('skills must be an object');
+      }
+      // #5717 r3: the binding declares that the controller already injected
+      // the built-in skills directory into the booted profile as a
+      // skill-filesystem bundledSkillDir overlay. The harness's own discovery
+      // delivers those skills; nothing registers in-process here.
+      const bundledSkillDir = optionalString(
+        (params.skills as Record<string, unknown>).bundledSkillDir,
+        'skills.bundledSkillDir'
+      );
+      if (!bundledSkillDir) {
+        throw new TypeError('skills.bundledSkillDir must be a non-empty string');
+      }
+      this.skillOverlay = { bundledSkillDir };
+    }
     this.initialized = true;
     return {
       serverInfo: { name, version: '1' },
-      capabilities: { tools: true, resume: true, cancel: true, images: !!this.ctx.get('attachments') },
+      capabilities: {
+        tools: true,
+        resume: true,
+        cancel: true,
+        images: !!this.ctx.get('attachments'),
+        // Whether Disclaude skills are deliverable on the booted profile
+        // (#5717 r3): an overlay binding means the built-in directory already
+        // ships through the profile's skill-filesystem discovery; otherwise
+        // false means the profile carries no skills overlay (e.g. sdk-minimal)
+        // and no skill is deliverable.
+        skills: this.skillOverlay !== undefined,
+      },
     };
   }
 
