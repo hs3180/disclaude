@@ -38,7 +38,7 @@ import {
   resolveChannelDeclarations,
   ChatFailureRegistry,
   GoalStore,
-  resolveAgentPreset,
+  resolveSessionAgentRuntime,
   getProvider,
   TaskResultOutbox,
   type ChatType,
@@ -674,9 +674,9 @@ export async function main(): Promise<void> {
     return typeof value === 'string' && value.trim() ? value : undefined;
   };
   const agentPool = new ChatSessionPool({
-    agentPresets: Config.getAgentPresets(),
+    agentRuntimes: Config.getAgentRuntimes(),
     agentSelections,
-    defaultAgentPresetForChat: perAppAgent,
+    defaultAgentRuntimeForChat: perAppAgent,
     turnRecovery,
     // Issue #5400: per-chat last-failure registry backing the /feedback entry.
     failureRecorder: (failure) => failureRegistry.record(failure),
@@ -723,11 +723,16 @@ export async function main(): Promise<void> {
           parentStopped = agentPool.stop(chatId, threadRootId);
         return parentStopped || childStopped;
       },
-      listAgentPresets: () => agentPool.listAgentPresets(),
-      getActiveAgentPreset: (chatId, threadRootId) =>
-        agentPool.getActiveAgentPreset(chatId, threadRootId),
-      switchAgentPreset: (chatId, presetName, threadRootId, actorId) =>
-        agentPool.switchAgentPreset(chatId, presetName, threadRootId, actorId),
+      listAgentRuntimes: () => agentPool.listAgentRuntimes(),
+      getActiveAgentRuntime: (chatId, threadRootId) =>
+        agentPool.getActiveAgentRuntime(chatId, threadRootId),
+      switchAgentRuntime: (chatId, backend, model, threadRootId, actorId) =>
+        agentPool.switchAgentRuntime(chatId, backend, model, threadRootId, actorId),
+      // Issue #5255: orthogonal backend/model dimension switches.
+      switchAgentBackend: (chatId, backend, threadRootId) =>
+        agentPool.switchAgentBackend(chatId, backend, threadRootId),
+      switchAgentModel: (chatId, model, threadRootId) =>
+        agentPool.switchAgentModel(chatId, model, threadRootId),
       steer: (chatId, prompt, threadRootId) => agentPool.steer(chatId, prompt, threadRootId),
       canSteer: (chatId, threadRootId) => agentPool.canSteer(chatId, threadRootId),
     },
@@ -796,6 +801,41 @@ export async function main(): Promise<void> {
   };
   // #5212: the only Goal runtime host. Feishu-only human commands reach it;
   // the model-facing REST control endpoint never receives this capability.
+  // Goal rounds and background subtasks share one runtime-resolution path:
+  // the pool's selected runtime (name domain), then the configured
+  // defaultHarness, then the agents default marker — anything unresolvable or
+  // unavailable for the resolved backend is a hard error, never a silent
+  // fallback to the global default agent.
+  const resolveActiveRuntimeOptions = (
+    source: { chatId: string; threadRootId?: string },
+    unavailableMessage: string
+  ): AgentCreateOptions => {
+    const presets = Config.getAgentRuntimes();
+    const selected = agentPool.getActiveAgentRuntime(source.chatId, source.threadRootId);
+    const resolved = presets
+      ? resolveSessionAgentRuntime(presets, selected?.name, Config.getRawConfig().defaultHarness)
+      : undefined;
+    if (resolved && !resolved.ok) {
+      throw new Error(unavailableMessage);
+    }
+    const preset = resolved?.ok ? structuredClone(resolved.preset) : undefined;
+    const options: AgentCreateOptions = {
+      ...(preset ?? Config.getAgentConfig()),
+      ...(preset ? { settings: preset } : {}),
+      turnRecovery,
+      failureRecorder: (failure: import('@disclaude/core').ChatFailureRecord) =>
+        failureRegistry.record(failure),
+      messageBuilderOptions: createFeishuMessageBuilderOptions(),
+    };
+    if (
+      !getProvider(options.agentBackend, options.settings).getInfo(
+        AgentFactory.resolveConfig(options)
+      ).available
+    ) {
+      throw new Error(unavailableMessage);
+    }
+    return options;
+  };
   const goalExecution = new GoalExecutionService({
     store: channelSetupContext.goalStore,
     projectManager,
@@ -811,30 +851,8 @@ export async function main(): Promise<void> {
         ?.id.startsWith('feishu') === true &&
       (!controlHandlerContext.isCommandAllowed || controlHandlerContext.isCommandAllowed(command)),
     callbacks: (source) => routerCallbacksFactory(source.chatId, source.threadRootId),
-    runtimeOptions: (source) => {
-      const presets = Config.getAgentPresets();
-      const selected = agentPool.getActiveAgentPreset(source.chatId, source.threadRootId);
-      const resolved = presets ? resolveAgentPreset(presets, selected?.name) : undefined;
-      if (resolved && !resolved.ok) {
-        throw new Error('Selected Goal runtime is unavailable');
-      }
-      const preset = resolved?.ok ? structuredClone(resolved.preset) : undefined;
-      const options = {
-        ...(preset ?? Config.getAgentConfig()),
-        ...(preset ? { settings: preset } : {}),
-        turnRecovery,
-        failureRecorder: (failure: import('@disclaude/core').ChatFailureRecord) =>
-          failureRegistry.record(failure),
-        messageBuilderOptions: createFeishuMessageBuilderOptions(),
-      };
-      const info = getProvider(options.agentBackend, options.settings).getInfo(
-        AgentFactory.resolveConfig(options)
-      );
-      if (!info.available) {
-        throw new Error('Selected Goal runtime is unavailable');
-      }
-      return options;
-    },
+    runtimeOptions: (source) =>
+      resolveActiveRuntimeOptions(source, 'Selected Goal runtime is unavailable'),
   });
   channelSetupContext.goalExecution = goalExecution;
   service.initInputMessageRouter(agentPool, routerCallbacksFactory);
@@ -859,31 +877,8 @@ export async function main(): Promise<void> {
   const taskRuntimeOptions = (input: {
     chatId: string;
     threadRootId?: string;
-  }): AgentCreateOptions => {
-    const presets = Config.getAgentPresets();
-    const selected = agentPool.getActiveAgentPreset(input.chatId, input.threadRootId);
-    const resolved = presets ? resolveAgentPreset(presets, selected?.name) : undefined;
-    if (resolved && !resolved.ok) {
-      throw new Error('Selected subtask runtime is unavailable');
-    }
-    const preset = resolved?.ok ? structuredClone(resolved.preset) : undefined;
-    const options = {
-      ...(preset ?? Config.getAgentConfig()),
-      ...(preset ? { settings: preset } : {}),
-      turnRecovery,
-      failureRecorder: (failure: import('@disclaude/core').ChatFailureRecord) =>
-        failureRegistry.record(failure),
-      messageBuilderOptions: createFeishuMessageBuilderOptions(),
-    };
-    if (
-      !getProvider(options.agentBackend, options.settings).getInfo(
-        AgentFactory.resolveConfig(options)
-      ).available
-    ) {
-      throw new Error('Selected subtask runtime is unavailable');
-    }
-    return options;
-  };
+  }): AgentCreateOptions =>
+    resolveActiveRuntimeOptions(input, 'Selected subtask runtime is unavailable');
   const taskResults = new TaskResultOutbox(
     path.join(workspaceDir, '.disclaude', 'tasks', 'results')
   );

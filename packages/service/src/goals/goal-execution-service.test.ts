@@ -19,7 +19,7 @@ it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', '
     try {
       const config = join(root, 'config.json');
       writeFileSync(config, JSON.stringify({ workspace: { dir: root },
-        agents: { default: { backend: 'claude', llm: 'default' } },
+        agents: { claude: { llm: 'default' } },
         llms: { default: { defaultModel: 'offline-default', api: { protocol: 'anthropic', apiKey: '$TEST_LLM_DEFAULT_KEY' } } },
       }));
       const script = `

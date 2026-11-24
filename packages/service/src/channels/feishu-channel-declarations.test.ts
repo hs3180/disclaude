@@ -25,21 +25,20 @@ const SECRET_B = 'app-secret-b';
 function declaredRawConfig(): DisclaudeConfigWithChannels {
   return {
     agents: {
-      personal: { backend: 'claude', llm: 'gateway' },
-      work: { backend: 'claude', llm: 'gateway', default: true },
+      claude: { llm: 'gateway', default: true },
     },
     channels: {
       personal: {
         type: 'feishu',
         appId: 'cli_a',
         appSecret: '$FEISHU_APP_SECRET_PERSONAL',
-        agent: 'personal',
+        agent: 'claude',
       },
       work: {
         type: 'feishu',
         appId: 'cli_b',
         appSecret: '${FEISHU_APP_SECRET_WORK}',
-        agent: 'work',
+        agent: 'claude',
       },
     },
   };
@@ -129,13 +128,13 @@ describe('named channel declarations (#5254)', () => {
         config: {
           appId: 'cli_a',
           appSecret: '$FEISHU_APP_SECRET_PERSONAL',
-          agent: 'personal',
+          agent: 'claude',
         },
       },
       {
         name: 'work',
         type: 'feishu',
-        config: { appId: 'cli_b', appSecret: '${FEISHU_APP_SECRET_WORK}', agent: 'work' },
+        config: { appId: 'cli_b', appSecret: '${FEISHU_APP_SECRET_WORK}', agent: 'claude' },
       },
     ]);
   });

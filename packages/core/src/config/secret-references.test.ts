@@ -11,7 +11,7 @@ import { registerExternalSecretEnvironmentNames } from './secret-environment.js'
 
 afterEach(() => { vi.unstubAllEnvs(); setLoadedConfig(null); });
 const config = (): DisclaudeConfig => ({
-  agents: { daily: { backend: 'codex', llm: 'native', default: true }, a: { backend: 'claude', llm: 'a' }, b: { backend: 'claude', llm: 'b' } },
+  agents: { codex: { llm: 'native', default: true }, claude: { llm: 'a' }, dsh: { llm: 'b' } },
   llms: { native: { defaultModel: 'gpt-6-luna' }, a: { defaultModel: 'a', api: { protocol: 'anthropic', baseUrl: 'https://a.example', apiKey: '$OPAQUE_A' } }, b: { defaultModel: 'b', api: { protocol: 'anthropic', baseUrl: 'https://b.example', apiKey: '$OPAQUE_B' } } },
 });
 
@@ -25,13 +25,13 @@ describe('persistent external secrets', () => {
     const result = resolveConfiguredAgents(value);
     expect(result.ok).toBe(true);
     if (!result.ok) {return;}
-    for (const name of ['daily', 'a', 'b']) {
+    for (const name of ['codex', 'claude', 'dsh']) {
       const preset = result.presets[name];
       const env = buildSdkEnv(preset.apiKey, preset.apiBaseUrl, {}, false, undefined,
         { protocol: preset.apiProtocol, credentialEnvKeys: preset.credentialEnvKeys, selectedEnv: preset.env });
       expect(env.OPAQUE_FILE_SOURCE).toBeUndefined();
       expect(env.OPAQUE_FILE_OVERRIDE).toBeUndefined();
-      expect(env.TOOL_DATA).toBe(name === 'daily' ? 'synthetic-opaque-file-canary' : undefined);
+      expect(env.TOOL_DATA).toBe(name === 'codex' ? 'synthetic-opaque-file-canary' : undefined);
     }
     const log = redactChannelSecrets(JSON.stringify({ OPAQUE_FILE_SOURCE: 'synthetic-opaque-file-canary',
       msg: 'synthetic-opaque-file-canary synthetic-opaque-inherited-canary' }));
@@ -60,20 +60,21 @@ describe('persistent external secrets', () => {
     const value = config();
     delete value.llms!.a.defaultModel;
     value.llms!.a.env = { TOOL_TOKEN: '$SELECTED_TOOL' };
-    value.agents!.a.claude = { env: { ANTHROPIC_DEFAULT_HAIKU_MODEL: 'small-model' } };
+    value.agents!.claude.claude = { env: { ANTHROPIC_DEFAULT_HAIKU_MODEL: 'small-model' } };
     const resolved = resolveConfiguredAgents(value); expect(resolved.ok).toBe(true);
     if (!resolved.ok) { throw new Error(resolved.errors.join('; ')); }
-    expect(resolved.presets.a.model).toBe('');
-    for (const name of ['a', 'b', 'daily']) {
+    expect(resolved.presets.claude.model).toBe('');
+    for (const name of ['claude', 'dsh', 'codex']) {
       const preset = resolved.presets[name];
       const env = buildSdkEnv(preset.apiKey, preset.apiBaseUrl, {}, false, undefined,
         { protocol: preset.apiProtocol, credentialEnvKeys: preset.credentialEnvKeys, selectedEnv: preset.env });
       expect(env.OPAQUE_A).toBeUndefined(); expect(env.OPAQUE_B).toBeUndefined(); expect(env.HOST_PASSWORD).toBeUndefined(); expect(env.SELECTED_TOOL).toBeUndefined();
       expect(env.DISCLAUDE_API_TOKEN).toBe('owned-channel-control');
-      expect(env.TOOL_TOKEN).toBe(name === 'a' ? 'synthetic-tool-value' : undefined);
-      expect(env.ANTHROPIC_API_KEY).toBe(name === 'daily' ? undefined : `synthetic-private-${name}`);
-      expect(env.ANTHROPIC_BASE_URL).toBe(name === 'daily' ? undefined : `https://${name}.example`);
-      if (name === 'a') {expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('small-model');}
+      const llm = name === 'codex' ? 'native' : name === 'claude' ? 'a' : 'b';
+      expect(env.TOOL_TOKEN).toBe(name === 'claude' ? 'synthetic-tool-value' : undefined);
+      expect(env.ANTHROPIC_API_KEY).toBe(name === 'codex' ? undefined : `synthetic-private-${llm}`);
+      expect(env.ANTHROPIC_BASE_URL).toBe(name === 'codex' ? undefined : `https://${llm}.example`);
+      if (name === 'claude') {expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('small-model');}
     }
   });
 
@@ -82,9 +83,9 @@ describe('persistent external secrets', () => {
     const value = config(); value.llms!.a.env = { TOOL_TOKEN: '${NATIVE_TOOL_SECRET}' };
     const result = resolveConfiguredAgents(value); expect(result.ok).toBe(true);
     if (!result.ok) {return;}
-    expect(validateResolvedAgent(result.presets.daily)).toBeUndefined();
-    expect(validateResolvedAgent(result.presets.a)).toContain('llms.a.env.TOOL_TOKEN (NATIVE_TOOL_SECRET)');
-    expect(validateResolvedAgent(result.presets.b)).toContain('credential');
+    expect(validateResolvedAgent(result.presets.codex)).toBeUndefined();
+    expect(validateResolvedAgent(result.presets.claude)).toContain('llms.a.env.TOOL_TOKEN (NATIVE_TOOL_SECRET)');
+    expect(validateResolvedAgent(result.presets.dsh)).toContain('credential');
   });
 
   it('projects explicitly selected native account auth while masking it from other agents', () => {
@@ -92,13 +93,13 @@ describe('persistent external secrets', () => {
     const value = config(); value.llms!.native.env = { OPENAI_API_KEY: '$CODEX_PRIVATE', OPENAI_BASE_URL: 'https://native.example' };
     const result = resolveConfiguredAgents(value); expect(result.ok).toBe(true);
     if (!result.ok) {return;}
-    const selected = result.presets.daily;
+    const selected = result.presets.codex;
     const env = buildSdkEnv(selected.apiKey, selected.apiBaseUrl, {}, false, undefined,
       { protocol: selected.apiProtocol, selectedEnv: selected.env, credentialEnvKeys: selected.credentialEnvKeys });
     expect(env.OPENAI_API_KEY).toBe('synthetic-native-canary');
     expect(env.OPENAI_BASE_URL).toBe('https://native.example');
     expect(env.CODEX_PRIVATE).toBeUndefined();
-    const other = result.presets.a;
+    const other = result.presets.claude;
     expect(buildSdkEnv(other.apiKey, other.apiBaseUrl, {}, false, undefined,
       { protocol: other.apiProtocol, selectedEnv: other.env, credentialEnvKeys: other.credentialEnvKeys }).OPENAI_API_KEY).toBeUndefined();
   });

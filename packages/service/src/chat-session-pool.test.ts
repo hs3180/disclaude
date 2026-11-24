@@ -46,7 +46,7 @@ vi.mock('@disclaude/core', async (importOriginal) => {
     // Preset tests supply their own maps; legacy pool tests need no presets.
     // Developer config must not change the factory arguments or reset routing.
     Config: class extends actual.Config {
-      static getAgentPresets() {
+      static getAgentRuntimes() {
         return undefined;
       }
     },
@@ -285,7 +285,7 @@ describe('ChatSessionPool', () => {
 
   it('applies temporary model/history overrides through the same preset-aware factory', () => {
     const pool = new ChatSessionPool({
-      agentPresets: {
+      agentRuntimes: {
         default: { apiKey: 'test-key', llm: 'test', agentBackend: 'codex', model: 'gpt-5.6' },
       },
     });
@@ -310,7 +310,7 @@ describe('ChatSessionPool', () => {
         sdkSessionKey: 'chat-1::execution:model-override',
       })
     );
-    expect(pool.getActiveAgentPreset('chat-1')).toMatchObject({
+    expect(pool.getActiveAgentRuntime('chat-1')).toMatchObject({
       name: 'default',
       model: 'gpt-5.6',
     });
@@ -353,11 +353,11 @@ describe('ChatSessionPool', () => {
     };
 
     it('passes the resolved target configuration into the backend preflight', () => {
-      const validatePresetBackend = vi.fn().mockReturnValue({ available: true });
-      const pool = new ChatSessionPool({ agentPresets: presets, validatePresetBackend });
+      const validateRuntimeBackend = vi.fn().mockReturnValue({ available: true });
+      const pool = new ChatSessionPool({ agentRuntimes: presets, validateRuntimeBackend });
       try {
-        expect(pool.switchAgentPreset('chat-selected', 'fast')).toMatchObject({ ok: true });
-        expect(validatePresetBackend).toHaveBeenCalledExactlyOnceWith('claude', {
+        expect(pool.switchAgentRuntime('chat-selected', 'fast')).toMatchObject({ ok: true });
+        expect(validateRuntimeBackend).toHaveBeenCalledExactlyOnceWith('claude', {
           apiKey: 'test-key',
           model: 'claude-haiku',
           apiProtocol: 'anthropic',
@@ -369,8 +369,8 @@ describe('ChatSessionPool', () => {
 
     it('passes the default preset through the real pool-to-factory creation path', () => {
       const pool = new ChatSessionPool({
-        agentPresets: presets,
-        validatePresetBackend: () => ({ available: true }),
+        agentRuntimes: presets,
+        validateRuntimeBackend: () => ({ available: true }),
       });
       const callbacks = createMockCallbacks();
       pool.getOrCreateChatAgent('chat-default', callbacks);
@@ -386,7 +386,7 @@ describe('ChatSessionPool', () => {
           model: 'claude-sonnet',
         })
       );
-      expect(pool.getActiveAgentPreset('chat-default')).toEqual({
+      expect(pool.getActiveAgentRuntime('chat-default')).toEqual({
         name: 'default',
         agentBackend: 'claude',
         model: 'claude-sonnet',
@@ -398,15 +398,15 @@ describe('ChatSessionPool', () => {
         ...presets,
         deep: { apiKey: 'test-key', llm: 'test', agentBackend: 'codex' as const, model: 'gpt-5.1', reasoningEffort: 'high' as const },
       };
-      const pool = new ChatSessionPool({ agentPresets: withEffort, validatePresetBackend: () => ({ available: true }) });
+      const pool = new ChatSessionPool({ agentRuntimes: withEffort, validateRuntimeBackend: () => ({ available: true }) });
       try {
-        expect(pool.listAgentPresets().find(p => p.name === 'deep')).toEqual({
+        expect(pool.listAgentRuntimes().find(p => p.name === 'deep')).toEqual({
           name: 'deep', agentBackend: 'codex', model: 'gpt-5.1', reasoningEffort: 'high',
         });
-        expect(pool.switchAgentPreset('chat-effort', 'deep')).toMatchObject({
+        expect(pool.switchAgentRuntime('chat-effort', 'deep')).toMatchObject({
           ok: true, active: { name: 'deep', reasoningEffort: 'high' },
         });
-        expect(pool.getActiveAgentPreset('chat-effort')).toEqual({
+        expect(pool.getActiveAgentRuntime('chat-effort')).toEqual({
           name: 'deep', agentBackend: 'codex', model: 'gpt-5.1', reasoningEffort: 'high',
         });
       } finally { pool.disposeAll(); }
@@ -423,9 +423,9 @@ describe('ChatSessionPool', () => {
       };
       const callbacks = createMockCallbacks();
       const first = new ChatSessionPool({
-        agentPresets: presets,
-        defaultAgentPresetForChat: defaultFor,
-        validatePresetBackend: () => ({ available: true }),
+        agentRuntimes: presets,
+        defaultAgentRuntimeForChat: defaultFor,
+        validateRuntimeBackend: () => ({ available: true }),
       });
       try {
         first.getOrCreateChatAgent('feishu:personal:oc_same', callbacks);
@@ -444,8 +444,8 @@ describe('ChatSessionPool', () => {
           callbacks,
           expect.objectContaining({ model: 'claude-sonnet' })
         );
-        expect(first.switchAgentPreset('feishu:work:oc_same', 'fast')).toMatchObject({ ok: true });
-        expect(first.getActiveAgentPreset('feishu:work:oc_same')?.name).toBe('fast');
+        expect(first.switchAgentRuntime('feishu:work:oc_same', 'fast')).toMatchObject({ ok: true });
+        expect(first.getActiveAgentRuntime('feishu:work:oc_same')?.name).toBe('fast');
       } finally {
         first.disposeAll();
       }
@@ -453,13 +453,13 @@ describe('ChatSessionPool', () => {
       // A restarted process keeps the configured app default; the in-memory
       // /agent use selection is intentionally not persisted.
       const second = new ChatSessionPool({
-        agentPresets: presets,
-        defaultAgentPresetForChat: defaultFor,
-        validatePresetBackend: () => ({ available: true }),
+        agentRuntimes: presets,
+        defaultAgentRuntimeForChat: defaultFor,
+        validateRuntimeBackend: () => ({ available: true }),
       });
       try {
         second.getOrCreateChatAgent('feishu:work:oc_same', callbacks);
-        expect(second.getActiveAgentPreset('feishu:work:oc_same')?.name).toBe('default');
+        expect(second.getActiveAgentRuntime('feishu:work:oc_same')?.name).toBe('default');
       } finally {
         second.disposeAll();
       }
@@ -467,19 +467,19 @@ describe('ChatSessionPool', () => {
 
     it('isolates selections by chat and atomically replaces only the selected chat', () => {
       const pool = new ChatSessionPool({
-        agentPresets: presets,
-        validatePresetBackend: () => ({ available: true }),
+        agentRuntimes: presets,
+        validateRuntimeBackend: () => ({ available: true }),
       });
       const callbacksA = createMockCallbacks();
       const callbacksB = createMockCallbacks();
       const oldA = pool.getOrCreateChatAgent('chat-a', callbacksA);
       const oldB = pool.getOrCreateChatAgent('chat-b', callbacksB);
 
-      expect(pool.switchAgentPreset('chat-a', 'fast')).toMatchObject({ ok: true });
+      expect(pool.switchAgentRuntime('chat-a', 'fast')).toMatchObject({ ok: true });
       expect(oldA.dispose).toHaveBeenCalledOnce();
       expect(oldB.dispose).not.toHaveBeenCalled();
-      expect(pool.getActiveAgentPreset('chat-a')?.name).toBe('fast');
-      expect(pool.getActiveAgentPreset('chat-b')?.name).toBe('default');
+      expect(pool.getActiveAgentRuntime('chat-a')?.name).toBe('fast');
+      expect(pool.getActiveAgentRuntime('chat-b')?.name).toBe('default');
       expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith(
         'pilot',
         'chat-a',
@@ -490,13 +490,13 @@ describe('ChatSessionPool', () => {
 
     it('switches one topic thread with its composite native session key', () => {
       const pool = new ChatSessionPool({
-        agentPresets: presets,
-        validatePresetBackend: () => ({ available: true }),
+        agentRuntimes: presets,
+        validateRuntimeBackend: () => ({ available: true }),
       });
       const callbacks = createMockCallbacks();
       const oldA = pool.getOrCreateChatAgent('chat-topic', callbacks, 'thread-a');
       const oldB = pool.getOrCreateChatAgent('chat-topic', callbacks, 'thread-b');
-      expect(pool.switchAgentPreset('chat-topic', 'fast', 'thread-a')).toMatchObject({ ok: true });
+      expect(pool.switchAgentRuntime('chat-topic', 'fast', undefined, 'thread-a')).toMatchObject({ ok: true });
       expect(oldA.dispose).toHaveBeenCalledOnce();
       expect(oldB.dispose).not.toHaveBeenCalled();
       expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith(
@@ -509,8 +509,8 @@ describe('ChatSessionPool', () => {
 
     it('keeps the accepted delivery callbacks after a duplicate temporary session is rejected', () => {
       const pool = new ChatSessionPool({
-        agentPresets: presets,
-        validatePresetBackend: () => ({ available: true }),
+        agentRuntimes: presets,
+        validateRuntimeBackend: () => ({ available: true }),
       });
       const accepted = createMockCallbacks();
       const rejected = createMockCallbacks();
@@ -527,7 +527,7 @@ describe('ChatSessionPool', () => {
           })
         ).toThrow('already owns');
         expect(original.updateCallbacks).not.toHaveBeenCalled();
-        expect(pool.switchAgentPreset('chat-project', 'fast', scope)).toMatchObject({ ok: true });
+        expect(pool.switchAgentRuntime('chat-project', 'fast', undefined, scope)).toMatchObject({ ok: true });
         const lastCall = vi.mocked(AgentFactory.createChatAgent).mock.calls.at(-1);
         expect(lastCall?.[2]).toBe(accepted);
       } finally {
@@ -537,8 +537,8 @@ describe('ChatSessionPool', () => {
 
     it('rejects a busy switch and preserves the old agent and selection', () => {
       const pool = new ChatSessionPool({
-        agentPresets: presets,
-        validatePresetBackend: () => ({ available: true }),
+        agentRuntimes: presets,
+        validateRuntimeBackend: () => ({ available: true }),
       });
       const old = pool.getOrCreateChatAgent('chat-busy', createMockCallbacks());
       const mutableOld = mockAgents.get('chat-busy');
@@ -547,25 +547,25 @@ describe('ChatSessionPool', () => {
       }
       mutableOld.isBusy = true;
 
-      expect(pool.switchAgentPreset('chat-busy', 'fast')).toEqual({
+      expect(pool.switchAgentRuntime('chat-busy', 'fast')).toEqual({
         ok: false,
         error:
-          'The current chat is busy; wait for the response or use /stop before switching presets',
+          'The current chat is busy; wait for the response or use /stop before switching runtimes',
       });
       expect(old.dispose).not.toHaveBeenCalled();
       expect(pool.get('chat-busy')).toBe(old);
-      expect(pool.getActiveAgentPreset('chat-busy')?.name).toBe('default');
+      expect(pool.getActiveAgentRuntime('chat-busy')?.name).toBe('default');
     });
 
     it('rejects an unavailable backend before replacing the old agent', () => {
       const pool = new ChatSessionPool({
-        agentPresets: presets,
-        validatePresetBackend: () => ({ available: false, unavailableReason: 'login required' }),
+        agentRuntimes: presets,
+        validateRuntimeBackend: () => ({ available: false, unavailableReason: 'login required' }),
       });
       const old = pool.getOrCreateChatAgent('chat-unavailable', createMockCallbacks());
-      expect(pool.switchAgentPreset('chat-unavailable', 'fast')).toEqual({
+      expect(pool.switchAgentRuntime('chat-unavailable', 'fast')).toEqual({
         ok: false,
-        error: 'Agent preset "fast" is unavailable: login required',
+        error: 'Agent runtime "fast" is unavailable: login required',
       });
       expect(pool.get('chat-unavailable')).toBe(old);
       expect(old.dispose).not.toHaveBeenCalled();
@@ -573,13 +573,13 @@ describe('ChatSessionPool', () => {
 
     it('contains a failed backend factory/probe and retains the old session', () => {
       const pool = new ChatSessionPool({
-        agentPresets: presets,
-        validatePresetBackend: () => {
+        agentRuntimes: presets,
+        validateRuntimeBackend: () => {
           throw new Error('token=private-backend-detail');
         },
       });
       const old = pool.getOrCreateChatAgent('chat-probe-failed', createMockCallbacks());
-      const result = pool.switchAgentPreset('chat-probe-failed', 'fast');
+      const result = pool.switchAgentRuntime('chat-probe-failed', 'fast');
       expect(result).toMatchObject({
         ok: false,
         error: expect.stringContaining('current session is unchanged'),
@@ -591,27 +591,27 @@ describe('ChatSessionPool', () => {
 
     it('preserves the old agent when candidate construction fails', () => {
       const pool = new ChatSessionPool({
-        agentPresets: presets,
-        validatePresetBackend: () => ({ available: true }),
+        agentRuntimes: presets,
+        validateRuntimeBackend: () => ({ available: true }),
       });
       const old = pool.getOrCreateChatAgent('chat-fail', createMockCallbacks());
       vi.mocked(AgentFactory.createChatAgent).mockImplementationOnce(() => {
         throw new Error('candidate rejected');
       });
 
-      expect(pool.switchAgentPreset('chat-fail', 'fast')).toEqual({
+      expect(pool.switchAgentRuntime('chat-fail', 'fast')).toEqual({
         ok: false,
-        error: 'Could not activate agent preset "fast": candidate rejected',
+        error: 'Could not activate agent runtime "fast": candidate rejected',
       });
       expect(old.dispose).not.toHaveBeenCalled();
       expect(pool.get('chat-fail')).toBe(old);
-      expect(pool.getActiveAgentPreset('chat-fail')?.name).toBe('default');
+      expect(pool.getActiveAgentRuntime('chat-fail')?.name).toBe('default');
     });
 
     it('releases evicted callbacks while preserving the selected preset', () => {
       const pool = new ChatSessionPool({
-        agentPresets: presets,
-        validatePresetBackend: () => ({ available: true }),
+        agentRuntimes: presets,
+        validateRuntimeBackend: () => ({ available: true }),
         idleTimeoutMs: 1,
       });
       const oldCallbacks = createMockCallbacks();
@@ -620,7 +620,7 @@ describe('ChatSessionPool', () => {
 
       // With no live agent/callback, switching records the next-session choice
       // but must not construct a candidate using the stale channel closure.
-      expect(pool.switchAgentPreset('chat-evicted', 'fast')).toMatchObject({
+      expect(pool.switchAgentRuntime('chat-evicted', 'fast')).toMatchObject({
         ok: true,
         active: { name: 'fast' },
       });
@@ -634,22 +634,22 @@ describe('ChatSessionPool', () => {
         newCallbacks,
         expect.objectContaining({ model: 'claude-haiku' })
       );
-      expect(pool.getActiveAgentPreset('chat-evicted')?.name).toBe('fast');
+      expect(pool.getActiveAgentRuntime('chat-evicted')?.name).toBe('fast');
     });
 
     it('releases reset callbacks while preserving the selected preset', () => {
       const pool = new ChatSessionPool({
-        agentPresets: presets,
-        validatePresetBackend: () => ({ available: true }),
+        agentRuntimes: presets,
+        validateRuntimeBackend: () => ({ available: true }),
       });
       pool.getOrCreateChatAgent('chat-reset', createMockCallbacks());
-      expect(pool.switchAgentPreset('chat-reset', 'fast')).toMatchObject({ ok: true });
+      expect(pool.switchAgentRuntime('chat-reset', 'fast')).toMatchObject({ ok: true });
       pool.reset('chat-reset');
 
       const callsBeforeSelection = vi.mocked(AgentFactory.createChatAgent).mock.calls.length;
-      expect(pool.switchAgentPreset('chat-reset', 'fast')).toMatchObject({ ok: true });
+      expect(pool.switchAgentRuntime('chat-reset', 'fast')).toMatchObject({ ok: true });
       expect(AgentFactory.createChatAgent).toHaveBeenCalledTimes(callsBeforeSelection);
-      expect(pool.getActiveAgentPreset('chat-reset')?.name).toBe('fast');
+      expect(pool.getActiveAgentRuntime('chat-reset')?.name).toBe('fast');
     });
   });
 
@@ -664,21 +664,21 @@ describe('ChatSessionPool', () => {
       { name: 'default', backend: 'claude' as const, model: 'claude-opus-4-6' },
       { name: 'native', backend: 'codex' as const, model: 'gpt-6-codex' },
     ])('validates and creates an isolated execution with the requested %s runtime', ({ name, backend, model }) => {
-      const validatePresetBackend = vi.fn().mockReturnValue({ available: true });
-      const pool = new ChatSessionPool({ agentPresets: harnessPresets, validatePresetBackend });
+      const validateRuntimeBackend = vi.fn().mockReturnValue({ available: true });
+      const pool = new ChatSessionPool({ agentRuntimes: harnessPresets, validateRuntimeBackend });
       try {
         const callbacks = createMockCallbacks();
         const user = pool.getOrCreateChatAgent('chat-harness', callbacks);
-        expect(pool.switchAgentPreset('chat-harness', 'fast')).toMatchObject({ ok: true });
+        expect(pool.switchAgentRuntime('chat-harness', 'fast')).toMatchObject({ ok: true });
         vi.mocked(AgentFactory.createChatAgent).mockClear();
-        validatePresetBackend.mockClear();
+        validateRuntimeBackend.mockClear();
 
         const task = pool.getOrCreateChatAgent('chat-harness', callbacks, undefined, {
           id: `execution:${name}`, harness: name, model, skipHistory: true, releaseAfterTurn: true,
         });
 
         expect(task).not.toBe(user);
-        expect(validatePresetBackend).toHaveBeenCalledExactlyOnceWith(backend, {
+        expect(validateRuntimeBackend).toHaveBeenCalledExactlyOnceWith(backend, {
           apiKey: 'test-key', model, apiProtocol: 'anthropic',
         });
         expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith(
@@ -692,16 +692,16 @@ describe('ChatSessionPool', () => {
         );
         pool.releaseChatAgent('chat-harness', `execution:${name}`, task);
         expect(pool.get('chat-harness')).not.toBe(user);
-        expect(pool.getActiveAgentPreset('chat-harness')?.name).toBe('fast');
+        expect(pool.getActiveAgentRuntime('chat-harness')?.name).toBe('fast');
       } finally { pool.disposeAll(); }
     });
 
     it('preserves the chat binding and the default runtime around a borrowed harness', () => {
-      const pool = new ChatSessionPool({ agentPresets: harnessPresets, validatePresetBackend: () => ({ available: true }) });
+      const pool = new ChatSessionPool({ agentRuntimes: harnessPresets, validateRuntimeBackend: () => ({ available: true }) });
       try {
         const callbacks = createMockCallbacks();
         const defaultUser = pool.getOrCreateChatAgent('chat-binding', callbacks);
-        expect(pool.switchAgentPreset('chat-binding', 'fast')).toMatchObject({ ok: true });
+        expect(pool.switchAgentRuntime('chat-binding', 'fast')).toMatchObject({ ok: true });
         const fastUser = pool.getOrCreateChatAgent('chat-binding', callbacks);
         expect(fastUser).not.toBe(defaultUser);
 
@@ -721,22 +721,22 @@ describe('ChatSessionPool', () => {
 
         expect(pool.get('chat-binding')).toBe(fastUser);
         expect(fastUser.dispose).not.toHaveBeenCalled();
-        expect(pool.getActiveAgentPreset('chat-binding')?.name).toBe('fast');
+        expect(pool.getActiveAgentRuntime('chat-binding')?.name).toBe('fast');
         const otherChat = pool.getOrCreateChatAgent('chat-global', callbacks);
         expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith(
           'pilot', 'chat-global', callbacks,
           expect.objectContaining({ agentBackend: 'claude', model: 'claude-sonnet' }),
         );
-        expect(pool.getActiveAgentPreset('chat-global')?.name).toBe('default');
+        expect(pool.getActiveAgentRuntime('chat-global')?.name).toBe('default');
         expect(otherChat).toBeDefined();
       } finally { pool.disposeAll(); }
     });
 
     it('validates the model with the selected harness rules, not the chat binding', () => {
-      const pool = new ChatSessionPool({ agentPresets: harnessPresets, validatePresetBackend: () => ({ available: true }) });
+      const pool = new ChatSessionPool({ agentRuntimes: harnessPresets, validateRuntimeBackend: () => ({ available: true }) });
       try {
         const callbacks = createMockCallbacks();
-        expect(pool.switchAgentPreset('chat-model-rules', 'native')).toMatchObject({ ok: true });
+        expect(pool.switchAgentRuntime('chat-model-rules', 'native')).toMatchObject({ ok: true });
         pool.getOrCreateChatAgent('chat-model-rules', callbacks);
         vi.mocked(AgentFactory.createChatAgent).mockClear();
 
@@ -753,7 +753,7 @@ describe('ChatSessionPool', () => {
           id: 'execution:codex-model', harness: 'native', model: 'claude-sonnet-4-5', releaseAfterTurn: true,
         })).toThrow(/Codex\/ChatGPT model identifier/);
         expect(pool.get('chat-model-rules', 'execution:codex-model')).toBeUndefined();
-        expect(pool.getActiveAgentPreset('chat-model-rules')?.name).toBe('native');
+        expect(pool.getActiveAgentRuntime('chat-model-rules')?.name).toBe('native');
       } finally { pool.disposeAll(); }
     });
 
@@ -762,8 +762,8 @@ describe('ChatSessionPool', () => {
       ['with an unconfigured name', harnessPresets],
     ])('rejects an unknown harness explicitly %s', (_case, presets) => {
       const pool = new ChatSessionPool({
-        ...(presets ? { agentPresets: presets } : {}),
-        validatePresetBackend: () => ({ available: true }),
+        ...(presets ? { agentRuntimes: presets } : {}),
+        validateRuntimeBackend: () => ({ available: true }),
       });
       try {
         expect(() => pool.getOrCreateChatAgent('chat-unknown', createMockCallbacks(), undefined, {
@@ -773,15 +773,15 @@ describe('ChatSessionPool', () => {
         expect(pool.get('chat-unknown')).toBeUndefined();
         expect(pool.get('chat-unknown', 'execution:unknown')).toBeUndefined();
         if (presets) {
-          expect(pool.getActiveAgentPreset('chat-unknown')?.name).toBe('default');
+          expect(pool.getActiveAgentRuntime('chat-unknown')?.name).toBe('default');
         }
       } finally { pool.disposeAll(); }
     });
 
     it('rejects an unavailable harness before creating or recording any execution state', () => {
       const pool = new ChatSessionPool({
-        agentPresets: harnessPresets,
-        validatePresetBackend: (_backend, config) => config.model === 'gpt-6-luna'
+        agentRuntimes: harnessPresets,
+        validateRuntimeBackend: (_backend, config) => config.model === 'gpt-6-luna'
           ? { available: false, unavailableReason: 'ChatGPT login required' }
           : { available: true },
       });
@@ -805,17 +805,17 @@ describe('ChatSessionPool', () => {
       const selections = new AgentSelectionStore(join(root, 'agent-selections.json'));
       selections.set('chat-model-only', 'native', 'tester');
       const pool = new ChatSessionPool({
-        agentPresets: harnessPresets,
+        agentRuntimes: harnessPresets,
         agentSelections: selections,
-        validatePresetBackend: () => ({ available: true }),
+        validateRuntimeBackend: () => ({ available: true }),
       });
       try {
         const callbacks = createMockCallbacks();
-        expect(pool.getActiveAgentPreset('chat-model-only')?.name).toBe('native');
+        expect(pool.getActiveAgentRuntime('chat-model-only')?.name).toBe('native');
 
         expect(() => pool.getOrCreateChatAgent('chat-model-only', callbacks, undefined, {
           id: 'execution:bad-model', model: 'claude-sonnet-4-5', releaseAfterTurn: true,
-        })).toThrow(/Invalid scheduled model override for agent preset "native": .*Codex\/ChatGPT model identifier/);
+        })).toThrow(/Invalid scheduled model override for agent runtime "native": .*Codex\/ChatGPT model identifier/);
         expect(AgentFactory.createChatAgent).not.toHaveBeenCalled();
         expect(pool.get('chat-model-only', 'execution:bad-model')).toBeUndefined();
         expect(selections.get('chat-model-only')?.presetName).toBe('native');
@@ -828,7 +828,7 @@ describe('ChatSessionPool', () => {
           expect.objectContaining({ agentBackend: 'codex', model: 'gpt-6-codex' }),
         );
         pool.releaseChatAgent('chat-model-only', 'execution:gpt-model', task);
-        expect(pool.getActiveAgentPreset('chat-model-only')?.name).toBe('native');
+        expect(pool.getActiveAgentRuntime('chat-model-only')?.name).toBe('native');
       } finally { pool.disposeAll(); rmSync(root, { recursive: true, force: true }); }
     });
 
@@ -837,10 +837,10 @@ describe('ChatSessionPool', () => {
       const selections = new AgentSelectionStore(join(root, 'agent-selections.json'));
       selections.set('chat-saved', 'native', 'tester');
       const pool = new ChatSessionPool({
-        agentPresets: harnessPresets,
+        agentRuntimes: harnessPresets,
         agentSelections: selections,
-        defaultAgentPresetForChat: (chatId) => (chatId === 'chat-per-app' ? 'fast' : undefined),
-        validatePresetBackend: () => ({ available: true }),
+        defaultAgentRuntimeForChat: (chatId) => (chatId === 'chat-per-app' ? 'fast' : undefined),
+        validateRuntimeBackend: () => ({ available: true }),
       });
       const callbacks = createMockCallbacks();
       const expectExecBackend = (chatId: string, backend: string, model: string) => {
@@ -856,7 +856,7 @@ describe('ChatSessionPool', () => {
       try {
         // saved choice (native) decides the chat's runs — the per-app default
         // is only set for chat-per-app, so it must not leak in here
-        expect(pool.getActiveAgentPreset('chat-saved')?.name).toBe('native');
+        expect(pool.getActiveAgentRuntime('chat-saved')?.name).toBe('native');
         expectExecBackend('chat-saved', 'codex', 'gpt-6-luna');
         // per-app default when the chat has no saved choice
         expectExecBackend('chat-per-app', 'claude', 'claude-haiku');
@@ -864,7 +864,7 @@ describe('ChatSessionPool', () => {
         expectExecBackend('chat-global-default', 'claude', 'claude-sonnet');
         // a later /agent use switch persists chat-wide (#5702) and the next
         // scoped execution follows the saved choice
-        expect(pool.switchAgentPreset('chat-saved', 'fast')).toMatchObject({ ok: true });
+        expect(pool.switchAgentRuntime('chat-saved', 'fast')).toMatchObject({ ok: true });
         expect(selections.get('chat-saved')?.presetName).toBe('fast');
         expectExecBackend('chat-saved', 'claude', 'claude-haiku');
       } finally { pool.disposeAll(); rmSync(root, { recursive: true, force: true }); }
@@ -875,9 +875,9 @@ describe('ChatSessionPool', () => {
       const selections = new AgentSelectionStore(join(root, 'agent-selections.json'));
       selections.set('chat-borrow', 'native', 'tester');
       const pool = new ChatSessionPool({
-        agentPresets: harnessPresets,
+        agentRuntimes: harnessPresets,
         agentSelections: selections,
-        validatePresetBackend: () => ({ available: true }),
+        validateRuntimeBackend: () => ({ available: true }),
       });
       try {
         const callbacks = createMockCallbacks();
@@ -890,7 +890,7 @@ describe('ChatSessionPool', () => {
         );
         pool.releaseChatAgent('chat-borrow', 'execution:borrow-fast', borrowed);
 
-        expect(pool.getActiveAgentPreset('chat-borrow')?.name).toBe('native');
+        expect(pool.getActiveAgentRuntime('chat-borrow')?.name).toBe('native');
         expect(selections.get('chat-borrow')?.presetName).toBe('native');
         const next = pool.getOrCreateChatAgent('chat-borrow', callbacks, undefined, {
           id: 'execution:chain-again', releaseAfterTurn: true,
@@ -1778,6 +1778,325 @@ describe('ChatSessionPool', () => {
     it('chatIdOfSessionKey inverts buildSessionKey', () => {
       expect(chatIdOfSessionKey('oc_topic')).toBe('oc_topic');
       expect(chatIdOfSessionKey('oc_topic::om_threadA')).toBe('oc_topic');
+    });
+  });
+});
+
+describe('ChatSessionPool orthogonal dimension switches (Issue #5255)', () => {
+  const mixedPresets = {
+    default: {
+      apiKey: 'k-claude', llm: 'direct', agentBackend: 'claude' as const,
+      model: 'claude-sonnet', apiProtocol: 'anthropic' as const,
+    },
+    fast: {
+      apiKey: 'k-fast', llm: 'direct', agentBackend: 'pi' as const,
+      model: 'glm-flash', apiProtocol: 'anthropic' as const,
+    },
+  };
+  const okBackend = () => ({ available: true });
+
+  it('switches only the backend and keeps the model dimension of the preset', () => {
+    const validateRuntimeBackend = vi.fn().mockReturnValue({ available: true });
+    const pool = new ChatSessionPool({ agentRuntimes: mixedPresets, validateRuntimeBackend });
+    const callbacks = createMockCallbacks();
+    const old = pool.getOrCreateChatAgent('chat-ortho', callbacks);
+    try {
+      expect(pool.switchAgentBackend('chat-ortho', 'pi')).toEqual({
+        ok: true,
+        active: { name: 'default', agentBackend: 'pi', model: 'claude-sonnet', backendOverride: 'pi' },
+        sessionBoundary: 'new-session',
+      });
+      // new native session semantics: the old agent is disposed and the
+      // replacement is constructed fresh with skipHistory
+      expect(old.dispose).toHaveBeenCalledOnce();
+      expect(validateRuntimeBackend).toHaveBeenLastCalledWith('pi', {
+        apiKey: 'test-key', model: 'claude-sonnet', apiProtocol: 'anthropic',
+      });
+      expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith(
+        'pilot', 'chat-ortho', callbacks,
+        expect.objectContaining({ agentBackend: 'pi', model: 'claude-sonnet', skipHistory: true, sdkSessionKey: 'chat-ortho' })
+      );
+      expect(pool.getActiveAgentRuntime('chat-ortho')).toEqual({
+        name: 'default', agentBackend: 'pi', model: 'claude-sonnet', backendOverride: 'pi',
+      });
+    } finally { pool.disposeAll(); }
+  });
+
+  it('composes a dimension override onto the chat\'s saved /agent use choice and clears it on the next use (#5255 × #5476)', () => {
+    // The saved store mimics AgentSelectionStore's read surface only.
+    const saved = new Map<string, { presetName: string; updatedAt: string; actorId: string }>();
+    const selections = {
+      get: (chatId: string) => saved.get(chatId),
+      set: (chatId: string, presetName: string, actorId: string) => {
+        saved.set(chatId, { presetName, updatedAt: new Date().toISOString(), actorId });
+      },
+    };
+    const pool = new ChatSessionPool({
+      agentRuntimes: mixedPresets,
+      validateRuntimeBackend: okBackend,
+      agentSelections: selections as never,
+    });
+    const callbacks = createMockCallbacks();
+    pool.getOrCreateChatAgent('chat-saved', callbacks);
+    try {
+      // A saved `fast` (pi / glm-flash) choice is the base for a NEW session
+      // of the same chat, and the backend override composes onto it.
+      expect(pool.switchAgentRuntime('chat-saved', 'fast', undefined, undefined, 'ou_op')).toMatchObject({ ok: true });
+      expect(saved.get('chat-saved')?.presetName).toBe('fast');
+      expect(pool.switchAgentModel('chat-saved', 'glm-5.3')).toMatchObject({
+        ok: true,
+        active: { name: 'fast', agentBackend: 'pi', model: 'glm-5.3', modelOverride: 'glm-5.3' },
+      });
+      // `use` sets both dimensions at once: the model override is superseded.
+      expect(pool.switchAgentRuntime('chat-saved', 'default')).toMatchObject({
+        ok: true,
+        active: { name: 'default', agentBackend: 'claude', model: 'claude-sonnet' },
+      });
+      expect(pool.getActiveAgentRuntime('chat-saved')).toEqual({
+        name: 'default', agentBackend: 'claude', model: 'claude-sonnet',
+      });
+    } finally { pool.disposeAll(); }
+  });
+
+  it('stacks a model switch on top of a backend override', () => {
+    const pool = new ChatSessionPool({ agentRuntimes: mixedPresets, validateRuntimeBackend: okBackend });
+    const callbacks = createMockCallbacks();
+    pool.getOrCreateChatAgent('chat-stack', callbacks);
+    try {
+      expect(pool.switchAgentBackend('chat-stack', 'pi')).toMatchObject({ ok: true });
+      expect(pool.switchAgentModel('chat-stack', 'glm-5.3')).toEqual({
+        ok: true,
+        active: {
+          name: 'default', agentBackend: 'pi', model: 'glm-5.3',
+          backendOverride: 'pi', modelOverride: 'glm-5.3',
+        },
+        sessionBoundary: 'new-session',
+      });
+      expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith(
+        'pilot', 'chat-stack', callbacks,
+        expect.objectContaining({ agentBackend: 'pi', model: 'glm-5.3', skipHistory: true })
+      );
+    } finally { pool.disposeAll(); }
+  });
+
+  it('answers an incompatible backend with the binding-compatible options, keeping the session', () => {
+    const openaiPresets = {
+      glm: { apiKey: 'k', llm: 'glm', agentBackend: 'pi' as const, model: 'glm-5', apiProtocol: 'openai' as const },
+    };
+    const pool = new ChatSessionPool({ agentRuntimes: openaiPresets, validateRuntimeBackend: okBackend });
+    const old = pool.getOrCreateChatAgent('chat-openai', createMockCallbacks());
+    const created = vi.mocked(AgentFactory.createChatAgent).mock.calls.length;
+    try {
+      const rejected = pool.switchAgentBackend('chat-openai', 'claude');
+      expect(rejected).toMatchObject({
+        ok: false,
+        error: expect.stringContaining('anthropic-protocol'),
+        // #5338: the OpenAI-protocol binding can also serve codex (#5006's
+        // miniswe needs a baseUrl and stays out).
+        options: ['pi', 'codex'],
+      });
+      expect(old.dispose).not.toHaveBeenCalled();
+      expect(pool.get('chat-openai')).toBe(old);
+      expect(AgentFactory.createChatAgent).toHaveBeenCalledTimes(created);
+      expect(pool.getActiveAgentRuntime('chat-openai')).toEqual({
+        name: 'glm', agentBackend: 'pi', model: 'glm-5',
+      });
+    } finally { pool.disposeAll(); }
+  });
+
+  it('rejects an unknown backend with the full switchable list', () => {
+    const pool = new ChatSessionPool({ agentRuntimes: mixedPresets, validateRuntimeBackend: okBackend });
+    try {
+      // miniswe joined the switchable domain in main (#5006); a genuinely
+      // unknown value still gets the full list.
+      expect(pool.switchAgentBackend('chat-unknown', 'nope' as 'claude')).toMatchObject({
+        ok: false,
+        error: expect.stringContaining('Unknown agent backend'),
+        options: ['claude', 'pi', 'codex', 'dsh', 'miniswe'],
+      });
+    } finally { pool.disposeAll(); }
+  });
+
+  it('validates codex model ids against the effective backend and offers preset models', () => {
+    const codexPresets = {
+      default: { apiKey: '', llm: 'native', agentBackend: 'codex' as const, model: 'gpt-5.6' },
+      claudeAlt: { apiKey: 'k', llm: 'direct', agentBackend: 'claude' as const, model: 'claude-sonnet', apiProtocol: 'anthropic' as const },
+    };
+    const pool = new ChatSessionPool({ agentRuntimes: codexPresets, validateRuntimeBackend: okBackend });
+    try {
+      const rejected = pool.switchAgentModel('chat-codex', 'claude-sonnet');
+      expect(rejected).toMatchObject({
+        ok: false,
+        error: expect.stringContaining('not a valid codex model identifier'),
+        // only the models usable on the codex dimension are offered
+        options: ['gpt-5.6'],
+      });
+      expect(pool.switchAgentModel('chat-codex', 'gpt-6-luna')).toEqual({
+        ok: true,
+        active: { name: 'default', agentBackend: 'codex', model: 'gpt-6-luna', modelOverride: 'gpt-6-luna' },
+        sessionBoundary: 'new-session',
+      });
+      // choice recorded before any agent existed: first creation composes it
+      pool.getOrCreateChatAgent('chat-codex', createMockCallbacks());
+      expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith(
+        'pilot', 'chat-codex',
+        expect.anything(),
+        expect.objectContaining({ agentBackend: 'codex', model: 'gpt-6-luna', skipHistory: true })
+      );
+    } finally { pool.disposeAll(); }
+  });
+
+  it('treats /agent use as setting both dimensions and clears the overrides', () => {
+    const pool = new ChatSessionPool({ agentRuntimes: mixedPresets, validateRuntimeBackend: okBackend });
+    const callbacks = createMockCallbacks();
+    pool.getOrCreateChatAgent('chat-use', callbacks);
+    try {
+      expect(pool.switchAgentBackend('chat-use', 'pi')).toMatchObject({ ok: true });
+      expect(pool.switchAgentModel('chat-use', 'glm-5.3')).toMatchObject({ ok: true });
+      expect(pool.switchAgentRuntime('chat-use', 'fast')).toEqual({
+        ok: true,
+        active: { name: 'fast', agentBackend: 'pi', model: 'glm-flash' },
+        sessionBoundary: 'new-session',
+      });
+      expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith(
+        'pilot', 'chat-use', callbacks,
+        expect.objectContaining({ agentBackend: 'pi', model: 'glm-flash' })
+      );
+      // switching a dimension back to the preset value clears the override
+      expect(pool.switchAgentModel('chat-use', 'glm-flash')).toEqual({
+        ok: true,
+        active: { name: 'fast', agentBackend: 'pi', model: 'glm-flash' },
+        sessionBoundary: 'new-session',
+      });
+      expect(pool.getActiveAgentRuntime('chat-use')).toEqual({ name: 'fast', agentBackend: 'pi', model: 'glm-flash' });
+    } finally { pool.disposeAll(); }
+  });
+
+  it('recomposes the overrides when the agent is rebuilt after reset', () => {
+    const pool = new ChatSessionPool({ agentRuntimes: mixedPresets, validateRuntimeBackend: okBackend });
+    expect(pool.switchAgentModel('chat-rebuild', 'glm-5.3')).toMatchObject({ ok: true });
+    const first = pool.getOrCreateChatAgent('chat-rebuild', createMockCallbacks());
+    expect(first).toBeDefined();
+    pool.reset('chat-rebuild');
+    pool.getOrCreateChatAgent('chat-rebuild', createMockCallbacks());
+    expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith(
+      'pilot', 'chat-rebuild',
+      expect.anything(),
+      expect.objectContaining({ agentBackend: 'claude', model: 'glm-5.3' })
+    );
+    pool.disposeAll();
+  });
+
+  it('keeps the dimensions across idle eviction', () => {
+    const pool = new ChatSessionPool({
+      agentRuntimes: mixedPresets, validateRuntimeBackend: okBackend, idleTimeoutMs: 1,
+    });
+    pool.getOrCreateChatAgent('chat-evict-ortho', createMockCallbacks());
+    pool.evictIdleAgents(Date.now() + 100);
+    expect(pool.switchAgentBackend('chat-evict-ortho', 'pi')).toMatchObject({ ok: true });
+    expect(pool.switchAgentModel('chat-evict-ortho', 'glm-5.3')).toMatchObject({ ok: true });
+    const fresh = createMockCallbacks();
+    pool.getOrCreateChatAgent('chat-evict-ortho', fresh);
+    expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith(
+      'pilot', 'chat-evict-ortho', fresh,
+      expect.objectContaining({ agentBackend: 'pi', model: 'glm-5.3' })
+    );
+    pool.disposeAll();
+  });
+
+  describe('singleton default without an agents: map', () => {
+    const withSingleton = (
+      impl: (options: AgentCreateOptions) => ReturnType<typeof AgentFactory.resolveConfig>,
+      run: () => void
+    ): void => {
+      const mock = vi.mocked(AgentFactory.resolveConfig);
+      const original = mock.getMockImplementation();
+      mock.mockImplementation((options: AgentCreateOptions = {}) => impl(options));
+      try { run(); } finally { mock.mockImplementation(original!); }
+    };
+
+    it('switches the model dimension with the singleton as the base value', () => {
+      withSingleton(
+        (options) => ({
+          apiKey: 'singleton-key',
+          model: options.model ?? 'claude-sonnet',
+          agentBackend: options.agentBackend ?? 'claude',
+          permissionMode: 'bypassPermissions',
+        }),
+        () => {
+          const pool = new ChatSessionPool({ validateRuntimeBackend: okBackend });
+          try {
+            expect(pool.switchAgentModel('solo-model', 'claude-opus-4')).toEqual({
+              ok: true,
+              active: { name: 'default', agentBackend: 'claude', model: 'claude-opus-4', modelOverride: 'claude-opus-4' },
+              sessionBoundary: 'new-session',
+            });
+            pool.getOrCreateChatAgent('solo-model', createMockCallbacks());
+            expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith(
+              'pilot', 'solo-model',
+              expect.anything(),
+              expect.objectContaining({ model: 'claude-opus-4', skipHistory: true })
+            );
+          } finally { pool.disposeAll(); }
+        }
+      );
+    });
+
+    it('switches the backend dimension carrying the singleton llm binding', () => {
+      withSingleton(
+        (options) => ({
+          apiKey: 'singleton-key',
+          model: options.model ?? 'claude-sonnet',
+          apiProtocol: options.apiProtocol ?? 'anthropic',
+          agentBackend: options.agentBackend ?? 'claude',
+          permissionMode: 'bypassPermissions',
+        }),
+        () => {
+          const pool = new ChatSessionPool({ validateRuntimeBackend: okBackend });
+          try {
+            expect(pool.switchAgentBackend('solo-backend', 'pi')).toEqual({
+              ok: true,
+              active: { name: 'default', agentBackend: 'pi', model: 'claude-sonnet', backendOverride: 'pi' },
+              sessionBoundary: 'new-session',
+            });
+            pool.getOrCreateChatAgent('solo-backend', createMockCallbacks());
+            expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith(
+              'pilot', 'solo-backend',
+              expect.anything(),
+              expect.objectContaining({ agentBackend: 'pi', model: 'claude-sonnet' })
+            );
+          } finally { pool.disposeAll(); }
+        }
+      );
+    });
+
+    it('refuses an api-dependent backend from a codex singleton and lists what works', () => {
+      withSingleton(
+        (options) => ({
+          apiKey: '',
+          model: options.model ?? 'gpt-5.6',
+          agentBackend: options.agentBackend ?? 'codex',
+          permissionMode: 'bypassPermissions',
+        }),
+        () => {
+          const pool = new ChatSessionPool({ validateRuntimeBackend: okBackend });
+          try {
+            expect(pool.switchAgentBackend('solo-codex', 'pi')).toMatchObject({
+              ok: false,
+              error: expect.stringContaining('api connection'),
+              options: ['codex'],
+            });
+            expect(pool.getActiveAgentRuntime('solo-codex')).toEqual({
+              name: 'default', agentBackend: 'codex', model: 'gpt-5.6',
+            });
+            // /agent use keeps requiring a configured preset map
+            expect(pool.switchAgentRuntime('solo-codex', 'fast')).toMatchObject({
+              ok: false,
+              error: expect.stringContaining('No named agent runtimes are configured'),
+            });
+          } finally { pool.disposeAll(); }
+        }
+      );
     });
   });
 });

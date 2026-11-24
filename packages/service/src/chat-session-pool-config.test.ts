@@ -12,21 +12,23 @@ describe('preset switching with real configuration and providers', () => {
     const root = mkdtempSync(join(tmpdir(), 'disclaude-preset-config-'));
     try {
       const configPath = join(root, 'config.yaml');
+      // Issue #5255 r4: `agents:` entries are keyed by harness name — the
+      // same name space the orthogonal selection uses. The default marker
+      // rides on the harness entry itself; there is no separate preset name.
       writeFileSync(
         configPath,
         JSON.stringify({
           workspace: { dir: root },
           logging: { level: 'silent' },
           agents: {
-            native: {
-              backend,
+            [backend]: {
               llm: 'native',
               default: true,
               ...(backend === 'dsh' ? { mode: 'minimal', dshHome: join(root, 'dsh-home') } : {}),
             },
-            proxy: { backend: 'claude', llm: 'proxy' },
-            direct: { backend: 'claude', llm: 'direct' },
-            missing: { backend: 'claude', llm: 'missing' },
+            claude: { llm: 'proxy' },
+            pi: { llm: 'direct' },
+            miniswe: { llm: 'missing' },
           },
           llms: {
             native: {
@@ -49,11 +51,15 @@ describe('preset switching with real configuration and providers', () => {
             },
             direct: {
               defaultModel: 'sonnet',
-              api: { protocol: 'anthropic', baseUrl: 'http://127.0.0.1:2', apiKey: '$DIRECT_KEY' },
+              // OpenAI-protocol binding: pi serves either protocol and its
+              // model resolution requires the openai shape for aliases.
+              api: { protocol: 'openai', baseUrl: 'http://127.0.0.1:2', apiKey: '$DIRECT_KEY' },
             },
+            // Endpoint shape satisfies the miniswe binding matrix (protocol +
+            // baseUrl); the empty key is what the provider must reject.
             missing: {
               defaultModel: 'missing-model',
-              api: { protocol: 'anthropic', apiKey: '$MISSING_KEY' },
+              api: { protocol: 'anthropic', baseUrl: 'http://127.0.0.1:3', apiKey: '$MISSING_KEY' },
             },
           },
         })
@@ -67,7 +73,7 @@ describe('preset switching with real configuration and providers', () => {
         const callbacks = { sendMessage: async () => {}, sendCard: async () => {}, sendFile: async () => {} };
         try {
           if (Config.AGENT_BACKEND === 'dsh') {
-            const preset = Config.getAgentPresets().native;
+            const preset = Config.getAgentRuntimes().dsh;
             assert.equal(preset.mode, 'minimal');
             assert.equal(Config.DSH_MODE, 'minimal');
             assert.equal(Config.DSH_HOME, preset.dshHome);
@@ -82,28 +88,35 @@ describe('preset switching with real configuration and providers', () => {
           assert.equal(Config.getAgentConfig().reasoningEffort, 'max');
           assert.equal(Config.getAgentConfig().maxConcurrentSessions, 3);
           assert.equal(Config.getAgentConfig().llm, 'native');
-          const rejected = pool.switchAgentPreset('test-chat', 'missing');
+          assert.equal(pool.getActiveAgentRuntime('test-chat').name, Config.AGENT_BACKEND);
+          const rejected = pool.switchAgentRuntime('test-chat', 'miniswe');
           assert.equal(rejected.ok, false);
           assert.match(rejected.error, /credential/);
           assert.equal(pool.getOrCreateChatAgent('test-chat', callbacks), original);
-          assert.equal(pool.getActiveAgentPreset('test-chat').name, 'native');
+          assert.equal(pool.getActiveAgentRuntime('test-chat').name, Config.AGENT_BACKEND);
+          // Binding resolution of every harness key is provider-independent
+          // and asserted for all entries; only claude is positively SWITCHED,
+          // because pi/dsh/miniswe availability depends on harness binaries
+          // this suite's environments do not provision.
           for (const [name, key, endpoint] of [
-            ['proxy', 'selected-proxy-key', 'http://127.0.0.1:1'],
-            ['direct', 'selected-direct-key', 'http://127.0.0.1:2'],
+            ['claude', 'selected-proxy-key', 'http://127.0.0.1:1'],
+            ['pi', 'selected-direct-key', 'http://127.0.0.1:2'],
           ]) {
-            const selected = AgentFactory.resolveConfig(Config.getAgentPresets()[name]);
+            const selected = AgentFactory.resolveConfig(Config.getAgentRuntimes()[name]);
             assert.equal(selected.apiKey, key);
             assert.equal(selected.apiBaseUrl, endpoint);
-            assert.equal(getProvider('claude').getInfo(selected).available, true);
-            assert.equal(pool.switchAgentPreset('test-chat', name).ok, true);
-            assert.equal(pool.getActiveAgentPreset('test-chat').name, name);
           }
+          assert.equal(getProvider('claude').getInfo(
+            AgentFactory.resolveConfig(Config.getAgentRuntimes().claude)
+          ).available, true);
+          assert.equal(pool.switchAgentRuntime('test-chat', 'claude').ok, true);
+          assert.equal(pool.getActiveAgentRuntime('test-chat').name, 'claude');
           const current = pool.getOrCreateChatAgent('test-chat', callbacks);
-          const missingKey = pool.switchAgentPreset('test-chat', 'missing');
+          const missingKey = pool.switchAgentRuntime('test-chat', 'miniswe');
           assert.equal(missingKey.ok, false);
           assert.match(missingKey.error, /credential/);
           assert.equal(pool.getOrCreateChatAgent('test-chat', callbacks), current);
-          assert.equal(pool.getActiveAgentPreset('test-chat').name, 'direct');
+          assert.equal(pool.getActiveAgentRuntime('test-chat').name, 'claude');
           console.log('target-config-and-session-preservation: passed');
         } finally { pool.disposeAll(); }
       `;

@@ -12,7 +12,7 @@ it.each(['complete', 'submission-ack', 'board-read-ack', 'unknown-projection', '
     try {
       const config = join(root, 'config.json');
       writeFileSync(config, JSON.stringify({ workspace: { dir: root },
-        agents: { default: { backend: 'claude', llm: 'default' } },
+        agents: { claude: { llm: 'default' } },
         llms: { default: { defaultModel: 'offline-default', api: { protocol: 'anthropic', apiKey: '$TEST_LLM_DEFAULT_KEY' } } },
       }));
       const script = `

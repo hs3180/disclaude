@@ -270,14 +270,14 @@ describe('MessageHandler', () => {
       handler.clearClient();
     });
     it('routes agent-config card callbacks to the config card service without an agent turn (#4914)', async () => {
-      const switchAgentPreset = vi.fn().mockReturnValue({
+      const switchAgentRuntime = vi.fn().mockReturnValue({
         ok: true, active: { name: 'solo', agentBackend: 'pi', model: 'm1' }, sessionBoundary: 'new-session' as const,
       });
       const { handler } = createHandler({
         agentConfigAccess: () => ({
-          listPresets: () => [{ name: 'solo', agentBackend: 'pi', model: 'm1' }],
-          getActivePreset: () => ({ name: 'solo', agentBackend: 'pi', model: 'm1' }),
-          switchAgentPreset,
+          listRuntimes: () => [{ name: 'solo', agentBackend: 'pi', model: 'm1' }],
+          getActiveRuntime: () => ({ name: 'solo', agentBackend: 'pi', model: 'm1' }),
+          switchAgentRuntime,
         }),
       });
       const create = vi.fn((req: { data?: { receive_id?: string; content?: string } }) => Promise.resolve({
@@ -306,7 +306,7 @@ describe('MessageHandler', () => {
       }));
       await vi.waitFor(() => expect(patch).toHaveBeenCalledOnce());
       expect(String(patch.mock.calls[0][0].data.content)).toContain('已取消');
-      expect(switchAgentPreset).not.toHaveBeenCalled();
+      expect(switchAgentRuntime).not.toHaveBeenCalled();
       expect(mockState.emitMessage).not.toHaveBeenCalled();
       expect(mockState.sendMessage).not.toHaveBeenCalled();
       expect(mockState.logCardInteraction).not.toHaveBeenCalled();

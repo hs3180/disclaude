@@ -193,7 +193,7 @@ describe('tryHandleSlashCommand', () => {
     }, deps);
     expect(deps.emitControl).toHaveBeenCalledWith(expect.objectContaining({
       type: 'agent', chatId: 'oc_x', actorId: 'ou_user', sourceMessageId: 'om_source', threadRootId: 'om_topic',
-      data: { subcommand: 'use', preset: 'fast' },
+      data: { subcommand: 'use', harness: 'fast' },
     }));
   });
 
