@@ -12,10 +12,12 @@ const repo = fileURLToPath(new URL('../../../../', import.meta.url));
  * The scoped-* scenarios exercise host-supplied turn tools bound to the
  * goal's current authority and settlement. `pause` pauses through the control
  * port (main has no `/goal pause` command) and checks that the paused Goal
- * admits no new work from its old turn scope (#5591).
+ * admits no new work from its old turn scope (#5591). `blocked-resume` resumes
+ * a blocked Goal through the same control port (no new /goal) and checks that
+ * the resume re-checks host policy before round 2 is admitted (#5591).
  */
 it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', 'missing-project-stop', 'two-goals-stop',
-  'scoped-tools', 'scope-edit', 'scope-project', 'system-source', 'pause'])(
+  'scoped-tools', 'scope-edit', 'scope-project', 'system-source', 'pause', 'blocked-resume'])(
   'runs the single-entry Goal service through %s', scenario => {
     const root = mkdtempSync(join(tmpdir(), 'disclaude-goal-service-'));
     try {
@@ -59,7 +61,7 @@ it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', '
           'stop': ['continue'], 'close': ['continue', 'completed'], 'revoked': ['continue'],
           'missing-project-stop': ['continue'], 'two-goals-stop': ['continue', 'completed'],
           'scoped-tools': ['completed'], 'scope-edit': ['completed'], 'scope-project': ['completed'],
-          'pause': ['continue', 'completed'],
+          'pause': ['continue', 'completed'], 'blocked-resume': ['blocked', 'completed'],
         }[scenario];
         const parksRoundResult = ['stop', 'close', 'missing-project-stop', 'two-goals-stop', 'pause'].includes(scenario);
         // Runtime selection is pinned at each Goal's launch: only rounds of a
@@ -108,7 +110,7 @@ it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', '
           if (text.startsWith('Goal ')) notified.release(); return 'fixture-receipt';
         }, sendCard: async () => {}, sendFile: async () => {} };
         const options = { store, projectManager: manager, runtimeOptions: () => runtime, callbacks: () => callbacks,
-          ...(['scoped-tools','scope-edit','scope-project','pause'].includes(scenario)?{createTurnTools:scope=>{
+          ...(['scoped-tools','scope-edit','scope-project','pause','blocked-resume'].includes(scenario)?{createTurnTools:scope=>{
             scopes.push(scope);assert.equal(scope.source.actorId,'fixture-user');assert.equal(scope.source.chatId,'fixture-chat');
             assert.equal(scope.source.threadRootId,'fixture-topic');assert.equal(scope.runtimeOptions().model,'fixed-offline');
             assert.equal(scope.callbacks,callbacks);
@@ -221,6 +223,32 @@ it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', '
               assert.equal((await store.get(id)).status, 'completed'); assert.equal(queries.length, 2);
               assert.equal(scopes.length, 2); assert.equal(toolClosed, 2);
               await assert.rejects(scopes[1].authorize(), /active|changed/);
+            } else if (scenario === 'blocked-resume') {
+              // #5591: the resume action also admits blocked → active, so a blocked Goal
+              // can continue without a new /goal. The resume re-checks host
+              // policy against the current revision: a denied resume changes no
+              // record and starts no round; an allowed one admits round 2 under
+              // a new turn scope while the old scope refuses.
+              await notified.promise;
+              await waitFor(async () => !service.isBusy('fixture-chat') && (await statusOf(id)) === 'blocked', 'goal settlement to blocked');
+              assert.equal(queries.length, 1);
+              const resume = { goalId: id, expectedRevision: (await store.get(id)).revision, chatId: 'fixture-chat',
+                projectRoot: project, actorId: 'fixture-user', sourceMessageId: 'fixture-resume', chatType: 'topic', threadRootId: 'fixture-topic' };
+              allowed = false; const deniedBefore = policies.length;
+              await assert.rejects(service.start(resume, 'resume'), /authorized/); allowed = true;
+              assert.ok(policies.slice(deniedBefore).some(command => command.type === 'goal' && command.actorId === 'fixture-user'));
+              await waitFor(() => !service.isBusy('fixture-chat'));
+              assert.equal((await store.get(id)).status, 'blocked'); assert.equal((await store.get(id)).revision, resume.expectedRevision);
+              assert.equal(queries.length, 1);
+              // Only an allowed resume re-authorizes and admits the next round.
+              runtime.model = 'fixed-offline'; const before = policies.length;
+              const resumed = await service.start(resume, 'resume');
+              assert.equal(resumed.record.status, 'active'); assert.equal(resumed.record.revision, resume.expectedRevision + 1);
+              assert.ok(policies.slice(before).some(command => command.type === 'goal' && command.actorId === 'fixture-user'));
+              await waitFor(async () => !service.isBusy('fixture-chat') && (await statusOf(id)) === 'completed', 'resumed goal settlement');
+              assert.equal((await store.get(id)).status, 'completed'); assert.equal(queries.length, 2);
+              await assert.rejects(scopes[0].authorize(), /active|changed/);
+              await assert.rejects(scopes[1].authorize(), /active|changed/);
             } else {
               await notified.promise;
               const expected = ['revoked', 'scope-edit', 'scope-project'].includes(scenario) ? 'active'
@@ -260,7 +288,7 @@ it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', '
           }
           assert.ok(policies.every(command => command.chatType === 'topic'));
           if (scopes.length) {
-            const turns = scenario === 'pause' ? 2 : 1; // pause resumes into a second turn scope
+            const turns = ['pause', 'blocked-resume'].includes(scenario) ? 2 : 1; // both resume into a second turn scope
             assert.equal(scopes.length, turns); assert.equal(toolClosed, turns);
             await assert.rejects(scopes[0].authorize(), /active|changed|Project|authorized/);
           }
