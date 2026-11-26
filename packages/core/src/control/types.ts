@@ -94,6 +94,13 @@ export interface ControlHandlerContext {
     getActiveAgentRuntime?(chatId: string, threadRootId?: string):
       { name: string; agentBackend: string; model: string; backendOverride?: string; modelOverride?: string; reasoningEffort?: ReasoningEffort } | undefined;
     /**
+     * Issue #4913: read-only sourcing port — `'creation'` when the chat's
+     * persisted selection record carries a creation-time runtime declaration.
+     * The active runtime object itself never carries an origin field; the
+     * `/agent current` report asks here for its source line instead.
+     */
+    getAgentSelectionSource?(chatId: string): 'creation' | undefined;
+    /**
      * Switch the session's runtime and durably save the choice for the chat
      * (#5476). `backend` names an `agents:` harness entry; the optional
      * `model` rides as a session-scoped override when it differs from the

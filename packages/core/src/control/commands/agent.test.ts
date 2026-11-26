@@ -181,8 +181,37 @@ describe('/agent', () => {
     expect(result.success).toBe(true);
     expect(result.message).toContain('reasoning effort: high');
     // Origin is deliberately not a runtime field (#4913 r5): the active
-    // runtime object stays main's shape, so no source line is rendered here.
+    // runtime object stays main's shape, so any source line comes from the
+    // read-only port, never from the runtime object.
     expect(result.message).not.toContain('origin');
+  });
+
+  it('names the creation-time declaration as the source on /agent current without an origin field (#4913)', async () => {
+    const result = await handleAgent(
+      { type: 'agent', chatId: 'a', data: { subcommand: 'current' } },
+      context({
+        getActiveAgentRuntime: () => ({ name: 'codex', agentBackend: 'codex', model: 'gpt-5.3-codex', reasoningEffort: 'high' }),
+        getAgentSelectionSource: () => 'creation',
+      })
+    );
+    expect(result.success).toBe(true);
+    expect(result.message).toContain("Source: this chat's creation-time runtime declaration");
+    expect(result.message).toContain("the chat's creation-time runtime declaration, if any");
+    // The source line is read from the saved selection record via the port,
+    // not from an origin field on the active runtime object.
+    expect(result.message).not.toContain('origin');
+  });
+
+  it('omits the source line when the chat has no creation-time declaration or the node has no sourcing port', async () => {
+    const notDeclared = await handleAgent(
+      { type: 'agent', chatId: 'a', data: { subcommand: 'current' } },
+      context({ getAgentSelectionSource: () => undefined })
+    );
+    expect(notDeclared.success).toBe(true);
+    expect(notDeclared.message).not.toContain('Source:');
+    const noPort = await handleAgent({ type: 'agent', chatId: 'a', data: { subcommand: 'current' } }, context());
+    expect(noPort.success).toBe(true);
+    expect(noPort.message).not.toContain('Source:');
   });
 
   it('renders identically when effort is absent', async () => {

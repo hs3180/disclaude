@@ -727,6 +727,10 @@ export async function main(): Promise<void> {
       listAgentRuntimes: () => agentPool.listAgentRuntimes(),
       getActiveAgentRuntime: (chatId, threadRootId) =>
         agentPool.getActiveAgentRuntime(chatId, threadRootId),
+      // Issue #4913: the creation-time declaration lives in the chat's saved
+      // selection record, never on the active runtime object.
+      getAgentSelectionSource: (chatId) =>
+        agentSelections.get(chatId)?.declared ? 'creation' : undefined,
       switchAgentRuntime: (chatId, backend, model, threadRootId, actorId) =>
         agentPool.switchAgentRuntime(chatId, backend, model, threadRootId, actorId),
       // Issue #5255: orthogonal backend/model dimension switches.

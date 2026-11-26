@@ -1876,6 +1876,55 @@ describe('ChatSessionPool', () => {
       expect(pool.getActiveAgentRuntime('oc_tier')).not.toHaveProperty('reasoningEffort');
       pool.disposeAll();
     });
+
+    it('composes /agent backend|model switches onto the creation declaration without touching it (#4913 × #5255)', () => {
+      // A backend switch is only offered for an api-connected llm binding
+      // (main's backendLlmCompatibility), so this fixture carries apiProtocol.
+      const runtimes = {
+        default: { apiKey: 'test-key', llm: 'test', apiProtocol: 'anthropic' as const, agentBackend: 'claude' as const, model: 'claude-sonnet' },
+        codex: { apiKey: 'test-key', llm: 'test', apiProtocol: 'anthropic' as const, agentBackend: 'codex' as const, model: 'gpt-5.2-codex' },
+      };
+      const { store, selections } = fakeStore();
+      const pool = new ChatSessionPool({
+        agentRuntimes: runtimes,
+        agentSelections: store,
+        validateRuntimeBackend: () => ({ available: true }),
+      });
+      expect(pool.declareChatRuntimeProfile('oc_ortho', declaration, 'creator')).toMatchObject({ ok: true });
+      // /agent backend flips the backend dimension only: the declared model (not
+      // the raw `codex` entry's model) carries across, per main's
+      // composeSessionRuntime semantics; the declaration is the base being
+      // overridden, so its effort stays a backend-agnostic setting.
+      expect(pool.switchAgentBackend('oc_ortho', 'claude')).toMatchObject({
+        ok: true,
+        active: { agentBackend: 'claude', model: 'gpt-5.3-codex', reasoningEffort: 'high', backendOverride: 'claude' },
+        sessionBoundary: 'new-session',
+      });
+      pool.getOrCreateChatAgent('oc_ortho', createMockCallbacks());
+      expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith(
+        'pilot', 'oc_ortho', expect.anything(),
+        expect.objectContaining({ agentBackend: 'claude', model: 'gpt-5.3-codex', reasoningEffort: 'high' })
+      );
+      // /agent model compares against the declared model, not the entry's.
+      expect(pool.switchAgentModel('oc_ortho', 'claude-opus')).toMatchObject({
+        ok: true,
+        active: { agentBackend: 'claude', model: 'claude-opus', reasoningEffort: 'high', backendOverride: 'claude', modelOverride: 'claude-opus' },
+      });
+      // Naming the declared model again clears the model override while the
+      // backend switch stays: two independent dimensions.
+      expect(pool.switchAgentModel('oc_ortho', 'gpt-5.3-codex')).toMatchObject({
+        ok: true,
+        active: { agentBackend: 'claude', model: 'gpt-5.3-codex', backendOverride: 'claude' },
+      });
+      expect(pool.getActiveAgentRuntime('oc_ortho')).not.toHaveProperty('modelOverride');
+      // Session switches never rewrite the chat's record: the declaration stays
+      // the chat-level configuration, and another session of the same chat
+      // resolves straight back to it.
+      expect(selections.get('oc_ortho')).toMatchObject({ presetName: 'codex', declared: { model: 'gpt-5.3-codex', reasoningEffort: 'high' } });
+      expect(pool.getActiveAgentRuntime('oc_ortho', 'thread-2')).toMatchObject({ agentBackend: 'codex', model: 'gpt-5.3-codex', reasoningEffort: 'high' });
+      expect(pool.getActiveAgentRuntime('oc_ortho', 'thread-2')).not.toHaveProperty('backendOverride');
+      pool.disposeAll();
+    });
   });
 });
 
