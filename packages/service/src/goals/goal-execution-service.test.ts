@@ -209,6 +209,18 @@ it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', '
               delivery.release(); await paused.settlement;
               await waitFor(() => !service.isBusy('fixture-chat'));
               assert.equal((await store.get(id)).status, 'paused'); assert.equal(queries.length, 1);
+              // Only an explicit resume re-authorizes (fresh host policy check)
+              // and admits the next round under a new turn scope.
+              runtime.model = 'fixed-offline'; const before = policies.length;
+              const resumed = await service.start({ goalId: id, expectedRevision: (await store.get(id)).revision, chatId: 'fixture-chat',
+                projectRoot: project, actorId: 'fixture-user', sourceMessageId: 'fixture-launch', chatType: 'topic', threadRootId: 'fixture-topic' }, 'resume');
+              assert.equal(resumed.record.status, 'active');
+              assert.ok(policies.slice(before).some(command => command.type === 'goal' && command.actorId === 'fixture-user'));
+              await notified.promise;
+              await waitFor(async () => !service.isBusy('fixture-chat') && (await statusOf(id)) === 'completed', 'resumed goal settlement');
+              assert.equal((await store.get(id)).status, 'completed'); assert.equal(queries.length, 2);
+              assert.equal(scopes.length, 2); assert.equal(toolClosed, 2);
+              await assert.rejects(scopes[1].authorize(), /active|changed/);
             } else {
               await notified.promise;
               const expected = ['revoked', 'scope-edit', 'scope-project'].includes(scenario) ? 'active'
@@ -248,7 +260,8 @@ it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', '
           }
           assert.ok(policies.every(command => command.chatType === 'topic'));
           if (scopes.length) {
-            assert.equal(scopes.length, 1); assert.equal(toolClosed, 1);
+            const turns = scenario === 'pause' ? 2 : 1; // pause resumes into a second turn scope
+            assert.equal(scopes.length, turns); assert.equal(toolClosed, turns);
             await assert.rejects(scopes[0].authorize(), /active|changed|Project|authorized/);
           }
           assert.ok(sends.every(send => send.chat === 'fixture-chat' && send.topic === 'fixture-topic'));
