@@ -20,6 +20,8 @@ import { CooldownManager } from './cooldown-manager.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import { DEFAULT_TIMEZONE, type ScheduledTask } from './scheduled-task.js';
 import type { TaskFailureStore } from './task-failure-store.js';
+import type { OccurrenceStore } from './occurrence-store.js';
+import { reconcileStartup, type LifecycleEvidence } from './schedule-occurrence.js';
 import { MessageRoutingError, type MessageRouter as InputMessageRouter } from '../messaging/message-router.js';
 import { TurnSupersededError } from '../messaging/turn-superseded-error.js';
 import type { SystemMessage } from '../types/message.js';
@@ -391,6 +393,14 @@ export interface SchedulerOptions {
   jobFactory?: SchedulerJobFactory;
   /** Direct runner for command schedules; defaults to /bin/sh -c. */
   commandRunner?: CommandRunner;
+  /**
+   * Issue #5763: occurrence ledger. When wired, {@link Scheduler.start} records
+   * this lifetime's start and reconciles occurrences the previous lifetime may
+   * have straddled (provable-missed vs unknown), and {@link Scheduler.stop}
+   * persists the clean-stop instant that makes a later reconciliation provable.
+   * Optional; absent = previous behavior (no ledger, no reconciliation).
+   */
+  occurrenceStore?: OccurrenceStore;
 }
 
 /**
@@ -458,6 +468,8 @@ export class Scheduler {
   private readonly failureStore?: TaskFailureStore;
   /** Deduplicates repeated config alerts until a valid task load or removal. */
   private readonly reportedScheduleConfigFailures = new Map<string, string>();
+  /** Issue #5763: optional file-backed occurrence ledger. */
+  private readonly occurrenceStore?: OccurrenceStore;
 
   constructor(options: SchedulerOptions) {
     this.scheduleManager = options.scheduleManager;
@@ -467,12 +479,17 @@ export class Scheduler {
     this.jobFactory = options.jobFactory;
     this.failureStore = options.failureStore;
     this.commandRunner = options.commandRunner ?? defaultCommandRunner;
+    this.occurrenceStore = options.occurrenceStore;
     logger.info('Scheduler created');
   }
 
   /**
    * Start the scheduler.
    * Loads all enabled tasks and schedules them.
+   *
+   * Issue #5763: the start instant is captured BEFORE the first CronJob exists
+   * (addTask computes the next fire from "now"), then the lifecycle gap left by
+   * the previous lifetime is reconciled — see {@link reconcileOccurrences}.
    */
   async start(): Promise<void> {
     if (this.running) {
@@ -481,6 +498,7 @@ export class Scheduler {
     }
 
     this.running = true;
+    const startedAt = new Date().toISOString();
 
     // Load and schedule all enabled tasks
     const tasks = await this.scheduleManager.listEnabled();
@@ -488,7 +506,68 @@ export class Scheduler {
       await this.addTask(task);
     }
 
+    await this.reconcileOccurrences(startedAt, tasks);
+
     logger.info({ taskCount: this.activeJobs.size }, 'Scheduler started');
+  }
+
+  /**
+   * Issue #5763: startup reconciliation against the occurrence ledger.
+   *
+   * Evidence is deliberately conservative: the previous stop counts only when
+   * it is not older than the previous start — a lifecycle that ended without a
+   * clean stop (crash, kill, power) leaves a stale `stoppedAt` behind, and
+   * using it would mark occurrences that ran during that lifetime as missed.
+   * Every gap is logged; nothing is re-executed or re-notified.
+   * Ledger failures never block startup.
+   */
+  private async reconcileOccurrences(startedAt: string, tasks: ScheduledTask[]): Promise<void> {
+    const store = this.occurrenceStore;
+    if (!store) { return; }
+    try {
+      const lifecycle = await store.getLifecycle();
+      const { stoppedAt } = lifecycle;
+      const stopIsCurrent = stoppedAt !== undefined
+        && (lifecycle.startedAt === undefined || Date.parse(stoppedAt) >= Date.parse(lifecycle.startedAt));
+      const evidence: LifecycleEvidence = {
+        startedAt,
+        ...(stopIsCurrent && stoppedAt !== undefined ? { previousStoppedAt: stoppedAt } : {}),
+      };
+      const result = reconcileStartup({ tasks, evidence, records: await store.all() });
+      if (result.additions.length > 0 || result.interrupted.length > 0) {
+        await store.putAll([...result.additions, ...result.interrupted]);
+      }
+      await store.recordStarted(startedAt);
+      for (const gap of result.gaps) {
+        logger.warn({ taskId: gap.taskId, code: gap.code, detail: gap.detail }, 'Schedule occurrence reconciliation: evidence gap');
+      }
+      if (result.additions.length > 0 || result.interrupted.length > 0) {
+        logger.warn(
+          {
+            missed: result.additions.map((r) => ({ taskId: r.taskId, scheduledFor: r.scheduledFor, scheduledForLocal: r.scheduledForLocal })),
+            interrupted: result.interrupted.map((r) => ({ taskId: r.taskId, scheduledFor: r.scheduledFor })),
+          },
+          'Schedule occurrences straddled a service restart: registered (missed/unknown, nothing re-executed)',
+        );
+      }
+    } catch (error) {
+      logger.error({ err: error }, 'Schedule occurrence reconciliation failed (scheduler continues)');
+    }
+  }
+
+  /**
+   * Issue #5763: persist the clean-stop instant — the only stop evidence a
+   * later start can rely on. Best-effort: on failure the store logs it and the
+   * next start reports `no-stop-evidence` instead of guessing.
+   */
+  private async recordOccurrenceStop(): Promise<void> {
+    const store = this.occurrenceStore;
+    if (!store) { return; }
+    try {
+      await store.recordStopped(new Date().toISOString());
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to record scheduler stop (next start will have no stop evidence)');
+    }
   }
 
   /**
@@ -512,6 +591,7 @@ export class Scheduler {
    *   (default: 5000ms). Set to 0 to skip waiting.
    */
   async stop(timeoutMs?: number): Promise<void> {
+    const wasRunning = this.running;
     this.running = false;
     this.commandStopGeneration++;
 
@@ -522,6 +602,12 @@ export class Scheduler {
     }
 
     this.activeJobs.clear();
+
+    // Issue #5763: the cron jobs are gone from this instant on — record it as
+    // the clean stop a later start reconciles against (only if we ran at all).
+    if (wasRunning) {
+      await this.recordOccurrenceStop();
+    }
 
     // Command schedules own subprocesses, unlike agent turns. Cancel them
     // before waiting for drain so shutdown cannot abandon process groups.

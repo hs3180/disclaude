@@ -23,6 +23,7 @@ import {
 } from './scheduler.js';
 import { TurnSupersededError } from '../messaging/turn-superseded-error.js';
 import { TaskFailureStore } from './task-failure-store.js';
+import { OccurrenceStore } from './occurrence-store.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
 import type { CooldownManager } from './cooldown-manager.js';
@@ -2218,6 +2219,84 @@ describe('Scheduler', () => {
       await vi.waitFor(() => {
         expect(mockRouterAsMock.route).toHaveBeenCalledTimes(2);
       }, { timeout: 2000 });
+    });
+  });
+
+  // Issue #5763: lifecycle hooks for the occurrence ledger. Only `Date` is
+  // faked (no timer faking): start()/stop() capture instants via `new Date()`,
+  // while the real scheduler/store mechanics stay untouched.
+  describe('occurrence ledger lifecycle (Issue #5763)', () => {
+    const daily = createTask({ id: 'morning-report', cron: '0 8 * * *', timezone: 'Asia/Shanghai' });
+    const at8 = '2026-11-25T00:00:00.000Z'; // 08:00 Asia/Shanghai
+    let dir: string;
+    let store: OccurrenceStore;
+
+    beforeEach(async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      dir = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'sched-occ-'));
+      store = new OccurrenceStore({ dir });
+      mockScheduleManager.listEnabled = vi.fn().mockResolvedValue([daily]) as ScheduleManager['listEnabled'];
+    });
+    afterEach(async () => {
+      await scheduler.stop(0).catch(() => {});
+      vi.useRealTimers();
+      await fsPromises.rm(dir, { recursive: true, force: true });
+    });
+
+    const withStore = (occurrenceStore: OccurrenceStore) => new Scheduler({
+      scheduleManager: mockScheduleManager, callbacks: mockCallbacks, inputMessageRouter: mockRouter,
+      jobFactory: testJobFactory, occurrenceStore,
+    });
+
+    it('clean stop before the instant, restore after it: the straddled occurrence is registered missed once', async () => {
+      vi.setSystemTime(new Date('2026-11-24T23:01:00Z'));
+      const before = withStore(store);
+      await before.start();
+      await before.stop(0);
+      expect((await store.getLifecycle()).stoppedAt).toBe('2026-11-24T23:01:00.000Z');
+
+      vi.setSystemTime(new Date('2026-11-25T00:24:00Z'));
+      const after = withStore(store);
+      await after.start();
+      expect(await store.get('morning-report', at8)).toMatchObject({ status: 'missed', delivery: 'not-applicable' });
+
+      // Consecutive restart: same single record, start instant moves forward, nothing re-executed.
+      vi.setSystemTime(new Date('2026-11-25T00:30:00Z'));
+      const again = withStore(store);
+      await again.start();
+      expect([...(await store.all()).keys()].filter((k) => k === `morning-report@${at8}`)).toHaveLength(1);
+      expect((await store.getLifecycle()).startedAt).toBe('2026-11-25T00:30:00.000Z');
+      expect(mockRouterAsMock.route).not.toHaveBeenCalled();
+    });
+
+    it('no clean stop (crash): nothing is registered as missed or failed; the evidence gap stays explicit', async () => {
+      vi.setSystemTime(new Date('2026-11-25T00:24:00Z'));
+      await withStore(store).start();
+      expect(await store.get('morning-report', at8)).toBeUndefined();
+      expect(await store.getLifecycle()).toEqual({ startedAt: '2026-11-25T00:24:00.000Z' });
+    });
+
+    it('a stale stop older than the previous start is not stop evidence after an unclean end', async () => {
+      await fsPromises.writeFile(
+        path.join(dir, 'lifecycle.json'),
+        JSON.stringify({ startedAt: '2026-11-24T22:00:00Z', stoppedAt: '2026-11-24T01:00:00Z' }),
+        'utf-8',
+      );
+      const restartedStore = new OccurrenceStore({ dir });
+      vi.setSystemTime(new Date('2026-11-25T00:24:00Z'));
+      await withStore(restartedStore).start();
+      expect(await restartedStore.get('morning-report', at8)).toBeUndefined();
+    });
+
+    it('an unwritable ledger never blocks start or stop', async () => {
+      await fsPromises.writeFile(path.join(dir, 'blocked'), 'not a dir', 'utf-8');
+      const blocked = new OccurrenceStore({ dir: path.join(dir, 'blocked') });
+      vi.setSystemTime(new Date('2026-11-25T00:24:00Z'));
+      const s = withStore(blocked);
+      await s.start();
+      expect(s.isRunning()).toBe(true);
+      await s.stop(0);
+      expect(blocked.degraded).toBe(true);
     });
   });
 });
