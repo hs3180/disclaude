@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.30] - 2026-11-26
+
+### Changed
+
+- Make the `/agent` harness (backend) and the model two independently
+  switchable dimensions and retire the named agent-preset concept
+  (#5255; #5723). The `agents:` key domain is now the harness name
+  (`claude`, `pi`, `codex`, `dsh`, `miniswe`): each entry is that
+  harness's default binding, with an optional `model` pin that outranks
+  `llms.<llm>.defaultModel`; the per-entry `backend` key is rejected at
+  load. A new top-level `defaultHarness` names the binding used by chats
+  that have not selected one, and `channels.<name>.agent` references a
+  harness id. `/agent backend [name]` and `/agent model [name]` switch one
+  dimension while keeping the other; `/agent use <harness> [model]` switches
+  the whole runtime and persists per chat across service restarts, whereas
+  the per-dimension overrides are in-memory and fall back to the configured
+  default on restart. Every switch is checked against the harness x LLM
+  compatibility matrix and an invalid combination returns the options for
+  that dimension instead of taking effect silently. The Feishu configuration
+  card switches per dimension with runtime wording, and the control ports
+  are renamed to `listAgentRuntimes` / `getActiveAgentRuntime` /
+  `switchAgentRuntime` (types `AgentPreset(s)` -> `AgentRuntime(s)`).
+
+### Fixed
+
+- Deliver built-in skills to the DeepSeek Harness (DSH) channel through the
+  harness's native skill discovery instead of splicing a Disclaude-side
+  skill list into the prompt (#5717; #5726). The standard `sdk` profile
+  gets a profile overlay that points the `@deepseek-ai/dsh-skill-filesystem`
+  plugin's `bundledSkillDir` at the built-in skills directory (a user
+  profile that already carries the plugin keeps its own configuration
+  keys); profiles that verifiably have no skill stack, such as
+  `sdk-minimal`, receive no overlay. The provider fails fast with an
+  actionable error when the opt-in diagnostics plugin is combined with such
+  a profile, and raises an actionable error instead of silently degrading
+  when the harness reports no skill capability after initialize. No
+  Disclaude-assembled skill list reaches the model input on any path.
+
 ## [0.6.29] - 2026-11-18
 
 ### Added

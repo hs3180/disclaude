@@ -131,7 +131,14 @@ export class SkillsRegistry {
         return candidates;
     }
 }
-function metadataFromFrontmatter(source, directoryName) {
+/**
+ * Split one SKILL.md into its strict frontmatter metadata and instruction
+ * body. The same single parser serves discovery and body loading so a skill
+ * cannot validate one way and load another. DSH delivers skill files through
+ * its own native discovery (#5717 r3), so this stays internal to the
+ * host-side registry; the Pi adapter can consume it the same way (T-100).
+ */
+function parseSkillDocument(source, directoryName) {
     const match = source.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
     if (!match) {
         throw new Error('missing strict frontmatter');
@@ -150,12 +157,21 @@ function metadataFromFrontmatter(source, directoryName) {
         }
         fields.set(field[1], field[2].replace(/^['"]|['"]$/g, ''));
     }
-    const declaredName = fields.get('name');
-    if (declaredName && declaredName !== directoryName) {
+    if (directoryName !== undefined && fields.get('name') && fields.get('name') !== directoryName) {
         throw new Error('frontmatter name does not match skill directory');
     }
     const description = fields.get('description');
-    return description ? { description: sanitizeDescription(description) } : {};
+    return {
+        metadata: {
+            ...(fields.has('name') ? { name: fields.get('name') } : {}),
+            ...(description ? { description: sanitizeDescription(description) } : {}),
+        },
+        body: source.slice(match[0].length),
+    };
+}
+function metadataFromFrontmatter(source, directoryName) {
+    const { metadata } = parseSkillDocument(source, directoryName);
+    return metadata.description ? { description: metadata.description } : {};
 }
 function sanitizeDescription(description) {
     // Strip controls and Markdown link delimiters so one metadata field cannot

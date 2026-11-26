@@ -11,7 +11,7 @@ export function buildWelcomeMessage(channel, options) {
         ...WELCOME_EXAMPLES.map(example => `「${example}」`),
         help,
         ...(options?.agentConfigCard
-            ? ['已配置多个模型预设：发送 /agent config 可打开配置卡片，按 harness / model / thinking 切换。']
+            ? ['已配置多个模型runtime：发送 /agent config 可打开配置卡片，按 harness / model / thinking 切换。']
             : []),
     ].join('\n');
 }
@@ -39,7 +39,7 @@ export function buildHelpMessage(command, context, brief = false) {
         // #5702: switches (card or command) save per chat and survive restarts.
         tips.push(context.agentConfigUi
             ? '用 `/agent config` 打开配置卡片，在受限选项中查看并切换 harness / model / thinking；也可用 `/agent list` + `/agent use <name>`。切换按聊天保存，服务重启后仍生效。'
-            : '用 `/agent list` 查看 backend/model 预设，`/agent use <name>` 切换并开始新会话；切换按聊天保存，服务重启后仍生效。');
+            : '用 `/agent list` 查看 backend/model runtime，`/agent use <name>` 切换并开始新会话；切换按聊天保存，服务重启后仍生效。');
     }
     if (context.guidance && available.has('help')) {
         tips.push('自动指引每个聊天至多 5 分钟一次；`/help off` 关闭，`/help on` 恢复（重启后恢复默认）。');

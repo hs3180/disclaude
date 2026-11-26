@@ -182,7 +182,7 @@ For a running session, job or cell, retain and poll the same handle until its un
 /**
  * Build the missing-context recovery guidance section.
  *
- * Issue #5746: switching presets (`/agent use`) starts a fresh native session
+ * Issue #5746: switching runtimes (agent backend/model switch) starts a fresh native session
  * and context is not migrated. A follow-up that refers to earlier work
  * ("this article", "前面那篇") then has nothing in-context to resolve against,
  * and agents picked a topic from thin air or re-asked for background that
@@ -195,7 +195,7 @@ For a running session, job or cell, retain and poll the same handle until its un
 export function buildContextRecoveryGuidance() {
     return `\n## Recovering Missing Context
 
-When the request uses referring expressions ("this article", "that one", "前面那篇", "那个文件"), when its intent is unclear because it plainly builds on an earlier conversation you cannot see, or when this is the first message of a fresh session (e.g. right after a preset switch), do not pick a topic or background on your own. First recover the context, then decide whether anything still needs clarifying:
+When the request uses referring expressions ("this article", "that one", "前面那篇", "那个文件"), when its intent is unclear because it plainly builds on an earlier conversation you cannot see, or when this is the first message of a fresh session (e.g. right after a runtime switch), do not pick a topic or background on your own. First recover the context, then decide whether anything still needs clarifying:
 
 \`disclaude history query --chat <the Chat ID in this prompt's metadata> --days 2 --limit 50\`
 

@@ -138,7 +138,7 @@ export class MessageHandler {
     issueReport;
     agentConfigCards;
     issueClient;
-    /** #4914: preset catalog + selection ports for the native config card. */
+    /** #4914: runtime catalog + selection ports for the native config card. */
     agentConfigAccess;
     welcomeService;
     setWelcomeService(service) {
@@ -1560,7 +1560,7 @@ export class MessageHandler {
             return;
         }
         // #4914: /agent config cards are presenter-only workflows over the same
-        // preset selection service; they never enter the agent turn path. Must be
+        // runtime selection service; they never enter the agent turn path. Must be
         // matched before the private-input form fallback (form_value payloads).
         if (FeishuAgentConfigCards.isCallback(rawData)) {
             void this.agentConfigCards?.submit(rawData).catch(() => logger.warn('Agent config card callback could not be handled'));

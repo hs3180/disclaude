@@ -11,7 +11,7 @@ import { existsSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { createLogger } from '../utils/logger.js';
 import { loadConfigFile, getConfigFromFile, validateConfig, getPreloadedConfig } from './loader.js';
-import { resolveAgentPreset } from './agent-presets.js';
+import { resolveDefaultAgentRuntime } from './agent-runtime.js';
 import { resolveConfiguredAgents, validateResolvedAgent } from './resolved-agents.js';
 import { resolveCodexModelSetting, resolveCodexReasoningEffort } from './codex-settings.js';
 import { channelCredentialErrors, resolveChannelCredential } from './channel-credentials.js';
@@ -20,7 +20,7 @@ import { setRuntimeContext, } from '../agents/types.js';
 // Re-export sub-modules
 export * from './types.js';
 export * from './loader.js';
-export * from './agent-presets.js';
+export * from './agent-runtime.js';
 export * from './resolved-agents.js';
 export * from './channel-credentials.js';
 export * from './channel-declarations.js';
@@ -33,9 +33,9 @@ const fileConfigOnly = getConfigFromFile(fileConfig);
 // Register private variable names for subprocess filtering without resolving them on imports.
 channelCredentialErrors(fileConfigOnly);
 const resolvedAgents = resolveConfiguredAgents(fileConfigOnly);
-const agentPresets = resolvedAgents.ok ? resolvedAgents.presets : {};
-const defaultSelection = Object.keys(agentPresets).length
-    ? resolveAgentPreset(agentPresets)
+const agentRuntimes = resolvedAgents.ok ? resolvedAgents.presets : {};
+const defaultSelection = Object.keys(agentRuntimes).length
+    ? resolveDefaultAgentRuntime(agentRuntimes, fileConfigOnly.defaultHarness)
     : undefined;
 const defaultAgent = defaultSelection?.ok ? defaultSelection.preset : undefined;
 const configLoaded = fileConfig._fromFile;
@@ -300,7 +300,7 @@ export class Config {
         return fileConfigOnly;
     }
     /** Resolved presets shared by the session pool, preflight and construction. */
-    static getAgentPresets() {
+    static getAgentRuntimes() {
         const resolved = resolveConfiguredAgents(this.getRawConfig());
         if (!resolved.ok) {
             throw new Error(resolved.errors.join('\n'));
@@ -308,7 +308,7 @@ export class Config {
         if (!Object.keys(resolved.presets).length) {
             return undefined;
         }
-        const selected = resolveAgentPreset(resolved.presets);
+        const selected = resolveDefaultAgentRuntime(resolved.presets, this.getRawConfig().defaultHarness);
         if (selected.ok && selected.preset.agentBackend === 'codex') {
             resolved.presets[selected.name] = {
                 ...selected.preset,
@@ -367,7 +367,7 @@ export class Config {
         if (!resolvedAgents.ok) {
             throw new Error(resolvedAgents.errors.join('\n'));
         }
-        const selected = resolveAgentPreset(this.getAgentPresets() ?? {});
+        const selected = resolveDefaultAgentRuntime(this.getAgentRuntimes() ?? {}, this.getRawConfig().defaultHarness);
         if (!selected.ok) {
             throw new Error(selected.error);
         }

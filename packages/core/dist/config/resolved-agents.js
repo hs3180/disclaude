@@ -1,10 +1,11 @@
-import { validateAgentPresets } from './agent-presets.js';
+import { validateAgentRuntimes } from './agent-runtime.js';
 import { isCodexReasoningEffort } from './codex-settings.js';
 import { apiCredentialEnvName, credentialEnvName } from './env-reference.js';
 import { modelSecretReferences, secretConfigurationErrors, resolveLlmEnvironment, hasUrlCredential } from './secret-references.js';
 const CONFIG_KEYS = new Set([
     'workspace',
     'agents',
+    'defaultHarness',
     'llms',
     'channels',
     'logging',
@@ -65,6 +66,19 @@ export function resolveConfiguredAgents(config) {
         (!mapping(config.env) ||
             Object.entries(config.env).some(([key, value]) => !ENV_NAME.test(key) || typeof value !== 'string'))) {
         errors.push('env must map variable names to strings');
+    }
+    // Top-level default harness binding (r4 review 5948908832): names the
+    // agents entry used when a chat declares no runtime. Selection semantics
+    // arrive with the agents key-domain switch; the reference is validated now
+    // so the key cannot silently rot — including on the empty-config early
+    // return below, where a dangling defaultHarness is the only defect.
+    if (config.defaultHarness !== undefined) {
+        if (typeof config.defaultHarness !== 'string' || !config.defaultHarness.trim()) {
+            errors.push('defaultHarness must be a non-empty string when set');
+        }
+        else if (!Object.hasOwn(config.agents ?? {}, config.defaultHarness)) {
+            errors.push('defaultHarness must reference a defined agents entry');
+        }
     }
     if (config.agents === undefined && config.llms === undefined) {
         return errors.length ? { ok: false, errors } : { ok: true, presets: {} };
@@ -173,6 +187,9 @@ export function resolveConfiguredAgents(config) {
     const presets = {};
     // Issue #5679: backends referencing each binding, for cross-harness checks.
     const backendsByLlm = new Map();
+    // Bindings pinning their own model (r4 schema step); their validation errors
+    // must not be rewritten onto llms.<llm>.defaultModel below.
+    const explicitModels = new Set();
     for (const [name, raw] of Object.entries(config.agents)) {
         const field = `agents.${name}`;
         if (!mapping(raw)) {
@@ -181,8 +198,8 @@ export function resolveConfiguredAgents(config) {
         }
         const agent = raw;
         const allowed = new Set([
-            'backend',
             'llm',
+            'model',
             'default',
             'mode',
             'dshHome',
@@ -205,18 +222,21 @@ export function resolveConfiguredAgents(config) {
                     : `${field}.${key} is unsupported; models and API connections belong in llms`);
             }
         }
-        if (!BACKENDS.has(agent.backend)) {
-            errors.push(raw.backend === 'deepseek'
-                ? `${field}.backend deepseek is unsupported; use backend: dsh`
-                : `${field}.backend must be claude, pi, codex, dsh or miniswe`);
+        if (!BACKENDS.has(name)) {
+            errors.push(name === 'deepseek'
+                ? `${field} is unsupported; deepseek runs under the dsh key`
+                : `${field} is unsupported; agents keys must be claude, pi, codex, dsh or miniswe`);
         }
         if (typeof agent.llm !== 'string' || !Object.hasOwn(llms, agent.llm)) {
             errors.push(`${field}.llm must reference a defined llms entry`);
             continue;
         }
         const referenced = backendsByLlm.get(agent.llm) ?? new Set();
-        referenced.add(agent.backend);
+        referenced.add(name);
         backendsByLlm.set(agent.llm, referenced);
+        if (agent.model !== undefined) {
+            explicitModels.add(name);
+        }
         for (const key of [
             'fullAccess',
             'codexNetworkAccess',
@@ -233,6 +253,11 @@ export function resolveConfiguredAgents(config) {
                 (!Number.isInteger(agent[key]) || agent[key] < 0)) {
                 errors.push(`${field}.${key} must be a non-negative integer${key === 'autoCompactWindow' ? ' or auto' : ''}`);
             }
+        }
+        // Per-runtime model pin (r4 review 5948908832 schema step): optional on the
+        // binding; resolution falls back to llms.<llm>.defaultModel below.
+        if (agent.model !== undefined && (typeof agent.model !== 'string' || !agent.model.trim())) {
+            errors.push(`${field}.model must be a non-empty string when set`);
         }
         if (agent.permissionMode !== undefined &&
             !['default', 'bypassPermissions'].includes(agent.permissionMode)) {
@@ -303,12 +328,12 @@ export function resolveConfiguredAgents(config) {
                     errors.push(`${field}.miniswe.timeoutMs must be a non-negative integer`);
                 }
             }
-            if (agent.backend !== 'miniswe') {
+            if (name !== 'miniswe') {
                 errors.push(`${field}.miniswe requires backend: miniswe`);
             }
         }
         if (agent.mode !== undefined) {
-            if (agent.backend !== 'dsh') {
+            if (name !== 'dsh') {
                 errors.push(`${field}.mode requires backend: dsh`);
             }
             if (typeof agent.mode !== 'string' || !['minimal', 'standard'].includes(agent.mode)) {
@@ -316,7 +341,7 @@ export function resolveConfiguredAgents(config) {
             }
         }
         if (agent.dshHome !== undefined) {
-            if (agent.backend !== 'dsh') {
+            if (name !== 'dsh') {
                 errors.push(`${field}.dshHome requires backend: dsh`);
             }
             if (typeof agent.dshHome !== 'string' || !agent.dshHome.trim()) {
@@ -324,7 +349,7 @@ export function resolveConfiguredAgents(config) {
             }
         }
         if (agent.claude !== undefined) {
-            if (agent.backend !== 'claude') {
+            if (name !== 'claude') {
                 errors.push(`${field}.claude requires backend: claude`);
             }
             else if (!mapping(agent.claude)) {
@@ -389,7 +414,7 @@ export function resolveConfiguredAgents(config) {
         if (!llm || typeof llm !== 'object') {
             continue;
         }
-        if (agent.backend === 'claude' && llm.api?.protocol === 'openai') {
+        if (name === 'claude' && llm.api?.protocol === 'openai') {
             errors.push(`${field}: Claude requires an Anthropic API connection`);
         }
         // reasoningEffort is a provider-level default, not a harness gate
@@ -401,10 +426,10 @@ export function resolveConfiguredAgents(config) {
         // runtime is NOT rejected for API access, and a missing credential is
         // never silently read as the chatgpt method.
         const llmVia = llm.via ?? (llm.api !== undefined ? 'api' : 'chatgpt');
-        if (llm.via === 'chatgpt' && agent.backend !== 'codex') {
+        if (llm.via === 'chatgpt' && name !== 'codex') {
             errors.push(`${field}: llms.${agent.llm}.via chatgpt requires backend: codex — the ChatGPT login is managed by the Codex CLI`);
         }
-        if (agent.backend === 'codex' && llmVia === 'api') {
+        if (name === 'codex' && llmVia === 'api') {
             if (llm.api?.protocol === 'anthropic') {
                 errors.push(`${field}: the codex runtime drives OpenAI-protocol (Responses API) endpoints; llms.${agent.llm}.api.protocol must be openai`);
             }
@@ -412,19 +437,23 @@ export function resolveConfiguredAgents(config) {
                 errors.push(`llms.${agent.llm}.api.baseUrl is required for API access on the codex runtime`);
             }
         }
-        if (agent.backend === 'dsh' && (!llm.api || !llm.api.baseUrl)) {
+        if (name === 'dsh' && (!llm.api || !llm.api.baseUrl)) {
             errors.push(`llms.${agent.llm}.api with protocol, baseUrl and credential reference is required for DSH`);
         }
         // mini-swe-agent resolves its model through LiteLLM from the bound LLM
         // connection; without an api block it would silently fall back to the
         // interactive global setup the headless child can never complete.
-        if (agent.backend === 'miniswe' && !llm.api) {
+        if (name === 'miniswe' && !llm.api) {
             errors.push(`llms.${agent.llm}.api with protocol, credential reference and (for custom endpoints) baseUrl is required for mini-swe`);
         }
         const protocol = llm.api?.protocol;
         const keyEnv = llm.api ? apiCredentialEnvName(llm.api) : undefined;
-        const { backend, ...settings } = agent;
-        const defaultModel = llm.defaultModel?.trim() ?? '';
+        // The backend is the agents key itself (r4 schema step); a legacy
+        // `backend` field is reported as unsupported above and stripped here.
+        const { backend: _legacyBackend, ...settings } = agent;
+        const backend = name;
+        // Per-runtime model pins outrank the provider default (r4 schema step).
+        const defaultModel = agent.model?.trim() || llm.defaultModel?.trim() || '';
         const resolvedEnv = resolveLlmEnvironment({
             ...llm.env,
             ...(backend === 'claude' ? agent.claude?.env : {}),
@@ -476,13 +505,14 @@ export function resolveConfiguredAgents(config) {
         // llms.defaultModel is optional and was validated above; an empty preset
         // model is its internal representation for "use the runtime's native
         // default".
-        const validation = validateAgentPresets(presets, { allowUnconfiguredModel: true });
+        const validation = validateAgentRuntimes(presets, { allowUnconfiguredModel: true });
         if (!validation.ok) {
             errors.push(...validation.errors.map((error) => {
                 for (const [name, preset] of Object.entries(presets)) {
-                    error = error
-                        .replace(`agents.${name}.model`, `llms.${preset.llm}.defaultModel`)
-                        .replace(`agents.${name}.agentBackend`, `agents.${name}.backend`);
+                    if (!explicitModels.has(name)) {
+                        error = error.replace(`agents.${name}.model`, `llms.${preset.llm}.defaultModel`);
+                    }
+                    error = error.replace(`agents.${name}.agentBackend`, `agents.${name}`);
                 }
                 return error;
             }));
