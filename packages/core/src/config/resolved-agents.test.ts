@@ -1035,7 +1035,7 @@ describe('named runtime and LLM configuration', () => {
         return;
       }
       expect(result.errors.length).toBe(1);
-      expect(result.errors.join('\n')).toMatch(/agents\.assistant\.claude\.modelMapping/);
+      expect(result.errors.join('\n')).toMatch(/agents\.claude\.claude\.modelMapping/);
     });
 
     it('applies a provider reasoning effort to any runtime without a harness gate', () => {
