@@ -72,12 +72,63 @@ function existingPlugin(files: string[], packageName: string): string | undefine
   return ids.values().next().value;
 }
 
+/**
+ * Config block of an existing profile plugin entry, so a patch can keep the
+ * user's own settings for the same plugin. Patch application semantics are not
+ * documented as merge vs replace; shallow-merging the original here is safe
+ * either way (a self-merging consumer sees the same values again).
+ */
+function existingPluginConfig(
+  files: string[],
+  packageName: string
+): Record<string, unknown> | undefined {
+  const configs: Record<string, unknown>[] = [];
+  const visited = new Set<object>();
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== 'object' || visited.has(value)) {
+      return;
+    }
+    visited.add(value);
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    const entry = value as Record<string, unknown>;
+    if (
+      typeof entry.name === 'string' &&
+      (entry.name === packageName || entry.name.includes(`/${packageName}/`)) &&
+      entry.config !== null &&
+      typeof entry.config === 'object' &&
+      !Array.isArray(entry.config)
+    ) {
+      configs.push(entry.config as Record<string, unknown>);
+    }
+    Object.values(entry).forEach(visit);
+  };
+  for (const file of files) {
+    if (!existsSync(file)) {
+      continue;
+    }
+    let config: unknown;
+    try {
+      config = load(readFileSync(file, 'utf8'), { schema: compositionSchema });
+    } catch {
+      throw new Error('Cannot read the selected DSH profile composition');
+    }
+    visit(config);
+  }
+  // existingPlugin already rejects multi-instance profiles, so at most one
+  // config block can be found; anything else means "none to merge".
+  return configs.length === 1 ? configs[0] : undefined;
+}
+
 /** An owned overlay; user profile files stay untouched and only the bound API route is added. */
 export function createDshNativeProfileOverlay(
   api?: DshApiConnection,
   profileFiles: string[] = [],
   defaultAdapter?: string,
   compaction?: DshCompactionSettings,
+  skills?: { bundledSkillDir: string },
 ): { path: string; dispose(): void } {
   const plugins: Record<string, unknown>[] = [];
   const patches: Record<string, unknown>[] = [{ id: 'sdk-jsonrpc-server', disabled: true }];
@@ -121,6 +172,24 @@ export function createDshNativeProfileOverlay(
       const existing = existingPlugin(profileFiles, packageName) ?? (defaultAdapter ? id : undefined);
       if (existing) { patches.push({ id: existing, disabled: false, ...(config ? { config } : {}) }); }
       else { plugins.push({ id: `disclaude-${id}`, name: packageName, ...(config ? { config } : {}) }); }
+    }
+  }
+  if (skills) {
+    // #5717: built-in skills ship through the harness's own skill-filesystem
+    // discovery (bundledSkillDir root, rank below project/user roots) instead
+    // of a parsed list injected into the model input. The default dsh profile
+    // already loads the plugin, so the common path is a config patch; keep the
+    // user's own plugin config keys while setting ours.
+    const packageName = '@deepseek-ai/dsh-skill-filesystem';
+    const existing = existingPlugin(profileFiles, packageName);
+    const config = {
+      ...existingPluginConfig(profileFiles, packageName),
+      bundledSkillDir: skills.bundledSkillDir,
+    };
+    if (existing) {
+      patches.push({ id: existing, disabled: false, config });
+    } else {
+      plugins.push({ id: 'disclaude-dsh-skill-filesystem', name: packageName, config });
     }
   }
   plugins.push({

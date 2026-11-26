@@ -227,15 +227,20 @@ export interface LlmConfig {
   env?: Record<string, string>;
 }
 
-/** A named runtime bound to exactly one named LLM. */
+/** A runtime keyed by its backend name, bound to exactly one named LLM. */
 export interface AgentDefinition extends Omit<AgentConfig, 'agentBackend'> {
-  backend: NonNullable<AgentConfig['agentBackend']>;
   llm: string;
+  /**
+   * Optional per-runtime model pin (r4 review 5948908832): outranks the bound
+   * provider's defaultModel; when omitted the resolution falls back to
+   * llms.<llm>.defaultModel.
+   */
+  model?: string;
   default?: boolean;
 }
 
 /** Internal resolved preset shared by validation and agent construction. */
-export interface AgentPreset extends AgentConfig {
+export interface AgentRuntime extends AgentConfig {
   agentBackend: NonNullable<AgentConfig['agentBackend']>;
   /**
    * Resolved access method of the bound llms entry (Issue #5338). Always set
@@ -258,7 +263,7 @@ export interface AgentPreset extends AgentConfig {
   /** Compiled three-tier `modelMapping` (Issue #5422): the agent's `claude.modelMapping` declaration completed at config time, omitted tiers deriving from the provider `defaultModel`; applied by Claude runtimes only. */
   modelMapping?: Record<string, string>;
 }
-export type AgentPresets = Record<string, AgentPreset>;
+export type AgentRuntimes = Record<string, AgentRuntime>;
 
 /**
  * A user-declared channel: a `channels.<name>` entry carrying an explicit
@@ -536,6 +541,11 @@ export interface DisclaudeConfig {
   workspace?: WorkspaceConfig;
   /** Named runtimes and their LLM bindings. */
   agents?: Record<string, AgentDefinition>;
+  /**
+   * Default harness binding for chats that declare no runtime (r4 review
+   * 5948908832): names a configured `agents` key.
+   */
+  defaultHarness?: string;
   /** Named models and API connections. */
   llms?: Record<string, LlmConfig>;
   /** Channel settings. */

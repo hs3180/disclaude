@@ -29,12 +29,11 @@ vi.mock('fs', () => ({
 }));
 
 /**
- * Shared preset fixture (agents.default bound to llms.default, the #5679 config
+ * Shared preset fixture (agents.claude bound to llms.default, the #5679 config
  * shape) embedded verbatim by multiple loader cases; single source of truth.
  */
 const sharedPresetYaml = `agents:
-  default:
-    backend: claude
+  claude:
     llm: default
 llms:
   default:
@@ -254,7 +253,7 @@ describe('getConfigFromFile', () => {
       _source: '/path/to/config.yaml',
       _fromFile: true,
       workspace: { dir: '/workspace' },
-      agents: { default: { backend: 'claude', llm: 'default' } },
+      agents: { claude: { llm: 'default' } },
       llms: { default: { defaultModel: 'test-model', api: { protocol: 'anthropic' } } },
     };
 
@@ -262,7 +261,7 @@ describe('getConfigFromFile', () => {
 
     expect(result).toEqual({
       workspace: { dir: '/workspace' },
-      agents: { default: { backend: 'claude', llm: 'default' } },
+      agents: { claude: { llm: 'default' } },
       llms: { default: { defaultModel: 'test-model', api: { protocol: 'anthropic' } } },
     });
     expect(result).not.toHaveProperty('_source');
@@ -287,7 +286,7 @@ describe('getConfigFromFile', () => {
       workspace: { dir: '/workspace' },
       logging: { level: 'info' },
       agents: {
-        default: { backend: 'claude', llm: 'default', permissionMode: 'bypassPermissions' },
+        claude: { llm: 'default', permissionMode: 'bypassPermissions' },
       },
       llms: { default: { defaultModel: 'model', api: { protocol: 'anthropic' } } },
       channels: { feishu: { appId: 'app123', appSecret: 'secret' } },
@@ -307,7 +306,7 @@ describe('validateConfig', () => {
     const config: DisclaudeConfig = {
       workspace: { dir: '/workspace' },
       logging: { level: 'debug' },
-      agents: { default: { backend: 'claude', llm: 'default' } },
+      agents: { claude: { llm: 'default' } },
       llms: { default: { defaultModel: 'claude-3-5-sonnet-20241022', api: { protocol: 'anthropic' } } },
     };
 
@@ -344,11 +343,11 @@ describe('validateConfig', () => {
 
   it('should reject an invalid provider defaultModel', () => {
     const config1 = {
-      agents: { default: { backend: 'claude', llm: 'default' } },
+      agents: { claude: { llm: 'default' } },
       llms: { default: { defaultModel: 123, api: { protocol: 'anthropic' } } },
     };
     const config2 = {
-      agents: { default: { backend: 'claude', llm: 'default' } },
+      agents: { claude: { llm: 'default' } },
       llms: { default: { defaultModel: ['array'], api: { protocol: 'anthropic' } } },
     };
 
@@ -368,7 +367,7 @@ describe('validateConfig', () => {
     const config: DisclaudeConfig = {
       workspace: { dir: '/workspace' },
       logging: { level: 'info' },
-      agents: { default: { backend: 'claude', llm: 'default' } },
+      agents: { claude: { llm: 'default' } },
       llms: { default: { defaultModel: 'model-name', api: { protocol: 'anthropic' } } },
     };
 
@@ -403,7 +402,7 @@ describe('validateConfig', () => {
     const config: DisclaudeConfig = {
       workspace: { dir: '/custom/dir' },
       logging: { level: 'debug', file: '/var/log/service.log' },
-      agents: { default: { backend: 'claude', llm: 'default', permissionMode: 'default' } },
+      agents: { claude: { llm: 'default', permissionMode: 'default' } },
       llms: { default: { defaultModel: 'claude-model', api: { protocol: 'anthropic' } } },
       channels: {
         feishu: {
@@ -502,7 +501,7 @@ describe('setLoadedConfig / getPreloadedConfig', () => {
     const config: LoadedConfig = {
       _source: '/test/config.yaml',
       _fromFile: true,
-      agents: { default: { backend: 'claude', llm: 'default' } },
+      agents: { claude: { llm: 'default' } },
       llms: { default: { defaultModel: 'test-model', api: { protocol: 'anthropic' } } },
     };
 

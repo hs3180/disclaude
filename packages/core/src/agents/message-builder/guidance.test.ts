@@ -283,7 +283,7 @@ describe('buildContextRecoveryGuidance', () => {
     expect(result).toContain('Recovering Missing Context');
     expect(result).toContain('referring expressions');
     expect(result).toContain('前面那篇');
-    expect(result).toContain('preset switch');
+    expect(result).toContain('runtime switch');
     expect(result).toContain('do not pick a topic or background on your own');
     expect(result).toContain('disclaude history query --chat <the Chat ID in this prompt\'s metadata> --days 2 --limit 50');
   });

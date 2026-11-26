@@ -20,7 +20,7 @@ import { tmpdir } from 'os';
 const { mockGetConfigFromFile, mockGetPreloadedConfig, mockLoadConfigFile } = vi.hoisted(() => ({
   mockGetConfigFromFile: vi.fn(() => ({
     workspace: { dir: '/test/workspace' },
-    agents: { default: { backend: 'claude', llm: 'default' } },
+    agents: { claude: { llm: 'default' } },
     llms: {
       default: {
         defaultModel: 'glm-4',

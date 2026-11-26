@@ -12,7 +12,7 @@ const canary = 'test-credential-must-not-appear-in-errors';
 describe('CLI configuration error reporting', () => {
   it.each([
     ['llms.test.api.apiKey', {
-      agents: { test: { backend: 'claude', llm: 'test' } },
+      agents: { claude: { llm: 'test' } },
       llms: {
         test: {
           defaultModel: 'test-model',
@@ -21,7 +21,7 @@ describe('CLI configuration error reporting', () => {
       },
     }],
     ['llms.test.api.baseUrl', {
-      agents: { test: { backend: 'claude', llm: 'test' } },
+      agents: { claude: { llm: 'test' } },
       llms: {
         test: {
           defaultModel: 'test-model',
