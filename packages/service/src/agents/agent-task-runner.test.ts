@@ -1,8 +1,9 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { writeOfflineConfig } from '../../../core/src/testing/offline-config.js';
 import { expect, it } from 'vitest';
 
 const repo = fileURLToPath(new URL('../../../../', import.meta.url));
@@ -13,11 +14,7 @@ it.each(['concurrent', 'cancel-one', 'stop-before-start', 'stop-active', 'close-
     try {
       const a = join(root, 'project-a'), b = join(root, 'project-b');
       mkdirSync(a); mkdirSync(b);
-      const configPath = join(root, 'config.json');
-      writeFileSync(configPath, JSON.stringify({ workspace: { dir: root },
-        agents: { claude: { llm: 'default' } },
-        llms: { default: { defaultModel: 'offline-fixture', api: { protocol: 'anthropic', apiKey: '$TEST_LLM_DEFAULT_KEY' } } },
-      }));
+      const configPath = writeOfflineConfig(root);
       const script = `
         import assert from 'node:assert/strict';
         import { realpathSync, rmSync } from 'node:fs';

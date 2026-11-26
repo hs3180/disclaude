@@ -1,8 +1,9 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { writeOfflineConfig } from '../../../core/src/testing/offline-config.js';
 import { expect, it } from 'vitest';
 
 const repo = fileURLToPath(new URL('../../../../', import.meta.url));
@@ -10,11 +11,7 @@ it.each(['success', 'missing-report', 'native-failure', 'background', 'delivery'
   'executes an assessed native Goal turn through %s', scenario => {
     const root = mkdtempSync(join(tmpdir(), 'disclaude-native-goal-'));
     try {
-      const configPath = join(root, 'config.json');
-      writeFileSync(configPath, JSON.stringify({ workspace: { dir: root },
-        agents: { claude: { llm: 'default' } },
-        llms: { default: { defaultModel: 'offline-fixture', api: { protocol: 'anthropic', apiKey: '$TEST_LLM_DEFAULT_KEY' } } },
-      }));
+      const configPath = writeOfflineConfig(root);
       const script = `
         import assert from 'node:assert/strict';
         import { realpathSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';

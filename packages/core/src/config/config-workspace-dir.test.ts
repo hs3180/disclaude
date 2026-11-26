@@ -15,19 +15,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, existsSync } from 'fs';
 import path, { sep } from 'path';
 import { tmpdir } from 'os';
+import { makeOfflineConfig } from '../testing/offline-config.js';
 
 // Mock the loader to control config file location and workspace.dir value.
 const { mockGetConfigFromFile, mockGetPreloadedConfig, mockLoadConfigFile } = vi.hoisted(() => ({
-  mockGetConfigFromFile: vi.fn(() => ({
-    workspace: { dir: '/test/workspace' },
-    agents: { claude: { llm: 'default' } },
-    llms: {
-      default: {
-        defaultModel: 'glm-4',
-        api: { protocol: 'anthropic', apiKey: '$TEST_LLM_DEFAULT_KEY' },
-      },
-    },
-  })),
+  mockGetConfigFromFile: vi.fn(() => makeOfflineConfig('/test/workspace', { llms: { default: { defaultModel: 'glm-4' } } })),
   mockGetPreloadedConfig: vi.fn(() => null),
   mockLoadConfigFile: vi.fn(() => ({ _fromFile: false, _source: null })),
 }));

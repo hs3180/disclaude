@@ -1,8 +1,9 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { writeOfflineConfig } from '../../core/src/testing/offline-config.js';
 import { describe, expect, it } from 'vitest';
 
 const repo = fileURLToPath(new URL('../../../', import.meta.url));
@@ -11,17 +12,7 @@ describe('Project commands with persistent chat and topic queries', () => {
   it.each(['use', 'reset'])('%s refreshes every affected topic cwd and preserves other chats', (subcommand) => {
     const root = mkdtempSync(join(tmpdir(), 'disclaude-project-sessions-'));
     try {
-      const configPath = join(root, 'config.json');
-      writeFileSync(configPath, JSON.stringify({
-        workspace: { dir: root },
-        agents: { claude: { llm: 'default' } },
-        llms: {
-          default: {
-            defaultModel: 'test-model',
-            api: { protocol: 'anthropic', apiKey: '$TEST_LLM_DEFAULT_KEY' },
-          },
-        },
-      }));
+      const configPath = writeOfflineConfig(root);
       const script = `
         import assert from 'node:assert/strict';
         import { mkdirSync } from 'node:fs';
