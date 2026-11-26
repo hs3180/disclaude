@@ -13,7 +13,7 @@ const repo = fileURLToPath(new URL('../../../../', import.meta.url));
  * goal's current authority and settlement.
  */
 it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', 'missing-project-stop', 'two-goals-stop',
-  'scoped-tools', 'scope-edit', 'scope-project'])(
+  'scoped-tools', 'scope-edit', 'scope-project', 'system-source'])(
   'runs the single-entry Goal service through %s', scenario => {
     const root = mkdtempSync(join(tmpdir(), 'disclaude-goal-service-'));
     try {
@@ -123,10 +123,18 @@ it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', '
           start: (...args) => service.start(...args), control: (...args) => service.control(...args),
           stopForChat: (chat, topic) => service.stopForChat(chat, topic),
         } });
-        const invoke = (text, sourceMessageId = 'fixture-launch') => tryHandleSlashCommand({ textWithoutMentions: text,
-          chatId: 'fixture-chat', actorId: 'fixture-user', sourceMessageId, threadRootId: 'fixture-topic', chatType: 'topic', senderType: 'user' },
+        const invoke = (text, sourceMessageId = 'fixture-launch', senderType = 'user') => tryHandleSlashCommand({ textWithoutMentions: text,
+          chatId: 'fixture-chat', actorId: 'fixture-user', sourceMessageId, threadRootId: 'fixture-topic', chatType: 'topic', senderType },
         { hasControlHandler: true, emitControl: userControl, sendMessage: async reply => { replies.push(reply); } });
         try {
+          if (scenario === 'system-source') {
+            // #5591: Goal execution must originate from a human event. A push
+            // without a real user source creates no record, starts no round and
+            // owns no child task; the router refuses before any control handler.
+            await invoke('/goal Deliver the artifact | Verify recorded evidence', 'fixture-system', 'app');
+            assert.deepEqual(await store.listIds(), []); assert.equal(queries.length, 0);
+            assert.ok(replies.some(reply => String(reply.text).includes('Goal 命令需由用户直接发送')));
+          } else {
           await invoke('/goal Deliver the artifact | Verify recorded evidence');
           const [id] = await store.listIds();
           if (scenario === 'denied') {
@@ -220,6 +228,7 @@ it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', '
             await assert.rejects(scopes[0].authorize(), /active|changed|Project|authorized/);
           }
           assert.ok(sends.every(send => send.chat === 'fixture-chat' && send.topic === 'fixture-topic'));
+          }
           console.log('goal-execution-service: passed');
         } finally { delivery.release(); await service.close(); }
       `;
