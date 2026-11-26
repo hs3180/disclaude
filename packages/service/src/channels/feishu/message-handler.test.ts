@@ -270,14 +270,14 @@ describe('MessageHandler', () => {
       handler.clearClient();
     });
     it('routes agent-config card callbacks to the config card service without an agent turn (#4914)', async () => {
-      const switchAgentPreset = vi.fn().mockReturnValue({
+      const switchAgentRuntime = vi.fn().mockReturnValue({
         ok: true, active: { name: 'solo', agentBackend: 'pi', model: 'm1' }, sessionBoundary: 'new-session' as const,
       });
       const { handler } = createHandler({
         agentConfigAccess: () => ({
-          listPresets: () => [{ name: 'solo', agentBackend: 'pi', model: 'm1' }],
-          getActivePreset: () => ({ name: 'solo', agentBackend: 'pi', model: 'm1' }),
-          switchAgentPreset,
+          listRuntimes: () => [{ name: 'solo', agentBackend: 'pi', model: 'm1' }],
+          getActiveRuntime: () => ({ name: 'solo', agentBackend: 'pi', model: 'm1' }),
+          switchAgentRuntime,
         }),
       });
       const create = vi.fn((req: { data?: { receive_id?: string; content?: string } }) => Promise.resolve({
@@ -306,7 +306,7 @@ describe('MessageHandler', () => {
       }));
       await vi.waitFor(() => expect(patch).toHaveBeenCalledOnce());
       expect(String(patch.mock.calls[0][0].data.content)).toContain('已取消');
-      expect(switchAgentPreset).not.toHaveBeenCalled();
+      expect(switchAgentRuntime).not.toHaveBeenCalled();
       expect(mockState.emitMessage).not.toHaveBeenCalled();
       expect(mockState.sendMessage).not.toHaveBeenCalled();
       expect(mockState.logCardInteraction).not.toHaveBeenCalled();
@@ -534,6 +534,50 @@ describe('MessageHandler', () => {
       expect(mockState.logIncomingMessage).not.toHaveBeenCalled();
       // The echo must be rejected before the claim so redeliveries stay filterable.
       expect(mockState.claimMessage).not.toHaveBeenCalledWith('msg_self_echo');
+    });
+
+    it('does not drop a same-message_id @mention received by a different app (T-106 dual-app)', async () => {
+      // App A already registered its send under its own routed key.
+      mockState.selfSentIds.add('feishu:a:msg_cross');
+      // App B's handler routes with its own prefix; the same bare message_id must NOT match.
+      const routeB = (id: string) => `feishu:b:${id}`;
+      const { handler } = createHandler({ routedMessageId: routeB });
+      await handler.handleMessageReceive(textEvent('legit mention', {
+        event: {
+          message: {
+            message_id: 'msg_cross',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ text: 'legit mention' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      }));
+      // Not a self-sent echo for app B → the message is processed normally.
+      expect(mockState.logIncomingMessage).toHaveBeenCalled();
+    });
+
+    it('still drops the echo on the OWNING app channel (T-106 same-app)', async () => {
+      mockState.selfSentIds.add('feishu:a:msg_own');
+      const routeA = (id: string) => `feishu:a:${id}`;
+      const { handler } = createHandler({ routedMessageId: routeA });
+      await handler.handleMessageReceive(textEvent('own echo', {
+        event: {
+          message: {
+            message_id: 'msg_own',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ text: 'own echo' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      }));
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+      expect(mockState.logIncomingMessage).not.toHaveBeenCalled();
     });
 
     it('should dispatch only once for concurrent deliveries of the same message', async () => {

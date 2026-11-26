@@ -45,7 +45,7 @@ async function verifyPackage() {
   writeFileSync(
     config,
     JSON.stringify({
-      agents: { default: { backend: 'claude', llm: 'smoke' } },
+      agents: { claude: { llm: 'smoke' } },
       llms: { smoke: { defaultModel: 'claude-sonnet-4', api: { protocol: 'anthropic', apiKey: '$SMOKE_API_KEY' } } },
       workspace: { dir: temp },
       channels: { feishu: { enabled: false } },

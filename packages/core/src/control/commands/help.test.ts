@@ -11,8 +11,8 @@ describe('handleHelp', () => {
   const mockContext: ControlHandlerContext = {
     agentPool: {
       reset: vi.fn(), stop: vi.fn(), steer: vi.fn(),
-      listAgentPresets: () => [{ name: 'default', agentBackend: 'codex', model: 'gpt-6-luna' }],
-      getActiveAgentPreset: vi.fn(), switchAgentPreset: vi.fn(),
+      listAgentRuntimes: () => [{ name: 'default', agentBackend: 'codex', model: 'gpt-6-luna' }],
+      getActiveAgentRuntime: vi.fn(), switchAgentRuntime: vi.fn(),
     },
     debugGroups: { getDebugGroup: () => null, setDebugGroup: vi.fn(), clearDebugGroup: () => null },
     triggerMode: { getMode: () => 'mention', setMode: vi.fn() },
@@ -99,7 +99,7 @@ describe('handleHelp', () => {
   it('appends the one-line config entry to the welcome only when a real choice exists (#4914)', () => {
     const withChoice = buildWelcomeMessage('feishu', { agentConfigCard: true });
     expect(withChoice).toContain('/agent config');
-    expect(withChoice).toContain('模型预设');
+    expect(withChoice).toContain('模型runtime');
     // One appended line, task examples and /help pointer stay intact.
     expect(withChoice.match(/「[^」]+」/g)).toHaveLength(3);
     expect(withChoice.endsWith('切换。')).toBe(true);

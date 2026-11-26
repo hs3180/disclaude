@@ -1007,7 +1007,20 @@ describe('HttpApiServer', () => {
 
       expect(statusCode).toBe(200);
       expect(JSON.parse(body)).toEqual({ ok: true, messageId: 'om_abc123' });
-      expect(registrar).toHaveBeenCalledExactlyOnceWith('om_abc123');
+      expect(registrar).toHaveBeenCalledExactlyOnceWith('om_abc123', undefined);
+    });
+
+    it('passes the optional ?channel= ownership param through to the registrar (T-106)', async () => {
+      const registrar = vi.fn();
+      server.setSelfSentRegistrar(registrar);
+
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/self-sent/om_multi1?channel=work',
+      });
+
+      expect(statusCode).toBe(200);
+      expect(registrar).toHaveBeenCalledExactlyOnceWith('om_multi1', 'work');
     });
 
     it('should return 503 when the registrar is not configured', async () => {
@@ -1036,7 +1049,7 @@ describe('HttpApiServer', () => {
         headers: { authorization: 'Bearer agent-token' },
       });
       expect(authorized.statusCode).toBe(200);
-      expect(registrar).toHaveBeenCalledExactlyOnceWith('om_secret1');
+      expect(registrar).toHaveBeenCalledExactlyOnceWith('om_secret1', undefined);
     });
   });
 

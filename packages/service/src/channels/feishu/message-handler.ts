@@ -243,7 +243,7 @@ export class MessageHandler {
   private issueReport?: FeishuIssueReport;
   private agentConfigCards?: FeishuAgentConfigCards;
   private readonly issueClient?: () => GitHubIssueClient | undefined;
-  /** #4914: preset catalog + selection ports for the native config card. */
+  /** #4914: runtime catalog + selection ports for the native config card. */
   private readonly agentConfigAccess?: () => FeishuAgentConfigAccess | undefined;
   private welcomeService?: WelcomeService;
 
@@ -346,7 +346,7 @@ export class MessageHandler {
     routedMessageId?: (messageId: string) => string;
     /** Issue #5400: resolved GitHub App client supplier for issue reporting. */
     issueClient?: () => GitHubIssueClient | undefined;
-    /** #4914: preset catalog/selection ports; injected by descriptor setup. */
+    /** #4914: runtime catalog/selection ports; injected by descriptor setup. */
     agentConfigAccess?: () => FeishuAgentConfigAccess | undefined;
   }) {
     this.triggerModeManager = options.triggerModeManager;
@@ -1326,7 +1326,7 @@ export class MessageHandler {
       {
         isProcessed: (id) => messageLogger.isMessageProcessed(this.toRoutedMessageId(id)),
         claim: (id) => messageLogger.claimMessage(this.toRoutedMessageId(id)),
-        isSelfSent: (id) => messageLogger.isSelfSentMessage(id),
+        isSelfSent: (id) => messageLogger.isSelfSentMessage(this.toRoutedMessageId(id)),
         maxMessageAge: this.MAX_MESSAGE_AGE,
       }
     );
@@ -1963,7 +1963,7 @@ export class MessageHandler {
       return;
     }
     // #4914: /agent config cards are presenter-only workflows over the same
-    // preset selection service; they never enter the agent turn path. Must be
+    // runtime selection service; they never enter the agent turn path. Must be
     // matched before the private-input form fallback (form_value payloads).
     if (FeishuAgentConfigCards.isCallback(rawData)) {
       void this.agentConfigCards?.submit(rawData).catch(() => logger.warn('Agent config card callback could not be handled'));

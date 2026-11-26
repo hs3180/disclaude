@@ -475,7 +475,7 @@ describe('AgentPoolMessageHandler', () => {
       it('keeps an explicit scheduled-harness failure diagnosable to the waiting caller (#5731)', async () => {
         options.agentPool.releaseChatAgent = vi.fn();
         vi.mocked(options.agentPool.getOrCreateChatAgent).mockImplementation(() => {
-          throw new Error('Unknown scheduled harness "missing-runtime": Unknown agent preset: missing-runtime');
+          throw new Error('Unknown scheduled harness "missing-runtime": Unknown agent runtime: missing-runtime');
         });
 
         await expect(
