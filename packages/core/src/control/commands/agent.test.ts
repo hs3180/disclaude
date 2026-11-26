@@ -168,22 +168,24 @@ describe('/agent', () => {
     expect(result.message).toContain('global default');
   });
 
-  it('shows reasoning effort and origin on /agent current when the active profile carries them (#4913)', async () => {
+  it('shows reasoning effort on /agent current when the active runtime carries it (#4913)', async () => {
     const result = await handleAgent(
       { type: 'agent', chatId: 'a', data: { subcommand: 'current' } },
       context({
-        getActiveAgentPreset: () => ({
+        getActiveAgentRuntime: () => ({
           name: 'researcher', agentBackend: 'codex', model: 'gpt-5.2-codex',
-          reasoningEffort: 'high', origin: 'creation',
+          reasoningEffort: 'high',
         }),
       })
     );
     expect(result.success).toBe(true);
     expect(result.message).toContain('reasoning effort: high');
-    expect(result.message).toContain('source: group creation binding');
+    // Origin is deliberately not a runtime field (#4913 r5): the active
+    // runtime object stays main's shape, so no source line is rendered here.
+    expect(result.message).not.toContain('origin');
   });
 
-  it('renders identically when effort/origin are absent (legacy presets)', async () => {
+  it('renders identically when effort is absent', async () => {
     const result = await handleAgent({ type: 'agent', chatId: 'a', data: { subcommand: 'current' } }, context());
     expect(result.success).toBe(true);
     expect(result.message).not.toContain('reasoning effort:');

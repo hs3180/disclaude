@@ -112,7 +112,7 @@ export type PushHandler = (chatId: string, message: string) => Promise<void>;
 
 /** Issue #4913: result of resolving/validating a creation-time runtime declaration. */
 export type RuntimeProfileDeclarerResult =
-  | { ok: true; active: { agentBackend: string; model: string; reasoningEffort?: string; origin?: string } }
+  | { ok: true; active: { agentBackend: string; model: string; reasoningEffort?: string } }
   | { ok: false; error: string };
 /** Issue #4913: resolves/validates a creation-time runtime declaration (sync or async). */
 export type RuntimeProfileDeclarer = (chatId: string, runtime: unknown, actorId: string, options?: { persist?: boolean }) =>

@@ -19,9 +19,11 @@ export interface AgentSelection {
   presetName: string;
   updatedBy: string;
   updatedAt: string;
-  overrides?: AgentSelectionOverrides;
-  /** Who set the binding: a `/agent use` command or a creation-time declaration (#4913). */
-  origin?: 'command' | 'creation';
+  /** Present only when this chat's binding comes from a creation-time runtime
+   * declaration (#4913). It is the chat-level runtime configuration, not a
+   * field of the active runtime; a later `/agent use` replaces the record and
+   * drops it, which is what makes the command win over the declaration. */
+  declared?: AgentSelectionOverrides;
 }
 
 interface AgentSelectionDocument { version: 1; selections: Record<string, AgentSelection> }
@@ -33,12 +35,9 @@ function validSelection(value: AgentSelection, chatId: string): boolean {
     || typeof value.updatedAt !== 'string' || !Number.isFinite(Date.parse(value.updatedAt))) {
     return false;
   }
-  if (value.origin !== undefined && value.origin !== 'command' && value.origin !== 'creation') {
-    return false;
-  }
-  if (value.overrides !== undefined) {
-    const { model, reasoningEffort } = value.overrides;
-    if (typeof value.overrides !== 'object'
+  if (value.declared !== undefined) {
+    const { model, reasoningEffort } = value.declared;
+    if (typeof value.declared !== 'object' || value.declared === null
       || (model !== undefined && (typeof model !== 'string' || !model.trim()))
       || (reasoningEffort !== undefined && !isReasoningEffort(reasoningEffort))) {
       return false;
@@ -80,22 +79,21 @@ export class AgentSelectionStore {
     return selection ? { ...selection } : undefined;
   }
 
-  set(chatId: string, presetName: string, actorId: string, extras: { overrides?: AgentSelectionOverrides; origin?: 'command' | 'creation' } = {}): AgentSelection {
+  set(chatId: string, presetName: string, actorId: string, extras: { declared?: AgentSelectionOverrides } = {}): AgentSelection {
     const previous = this.selections[chatId];
     const selection: AgentSelection = {
       chatId,
       presetName,
       updatedBy: actorId,
       updatedAt: new Date().toISOString(),
-      ...(extras.overrides ? { overrides: { ...extras.overrides } } : {}),
-      ...(extras.origin ? { origin: extras.origin } : {}),
+      ...(extras.declared ? { declared: { ...extras.declared } } : {}),
     };
     this.selections[chatId] = selection;
     try { this.write(); } catch (error) {
       if (previous) { this.selections[chatId] = previous; } else { delete this.selections[chatId]; }
       throw error;
     }
-    return { ...selection, ...(selection.overrides ? { overrides: { ...selection.overrides } } : {}) };
+    return { ...selection, ...(selection.declared ? { declared: { ...selection.declared } } : {}) };
   }
 
   private write(): void {

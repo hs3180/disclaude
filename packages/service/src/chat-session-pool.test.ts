@@ -1791,7 +1791,7 @@ describe('ChatSessionPool', () => {
       const selections = new Map<string, unknown>();
       const store = {
         get: (chatId: string) => selections.get(chatId),
-        set: (chatId: string, presetName: string, updatedBy: string, extras: { overrides?: { model?: string; reasoningEffort?: string }; origin?: string } = {}) => {
+        set: (chatId: string, presetName: string, updatedBy: string, extras: { declared?: { model?: string; reasoningEffort?: string } } = {}) => {
           const value = { chatId, presetName, updatedBy, updatedAt: new Date().toISOString(), ...extras };
           selections.set(chatId, value);
           return value;
@@ -1802,23 +1802,26 @@ describe('ChatSessionPool', () => {
 
     it('persists explicit overrides without exposing the internal credential base', () => {
       const { store, selections } = fakeStore();
-      const pool = new ChatSessionPool({ agentPresets: presets, agentSelections: store });
+      const pool = new ChatSessionPool({ agentRuntimes: presets, agentSelections: store });
       expect(pool.declareChatRuntimeProfile('oc_new', declaration, 'creator')).toEqual({
         ok: true,
-        active: { agentBackend: 'codex', model: 'gpt-5.3-codex', reasoningEffort: 'high', origin: 'creation' },
+        active: { agentBackend: 'codex', model: 'gpt-5.3-codex', reasoningEffort: 'high' },
         sessionBoundary: 'new-session',
       });
-      expect(selections.get('oc_new')).toMatchObject({ presetName: 'codex', updatedBy: 'creator', origin: 'creation', overrides: { model: 'gpt-5.3-codex', reasoningEffort: 'high' } });
+      expect(selections.get('oc_new')).toMatchObject({ presetName: 'codex', updatedBy: 'creator', declared: { model: 'gpt-5.3-codex', reasoningEffort: 'high' } });
       pool.getOrCreateChatAgent('oc_new', createMockCallbacks());
       expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith('pilot', 'oc_new', expect.anything(), expect.objectContaining({ agentBackend: 'codex', model: 'gpt-5.3-codex', reasoningEffort: 'high' }));
-      expect(pool.getActiveAgentPreset('oc_new')).toMatchObject({ model: 'gpt-5.3-codex', reasoningEffort: 'high', origin: 'creation' });
-      expect(pool.getActiveAgentPreset('oc_new')).not.toHaveProperty('thinking');
+      // The active runtime object keeps main's shape: it carries the effort but
+      // never an origin field (the declaration lives in the selection record).
+      expect(pool.getActiveAgentRuntime('oc_new')).toMatchObject({ model: 'gpt-5.3-codex', reasoningEffort: 'high' });
+      expect(pool.getActiveAgentRuntime('oc_new')).not.toHaveProperty('origin');
+      expect(pool.getActiveAgentRuntime('oc_new')).not.toHaveProperty('thinking');
       pool.disposeAll();
     });
 
     it('rejects unsupported reasoning effort with an actionable error and binds nothing', () => {
       const { store, selections } = fakeStore();
-      const pool = new ChatSessionPool({ agentPresets: presets, agentSelections: store });
+      const pool = new ChatSessionPool({ agentRuntimes: presets, agentSelections: store });
       const rejected = pool.declareChatRuntimeProfile('oc_bad', { harness: 'claude', model: 'claude-sonnet', reasoningEffort: 'high' }, 'creator');
       expect(rejected).toMatchObject({ ok: false, error: expect.stringContaining('does not support a reasoning effort') });
       expect(selections.size).toBe(0);
@@ -1827,7 +1830,7 @@ describe('ChatSessionPool', () => {
 
     it('validate-only probes bind nothing and return no credential-base name', () => {
       const { store, selections } = fakeStore();
-      const pool = new ChatSessionPool({ agentPresets: presets, agentSelections: store });
+      const pool = new ChatSessionPool({ agentRuntimes: presets, agentSelections: store });
       const probe = pool.declareChatRuntimeProfile('oc_probe', declaration, 'preflight', { persist: false });
       expect(probe).toEqual({ ok: true, active: { agentBackend: 'codex', model: 'gpt-5.3-codex', reasoningEffort: 'high' }, sessionBoundary: 'new-session' });
       expect(selections.size).toBe(0);
@@ -1836,20 +1839,20 @@ describe('ChatSessionPool', () => {
 
     it('is idempotent when the same explicit profile is redeclared', () => {
       const { store, selections } = fakeStore();
-      const pool = new ChatSessionPool({ agentPresets: presets, agentSelections: store });
+      const pool = new ChatSessionPool({ agentRuntimes: presets, agentSelections: store });
       expect(pool.declareChatRuntimeProfile('oc_retry', declaration, 'creator')).toMatchObject({ ok: true });
       expect(pool.declareChatRuntimeProfile('oc_retry', declaration, 'creator')).toMatchObject({ ok: true });
-      expect(selections.get('oc_retry')).toMatchObject({ presetName: 'codex', origin: 'creation' });
+      expect(selections.get('oc_retry')).toMatchObject({ presetName: 'codex', declared: { model: 'gpt-5.3-codex', reasoningEffort: 'high' } });
       pool.disposeAll();
     });
 
     it('preserves /agent use precedence over the creation binding', () => {
       const { store } = fakeStore();
-      const pool = new ChatSessionPool({ agentPresets: presets, agentSelections: store, defaultAgentPresetForChat: () => 'default', validatePresetBackend: () => ({ available: true }) });
+      const pool = new ChatSessionPool({ agentRuntimes: presets, agentSelections: store, defaultAgentRuntimeForChat: () => 'default' });
       expect(pool.declareChatRuntimeProfile('oc_chain', declaration, 'creator')).toMatchObject({ ok: true });
       pool.getOrCreateChatAgent('oc_chain', createMockCallbacks());
       expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith('pilot', 'oc_chain', expect.anything(), expect.objectContaining({ agentBackend: 'codex' }));
-      expect(pool.switchAgentPreset('oc_chain', 'default', undefined, 'user')).toMatchObject({ ok: true, active: { name: 'default' } });
+      expect(pool.switchAgentRuntime('oc_chain', 'default', undefined, undefined, 'user')).toMatchObject({ ok: true, active: { name: 'default' } });
       pool.getOrCreateChatAgent('oc_chain', createMockCallbacks());
       expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith('pilot', 'oc_chain', expect.anything(), expect.objectContaining({ agentBackend: 'claude', model: 'claude-sonnet' }));
       pool.disposeAll();

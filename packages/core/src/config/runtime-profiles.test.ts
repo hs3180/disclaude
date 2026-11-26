@@ -1,9 +1,9 @@
 /** Runtime profile declarations for chat creation (Issue #4913). */
 import { describe, expect, it } from 'vitest';
-import type { AgentPresets } from './types.js';
+import type { AgentRuntimes } from './types.js';
 import { parseRuntimeProfileDeclaration, resolveRuntimeProfile } from './runtime-profiles.js';
 
-const presets: AgentPresets = {
+const runtimes: AgentRuntimes = {
   'codex-main': { agentBackend: 'codex', model: 'gpt-5.2-codex', apiKey: 'k', llm: 'codex-llm' },
   'claude-main': { agentBackend: 'claude', model: 'claude-sonnet-4-6', apiKey: 'k', llm: 'claude-llm' },
   'pi-main': { agentBackend: 'pi', model: 'pi-default', apiKey: 'k', llm: 'pi-llm' },
@@ -38,16 +38,16 @@ describe('parseRuntimeProfileDeclaration', () => {
 
 describe('resolveRuntimeProfile', () => {
   it('validates an explicit codex triple and returns only an internal credential base', () => {
-    const result = resolveRuntimeProfile(presets, { harness: 'codex', model: 'gpt-5.3-codex', reasoningEffort: 'high' });
+    const result = resolveRuntimeProfile(runtimes, { harness: 'codex', model: 'gpt-5.3-codex', reasoningEffort: 'high' });
     expect(result).toEqual({
       ok: true,
-      base: { presetName: 'codex-main', preset: presets['codex-main'] },
+      base: { presetName: 'codex-main', preset: runtimes['codex-main'] },
       overrides: { model: 'gpt-5.3-codex', reasoningEffort: 'high' },
     });
   });
 
   it('rejects an unsupported harness with the valid harnesses as options', () => {
-    const result = resolveRuntimeProfile(presets, { harness: 'gemini', model: 'x' });
+    const result = resolveRuntimeProfile(runtimes, { harness: 'gemini', model: 'x' });
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error).toContain('Unsupported harness: gemini');
@@ -56,19 +56,19 @@ describe('resolveRuntimeProfile', () => {
   });
 
   it('rejects a model that is not a Codex identifier for the codex harness', () => {
-    const result = resolveRuntimeProfile(presets, { harness: 'codex', model: 'claude-sonnet-4-6' });
+    const result = resolveRuntimeProfile(runtimes, { harness: 'codex', model: 'claude-sonnet-4-6' });
     expect(result.ok).toBe(false);
     if (!result.ok) { expect(result.error).toContain('not a Codex/ChatGPT model identifier'); }
   });
 
   it('requires an explicit model — never falls back to a default model', () => {
-    const result = resolveRuntimeProfile(presets, { harness: 'claude' });
+    const result = resolveRuntimeProfile(runtimes, { harness: 'claude' });
     expect(result.ok).toBe(false);
     if (!result.ok) { expect(result.error).toContain('must declare a model'); }
   });
 
   it('rejects reasoning effort on harnesses that cannot apply it', () => {
-    const result = resolveRuntimeProfile(presets, { harness: 'claude', model: 'claude-sonnet-4-6', reasoningEffort: 'high' });
+    const result = resolveRuntimeProfile(runtimes, { harness: 'claude', model: 'claude-sonnet-4-6', reasoningEffort: 'high' });
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error).toContain('does not support a reasoning effort');
@@ -77,7 +77,7 @@ describe('resolveRuntimeProfile', () => {
   });
 
   it('rejects invalid reasoning effort values with the supported levels as options', () => {
-    const result = resolveRuntimeProfile(presets, { harness: 'codex', model: 'gpt-5.2-codex', reasoningEffort: 'extreme' });
+    const result = resolveRuntimeProfile(runtimes, { harness: 'codex', model: 'gpt-5.2-codex', reasoningEffort: 'extreme' });
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error).toContain('Invalid reasoning effort: extreme');
@@ -87,7 +87,7 @@ describe('resolveRuntimeProfile', () => {
 
   it('rejects a harness with no enabled credential base before chat creation', () => {
     const result = resolveRuntimeProfile(
-      { 'claude-main': presets['claude-main'] },
+      { 'claude-main': runtimes['claude-main'] },
       { harness: 'codex', model: 'gpt-5.2-codex' }
     );
     expect(result.ok).toBe(false);

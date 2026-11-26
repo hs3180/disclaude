@@ -1,12 +1,15 @@
-/** Runtime profile declarations for chat creation (Issue #4913). */
+/** Runtime declarations for chat creation (Issue #4913): expressed on the
+ * AgentRuntime ports (#5255), never on the retired preset surface. */
 
-import type { AgentPreset, AgentPresets, ReasoningEffort } from './types.js';
+import type { AgentRuntime, AgentRuntimes, ReasoningEffort } from './types.js';
 import { isReasoningEffort } from './codex-settings.js';
+import { isValidModelForBackend, resolveDefaultAgentRuntime, SWITCHABLE_BACKENDS } from './agent-runtime.js';
 
-const VALID_BACKENDS = new Set<AgentPreset['agentBackend']>(['claude', 'pi', 'codex', 'dsh']);
+/** Harness domain shared with `/agent backend` (#5255), so creation cannot
+ * declare a harness the session cannot switch to. */
+const VALID_BACKENDS = new Set<AgentRuntime['agentBackend']>(SWITCHABLE_BACKENDS);
 /** Harnesses whose runtimes can apply a reasoning effort; a capability list, not a codex special case. */
 const EFFORT_CAPABLE_HARNESSES = new Set<string>(['codex']);
-const CODEX_MODEL_PATTERN = /^gpt-\d+(?:[.-].+)/i;
 const DECLARATION_KEYS = new Set(['harness', 'model', 'reasoningEffort']);
 const REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
 
@@ -21,7 +24,7 @@ export type RuntimeProfileResolution =
   | {
       ok: true;
       /** Internal credential/store base; never part of the declaration API. */
-      base: { presetName: string; preset: AgentPreset };
+      base: { presetName: string; preset: AgentRuntime };
       overrides: { model: string; reasoningEffort?: ReasoningEffort };
     }
   | { ok: false; error: string; options?: string[] };
@@ -52,7 +55,7 @@ export function parseRuntimeProfileDeclaration(value: unknown): RuntimeProfileDe
 
 /** Validate the explicit runtime and select its internal credential/store base. */
 export function resolveRuntimeProfile(
-  agents: AgentPresets,
+  agents: AgentRuntimes,
   declaration: RuntimeProfileDeclaration
 ): RuntimeProfileResolution {
   const names = Object.keys(agents);
@@ -60,13 +63,13 @@ export function resolveRuntimeProfile(
   if (harness === undefined) {
     return { ok: false, error: 'runtime must declare a harness' };
   }
-  if (!VALID_BACKENDS.has(harness as AgentPreset['agentBackend'])) {
+  if (!VALID_BACKENDS.has(harness as AgentRuntime['agentBackend'])) {
     return { ok: false, error: `Unsupported harness: ${harness}`, options: [...VALID_BACKENDS] };
   }
   if (model === undefined) {
     return { ok: false, error: `An explicit runtime must declare a model for harness ${harness}; no fallback model is applied` };
   }
-  if (harness === 'codex' && !CODEX_MODEL_PATTERN.test(model)) {
+  if (!isValidModelForBackend(harness as AgentRuntime['agentBackend'], model)) {
     return { ok: false, error: `Model ${model} is not a Codex/ChatGPT model identifier` };
   }
   if (reasoningEffort !== undefined) {
@@ -79,16 +82,16 @@ export function resolveRuntimeProfile(
   }
 
   // Credentials come only from an enabled agent for the requested harness.
-  // Prefer its default, otherwise use declaration order deterministically.
-  const [base] = names
-    .filter((name) => agents[name].agentBackend === harness)
-    .sort((a, b) => Number(b === 'default' || agents[b].default === true) - Number(a === 'default' || agents[a].default === true));
-  if (base === undefined) {
+  // Which one is the base follows main's default-marker/declaration-order
+  // rules (resolveDefaultAgentRuntime), not a task-private ordering.
+  const forHarness = Object.fromEntries(names.filter((name) => agents[name].agentBackend === harness).map((name) => [name, agents[name]]));
+  const base = resolveDefaultAgentRuntime(forHarness);
+  if (!base.ok) {
     return { ok: false, error: `No enabled agent provides the ${harness} harness; configure and enable one first`, options: names };
   }
   return {
     ok: true,
-    base: { presetName: base, preset: agents[base] },
+    base: { presetName: base.name, preset: base.preset },
     overrides: {
       model,
       ...(reasoningEffort !== undefined && isReasoningEffort(reasoningEffort) ? { reasoningEffort } : {}),
