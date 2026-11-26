@@ -4,6 +4,7 @@
  * Handles welcome messages for new chats and group joins.
  * Issue #463: Send welcome message on first private chat
  * Issue #676: Send help message when users join a group
+ * Issue #5761: Human joins no longer trigger an automatic message (/help is manual)
  * Issue #694: Extracted from feishu-channel.ts
  *
  * Migrated to @disclaude/service (Issue #1040)
@@ -100,7 +101,7 @@ export class WelcomeHandler {
       (event.app_id && event.app_id !== this.appId)) { return; }
     const userIds = [...new Set((event.users ?? []).map(user => user?.user_id?.open_id).filter((id): id is string => !!id))];
     if (!userIds.length) { return; }
-    logger.info({ chatId: event.chat_id, userCount: userIds.length }, 'New users joined group, sending help message');
+    logger.debug({ chatId: event.chat_id, userCount: userIds.length }, 'Users joined group; no automatic message (#5761)');
     await this.welcomeService.handleUserJoinedGroup(event.chat_id, CHAT_TYPE_FROM_MEMBER_ADDED, userIds);
   }
 
@@ -138,10 +139,10 @@ export class WelcomeHandler {
       logger.info({ chatId: event.chat_id }, 'Bot added to group, sending welcome message');
       await this.welcomeService.handleBotAddedToGroup(event.chat_id, CHAT_TYPE_FROM_MEMBER_ADDED);
     } else if (userMembers.length > 0) {
-      // Users joined a group that already has the bot -> send help message
-      logger.info(
+      // Users joined a group that already has the bot -> no automatic message (#5761)
+      logger.debug(
         { chatId: event.chat_id, userCount: userMembers.length },
-        'New users joined group, sending help message'
+        'Users joined group; no automatic message (#5761)'
       );
       const userIds = userMembers.map((m) => m.member_id);
       await this.welcomeService.handleUserJoinedGroup(event.chat_id, CHAT_TYPE_FROM_MEMBER_ADDED, userIds);

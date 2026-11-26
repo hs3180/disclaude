@@ -30,7 +30,7 @@ describe('WelcomeService', () => {
     resetWelcomeService();
   });
 
-  it('coalesces concurrent bot/member joins and retains the group cooldown after failure', async () => {
+  it('coalesces concurrent bot joins and retains the group cooldown after failure', async () => {
     vi.useFakeTimers();
     sendMessageMock.mockRejectedValueOnce(new Error('delivery outcome unknown'));
     await Promise.all([
@@ -41,9 +41,11 @@ describe('WelcomeService', () => {
     expect(sendMessageMock).toHaveBeenCalledTimes(1);
     vi.advanceTimersByTime(23 * 60 * 60 * 1000);
     await service.handleUserJoinedGroup('group', 'group', ['user']);
+    await service.handleBotAddedToGroup('group', 'group');
     expect(sendMessageMock).toHaveBeenCalledTimes(1);
     vi.advanceTimersByTime(60 * 60 * 1000);
     await service.handleUserJoinedGroup('group', 'group', ['user']);
+    await service.handleBotAddedToGroup('group', 'group');
     expect(sendMessageMock).toHaveBeenCalledTimes(2);
   });
 
@@ -102,45 +104,37 @@ describe('WelcomeService', () => {
   });
 
   describe('handleUserJoinedGroup', () => {
-    it('should send help message to group when users join', async () => {
+    it('sends nothing when users join a group the bot is already in (#5761)', async () => {
       await service.handleUserJoinedGroup('oc_test123', 'group', ['ou_user1', 'ou_user2']);
+
+      expect(sendMessageMock).not.toHaveBeenCalled();
+      // A join must not consume the group's automatic-prompt slot either.
+      expect(service.claimPrompt('oc_test123')).toBe(true);
+    });
+
+    it('never falls back to the first-contact welcome text, with or without user IDs', async () => {
+      const generateWelcomeMessage = vi.fn(() => '👋 Welcome!');
+      const joined = new WelcomeService({ generateWelcomeMessage, sendMessage: sendMessageMock });
+
+      await joined.handleUserJoinedGroup('oc_test123', 'group', ['ou_user1']);
+      await joined.handleUserJoinedGroup('oc_test123', 'group');
+
+      expect(generateWelcomeMessage).not.toHaveBeenCalled();
+      expect(sendMessageMock).not.toHaveBeenCalled();
+    });
+
+    it('adds no message after the group already received the bot welcome', async () => {
+      await service.handleBotAddedToGroup('oc_test123', 'group');
+      await service.handleUserJoinedGroup('oc_test123', 'group', ['ou_user2']);
 
       expect(sendMessageMock).toHaveBeenCalledTimes(1);
       expect(sendMessageMock).toHaveBeenCalledWith('oc_test123', '👋 Welcome!');
-    });
-
-    it('should use custom help message if provided', async () => {
-      const customService = new WelcomeService({
-        generateWelcomeMessage: () => '👋 Welcome!',
-        generateHelpMessage: () => '📖 Help info for new users',
-        sendMessage: sendMessageMock,
-      });
-
-      await customService.handleUserJoinedGroup('oc_test123', 'group', ['ou_user1']);
-
-      expect(sendMessageMock).toHaveBeenCalledWith('oc_test123', '📖 Help info for new users');
     });
 
     it('should not send message to non-group chat type', async () => {
       await service.handleUserJoinedGroup('ou_test123', 'p2p', ['ou_user1']);
 
       expect(sendMessageMock).not.toHaveBeenCalled();
-    });
-
-    it('should handle send message error', async () => {
-      sendMessageMock.mockRejectedValueOnce(new Error('Send failed'));
-
-      // Should not throw
-      await service.handleUserJoinedGroup('oc_test123', 'group', ['ou_user1']);
-
-      expect(sendMessageMock).toHaveBeenCalledTimes(1);
-    });
-
-    it('should work without user IDs parameter', async () => {
-      await service.handleUserJoinedGroup('oc_test123', 'group');
-
-      expect(sendMessageMock).toHaveBeenCalledTimes(1);
-      expect(sendMessageMock).toHaveBeenCalledWith('oc_test123', '👋 Welcome!');
     });
   });
 
