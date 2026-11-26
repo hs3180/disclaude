@@ -87,3 +87,10 @@ export {
   type ReconcileInput,
   type ReconcileResult,
 } from './schedule-occurrence.js';
+export {
+  OccurrenceStore,
+  DEFAULT_OCCURRENCE_RETENTION_MS,
+  DEFAULT_OCCURRENCES_PER_TASK,
+  type OccurrenceStoreOptions,
+  type LifecycleState,
+} from './occurrence-store.js';
