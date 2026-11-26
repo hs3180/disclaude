@@ -57,6 +57,23 @@ describe('named runtime and LLM configuration', () => {
     const result = resolveConfiguredAgents(config);
     expect(result.ok && result.presets.claude.autoCompactWindow).toBe('auto');
   });
+  it('accepts the progress-heartbeat brief switch on a runtime and carries it into the preset (Issue #5762)', () => {
+    const config = configuration();
+    config.agents!.claude.progressHeartbeat = { detail: 'tools' };
+    expect(validateConfig(config)).toBe(true);
+    const result = resolveConfiguredAgents(config);
+    expect(result.ok && result.presets.claude.progressHeartbeat?.detail).toBe('tools');
+  });
+  it('rejects an unknown progressHeartbeat key or detail value (Issue #5762)', () => {
+    const config = configuration();
+    config.agents!.claude.progressHeartbeat = { detail: 'verbose' } as never;
+    const result = resolveConfiguredAgents(config);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.errors).toContain('agents.claude.progressHeartbeat.detail must be off, tools or labels');
+  });
   it('accepts a defaultHarness that names a configured runtime', () => {
     const config = configuration();
     config.defaultHarness = 'claude';

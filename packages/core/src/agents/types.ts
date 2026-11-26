@@ -291,6 +291,8 @@ export interface BaseAgentConfig {
   env?: Record<string, string>;
   credentialEnvKeys?: string[];
   settings?: AgentSettings;
+  /** Issue #5762 (T-120): detail level of the progress-heartbeat brief; unset → 'labels'. */
+  progressHeartbeatDetail?: 'off' | 'tools' | 'labels';
   /** Optional API base URL for a compatible endpoint */
   apiBaseUrl?: string;
   /** Permission mode for tool execution */

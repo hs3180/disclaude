@@ -73,6 +73,11 @@ import { HistoryManager } from './history-manager.js';
 import crypto from 'node:crypto';
 import { SERVICE_VERSION } from '../version.js';
 import { appendFailureReportLink } from './failure-report-link.js';
+// Issue #5762 (T-120): one-line brief for the narration-silent heartbeat.
+import {
+  buildHeartbeatBrief, labelForToolUse, normalizeHeartbeatDetail,
+  type HeartbeatBriefSource, type HeartbeatToolNote, type ProgressHeartbeatDetail,
+} from './heartbeat-brief.js';
 
 // Type alias for backward compatibility within this module
 type UserInput = AgentUserInput;
@@ -394,6 +399,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   private readonly turnRecovery?: ServiceTurnRecoveryStore;
   /** Issue #5400: sink for the per-chat last-failure registry. */
   private readonly failureRecorder?: ChatAgentConfig['failureRecorder'];
+  /** Issue #5762 (T-120): `agent.progressHeartbeat.detail`, normalized at construction. */
+  private readonly progressHeartbeatDetail: ProgressHeartbeatDetail;
   private serviceClosing = false;
   private restartInterruptionInProgress = false;
   private readonly recoveryRunIds = new Map<string, string>();
@@ -508,6 +515,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       ].filter(Boolean).join('\n'),
     } : config.messageBuilderOptions);
     this.configureQueryOptions = config.configureQueryOptions;
+    this.progressHeartbeatDetail = normalizeHeartbeatDetail(config.progressHeartbeatDetail);
 
     this.logger.info(
       { chatId: this.boundChatId, skipHistory: config.skipHistory },
@@ -2738,6 +2746,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     let turnPendingToolResults = 0;
     let heartbeatSendInFlight = false;
     const turnToolUsage = new Map<string, number>();
+    // Issue #5762 (T-120): input of the heartbeat brief — tool notes and
+    // usage since the LAST heartbeat (window-scoped, reset on send), plus the
+    // outstanding call the timer backstop may be parked in (#5719).
+    const windowToolNotes: HeartbeatToolNote[] = [];
+    const windowToolUsage = new Map<string, number>();
+    let pendingToolNote: HeartbeatToolNote | undefined;
+    let pendingToolStartedAtMs = 0;
     // Issue #4194: count substantive user-visible output sent this turn
     // (excludes the ✅ Complete result marker) so empty turns are detectable.
     let userVisibleOutputCount = 0;
@@ -2814,6 +2829,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         turnToolsSinceHeartbeat = 0;
         turnPendingToolResults = 0;
         turnToolUsage.clear();
+        windowToolNotes.length = 0;
+        windowToolUsage.clear();
+        pendingToolNote = undefined;
         turnFailedWithConnectivityIssue = false;
       }
       return currentTurnAnchor ?? undefined;
@@ -2943,6 +2961,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       heartbeatSendInFlight = true;
       let toolsSinceLast = 0;
       let elapsedMs = 0;
+      // Issue #5762 (T-120): kind + length only — never the brief text (#4774).
+      let briefSource: HeartbeatBriefSource = 'none';
+      let briefLength = 0;
       try {
         toolsSinceLast = turnToolsSinceHeartbeat;
         const summary = this.activeTurnNarration || this.activeTurnTriggerLine;
@@ -2950,9 +2971,30 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         const activityText = toolsSinceLast > 0
           ? `期间完成 ${toolsSinceLast} 次工具调用（累计 ${toolCallCount} 次）。`
           : `仍在等待当前工具返回（本轮累计 ${toolCallCount} 次工具调用）。`;
+        // Issue #5762 (T-120): one bounded line of "what is it doing" from
+        // already-held tool metadata — no model call, no raw tool input. On the
+        // timer backstop with no completed call it names the awaited tool.
+        const waitingNote = toolsSinceLast === 0 ? pendingToolNote : undefined;
+        const brief = buildHeartbeatBrief(this.progressHeartbeatDetail, {
+          notes: windowToolNotes,
+          usage: windowToolUsage,
+          ...(waitingNote
+            ? {
+              waiting: {
+                toolName: waitingNote.toolName,
+                label: waitingNote.label,
+                source: waitingNote.source,
+                elapsedText: formatElapsedForNotice(now - pendingToolStartedAtMs),
+              },
+            }
+            : {}),
+        });
+        briefSource = brief.source;
+        briefLength = brief.length;
         const text =
           `⏳ 本轮仍在执行：${summary ? `「${summary}」` : '当前任务'}已运行 ${formatElapsedForNotice(elapsedMs)}，` +
-          `最近 ${formatElapsedForNotice(silenceMs)} 无模型播报，${activityText}无需干预，结果产出后会自动回复。`;
+          `最近 ${formatElapsedForNotice(silenceMs)} 无模型播报，${activityText}` +
+          `${brief.line ? `\n${brief.line}\n` : ''}无需干预，结果产出后会自动回复。`;
         // Issue #5719 (T-102): through the accounting wrapper — an undelivered
         // heartbeat is a recorded failed attempt, never a silent "delivered".
         await deliverProgress('heartbeat', text, resolveReplyThreadRoot());
@@ -2960,13 +3002,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         // Reset both clocks (delivered or not) so a broken channel cannot
         // produce a retry burst (#5654 semantics preserved).
         turnLastProgressAtMs = Date.now();
+        windowToolNotes.length = 0;
+        windowToolUsage.clear();
         turnToolsSinceHeartbeat = 0;
         turnHeartbeatsSent++;
         heartbeatSendInFlight = false;
       }
       this.logger.info(
         { chatId, trigger, heartbeatIndex: turnHeartbeatsSent, silenceMs, toolsSinceLast,
-          toolCallCount, elapsedMs, pendingToolResults: turnPendingToolResults },
+          toolCallCount, elapsedMs, pendingToolResults: turnPendingToolResults, briefSource, briefLength },
         'Narration-silent progress heartbeat sent (#5654/#5719)'
       );
     };
@@ -3251,6 +3295,16 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // Issue #5719 (T-102): this tool call is now outstanding — the
           // timer backstop's liveness proof while its result is pending.
           turnPendingToolResults++;
+          // Issue #5762 (T-120): window-scoped metadata for the heartbeat
+          // brief — whitelisted label fields only, never the raw input.
+          const toolNote: HeartbeatToolNote = { toolName: heartbeatToolName };
+          const labelled = labelForToolUse(heartbeatToolName, parsed.metadata?.toolInput);
+          if (labelled) { toolNote.label = labelled.label; toolNote.source = labelled.source; }
+          if (windowToolNotes.length >= 12) { windowToolNotes.shift(); }
+          windowToolNotes.push(toolNote);
+          windowToolUsage.set(heartbeatToolName, (windowToolUsage.get(heartbeatToolName) ?? 0) + 1);
+          pendingToolNote = toolNote;
+          pendingToolStartedAtMs = Date.now();
           await maybeSendProgressHeartbeat();
           const now = Date.now();
           const sinceLastTool = lastToolCallMs ? now - lastToolCallMs : undefined;
@@ -3267,6 +3321,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         // settle the outstanding count that authorizes timer heartbeats.
         if (parsed.type === 'tool_result') {
           turnPendingToolResults = Math.max(0, turnPendingToolResults - 1);
+          // Issue #5762 (T-120): nothing is awaited once the last call settles.
+          if (turnPendingToolResults === 0) { pendingToolNote = undefined; }
         }
 
         // A backend-confirmed interruption is a control outcome. Reuse the

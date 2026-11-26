@@ -10,6 +10,7 @@
  */
 
 import type { FeishuCard, ChannelCapabilities, BaseAgentConfig, ChatAgentHooks, MessageBuilderOptions, CwdProvider, CwdResolution, ChatFailureRecord } from '@disclaude/core';
+import type { ProgressHeartbeatDetail } from './heartbeat-brief.js';
 import type { ServiceTurnRecoveryStore } from '../service-turn-recovery.js';
 
 // ============================================================================
@@ -150,6 +151,12 @@ export interface ChatAgentCallbacks {
  * Issue #857: Added complexityThreshold for task progress tracking.
  */
 export interface ChatAgentConfig extends BaseAgentConfig, ChatAgentHooks {
+  /**
+   * Issue #5762 (T-120): detail level of the one-line brief carried by the
+   * narration-silent progress heartbeat (`agent.progressHeartbeat.detail`).
+   * Unset → `'labels'`.
+   */
+  progressHeartbeatDetail?: ProgressHeartbeatDetail;
   /**
    * The chatId this ChatAgent is bound to.
    * Each ChatAgent instance serves exactly one chatId.

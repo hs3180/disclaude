@@ -101,6 +101,8 @@ export interface AgentCreateOptions extends Partial<BaseAgentConfig> {
   apiBaseUrl?: string;
   /** Override permission mode */
   permissionMode?: 'default' | 'bypassPermissions';
+  /** Issue #5762 (T-120): overrides `agent.progressHeartbeat.detail` for this agent. */
+  progressHeartbeatDetail?: 'off' | 'tools' | 'labels';
   /**
    * Channel-specific MessageBuilder options.
    * Issue #1499: Decouple Feishu-specific logic from worker-node.
@@ -159,6 +161,10 @@ export class AgentFactory {
       apiKey: options.apiKey ?? defaultConfig.apiKey,
       model: options.model ?? defaultConfig.model,
       permissionMode: options.permissionMode ?? defaultConfig.permissionMode ?? 'bypassPermissions',
+      // Issue #5762 (T-120): `agent.progressHeartbeat.detail` rides on the resolved preset.
+      progressHeartbeatDetail: options.progressHeartbeatDetail
+        ?? (defaultConfig.settings as { progressHeartbeat?: { detail?: 'off' | 'tools' | 'labels' } } | undefined)
+          ?.progressHeartbeat?.detail,
     };
   }
 
