@@ -1857,6 +1857,25 @@ describe('ChatSessionPool', () => {
       expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith('pilot', 'oc_chain', expect.anything(), expect.objectContaining({ agentBackend: 'claude', model: 'claude-sonnet' }));
       pool.disposeAll();
     });
+
+    it('resolves one precedence chain: session command > creation declaration > global default (#4913 r5)', () => {
+      const { store, selections } = fakeStore();
+      const pool = new ChatSessionPool({ agentRuntimes: presets, agentSelections: store, defaultAgentRuntimeForChat: () => 'default' });
+      // 1. Global default: no declaration and no command resolve the configured default.
+      expect(pool.getActiveAgentRuntime('oc_tier')).toMatchObject({ name: 'default', agentBackend: 'claude', model: 'claude-sonnet' });
+      expect(pool.getActiveAgentRuntime('oc_tier')).not.toHaveProperty('reasoningEffort');
+      // 2. Creation declaration: the chat-level runtime configuration wins over the default.
+      expect(pool.declareChatRuntimeProfile('oc_tier', declaration, 'creator')).toMatchObject({ ok: true });
+      expect(pool.getActiveAgentRuntime('oc_tier')).toMatchObject({ name: 'codex', agentBackend: 'codex', model: 'gpt-5.3-codex', reasoningEffort: 'high' });
+      // 3. Session command: /agent use wins over the declaration; its saved record
+      //    carries no declaration, so the effort/model of the declaration are gone.
+      expect(pool.switchAgentRuntime('oc_tier', 'default', undefined, undefined, 'user')).toMatchObject({ ok: true, active: { name: 'default' } });
+      expect(selections.get('oc_tier')).toMatchObject({ presetName: 'default', updatedBy: 'user' });
+      expect(selections.get('oc_tier')).not.toHaveProperty('declared');
+      expect(pool.getActiveAgentRuntime('oc_tier')).toMatchObject({ name: 'default', agentBackend: 'claude', model: 'claude-sonnet' });
+      expect(pool.getActiveAgentRuntime('oc_tier')).not.toHaveProperty('reasoningEffort');
+      pool.disposeAll();
+    });
   });
 });
 
