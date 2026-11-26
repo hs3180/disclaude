@@ -263,6 +263,13 @@ export {
   // Issue #4648 residual ⑥: restart-surviving failure streaks
   TaskFailureStore,
   type TaskFailureStoreOptions,
+  // Issue #5763: occurrence ledger (restart-straddled occurrences)
+  OccurrenceStore,
+  type OccurrenceStoreOptions,
+  classifyOccurrence,
+  type OccurrenceRecord,
+  type OccurrenceStatus,
+  type OccurrenceDelivery,
   // Issue #2947: Bot group chat mapping
   BotChatMappingStore,
   makeMappingKey,

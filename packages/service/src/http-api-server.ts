@@ -372,6 +372,8 @@ export class HttpApiServer {
 
   /** Issue #5603: structured read-only chat history provider. */
   private historyQueryHandler?: (options: { chatId: string; days?: number; limit?: number }) => Promise<unknown>;
+  /** Issue #5763: read-only occurrence ledger lookup (`GET /api/schedule/occurrences`). */
+  private occurrenceQueryHandler?: (query: { taskId: string; at: string }) => Promise<unknown>;
   /** T-089 rework (#5197): research doc comment watch session controller. */
   private researchWatchController?: ResearchWatchController;
   private uploadImageHandler?: UploadImageHandler;
@@ -705,6 +707,7 @@ export class HttpApiServer {
     // Issue #5603: read-only structured chat history for agents (CLI parity).
     // GET but authRequired: the payload is conversation content, not a health check.
     this.addRoute('GET', '/api/history/query', this.handleHistoryQuery.bind(this), true);
+    this.addRoute('GET', '/api/schedule/occurrences', this.handleScheduleOccurrenceQuery.bind(this), true);
     // T-089 rework (#5197): on-demand research doc comment watch session
     // (`disclaude research watch start|stop|status|add|remove`). The mutating
     // routes are POSTs (token-gated); status is GET but authRequired because it
@@ -721,9 +724,48 @@ export class HttpApiServer {
     this.historyQueryHandler = handler;
   }
 
+  /** Issue #5763: set the read-only schedule occurrence lookup backend. */
+  setOccurrenceQueryHandler(handler: (query: { taskId: string; at: string }) => Promise<unknown>): void {
+    this.occurrenceQueryHandler = handler;
+  }
+
   /** T-089 rework (#5197): set the research doc comment watch session controller. */
   setResearchWatchController(controller: ResearchWatchController): void {
     this.researchWatchController = controller;
+  }
+
+  /**
+   * Issue #5763: `GET /api/schedule/occurrences?taskId=<id>&at=<ISO instant>` —
+   * read-only lookup of ONE scheduled occurrence by task ID and original
+   * scheduled instant (an offset-carrying ISO such as `2026-11-25T08:00:00+08:00`
+   * is accepted). `occurrence` is `null` when the ledger cannot answer (not
+   * wired, or this lifetime recorded no start); an unrecorded instant is
+   * reported as the derived `pending` / `missed` / `unknown` classification —
+   * never a fabricated result. Nothing is re-executed or re-notified.
+   */
+  private async handleScheduleOccurrenceQuery(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.occurrenceQueryHandler) {
+      this.sendJson(res, 503, { ok: false, message: 'schedule occurrence handler not configured' });
+      return;
+    }
+    const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
+    const taskId = url.searchParams.get('taskId')?.trim();
+    const at = url.searchParams.get('at')?.trim();
+    if (!taskId || !at) {
+      this.sendJson(res, 400, { ok: false, message: 'taskId and at query parameters are required' });
+      return;
+    }
+    if (Number.isNaN(Date.parse(at))) {
+      this.sendJson(res, 400, { ok: false, message: 'at must be an ISO instant, e.g. 2026-11-25T08:00:00+08:00' });
+      return;
+    }
+    try {
+      const occurrence = await this.occurrenceQueryHandler({ taskId, at });
+      this.sendJson(res, 200, { ok: true, occurrence: occurrence ?? null });
+    } catch (err) {
+      logger.error({ err }, 'schedule occurrence query handler error');
+      this.sendJson(res, 500, { ok: false, message: err instanceof Error ? err.message : 'schedule occurrence query failed' });
+    }
   }
 
   private async handleHistoryQuery(req: IncomingMessage, res: ServerResponse): Promise<void> {

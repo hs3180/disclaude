@@ -19,6 +19,8 @@ import {
   CooldownManager,
   // Issue #4648 residual ⑥: restart-surviving failure streaks
   TaskFailureStore,
+  // Issue #5763: occurrence ledger (restart-straddled occurrences)
+  OccurrenceStore,
   Config,
   // Issue #4388: select Agent SDK backend from config at boot.
   setDefaultProvider,
@@ -102,6 +104,8 @@ export class DisclaudeService extends EventEmitter {
   protected cooldownManager?: CooldownManager;
   /** Issue #4648 residual ⑥: file-backed failure streaks (survive restarts) */
   protected taskFailureStore?: TaskFailureStore;
+  /** Issue #5763: per-occurrence ledger under `schedules/.occurrences` */
+  protected occurrenceStore?: OccurrenceStore;
 
   // Input MessageRouter for unified routing (Issue #3582 Phase 3)
   protected inputMessageRouter?: InputMessageRouter;
@@ -423,6 +427,13 @@ export class DisclaudeService extends EventEmitter {
     const failureDir = path.join(schedulesDir, '.failures');
     this.taskFailureStore = new TaskFailureStore({ dir: failureDir });
 
+    // Issue #5763: occurrence ledger beside the failure streaks. The scheduler
+    // records every tick outcome here (executing/skipped/completed/failed/
+    // unknown + notice delivery) and reconciles restart-straddled occurrences
+    // at start; a write failure only degrades the ledger, never the schedule.
+    const occurrenceDir = path.join(schedulesDir, '.occurrences');
+    this.occurrenceStore = new OccurrenceStore({ dir: occurrenceDir });
+
     // Step 2: Initialize ScheduleManager
     logger.info('Scheduler init step 2/6: Initializing ScheduleManager');
     this.scheduleManager = new ScheduleManager({ schedulesDir, onDiagnostic: onScheduleDiagnostic });
@@ -440,6 +451,8 @@ export class DisclaudeService extends EventEmitter {
       cooldownManager: this.cooldownManager,
       // Issue #4648 residual ⑥: persist failure streaks across restarts
       failureStore: this.taskFailureStore,
+      // Issue #5763: record tick outcomes and reconcile restart-straddled occurrences
+      occurrenceStore: this.occurrenceStore,
       callbacks: schedulerCallbacks,
       // Issue #3582: Route through InputMessageRouter to existing agents
       inputMessageRouter: this.inputMessageRouter,

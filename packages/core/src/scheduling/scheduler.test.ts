@@ -2410,5 +2410,20 @@ describe('Scheduler', () => {
       const [record] = [...(await store.all()).values()];
       expect(record).toMatchObject({ status: 'completed', scheduledFor: '2026-11-25T00:24:00.000Z', scheduledForLocal: 'unknown', timezone: 'Asia/Shanghai' });
     });
+
+    it('getOccurrence answers by task ID and an offset-carrying instant; without a ledger it is undefined', async () => {
+      const s = withLedger();
+      await s.start(); // records this lifetime's startedAt — the classification bracket
+      fire(s);
+      await vi.waitFor(() => expect(recorded()).resolves.toMatchObject({ status: 'completed' }));
+      // 08:00 Asia/Shanghai is the same instant as 00:00Z — the lookup accepts both spellings.
+      await expect(s.getOccurrence('tick-ledger', '2026-11-25T08:00:00+08:00')).resolves.toMatchObject({
+        taskId: 'tick-ledger', scheduledFor, status: 'completed', scheduledForLocal: '2026-11-25T08:00:00.000+08:00',
+      });
+      // Not yet due → pending; not recorded with no provable bracket → unknown, never a fabricated result.
+      await expect(s.getOccurrence('tick-ledger', '2026-11-25T00:01:00Z')).resolves.toMatchObject({ status: 'pending', evidence: 'not-yet-due' });
+      await expect(s.getOccurrence('tick-ledger', '2026-11-24T23:59:00Z')).resolves.toMatchObject({ status: 'unknown', evidence: 'no-record-and-no-clean-stop-boundary' });
+      expect(await scheduler.getOccurrence('tick-ledger', scheduledFor)).toBeUndefined();
+    });
   });
 });

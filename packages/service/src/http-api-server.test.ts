@@ -1395,6 +1395,33 @@ describe('HttpApiServer', () => {
     });
   });
 
+  describe('GET /api/schedule/occurrences (Issue #5763)', () => {
+    it('validates taskId/at, forwards them and returns the record — or null when the ledger cannot answer', async () => {
+      const record = { taskId: 'morning-report', scheduledFor: '2026-11-25T00:00:00.000Z', status: 'missed', delivery: 'not-applicable' };
+      const handler = vi.fn().mockResolvedValueOnce(record).mockResolvedValueOnce(undefined);
+      server.setOccurrenceQueryHandler(handler);
+      expect((await dispatch(server, { method: 'GET', url: '/api/schedule/occurrences?taskId=morning-report' })).statusCode).toBe(400);
+      expect((await dispatch(server, { method: 'GET', url: '/api/schedule/occurrences?taskId=morning-report&at=yesterday' })).statusCode).toBe(400);
+      expect(handler).not.toHaveBeenCalled();
+      const response = await dispatch(server, { method: 'GET', url: '/api/schedule/occurrences?taskId=morning-report&at=2026-11-25T08:00:00%2B08:00' });
+      expect(response.statusCode).toBe(200);
+      expect(handler).toHaveBeenCalledExactlyOnceWith({ taskId: 'morning-report', at: '2026-11-25T08:00:00+08:00' });
+      expect(JSON.parse(response.body)).toEqual({ ok: true, occurrence: record });
+      // Ledger cannot answer (not wired / no start evidence) → explicit null, never an invented status.
+      const absent = await dispatch(server, { method: 'GET', url: '/api/schedule/occurrences?taskId=morning-report&at=2026-11-25T00:00:00Z' });
+      expect(JSON.parse(absent.body)).toEqual({ ok: true, occurrence: null });
+      server = new HttpApiServer({ port: 0, host: '127.0.0.1' });
+      expect((await dispatch(server, { method: 'GET', url: '/api/schedule/occurrences?taskId=morning-report&at=2026-11-25T00:00:00Z' })).statusCode).toBe(503);
+    });
+    it('is token-gated (schedule outcome data, not a health check)', async () => {
+      server = new HttpApiServer({ port: 0, apiToken: 'agent-token' });
+      const handler = vi.fn().mockResolvedValue(undefined);
+      server.setOccurrenceQueryHandler(handler);
+      expect((await dispatch(server, { method: 'GET', url: '/api/schedule/occurrences?taskId=t&at=2026-11-25T00:00:00Z' })).statusCode).toBe(401);
+      expect(handler).not.toHaveBeenCalled();
+    });
+  });
+
   describe('GET /api/history/query (Issue #5603)', () => {
     it('requires the provider, validates params and forwards the query', async () => {
       const handler = vi.fn().mockResolvedValue({ chatId: 'chat-1', days: [], totalMessages: 0, truncatedByLimit: false });

@@ -22,6 +22,7 @@ import { DEFAULT_TIMEZONE, type ScheduledTask } from './scheduled-task.js';
 import type { TaskFailureStore } from './task-failure-store.js';
 import type { OccurrenceStore } from './occurrence-store.js';
 import {
+  classifyOccurrence,
   enumerateOccurrences,
   reconcileStartup,
   type LifecycleEvidence,
@@ -537,13 +538,9 @@ export class Scheduler {
     const store = this.occurrenceStore;
     if (!store) { return; }
     try {
-      const lifecycle = await store.getLifecycle();
-      const { stoppedAt } = lifecycle;
-      const stopIsCurrent = stoppedAt !== undefined
-        && (lifecycle.startedAt === undefined || Date.parse(stoppedAt) >= Date.parse(lifecycle.startedAt));
       const evidence: LifecycleEvidence = {
         startedAt,
-        ...(stopIsCurrent && stoppedAt !== undefined ? { previousStoppedAt: stoppedAt } : {}),
+        ...this.stopEvidenceFrom(await store.getLifecycle()),
       };
       const result = reconcileStartup({ tasks, evidence, records: await store.all() });
       if (result.additions.length > 0 || result.interrupted.length > 0) {
@@ -565,6 +562,46 @@ export class Scheduler {
     } catch (error) {
       logger.error({ err: error }, 'Schedule occurrence reconciliation failed (scheduler continues)');
     }
+  }
+
+  /**
+   * Issue #5763: the persisted `stoppedAt` counts as stop evidence only when
+   * it is not older than the persisted `startedAt` — a lifetime that ended
+   * without a clean stop leaves a stale stop behind, and using it would mark
+   * occurrences that actually ran as missed.
+   */
+  private stopEvidenceFrom(lifecycle: { stoppedAt?: string; startedAt?: string }): Pick<LifecycleEvidence, 'previousStoppedAt'> {
+    const { stoppedAt } = lifecycle;
+    const stopIsCurrent = stoppedAt !== undefined
+      && (lifecycle.startedAt === undefined || Date.parse(stoppedAt) >= Date.parse(lifecycle.startedAt));
+    return stopIsCurrent ? { previousStoppedAt: stoppedAt } : {};
+  }
+
+  /**
+   * Issue #5763: read-only lookup of ONE occurrence by task ID and original
+   * scheduled instant. `scheduledFor` may carry an offset (`…+08:00`) — it is
+   * normalized to the UTC instant the ledger keys on. Returns the stored
+   * record when there is one, otherwise the honest derived classification
+   * (`pending` before the instant, `missed` only when both lifecycle
+   * boundaries bracket it, `unknown` otherwise); `undefined` when no ledger
+   * is wired or this lifetime recorded no start. Nothing is written or
+   * re-executed.
+   */
+  async getOccurrence(taskId: string, scheduledFor: string): Promise<OccurrenceRecord | undefined> {
+    const store = this.occurrenceStore;
+    if (!store) { return undefined; }
+    const lifecycle = await store.getLifecycle();
+    if (lifecycle.startedAt === undefined) { return undefined; }
+    const instant = new Date(scheduledFor);
+    const normalized = Number.isNaN(instant.getTime()) ? scheduledFor : instant.toISOString();
+    const task = await this.scheduleManager.get(taskId).catch(() => undefined);
+    return classifyOccurrence({
+      taskId,
+      scheduledFor: normalized,
+      ...(task ? { task } : {}),
+      records: await store.all(),
+      evidence: { startedAt: lifecycle.startedAt, ...this.stopEvidenceFrom(lifecycle) },
+    });
   }
 
   /**
