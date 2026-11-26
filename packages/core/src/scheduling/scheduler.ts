@@ -21,7 +21,13 @@ import type { ScheduleManager } from './schedule-manager.js';
 import { DEFAULT_TIMEZONE, type ScheduledTask } from './scheduled-task.js';
 import type { TaskFailureStore } from './task-failure-store.js';
 import type { OccurrenceStore } from './occurrence-store.js';
-import { reconcileStartup, type LifecycleEvidence } from './schedule-occurrence.js';
+import {
+  enumerateOccurrences,
+  reconcileStartup,
+  type LifecycleEvidence,
+  type OccurrenceDelivery,
+  type OccurrenceRecord,
+} from './schedule-occurrence.js';
 import { MessageRoutingError, type MessageRouter as InputMessageRouter } from '../messaging/message-router.js';
 import { TurnSupersededError } from '../messaging/turn-superseded-error.js';
 import type { SystemMessage } from '../types/message.js';
@@ -470,6 +476,12 @@ export class Scheduler {
   private readonly reportedScheduleConfigFailures = new Map<string, string>();
   /** Issue #5763: optional file-backed occurrence ledger. */
   private readonly occurrenceStore?: OccurrenceStore;
+  /**
+   * Issue #5763: ledger writes are serialized. `OccurrenceStore.put` persists
+   * one temp path per task, so overlapping puts for the same task would race
+   * on it; chaining them keeps `executing` → terminal-state order intact too.
+   */
+  private occurrenceWriteChain: Promise<void> = Promise.resolve();
 
   constructor(options: SchedulerOptions) {
     this.scheduleManager = options.scheduleManager;
@@ -567,6 +579,82 @@ export class Scheduler {
       await store.recordStopped(new Date().toISOString());
     } catch (error) {
       logger.error({ err: error }, 'Failed to record scheduler stop (next start will have no stop evidence)');
+    }
+  }
+
+  /**
+   * Issue #5763: how far back a tick may be attributed to a cron fire instant.
+   * CronJob fires within milliseconds of the instant; the window only tolerates
+   * event-loop lag and clock granularity.
+   */
+  private static readonly TICK_ATTRIBUTION_WINDOW_MS = 90_000;
+
+  /**
+   * Issue #5763: the fire instant a tick belongs to — the latest cron instant
+   * in `(now - 90s, now]` under the task's own timezone (same arithmetic as
+   * the production CronJob, see `enumerateOccurrences`). When no instant
+   * matches (manually fired job, clock jump, definition changed since the job
+   * was registered) the tick cannot be attributed to any instant and is kept
+   * under an `unknown` identity keyed by the observed instant instead — never
+   * silently dropped, never folded into a neighbouring occurrence.
+   */
+  private resolveTickInstant(task: ScheduledTask, now: Date): Pick<OccurrenceRecord, 'scheduledFor' | 'scheduledForLocal' | 'timezone'> {
+    const timezone = task.timezone || DEFAULT_TIMEZONE;
+    const enumerated = enumerateOccurrences(
+      { cron: task.cron, timezone },
+      new Date(now.getTime() - Scheduler.TICK_ATTRIBUTION_WINDOW_MS),
+      now,
+    );
+    const last = enumerated.occurrences[enumerated.occurrences.length - 1];
+    if (enumerated.error || !last) {
+      const observed = now.toISOString();
+      return { scheduledFor: observed, scheduledForLocal: 'unknown', timezone };
+    }
+    return { scheduledFor: last.scheduledFor, scheduledForLocal: last.scheduledForLocal, timezone };
+  }
+
+  /**
+   * Issue #5763: best-effort ledger write for one occurrence of `task`.
+   *
+   * Never throws and never delays the caller: the store write runs on the
+   * serialized chain and every failure is logged there. The ledger must not
+   * change `executeTask`'s return value or exception path (#4648 residual ⑧).
+   */
+  private recordOccurrence(
+    task: ScheduledTask,
+    tick: Pick<OccurrenceRecord, 'scheduledFor' | 'scheduledForLocal' | 'timezone'> | undefined,
+    status: OccurrenceRecord['status'],
+    evidence: string,
+    delivery: OccurrenceDelivery = 'not-applicable',
+  ): void {
+    const store = this.occurrenceStore;
+    if (!store || !tick) { return; }
+    const record: OccurrenceRecord = {
+      taskId: task.id,
+      scheduledFor: tick.scheduledFor,
+      scheduledForLocal: tick.scheduledForLocal,
+      timezone: tick.timezone,
+      cron: task.cron,
+      status,
+      delivery,
+      evidence,
+      observedAt: new Date().toISOString(),
+    };
+    this.occurrenceWriteChain = this.occurrenceWriteChain
+      .then(() => store.put(record))
+      .then(() => undefined, (error: unknown) => {
+        logger.error({ err: error, taskId: task.id, scheduledFor: tick.scheduledFor }, 'Occurrence ledger write failed (execution continues)');
+      });
+  }
+
+  /** Issue #5763: resolve the fire instant for a tick observed now. */
+  private tickInstant(task: ScheduledTask): Pick<OccurrenceRecord, 'scheduledFor' | 'scheduledForLocal' | 'timezone'> {
+    try {
+      return this.resolveTickInstant(task, new Date());
+    } catch (error) {
+      logger.warn({ err: error, taskId: task.id }, 'Could not resolve tick fire instant; recording under unknown identity');
+      const observed = new Date().toISOString();
+      return { scheduledFor: observed, scheduledForLocal: 'unknown', timezone: task.timezone || DEFAULT_TIMEZONE };
     }
   }
 
@@ -713,15 +801,26 @@ export class Scheduler {
    * double-deliver. One attempt, warn on failure, return undefined so the
    * caller can fall back (e.g. no reply root).
    */
-  private async sendInformationalNotification(task: ScheduledTask, message: string): Promise<string | undefined> {
+  private async sendInformationalNotification(
+    task: ScheduledTask,
+    message: string,
+    /**
+     * Issue #5763: reports whether the channel accepted the notice. Only the
+     * caller's ledger `delivery` field depends on it — never the task's
+     * execution path, which stays best-effort (#5656).
+     */
+    onDelivery?: (delivered: boolean) => void,
+  ): Promise<string | undefined> {
     try {
       const messageId = await this.callbacks.sendMessage(task.chatId, message);
+      onDelivery?.(true);
       return typeof messageId === 'string' ? messageId : undefined;
     } catch (error) {
       logger.warn(
         { err: error, taskId: task.id, name: task.name, chatId: task.chatId },
         'Failed to send informational notification for scheduled task (best-effort — task execution continues)'
       );
+      onDelivery?.(false);
       return undefined;
     }
   }
@@ -834,6 +933,16 @@ ${task.prompt ?? ''}`;
    * @param task - Task to execute
    */
   private async executeTask(task: ScheduledTask): Promise<void> {
+    // Issue #5763: the fire instant this tick belongs to, resolved once before
+    // the first await so every skip / terminal record shares one identity.
+    const tick = this.occurrenceStore ? this.tickInstant(task) : undefined;
+    // Issue #5763: the ledger's `delivery` is independent of the execution
+    // status — it records whether the channel accepted the notices the
+    // scheduler itself sent for this occurrence (⏰ start, ⏱️ timeout, ❌
+    // failure). The agent's reply body is not delivered here (#5756).
+    let delivery: OccurrenceDelivery = 'not-applicable';
+    const trackDelivery = (delivered: boolean): void => { delivery = delivered ? 'sent' : 'failed'; };
+
     // Issue #869: Check cooldown period first
     if (task.cooldownPeriod && this.cooldownManager) {
       const isInCooldown = await this.cooldownManager.isInCooldown(task.id, task.cooldownPeriod);
@@ -853,8 +962,10 @@ ${task.prompt ?? ''}`;
           `⏰ 定时任务「${task.name}」冷静期中，跳过执行\n` +
           `   上次执行: ${status.lastExecutionTime?.toLocaleString('zh-CN')}\n` +
           `   冷静期结束: ${status.cooldownEndsAt?.toLocaleString('zh-CN')}\n` +
-          `   剩余时间: ${remainingMinutes} 分钟`
+          `   剩余时间: ${remainingMinutes} 分钟`,
+          trackDelivery,
         );
+        this.recordOccurrence(task, tick, 'skipped', 'skipped-in-cooldown-period', delivery);
         return;
       }
     }
@@ -866,6 +977,7 @@ ${task.prompt ?? ''}`;
         { taskId: task.id, name: task.name },
         'Task skipped - previous execution still running'
       );
+      this.recordOccurrence(task, tick, 'skipped', 'skipped-previous-execution-still-running');
       return;
     }
 
@@ -874,6 +986,7 @@ ${task.prompt ?? ''}`;
         { taskId: task.id, name: task.name, chatId: task.chatId },
         'Task skipped - another scheduled execution is active for this chatId'
       );
+      this.recordOccurrence(task, tick, 'skipped', 'skipped-another-execution-active-for-chat');
       return;
     }
 
@@ -888,6 +1001,7 @@ ${task.prompt ?? ''}`;
         { taskId: task.id, name: task.name, chatId: task.chatId },
         'Task skipped - chat is busy (agent is processing a message)'
       );
+      this.recordOccurrence(task, tick, 'skipped', 'skipped-chat-busy');
       return;
     }
 
@@ -895,6 +1009,10 @@ ${task.prompt ?? ''}`;
 
     // Mark task as running
     this.activeExecutions.set(task.id, task.chatId);
+    // Issue #5763: admitted for execution — the ledger now holds this
+    // occurrence as `executing`; a terminal record below (or the next start's
+    // reconciliation, if this lifetime ends first) resolves it.
+    this.recordOccurrence(task, tick, 'executing', 'tick-admitted');
     const commandExecutionGeneration = this.commandStopGeneration;
     // Create drain promise if this is the first running task
     if (!this._drainPromise) {
@@ -914,6 +1032,7 @@ ${task.prompt ?? ''}`;
           { taskId: task.id, name: task.name },
           'Task file no longer exists, removing stale cron job'
         );
+        this.recordOccurrence(task, tick, 'skipped', 'skipped-schedule-file-removed-before-execution');
         this.cleanupTaskTracking(task);
         this.removeTask(task.id);
         this.resolveDrainIfNeeded();
@@ -924,6 +1043,7 @@ ${task.prompt ?? ''}`;
         { err: error, taskId: task.id },
         'Failed to verify schedule file existence, skipping execution'
       );
+      this.recordOccurrence(task, tick, 'unknown', 'schedule-file-verification-failed');
       this.cleanupTaskTracking(task);
       this.removeTask(task.id);
       this.resolveDrainIfNeeded();
@@ -952,7 +1072,7 @@ ${task.prompt ?? ''}`;
           }
           // Issue #5656: informational start notice — best-effort, the
           // command must still execute if the channel is briefly down.
-          await this.sendInformationalNotification(task, `⏰ 定时任务「${task.name}」开始执行命令...`);
+          await this.sendInformationalNotification(task, `⏰ 定时任务「${task.name}」开始执行命令...`, trackDelivery);
           if (controller.signal.aborted || commandExecutionGeneration !== this.commandStopGeneration) {
             throw new CommandCancelledError();
           }
@@ -978,6 +1098,7 @@ ${task.prompt ?? ''}`;
             stdoutTruncated: result.stdoutTruncated,
             stderrTruncated: result.stderrTruncated,
           }, 'Scheduled command completed');
+          this.recordOccurrence(task, tick, 'completed', 'command-exit-0', delivery);
           return;
         } finally {
           controllers.delete(controller);
@@ -1001,8 +1122,10 @@ ${task.prompt ?? ''}`;
         // it must not turn this into a counted task failure in the catch.
         await this.sendInformationalNotification(
           task,
-          `⚠️ 定时任务「${task.name}」无法执行: InputMessageRouter 未配置或任务缺少 chatId`
+          `⚠️ 定时任务「${task.name}」无法执行: InputMessageRouter 未配置或任务缺少 chatId`,
+          trackDelivery,
         );
+        this.recordOccurrence(task, tick, 'skipped', 'skipped-router-or-chatid-missing', delivery);
         return;
       }
 
@@ -1023,7 +1146,8 @@ ${task.prompt ?? ''}`;
       // fail once, warn, keep routing without a reply root.
       const startMessageId = await this.sendInformationalNotification(
         task,
-        `⏰ 定时任务「${task.name}」开始执行...`
+        `⏰ 定时任务「${task.name}」开始执行...`,
+        trackDelivery,
       );
 
       {
@@ -1100,6 +1224,9 @@ ${task.prompt ?? ''}`;
           },
           'Scheduled task completed (agent turn finished)'
         );
+        // Issue #5763: execution outcome only — the delivery of the agent's
+        // reply is a separate concern (#5756) and is not recorded here.
+        this.recordOccurrence(task, tick, 'completed', 'agent-turn-finished', delivery);
       }
 
     } catch (error) {
@@ -1141,11 +1268,13 @@ ${task.prompt ?? ''}`;
           outcomeContext,
           'Scheduled task turn superseded by a newer message (neutral — not counted as failure)',
         );
+        this.recordOccurrence(task, tick, 'unknown', 'turn-superseded-by-newer-message', delivery);
         return;
       }
 
       if (cause instanceof CommandCancelledError) {
         logger.info(outcomeContext, 'Scheduled command cancelled during scheduler shutdown (neutral)');
+        this.recordOccurrence(task, tick, 'skipped', 'cancelled-during-scheduler-shutdown', delivery);
         return;
       }
 
@@ -1168,18 +1297,24 @@ ${task.prompt ?? ''}`;
         // a Feishu send failing here would replace the handled timeout and
         // reject executeTask past the fire-and-forget cron onTick (unhandled
         // rejection). The notification is best-effort.
+        // Issue #5763: the wait timed out, so the outcome is `unknown` (the
+        // turn may still finish); whether the ⏱️ notice reached the channel is
+        // recorded separately as `delivery`.
         try {
           await this.callbacks.sendMessage(
             task.chatId,
             `⏱️ 定时任务「${task.name}」执行超时 (${formatTimeout(cause.timeoutMs)})，已停止等待` +
               '（agent 轮次可能仍在后台继续）。若该任务确需更长运行时间，请在 SCHEDULE.md 设置 timeoutMs。',
           );
+          trackDelivery(true);
         } catch (notifyErr) {
+          trackDelivery(false);
           logger.warn(
             { err: notifyErr, taskId: task.id, chatId: task.chatId },
             'Failed to send timeout notification for scheduled task',
           );
         }
+        this.recordOccurrence(task, tick, 'unknown', 'wait-timeout-turn-not-cancelled', delivery);
         return;
       }
 
@@ -1223,6 +1358,9 @@ ${task.prompt ?? ''}`;
       // fire-and-forget cron onTick, i.e. an unhandled rejection. The
       // failure itself is fully logged above; the notification is
       // best-effort.
+      //
+      // Issue #5763: execution outcome (`failed`) and whether the ❌ notice
+      // reached the channel (`delivery`) are recorded as separate facts.
       try {
         await this.callbacks.sendMessage(
           task.chatId,
@@ -1231,12 +1369,15 @@ ${task.prompt ?? ''}`;
             }${outcomeContext.runId ? `\nrunId: ${outcomeContext.runId}` : ''
             }${outcomeContext.traceId ? `\ntraceId: ${outcomeContext.traceId}` : ''}`
         );
+        trackDelivery(true);
       } catch (notifyErr) {
+        trackDelivery(false);
         logger.warn(
           { err: notifyErr, taskId: task.id, chatId: task.chatId },
           'Failed to send failure notification for scheduled task',
         );
       }
+      this.recordOccurrence(task, tick, 'failed', 'agent-turn-ended-with-error', delivery);
     } finally {
       // Always remove from running tasks
       this.cleanupTaskTracking(task);

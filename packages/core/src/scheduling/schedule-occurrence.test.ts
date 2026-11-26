@@ -118,7 +118,7 @@ describe('reconcileStartup', () => {
       cron: '0 8 * * *',
       status: 'missed',
       delivery: 'not-applicable',
-      evidence: 'previous-lifetime-stopped-before-and-this-started-after-instant',
+      evidence: 'previous-lifetime-stopped-before-and-this-started-after-instant (enumerated under the current cron/timezone; definition changes during the gap are not knowable)',
       observedAt: '2026-11-25T00:24:00.000Z',
     });
 

@@ -188,6 +188,17 @@ export interface ReconcileResult {
 }
 
 /**
+ * Evidence code carried by every `missed` record. The instants are enumerated
+ * under the task's CURRENT cron/timezone: if the definition (or its enabled
+ * state) was edited during the lifecycle gap, the set of fire instants that
+ * existed back then is not knowable from here — the record says so instead of
+ * presenting the enumeration as exact.
+ */
+const MISSED_EVIDENCE =
+  'previous-lifetime-stopped-before-and-this-started-after-instant'
+  + ' (enumerated under the current cron/timezone; definition changes during the gap are not knowable)';
+
+/**
  * Startup reconciliation (Issue #5763): walk each enabled task over the
  * lifecycle gap and register only what is provable.
  *
@@ -255,7 +266,7 @@ export function reconcileStartup(input: ReconcileInput): ReconcileResult {
         cron: task.cron,
         status: 'missed',
         delivery: 'not-applicable',
-        evidence: 'previous-lifetime-stopped-before-and-this-started-after-instant',
+        evidence: MISSED_EVIDENCE,
         observedAt,
       });
     }
@@ -307,7 +318,7 @@ export function classifyOccurrence(lookup: OccurrenceLookup): OccurrenceRecord {
   const stoppedAtMs = lookup.evidence.previousStoppedAt === undefined ? NaN : Date.parse(lookup.evidence.previousStoppedAt);
   const startedAtMs = Date.parse(lookup.evidence.startedAt);
   if (!Number.isNaN(stoppedAtMs) && stoppedAtMs < instantMs && instantMs <= startedAtMs) {
-    return { ...base, status: 'missed', evidence: 'previous-lifetime-stopped-before-and-this-started-after-instant' };
+    return { ...base, status: 'missed', evidence: MISSED_EVIDENCE };
   }
   if (instantMs > startedAtMs) {
     return { ...base, status: 'unknown', evidence: 'no-record-for-instant-inside-current-lifetime' };
