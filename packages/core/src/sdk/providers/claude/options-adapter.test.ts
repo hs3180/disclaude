@@ -178,31 +178,31 @@ describe('adaptOptions', () => {
     expect(result.env).toHaveProperty('CUSTOM_VAR', 'kept');
   });
 
-  it('injects modelOverrides into SDK settings alongside pinned credentials (Issue #5410)', () => {
+  it('injects the compiled model mapping into SDK settings alongside pinned credentials (Issue #5410)', () => {
     const result = adaptOptions({
       settingSources: ['user', 'project', 'local'],
       env: { ANTHROPIC_API_KEY: 'selected-key' },
-      modelOverrides: { 'claude-opus-5': 'kimi-k3' },
+      modelMapping: { 'claude-opus-5': 'kimi-k3.1-pro' },
     });
     expect(result.settings).toMatchObject({
       env: { ANTHROPIC_API_KEY: 'selected-key' },
-      modelOverrides: { 'claude-opus-5': 'kimi-k3' },
+      modelOverrides: { 'claude-opus-5': 'kimi-k3.1-pro' },
     });
   });
 
-  it('builds SDK settings from modelOverrides without an API key (Issue #5410)', () => {
+  it('builds SDK settings from the compiled model mapping without an API key (Issue #5410)', () => {
     const result = adaptOptions({
       settingSources: ['user', 'project', 'local'],
-      modelOverrides: { 'claude-opus-4-7': 'kimi-k3' },
+      modelMapping: { 'claude-opus-4-7': 'kimi-k3.1-pro' },
     });
-    expect(result.settings).toEqual({ modelOverrides: { 'claude-opus-4-7': 'kimi-k3' } });
+    expect(result.settings).toEqual({ modelOverrides: { 'claude-opus-4-7': 'kimi-k3.1-pro' } });
   });
 
   it('sends the shared binding wire model with its compiled capability mapping (Issue #5679)', () => {
     const result = adaptOptions({
       settingSources: ['user', 'project', 'local'],
       model: 'group/hq-degrade',
-      modelOverrides: { 'claude-sonnet-4-5': 'group/hq-degrade' },
+      modelMapping: { 'claude-sonnet-4-5': 'group/hq-degrade' },
     });
     // The SDK query carries the wire model; the mapping only attaches the
     // Claude catalog entry, so Claude Code still sends group/hq-degrade.

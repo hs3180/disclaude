@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bundledClaudeCodeVersion, lacksModelOverrides } from './version.js';
+import { bundledClaudeCodeVersion, lacksModelMapping } from './version.js';
 
 describe('bundled Claude Code version', () => {
   it('resolves the pinned SDK manifest', () => {
@@ -17,7 +17,7 @@ describe('bundled Claude Code version', () => {
     ['3.0.0', false],
     ['unknown', false],
     ['2.x', false],
-  ])('gates modelOverrides on %s as %s', (version, expected) => {
-    expect(lacksModelOverrides(version)).toBe(expected);
+  ])('gates the model-mapping feature on %s as %s', (version, expected) => {
+    expect(lacksModelMapping(version)).toBe(expected);
   });
 });

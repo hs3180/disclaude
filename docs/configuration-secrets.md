@@ -59,7 +59,7 @@ agents:
     default: true
     claude:
       # Claude-only environment. The three tier variables can also come from
-      # the structured claude.models mapping; see docs/agent-configuration.md:
+      # the structured claude.modelMapping mapping; see docs/agent-configuration.md:
       env:
         ANTHROPIC_DEFAULT_HAIKU_MODEL: your-small-model
 llms:
