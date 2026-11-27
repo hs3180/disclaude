@@ -191,6 +191,22 @@ describe('WeChatChannel', () => {
       });
     });
 
+    it('keeps the observation paired with the context actually used for every text chunk', async () => {
+      const channel = readyChannel();
+      const state = channel as unknown as { contexts: Map<string, string>; contextObservedAt: Map<string, number> };
+      (channel as any).client = { sendText: mockSendText };
+      state.contextObservedAt.set('chat-1', 100);
+      mockSendText.mockImplementationOnce(() => {
+        state.contexts.set('chat-1', 'new-context');
+        state.contextObservedAt.set('chat-1', 200);
+        return Promise.resolve('first-ack');
+      });
+      await (channel as any).doSendMessage({ chatId: 'chat-1', type: 'text', text: '🙂'.repeat(1001) });
+      expect(mockSendText.mock.calls.map(([params]) => [params.contextToken, params.contextObservedAt])).toEqual([['ctx-chat', 100], ['ctx-chat', 100]]);
+      await (channel as any).doSendMessage({ chatId: 'chat-1', type: 'text', text: 'next' });
+      expect(mockSendText).toHaveBeenLastCalledWith({ to: 'chat-1', content: 'next', contextToken: 'new-context', contextObservedAt: 200 });
+    });
+
     it('rejects cards without an explicit human-readable description', async () => {
       const channel = readyChannel();
       (channel as any).client = { sendText: mockSendText };

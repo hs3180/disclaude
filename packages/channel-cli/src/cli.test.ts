@@ -52,6 +52,11 @@ describe('@disclaude/channel-cli', () => {
     ['delivery-rejected', {
       channel: 'wechat', errorKind: 'delivery-rejected', sessionState: 'unverified',
       endpoint: '/ilink/bot/sendmessage', httpStatus: 200, ret: -2, errmsg: 'prepare failed', channelDiagnosticId: 'ab12cd34',
+      send: {
+        clientMessageId: 'd5b48bee-2762-44bb-9a4c-f6fd5b5d3692', channelId: 'wechat', peerHash: 'bb2233445566',
+        messageType: 'text', replyContextPresent: true, replyContextObservedAgeMs: 3000, lastAcceptedPollAgeMs: 25,
+        elapsedMs: 420, stage: 'api-response', failure: 'api-rejected', upstreamTraceId: '0123456789abcdef',
+      },
     }],
     ['login-expired', {
       channel: 'wechat', errorKind: 'login-expired', sessionState: 'login-expired',

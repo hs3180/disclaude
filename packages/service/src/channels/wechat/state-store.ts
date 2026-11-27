@@ -8,6 +8,7 @@ import { emptyWelcomeState, validWelcomeState, type WeChatWelcomeState } from '.
 
 export const DEFAULT_WECHAT_STATE_DIR = join(homedir(), '.disclaude', 'wechat');
 export const DEFAULT_WECHAT_BASE_URL = 'https://ilinkai.weixin.qq.com';
+const STATE_LIMIT_BYTES = 4 * 1024 * 1024;
 
 /** A readable PID is an owner record, not proof that its process is alive. */
 export function wechatLockPid(record: string): number | undefined {
@@ -28,6 +29,8 @@ export interface WeChatCredentials {
 export interface WeChatSessionState extends WeChatListenerState {
   botId: string;
   contexts: Record<string, string>;
+  /** Optional local observation times (milliseconds since epoch), absent in older sessions. */
+  contextObservedAt?: Record<string, number>;
 }
 
 /** Only HTTPS Tencent iLink hosts may receive server-issued credentials. */
@@ -48,7 +51,7 @@ export class WeChatStateStore {
     try {
       const file = join(this.dir, name);
       const stat = await fs.lstat(file);
-      if (!stat.isFile() || stat.size > 4 * 1024 * 1024) { throw new Error('invalid file'); }
+      if (!stat.isFile() || stat.size > STATE_LIMIT_BYTES) { throw new Error('invalid file'); }
       await fs.chmod(file, 0o600);
       return JSON.parse(await fs.readFile(file, 'utf8')) as T;
     } catch (error) {
@@ -65,7 +68,7 @@ export class WeChatStateStore {
 
   private async write(name: string, value: unknown): Promise<void> {
     const content = JSON.stringify(value);
-    if (Buffer.byteLength(content) > 4 * 1024 * 1024) { throw new Error(`WeChat ${name} exceeds private storage limit`); }
+    if (Buffer.byteLength(content) > STATE_LIMIT_BYTES) { throw new Error(`WeChat ${name} exceeds private storage limit`); }
     await this.prepare();
     const temp = join(this.dir, `.${randomUUID()}.tmp`);
     try {
@@ -98,10 +101,22 @@ export class WeChatStateStore {
       throw new Error('Invalid WeChat session state; restore the file before restarting');
     }
     if (value.mediaInbox !== undefined && !validMediaInbox(value.mediaInbox)) { throw new Error('Invalid WeChat media recovery state; restore the session file'); }
+    if (!value.contextObservedAt || typeof value.contextObservedAt !== 'object' || Array.isArray(value.contextObservedAt)) {
+      delete value.contextObservedAt;
+    }
     return value;
   }
 
-  async saveSession(state: WeChatSessionState): Promise<void> { await this.write('session.json', state); }
+  async saveSession(state: WeChatSessionState): Promise<void> {
+    // Optional telemetry must not take space away from a cursor, reply context or media-recovery checkpoint.
+    if (state.contextObservedAt && Buffer.byteLength(JSON.stringify(state)) > STATE_LIMIT_BYTES) {
+      const required = { ...state };
+      delete required.contextObservedAt;
+      await this.write('session.json', required);
+      return;
+    }
+    await this.write('session.json', state);
+  }
 
   async loadWelcome(botId: string): Promise<WeChatWelcomeState> {
     const state = await this.read<WeChatWelcomeState>('welcome.json');

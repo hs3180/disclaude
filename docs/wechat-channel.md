@@ -142,6 +142,14 @@ WeChat forwards the existing public stage updates and decision summaries through
 
 Successful API completion means Tencent accepted the request; it is not a read receipt. Timeouts, network failures, or unreadable send responses have an unknown delivery outcome and are not automatically resent. If a later text part fails, the error reports partial delivery. Check WeChat before retrying either case. Sending a file fails before reporting success when upload, encryption or the final message request fails.
 
+### Diagnosing a send failure
+
+Each actual `sendmessage` request emits a `wechat_send_result` event in `WeChatApiClient`, for both accepted and failed sends. Compare the account's `channelId` and `peerHash` in the nested `send` observation. `clientMessageId` is the locally generated request identifier. An accepted event includes the platform message ID when it is available. Failed requests carry the channel diagnostic ID used by the REST error response and the CLI's `diagnostic.diagnostics.send` fields. Upstream request/trace identifiers are optional and retained only when a recognized response field supplies a safe value.
+
+`replyContextPresent` describes the context actually sent for that request. `replyContextObservedAgeMs` is the age of the last local observation of that context in an incoming message. A legacy saved context has an unknown age until it has been observed again. `lastAcceptedPollAgeMs` measures an actual accepted `getUpdates` response, excluding local empty timeouts. These observations help compare successful and failed requests, but cannot establish provider-side context validity or the cause of a generic `-2 / prepare failed` rejection.
+
+Use `stage`, `failure`, `elapsedMs` and an optional allowlisted transport code to distinguish an HTTP rejection, a business-code rejection, a transport failure, a deadline while reading the body, or invalid JSON. `ret` and `errcode` are retained independently when returned. Small JSON error bodies also contribute safe details on non-2xx responses. `serverErrorMessagePresent` indicates whether the provider supplied a reason, even if it could not be included safely. The diagnostic event omits raw response bodies, request headers, reply credentials and message content. Collection uses the existing request only and does not retry delivery.
+
 ## Restart, expiry, and migration
 
 The sync cursor, bounded accepted-ID cache, and per-peer reply contexts are checkpointed atomically. Failed message handoffs remain retryable; accepted replays are suppressed across a normal restart. This is not a transactional exactly-once guarantee: a process crash between Agent admission and the checkpoint can replay a message, and eviction from the bounded cache removes the dedup tombstone. Generic Agent/job recovery is a separate layer.
