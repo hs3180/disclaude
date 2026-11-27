@@ -1,5 +1,5 @@
 import { GoalController, GoalRevisionConflictError, type ControlCommand, type GoalExecutionRequest, type GoalExecutionStart,
-  type GoalRecord, type GoalStore, type ProjectManager } from '@disclaude/core';
+  type GoalRecord, type GoalStore, type ProjectManager, type TaskQuestion } from '@disclaude/core';
 import type { Logger } from 'pino';
 import type { AgentCreateOptions } from '../agents/factory.js';
 import type { ChatAgentCallbacks } from '../agents/types.js';
@@ -187,6 +187,42 @@ export class GoalExecutionService {
     }
   }
   isBusy(chatId: string): boolean { return [...this.bindings.values()].some(binding => binding.source.chatId === chatId); }
+  /** Send phase of a task question (#5591 G1): a live Goal turn asks the user
+   * through the host CLI path, never a model tool. Only a live binding's
+   * trusted source selects the Goal; a caller-supplied goalId may narrow an
+   * ambiguous trusted set but never widen it. The Goal id becomes the
+   * persisted taskKey so the answer/wake phases map back without a schema
+   * change; the caller's own taskKey is not trusted and not mutated.
+   */
+  async bindTaskQuestion(question: Readonly<TaskQuestion>, goalId?: string): Promise<Readonly<TaskQuestion>> {
+    if (this.closing) { throw new Error('Goal execution service is closing'); }
+    const trusted = [...this.bindings.values()].filter(({ source }) => source.chatId === question.chatId
+      && source.actorId === question.actorId && source.projectRoot === question.projectRoot
+      && (goalId === undefined || source.goalId === goalId));
+    const binding = trusted.length === 1 ? trusted[0] : undefined;
+    if (!binding) { throw new Error('No live Goal turn of this user and Project owns this task question'); }
+    const current = await this.options.store.get(binding.source.goalId);
+    if (!current || current.status !== 'active') { throw new Error('Goal turn changed; do not admit new work from its old scope'); }
+    await this.authorize(current, binding.source);
+    return Object.freeze({ ...question, taskKey: current.id });
+  }
+  /** Answer/wake phase: the asking turn's binding is gone by design, so
+   * authority is re-derived from the persisted Goal the taskKey names and the
+   * verified answer callback is the user event (the record carries no chat
+   * type, so the policy check sees chat/actor/message identity only). A
+   * record without a Project root, another chat, or an ended Goal rejects.
+   */
+  async authorizeTaskQuestionAnswer(question: Readonly<TaskQuestion>, answer: Readonly<{ actorId: string; messageId: string }>): Promise<Readonly<GoalRecord>> {
+    const record = await this.options.store.get(question.taskKey);
+    if (!record || record.chatId !== question.chatId || record.projectRoot === undefined || record.projectRoot !== question.projectRoot) {
+      throw new Error('Task question has no matching Goal record; its evidence is insufficient');
+    }
+    if (record.status === 'abandoned' || record.status === 'completed') { throw new Error('Goal no longer admits its task answer'); }
+    await this.authorize(record, { goalId: record.id, expectedRevision: record.revision, chatId: question.chatId,
+      projectRoot: question.projectRoot, actorId: answer.actorId, sourceMessageId: answer.messageId,
+      ...(question.threadRootId ? { threadRootId: question.threadRootId } : {}) });
+    return record;
+  }
   close(): Promise<void> {
     this.closing = true;
     this.closeFlight ??= (async () => {
