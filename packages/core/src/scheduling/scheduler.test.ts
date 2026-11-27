@@ -23,6 +23,8 @@ import {
 } from './scheduler.js';
 import { TurnSupersededError } from '../messaging/turn-superseded-error.js';
 import { TaskFailureStore } from './task-failure-store.js';
+import { OccurrenceStore } from './occurrence-store.js';
+import { classifyOccurrence } from './schedule-occurrence.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
 import type { CooldownManager } from './cooldown-manager.js';
@@ -2218,6 +2220,210 @@ describe('Scheduler', () => {
       await vi.waitFor(() => {
         expect(mockRouterAsMock.route).toHaveBeenCalledTimes(2);
       }, { timeout: 2000 });
+    });
+  });
+
+  // Issue #5763: lifecycle hooks for the occurrence ledger. Only `Date` is
+  // faked (no timer faking): start()/stop() capture instants via `new Date()`,
+  // while the real scheduler/store mechanics stay untouched.
+  describe('occurrence ledger lifecycle (Issue #5763)', () => {
+    const daily = createTask({ id: 'morning-report', cron: '0 8 * * *', timezone: 'Asia/Shanghai' });
+    const at8 = '2026-11-25T00:00:00.000Z'; // 08:00 Asia/Shanghai
+    let dir: string;
+    let store: OccurrenceStore;
+
+    beforeEach(async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      dir = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'sched-occ-'));
+      store = new OccurrenceStore({ dir });
+      mockScheduleManager.listEnabled = vi.fn().mockResolvedValue([daily]) as ScheduleManager['listEnabled'];
+    });
+    afterEach(async () => {
+      await scheduler.stop(0).catch(() => {});
+      vi.useRealTimers();
+      await fsPromises.rm(dir, { recursive: true, force: true });
+    });
+
+    const withStore = (occurrenceStore: OccurrenceStore) => new Scheduler({
+      scheduleManager: mockScheduleManager, callbacks: mockCallbacks, inputMessageRouter: mockRouter,
+      jobFactory: testJobFactory, occurrenceStore,
+    });
+
+    it('clean stop before the instant, restore after it: the straddled occurrence is registered missed once', async () => {
+      vi.setSystemTime(new Date('2026-11-24T23:01:00Z'));
+      const before = withStore(store);
+      await before.start();
+      await before.stop(0);
+      expect((await store.getLifecycle()).stoppedAt).toBe('2026-11-24T23:01:00.000Z');
+
+      vi.setSystemTime(new Date('2026-11-25T00:24:00Z'));
+      const after = withStore(store);
+      await after.start();
+      expect(await store.get('morning-report', at8)).toMatchObject({ status: 'missed', delivery: 'not-applicable' });
+
+      // Consecutive restart: same single record, start instant moves forward, nothing re-executed.
+      vi.setSystemTime(new Date('2026-11-25T00:30:00Z'));
+      const again = withStore(store);
+      await again.start();
+      expect([...(await store.all()).keys()].filter((k) => k === `morning-report@${at8}`)).toHaveLength(1);
+      expect((await store.getLifecycle()).startedAt).toBe('2026-11-25T00:30:00.000Z');
+      expect(mockRouterAsMock.route).not.toHaveBeenCalled();
+    });
+
+    it('no clean stop (crash): nothing is registered as missed or failed; the evidence gap stays explicit', async () => {
+      vi.setSystemTime(new Date('2026-11-25T00:24:00Z'));
+      await withStore(store).start();
+      expect(await store.get('morning-report', at8)).toBeUndefined();
+      expect(await store.getLifecycle()).toEqual({ startedAt: '2026-11-25T00:24:00.000Z' });
+    });
+
+    it('a stale stop older than the previous start is not stop evidence after an unclean end', async () => {
+      await fsPromises.writeFile(
+        path.join(dir, 'lifecycle.json'),
+        JSON.stringify({ startedAt: '2026-11-24T22:00:00Z', stoppedAt: '2026-11-24T01:00:00Z' }),
+        'utf-8',
+      );
+      const restartedStore = new OccurrenceStore({ dir });
+      vi.setSystemTime(new Date('2026-11-25T00:24:00Z'));
+      await withStore(restartedStore).start();
+      expect(await restartedStore.get('morning-report', at8)).toBeUndefined();
+    });
+
+    it('an unwritable ledger never blocks start or stop', async () => {
+      await fsPromises.writeFile(path.join(dir, 'blocked'), 'not a dir', 'utf-8');
+      const blocked = new OccurrenceStore({ dir: path.join(dir, 'blocked') });
+      vi.setSystemTime(new Date('2026-11-25T00:24:00Z'));
+      const s = withStore(blocked);
+      await s.start();
+      expect(s.isRunning()).toBe(true);
+      await s.stop(0);
+      expect(blocked.degraded).toBe(true);
+    });
+  });
+
+  describe('occurrence ledger tick path (Issue #5763)', () => {
+    const firedAt = new Date('2026-11-25T00:00:00Z'); // a `* * * * *` fire instant in every zone
+    const scheduledFor = '2026-11-25T00:00:00.000Z';
+    const ledgerTask = () => createTask({ id: 'tick-ledger', name: 'Ledger Task', timezone: 'Asia/Shanghai' });
+    let dir: string;
+    let store: OccurrenceStore;
+
+    beforeEach(async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(firedAt);
+      dir = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'sched-occ-tick-'));
+      store = new OccurrenceStore({ dir });
+      mockScheduleManager.get = vi.fn().mockResolvedValue(ledgerTask()) as ScheduleManager['get'];
+    });
+    afterEach(async () => {
+      await scheduler.stop(0).catch(() => {});
+      vi.useRealTimers();
+      await fsPromises.rm(dir, { recursive: true, force: true });
+    });
+
+    const withLedger = (task = ledgerTask()) => {
+      const s = new Scheduler({
+        scheduleManager: mockScheduleManager, callbacks: mockCallbacks, inputMessageRouter: mockRouter,
+        jobFactory: testJobFactory, occurrenceStore: store,
+      });
+      s.addTask(task);
+      return s;
+    };
+    const fire = (s: Scheduler) => { void s.getActiveJobs()[0].job.fireOnTick(); };
+    const recorded = () => store.get('tick-ledger', scheduledFor);
+
+    it('a fired tick is recorded executing at its fire instant, then completed when the turn ends', async () => {
+      let release!: () => void;
+      mockRouterAsMock.route.mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }));
+      const s = withLedger();
+      fire(s);
+      await vi.waitFor(() => expect(recorded()).resolves.toMatchObject({
+        status: 'executing', evidence: 'tick-admitted', delivery: 'not-applicable',
+        scheduledFor, timezone: 'Asia/Shanghai', cron: '* * * * *',
+      }));
+      release();
+      await vi.waitFor(() => expect(recorded()).resolves.toMatchObject({
+        status: 'completed', evidence: 'agent-turn-finished', delivery: 'sent',
+      }));
+      expect([...(await store.all()).keys()]).toEqual([`tick-ledger@${scheduledFor}`]);
+    });
+
+    it('a tick that never fired stays unknown inside the current lifetime — not failed, not missed', async () => {
+      vi.setSystemTime(new Date('2026-11-24T23:59:00Z'));
+      const s = withLedger();
+      await s.start();
+      vi.setSystemTime(new Date('2026-11-25T00:05:00Z'));
+      // The job for 00:00 existed and the scheduler was alive: the tick is simply absent.
+      expect(await recorded()).toBeUndefined();
+      const classified = classifyOccurrence({
+        taskId: 'tick-ledger', scheduledFor, task: ledgerTask(), records: await store.all(),
+        evidence: { startedAt: '2026-11-24T23:59:00.000Z' }, now: new Date(),
+      });
+      expect(classified).toMatchObject({ status: 'unknown', delivery: 'not-applicable', evidence: 'no-record-for-instant-inside-current-lifetime' });
+    });
+
+    it('a rejected channel notice does not turn a successful run into a failure: completed + delivery failed', async () => {
+      vi.mocked(mockCallbacks.sendMessage).mockRejectedValueOnce(new Error('feishu 500'));
+      const s = withLedger();
+      fire(s);
+      await vi.waitFor(() => expect(recorded()).resolves.toMatchObject({ status: 'completed', delivery: 'failed' }));
+      expect(mockRouterAsMock.route).toHaveBeenCalledOnce();
+      expect(vi.mocked(mockCallbacks.sendMessage).mock.calls.some(([, text]) => text.startsWith('❌'))).toBe(false);
+    });
+
+    it('a failed turn is failed regardless of whether the ❌ notice reached the channel', async () => {
+      mockRouterAsMock.route.mockRejectedValueOnce(new Error('route boom'));
+      const delivered = withLedger();
+      fire(delivered);
+      await vi.waitFor(() => expect(recorded()).resolves.toMatchObject({ status: 'failed', delivery: 'sent', evidence: 'agent-turn-ended-with-error' }));
+    });
+
+    it('a failed turn whose ❌ notice is rejected keeps both facts: failed + delivery failed', async () => {
+      mockRouterAsMock.route.mockRejectedValueOnce(new Error('route boom'));
+      vi.mocked(mockCallbacks.sendMessage).mockRejectedValue(new Error('channel down'));
+      const s = withLedger();
+      fire(s);
+      await vi.waitFor(() => expect(recorded()).resolves.toMatchObject({ status: 'failed', delivery: 'failed' }));
+    });
+
+    it('a wait timeout is unknown (not failed) and records the ⏱️ notice delivery', async () => {
+      mockRouterAsMock.route.mockImplementationOnce(() => new Promise<void>(() => {}));
+      const s = withLedger({ ...ledgerTask(), timeoutMs: 30 });
+      fire(s);
+      await vi.waitFor(() => expect(recorded()).resolves.toMatchObject({ status: 'unknown', delivery: 'sent', evidence: 'wait-timeout-turn-not-cancelled' }), { timeout: 3000 });
+    });
+
+    it('a skipped tick (busy chat) is an explicit skipped record', async () => {
+      mockCallbacks.isChatBusy = () => true;
+      const s = withLedger();
+      fire(s);
+      await vi.waitFor(() => expect(recorded()).resolves.toMatchObject({ status: 'skipped', delivery: 'not-applicable', evidence: 'skipped-chat-busy' }));
+      expect(mockRouterAsMock.route).not.toHaveBeenCalled();
+    });
+
+    it('a tick away from any fire instant is kept under an unknown identity instead of being dropped', async () => {
+      vi.setSystemTime(new Date('2026-11-25T00:24:00Z')); // 08:24 Asia/Shanghai — no `0 8 * * *` instant in the window
+      const daily = createTask({ id: 'tick-ledger', cron: '0 8 * * *', timezone: 'Asia/Shanghai' });
+      const s = withLedger(daily);
+      fire(s);
+      await vi.waitFor(() => expect(store.all()).resolves.toHaveProperty('size', 1));
+      const [record] = [...(await store.all()).values()];
+      expect(record).toMatchObject({ status: 'completed', scheduledFor: '2026-11-25T00:24:00.000Z', scheduledForLocal: 'unknown', timezone: 'Asia/Shanghai' });
+    });
+
+    it('getOccurrence answers by task ID and an offset-carrying instant; without a ledger it is undefined', async () => {
+      const s = withLedger();
+      await s.start(); // records this lifetime's startedAt — the classification bracket
+      fire(s);
+      await vi.waitFor(() => expect(recorded()).resolves.toMatchObject({ status: 'completed' }));
+      // 08:00 Asia/Shanghai is the same instant as 00:00Z — the lookup accepts both spellings.
+      await expect(s.getOccurrence('tick-ledger', '2026-11-25T08:00:00+08:00')).resolves.toMatchObject({
+        taskId: 'tick-ledger', scheduledFor, status: 'completed', scheduledForLocal: '2026-11-25T08:00:00.000+08:00',
+      });
+      // Not yet due → pending; not recorded with no provable bracket → unknown, never a fabricated result.
+      await expect(s.getOccurrence('tick-ledger', '2026-11-25T00:01:00Z')).resolves.toMatchObject({ status: 'pending', evidence: 'not-yet-due' });
+      await expect(s.getOccurrence('tick-ledger', '2026-11-24T23:59:00Z')).resolves.toMatchObject({ status: 'unknown', evidence: 'no-record-and-no-clean-stop-boundary' });
+      expect(await scheduler.getOccurrence('tick-ledger', scheduledFor)).toBeUndefined();
     });
   });
 });

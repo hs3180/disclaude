@@ -1252,6 +1252,11 @@ export async function main(): Promise<void> {
       // history backend (same module as `disclaude history query`).
       httpApiServer.setHistoryQueryHandler((options) => queryChatHistory(options));
 
+      // Issue #5763: wire REST GET /api/schedule/occurrences to the scheduler's
+      // read-only occurrence ledger (task ID + original instant → recorded or
+      // derived status). Read-only: nothing is re-executed or re-notified.
+      httpApiServer.setOccurrenceQueryHandler(({ taskId, at }) => Promise.resolve(service.getScheduler()?.getOccurrence(taskId, at)));
+
       // T-089 rework (#5197, review 6677596913): wire the on-demand research
       // doc comment watch session. Constructing the host is inert — no monitor
       // and no timer exist until `disclaude research watch start` (or a direct

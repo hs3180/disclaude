@@ -68,3 +68,29 @@ export {
   type SchedulerCallbacks,
   type SchedulerOptions,
 } from './scheduler.js';
+
+// Occurrence ledger (Issue #5763: restart-straddled occurrences, provable-missed vs unknown)
+export {
+  classifyOccurrence,
+  enumerateOccurrences,
+  occurrenceKey,
+  reconcileStartup,
+  MAX_ENUMERATED_OCCURRENCES,
+  type EnumerateResult,
+  type EnumeratedOccurrence,
+  type LifecycleEvidence,
+  type OccurrenceDelivery,
+  type OccurrenceLookup,
+  type OccurrenceRecord,
+  type OccurrenceStatus,
+  type ReconcileGap,
+  type ReconcileInput,
+  type ReconcileResult,
+} from './schedule-occurrence.js';
+export {
+  OccurrenceStore,
+  DEFAULT_OCCURRENCE_RETENTION_MS,
+  DEFAULT_OCCURRENCES_PER_TASK,
+  type OccurrenceStoreOptions,
+  type LifecycleState,
+} from './occurrence-store.js';
