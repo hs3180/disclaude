@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { TaskQuestionStore, type GoalExecutionRequest, type GoalExecutionStart, type GoalRecord, type TaskQuestion, type TaskQuestionRecord } from '@disclaude/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { TaskQuestionFlow } from '../agents/task-question-flow.js';
 import { attachTaskQuestionHost, createTaskQuestionHostPorts } from './task-question-host.js';
 
 const roots: string[] = [];
@@ -46,6 +47,7 @@ describe('task question host ports (#5591 G1)', () => {
   it('answer phase requires the verified callback and re-checks the Goal record with it', async () => {
     const f = fixture();
     await expect(f.ports.authorize(f.question, 'answer')).rejects.toThrow(/requires the verified callback/);
+    await expect(f.ports.authorize(f.question, 'wake')).rejects.toThrow(/requires the verified callback/);
     await f.ports.authorize(f.question, 'answer', { actorId: 'user-1', messageId: 'om-card' });
     expect(f.goalExecution.authorizeTaskQuestionAnswer).toHaveBeenCalledWith(f.question, { actorId: 'user-1', messageId: 'om-card' });
   });
@@ -67,6 +69,18 @@ describe('task question host ports (#5591 G1)', () => {
     await expect(f.ports.wake(f.answered)).rejects.toThrow(/no Project root/);
     await expect(f.ports.wake({ ...f.answered, answer: undefined, wake: 'none' })).rejects.toThrow(/answer is missing/);
     expect(f.goalExecution.start).not.toHaveBeenCalled();
+  });
+  it('a saved answer flows through TaskQuestionFlow.wake into the Goal resume and is marked delivered', async () => {
+    const f = fixture();
+    const flow = new TaskQuestionFlow({ ...f.ports,
+      send: () => Promise.resolve({ messageId: 'om-card', chatId: 'chat-1', threadRootId: 'omt-thread' }),
+      reconcileCard: () => Promise.resolve({ messageId: 'om-card', chatId: 'chat-1' }) });
+    await flow.ask(f.question);
+    const saved = await flow.acceptAuthenticatedAnswer(f.question.id, { actorId: 'user-1', chatId: 'chat-1', messageId: 'om-card', text: 'Use the public set' });
+    expect(saved.wake).toBe('pending'); expect(f.goalExecution.start).not.toHaveBeenCalled();
+    const woken = await flow.wake(f.question.id);
+    expect(woken.wake).toBe('delivered'); expect(woken.wakeReceiptId).toBe(`goal-resume:${f.goal.id}:r4`);
+    expect(f.goalExecution.start).toHaveBeenCalledOnce(); expect(f.goalExecution.start.mock.calls[0][1]).toBe('resume');
   });
   it('admission is never re-derived from a sending/uncertain wake', async () => {
     const f = fixture();

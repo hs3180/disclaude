@@ -1,15 +1,19 @@
 import type { TaskQuestion, TaskQuestionRecord, TaskQuestionStore } from '@disclaude/core';
 
 type Receipt = { messageId: string; chatId: string; threadRootId?: string; replyRootId?: string | null };
+/** The saved answer is the user event a host re-checks before waking. */
+const callbackOf = (record: Readonly<TaskQuestionRecord>): Callback | undefined =>
+  record.answer ? { actorId: record.question.actorId, messageId: record.answer.messageId } : undefined;
+type Callback = Readonly<{ actorId: string; messageId: string }>;
 export interface TaskQuestionFlowPorts {
   store: TaskQuestionStore;
   /** Current authority, not authentication inferred from persisted strings.
-   * The answer phase also receives the verified callback identity the flow
-   * has just checked against the question (actorId/chatId), so hosts can
-   * re-derive authority from that user event instead of persisted strings.
+   * The answer/wake phases also receive the callback identity (the verified
+   * answer for 'answer', the saved answer for 'wake') so hosts re-derive
+   * authority from that user event instead of persisted strings.
    */
   authorize(question: Readonly<TaskQuestion>, phase: 'send' | 'answer' | 'wake',
-    answer?: Readonly<{ actorId: string; messageId: string }>): void | Promise<void>;
+    answer?: Callback): void | Promise<void>;
   send(question: Readonly<TaskQuestion>): Promise<Receipt>;
   /** Verify the actual platform card/token/original route on an early callback. */
   reconcileCard(question: Readonly<TaskQuestion>, messageId: string): Promise<Receipt>;
@@ -74,7 +78,7 @@ export class TaskQuestionFlow {
   }
   wake(id: string): Promise<TaskQuestionRecord> {
     return this.track(async () => {
-      const current = await this.read(id); await this.ports.authorize(current.question, 'wake');
+      const current = await this.read(id); await this.ports.authorize(current.question, 'wake', callbackOf(current));
       if (this.closing) { throw new Error('Task question flow is closing'); }
       const intent = await this.ports.store.begin(id, 'wake');
       if (!intent.dispatch) {
@@ -84,7 +88,7 @@ export class TaskQuestionFlow {
       let dispatched = false;
       try {
         if (this.closing) { throw new Error('Task question flow is closing'); }
-        await this.ports.authorize(intent.record.question, 'wake');
+        await this.ports.authorize(intent.record.question, 'wake', callbackOf(intent.record));
         if (this.closing) { throw new Error('Task question flow is closing'); }
         dispatched = true; const receipt = await this.ports.wake(Object.freeze(structuredClone(intent.record)));
         return await this.ports.store.confirmWake(id, receipt);
@@ -97,7 +101,7 @@ export class TaskQuestionFlow {
   }
   reconcileWake(id: string): Promise<TaskQuestionRecord> {
     return this.track(async () => {
-      const current = await this.read(id); await this.ports.authorize(current.question, 'wake');
+      const current = await this.read(id); await this.ports.authorize(current.question, 'wake', callbackOf(current));
       if (current.cancelled || !['sending', 'uncertain', 'delivered'].includes(current.wake)) { throw new Error('No task-answer admission to reconcile'); }
       if (current.wake === 'delivered') { return current; }
       const receipt = await this.ports.admitted(Object.freeze(structuredClone(current)));
