@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 /**
  * The SDK serializes inline settings into argv; keep API keys in a private
- * file, and modelOverrides maps out of the command line (Issue #5410).
+ * file, and the native model-override settings map out of the command line
+ * (Issue #5410).
  */
 export function privateSdkSettings(options) {
     const settings = options.settings;

@@ -89,12 +89,12 @@ export function composeSessionRuntime(base, override) {
     }
     const { backendOverride, modelOverride } = override;
     const agentBackend = backendOverride ?? base.agentBackend;
-    const { modelOverrides, ...portable } = base;
+    const { modelMapping, ...portable } = base;
     return {
         ...portable,
         agentBackend,
         ...(modelOverride ? { model: modelOverride } : {}),
-        ...(agentBackend === 'claude' ? { modelOverrides } : {}),
+        ...(agentBackend === 'claude' ? { modelMapping } : {}),
     };
 }
 /**

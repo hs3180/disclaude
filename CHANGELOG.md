@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.31] - 2026-11-27
+
+### Changed
+
+- Declare the Claude agent's model capability tiers only through the
+  three-tier `agents.<name>.claude.modelMapping` and compile it into the
+  parameter mapping passed to Claude Code at configuration time (#5422;
+  #5725). Every tier alias key (`opus`, `sonnet`, `haiku`) maps to the
+  declared `modelMapping.<tier>` value — a full Claude model ID is passed
+  through unchanged — and an omitted tier falls back to the provider's
+  `defaultModel`. Because the keys are tier aliases rather than pinned full
+  IDs, Claude Code resolves each one against its current catalog, so the
+  capability binding follows Claude Code upgrades instead of silently going
+  stale. The repository's types, SDK options and runtime properties are
+  named `modelMapping` throughout (`ClaudeModelMapping`, `AgentQueryOptions.
+  modelMapping`, the `claude_model_mapping` event); the only translation to
+  Claude Code's native `settings.modelOverrides` key is the options adapter,
+  and an empty mapping is not written.
+
+### Removed
+
+- The `agents.<name>.claude.behavesAs`, `agents.<name>.claude.modelOverrides`
+  and `llms.<name>.behavesAs` configuration keys (#5422; #5725). Each is now
+  an explicit configuration error whose message points at the three-tier
+  `claude.modelMapping` declaration; `modelOverrides` no longer exists in the
+  repository's configuration surface, types or compiled output. The tier
+  alias key surface requires Claude Code >= 2.1.200.
+
 ## [0.6.30] - 2026-11-26
 
 ### Changed
