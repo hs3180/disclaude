@@ -42,10 +42,17 @@ function connection() {
     interruptKernel: vi.fn((kernelId: string) =>
       Promise.resolve({ kernelId, state: 'accepted', executionState: 'unknown', httpStatus: 204 })
     ),
-    probeRuntime: vi.fn((kernelId: string) => Promise.resolve({
-      schema: 'disclaude.jupyter-runtime.v1', host: { state: 'available', id: `sha256:${'a'.repeat(64)}` },
-      gpus: { state: 'available', uuids: [`GPU-${'b'.repeat(8)}-aaaa-aaaa-aaaa-${'c'.repeat(12)}`] }, kernelId,
-    })),
+    probeRuntime: vi.fn((kernelId: string) =>
+      Promise.resolve({
+        schema: 'disclaude.jupyter-runtime.v1',
+        host: { state: 'available', id: `sha256:${'a'.repeat(64)}` },
+        gpus: {
+          state: 'available',
+          uuids: [`GPU-${'b'.repeat(8)}-aaaa-aaaa-aaaa-${'c'.repeat(12)}`],
+        },
+        kernelId,
+      })
+    ),
     response: vi.fn((_route: string, _method = 'GET', _body?: Record<string, unknown>) =>
       Promise.resolve(new Response('{}', { status: 404 }))
     ),
@@ -67,20 +74,38 @@ function connection() {
 describe('Optional Jupyter CLI boundary', () => {
   it('rejects a truncated hash before credentials, RTC or execution requests', async () => {
     const f = connection();
-    await expect(runNotebookCommand(parseNotebookOptions(['execute', '--project-dir', root(), '--input-file', '-']),
-      f.resolve, signal, () => JSON.stringify({ notebookId: 'owned', cellId: 'owned', runId: 'owned',
-        expectedSourceHash: '123456789abc' }))).rejects.toMatchObject({ diagnostic: { layer: 'cas', code: 'invalid_source_hash', outcome: 'not-submitted' } });
+    await expect(
+      runNotebookCommand(
+        parseNotebookOptions(['execute', '--project-dir', root(), '--input-file', '-']),
+        f.resolve,
+        signal,
+        () =>
+          JSON.stringify({
+            notebookId: 'owned',
+            cellId: 'owned',
+            runId: 'owned',
+            expectedSourceHash: '123456789abc',
+          })
+      )
+    ).rejects.toMatchObject({
+      diagnostic: { layer: 'cas', code: 'invalid_source_hash', outcome: 'not-submitted' },
+    });
     expect(f.resolve).not.toHaveBeenCalled();
     expect(f.client.openDocument).not.toHaveBeenCalled();
   });
   it('publishes canonical error output fields and bounded traceback policy in tools', async () => {
     const f = connection();
-    const tools = await runNotebookCommand(parseNotebookOptions(['tools', '--project-dir', root()]), f.resolve, signal) as
-      Array<{ command: string; outputSchema?: { description?: string } }>;
+    const tools = (await runNotebookCommand(
+      parseNotebookOptions(['tools', '--project-dir', root()]),
+      f.resolve,
+      signal
+    )) as Array<{ command: string; outputSchema?: { description?: string } }>;
     for (const command of ['read-cell', 'describe', 'status']) {
-      const description = tools.find(tool => tool.command === command)?.outputSchema?.description;
-      expect(description).toContain('ename:string'); expect(description).toContain('traceback:string[]');
-      expect(description).toContain('8000 total'); expect(description).toContain('deprecated aliases');
+      const description = tools.find((tool) => tool.command === command)?.outputSchema?.description;
+      expect(description).toContain('ename:string');
+      expect(description).toContain('traceback:string[]');
+      expect(description).toContain('8000 total');
+      expect(description).toContain('deprecated aliases');
     }
     expect(f.resolve).not.toHaveBeenCalled();
   });
@@ -99,19 +124,35 @@ describe('Optional Jupyter CLI boundary', () => {
   it('probes only an explicitly selected existing kernel without opening RTC', async () => {
     const directory = root();
     const f = connection();
-    const result = await runNotebookCommand(parseNotebookOptions(['runtime-probe', '--project-dir', directory, '--input-file', '-']),
-      f.resolve, signal, () => JSON.stringify({ kernelId: 'selected-kernel' }));
-    expect(result).toMatchObject({ schema: 'disclaude.jupyter-runtime.v1', gpus: { state: 'available' } });
+    const result = await runNotebookCommand(
+      parseNotebookOptions(['runtime-probe', '--project-dir', directory, '--input-file', '-']),
+      f.resolve,
+      signal,
+      () => JSON.stringify({ kernelId: 'selected-kernel' })
+    );
+    expect(result).toMatchObject({
+      schema: 'disclaude.jupyter-runtime.v1',
+      gpus: { state: 'available' },
+    });
     expect(f.client.probeRuntime).toHaveBeenCalledExactlyOnceWith('selected-kernel', signal);
     expect(f.client.openDocument).not.toHaveBeenCalled();
   });
 
-  it.each([{}, { kernelId: '../other' }, { kernelId: 'kernel', code: 'arbitrary' }])('rejects custom or unsafe probe input before connection: %s', async (input) => {
-    const f = connection();
-    await expect(runNotebookCommand(parseNotebookOptions(['runtime-probe', '--project-dir', root(), '--input-file', '-']),
-      f.resolve, signal, () => JSON.stringify(input))).rejects.toThrow('runtime probe');
-    expect(f.resolve).not.toHaveBeenCalled();
-  });
+  it.each([{}, { kernelId: '../other' }, { kernelId: 'kernel', code: 'arbitrary' }])(
+    'rejects custom or unsafe probe input before connection: %s',
+    async (input) => {
+      const f = connection();
+      await expect(
+        runNotebookCommand(
+          parseNotebookOptions(['runtime-probe', '--project-dir', root(), '--input-file', '-']),
+          f.resolve,
+          signal,
+          () => JSON.stringify(input)
+        )
+      ).rejects.toThrow('runtime probe');
+      expect(f.resolve).not.toHaveBeenCalled();
+    }
+  );
 
   it('publishes the interrupt target alternatives without requiring credentials', async () => {
     const f = connection();
@@ -135,15 +176,38 @@ describe('Optional Jupyter CLI boundary', () => {
       signal
     )) as Array<{
       command: string;
-      inputSchema: { type: string; properties: Record<string, unknown>; required: string[]; additionalProperties: boolean };
+      inputSchema: {
+        type: string;
+        properties: Record<string, unknown>;
+        required: string[];
+        additionalProperties: boolean;
+      };
     }>;
     // Regression lock (#5321): the whole command surface, lifecycle included,
     // is discoverable from tools output alone, in one JSON input style.
     expect(entries.map((entry) => entry.command)).toEqual([
-      'list', 'describe', 'read-cell', 'insert-cell', 'edit-cell', 'move-cell',
-      'delete-cell', 'execute', 'status', 'reconcile', 'stop', 'observe-image',
-      'import-file', 'download-report', 'export',
-      'check', 'link', 'create', 'unlink', 'interrupt', 'runtime-probe',
+      'list',
+      'describe',
+      'read-cell',
+      'insert-cell',
+      'edit-cell',
+      'move-cell',
+      'delete-cell',
+      'execute',
+      'status',
+      'reconcile',
+      'stop',
+      'observe-image',
+      'import-file',
+      'download-report',
+      'export',
+      'sync-check',
+      'check',
+      'link',
+      'create',
+      'unlink',
+      'interrupt',
+      'runtime-probe',
     ]);
     for (const entry of entries) {
       expect(entry.inputSchema.type).toBe('object');
@@ -151,7 +215,9 @@ describe('Optional Jupyter CLI boundary', () => {
     }
     const lifecycleSchema = entries.find((entry) => entry.command === 'create')?.inputSchema;
     for (const command of ['link', 'create', 'unlink']) {
-      expect(entries.find((entry) => entry.command === command)?.inputSchema).toEqual(lifecycleSchema);
+      expect(entries.find((entry) => entry.command === command)?.inputSchema).toEqual(
+        lifecycleSchema
+      );
     }
     expect(lifecycleSchema).toMatchObject({
       type: 'object',
@@ -179,25 +245,33 @@ describe('Optional Jupyter CLI boundary', () => {
       description: string;
       inputSchema: { properties: { filePath?: { description?: string } } };
     }>;
-    expect(entries.find((entry) => entry.command === 'describe')?.description)
-      .toContain('RTC-seeded phantom empty code cell');
-    expect(entries.find((entry) => entry.command === 'describe')?.description)
-      .toContain('SHA-256 of the empty string');
-    expect(entries.find((entry) => entry.command === 'describe')?.description)
-      .toContain('removedSeedCellId');
+    expect(entries.find((entry) => entry.command === 'describe')?.description).toContain(
+      'RTC-seeded phantom empty code cell'
+    );
+    expect(entries.find((entry) => entry.command === 'describe')?.description).toContain(
+      'SHA-256 of the empty string'
+    );
+    expect(entries.find((entry) => entry.command === 'describe')?.description).toContain(
+      'removedSeedCellId'
+    );
     const execute = entries.find((entry) => entry.command === 'execute')?.description;
     expect(execute).toContain('submission order');
     expect(execute).toContain('per-kernel FIFO queue');
     expect(execute).toContain('superseded');
-    expect(entries.find((entry) => entry.command === 'import-file')?.inputSchema.properties.filePath?.description)
-      .toContain('Project-relative');
+    expect(
+      entries.find((entry) => entry.command === 'import-file')?.inputSchema.properties.filePath
+        ?.description
+    ).toContain('Project-relative');
     expect(f.resolve).not.toHaveBeenCalled();
   });
 
   it('locks the documented contracts in the Skill and module READMEs', () => {
     const skillReadme = fs.readFileSync(path.join(repository, 'skills/jupyter/README.md'), 'utf8');
     const skill = fs.readFileSync(path.join(repository, 'skills/jupyter/SKILL.md'), 'utf8');
-    const moduleReadme = fs.readFileSync(path.join(repository, 'packages/service/src/jupyter/README.md'), 'utf8');
+    const moduleReadme = fs.readFileSync(
+      path.join(repository, 'packages/service/src/jupyter/README.md'),
+      'utf8'
+    );
     for (const document of [skillReadme, skill]) {
       expect(document).toContain('phantom empty code cell');
       expect(document).toContain('removedSeedCellId');
@@ -221,7 +295,10 @@ describe('Optional Jupyter CLI boundary', () => {
       signal,
       () => '{"path":"research.ipynb"}'
     );
-    expect(linked).toMatchObject({ documentId: 'document-1', serverNamespace: 'endpoint-fingerprint' });
+    expect(linked).toMatchObject({
+      documentId: 'document-1',
+      serverNamespace: 'endpoint-fingerprint',
+    });
     expect(f.doc.close).toHaveBeenCalledOnce();
     f.resolve.mockClear();
     expect(
@@ -246,24 +323,21 @@ describe('Optional Jupyter CLI boundary', () => {
     );
   });
 
-  it.each([
-    ['{"path":123}'],
-    ['{"other":true}'],
-    ['{}'],
-    ['[]'],
-    ['{"path":"../other.ipynb"}'],
-  ])('rejects lifecycle JSON input that does not match the published schema: %s', async (raw) => {
-    const f = connection();
-    await expect(
-      runNotebookCommand(
-        parseNotebookOptions(['link', '--input-file', '-', '--project-dir', root()]),
-        f.resolve,
-        signal,
-        () => raw
-      )
-    ).rejects.toThrow(/lifecycle command input|relative Notebook path/);
-    expect(f.resolve).not.toHaveBeenCalled();
-  });
+  it.each([['{"path":123}'], ['{"other":true}'], ['{}'], ['[]'], ['{"path":"../other.ipynb"}']])(
+    'rejects lifecycle JSON input that does not match the published schema: %s',
+    async (raw) => {
+      const f = connection();
+      await expect(
+        runNotebookCommand(
+          parseNotebookOptions(['link', '--input-file', '-', '--project-dir', root()]),
+          f.resolve,
+          signal,
+          () => raw
+        )
+      ).rejects.toThrow(/lifecycle command input|relative Notebook path/);
+      expect(f.resolve).not.toHaveBeenCalled();
+    }
+  );
 
   it('interrupts an explicit kernel with no Notebook reference, run ID, journal or RTC', async () => {
     const directory = root();
@@ -417,9 +491,11 @@ describe('Optional Jupyter CLI boundary', () => {
     expect(parseNotebookOptions(['status', '--input-file', '-', '--no-interactive'])).toMatchObject(
       { command: 'status', inputFile: '-', interactive: false }
     );
-    expect(parseNotebookOptions(['link', '--input-file', '-', '--no-interactive'])).toMatchObject(
-      { command: 'link', inputFile: '-', interactive: false }
-    );
+    expect(parseNotebookOptions(['link', '--input-file', '-', '--no-interactive'])).toMatchObject({
+      command: 'link',
+      inputFile: '-',
+      interactive: false,
+    });
     expect(parseNotebookOptions(['unlink', '--path', 'x.ipynb'])).toMatchObject({
       command: 'unlink',
       contentPath: 'x.ipynb',
@@ -777,12 +853,13 @@ describe('Jupyter CLI wait options (#5320)', () => {
           })
       ),
     };
-    const resolve = vi.fn((): Promise<NotebookCLIConnection> =>
-      Promise.resolve({
-        client: client as unknown as DatalayerJupyterClient,
-        connectionId: 'configured',
-        namespace: 'endpoint-fingerprint',
-      })
+    const resolve = vi.fn(
+      (): Promise<NotebookCLIConnection> =>
+        Promise.resolve({
+          client: client as unknown as DatalayerJupyterClient,
+          connectionId: 'configured',
+          namespace: 'endpoint-fingerprint',
+        })
     );
     const options = parseNotebookOptions([
       'status',
@@ -829,4 +906,74 @@ describe('Jupyter CLI wait options (#5320)', () => {
     expect(result.wait.state).toBe('completed');
     expect(fs.existsSync(path.join(directory, '.jupyter', 'cli.lock'))).toBe(false);
   }, 15000);
+});
+
+describe('Jupyter sync-watch command (web Lab session guard, #5750)', () => {
+  function syncWatchConnection(disk: string, room: string) {
+    const roomDoc = {
+      flush: vi.fn(() => Promise.resolve()),
+      source: vi.fn(() => room),
+      close: vi.fn(),
+    };
+    const client = {
+      openTextDocument: vi.fn(() => Promise.resolve(roomDoc)),
+      json: vi.fn((route: string, method = 'GET', _body?: Record<string, unknown>) => {
+        if (route === 'api/contents/?content=1' && method === 'GET') {
+          return Promise.resolve({
+            content: [{ path: 'script.py', type: 'file', name: 'script.py' }],
+          });
+        }
+        if (route === 'api/contents/script.py?content=1') {
+          return Promise.resolve({ type: 'file', format: 'text', content: disk });
+        }
+        throw new Error(`Unexpected remote route ${route}`);
+      }),
+    };
+    return {
+      client,
+      roomDoc,
+      resolve: vi.fn(() =>
+        Promise.resolve({
+          client: client as unknown as DatalayerJupyterClient,
+          connectionId: 'configured',
+          namespace: 'endpoint-fingerprint',
+        })
+      ),
+    };
+  }
+
+  it('sweeps project text files and returns the last sweep summary on abort', async () => {
+    const controller = new AbortController();
+    const f = syncWatchConnection('print(1)\n', 'print(2)\n');
+    setTimeout(() => controller.abort(), 100);
+    const result = (await runNotebookCommand(
+      parseNotebookOptions(['sync-watch', '--project-dir', root(), '--interval', '5']),
+      f.resolve,
+      controller.signal
+    )) as {
+      command: string;
+      sweeps: number;
+      lastEvent: { checked: number; diverged: Array<{ path: string; status: string }> };
+    };
+    expect(result.command).toBe('sync-watch');
+    expect(result.sweeps).toBe(1);
+    expect(result.lastEvent.checked).toBe(1);
+    expect(result.lastEvent.diverged).toEqual([
+      expect.objectContaining({ path: 'script.py', status: 'diverged' }),
+    ]);
+    // Warn-only default: the diverged file was reported, never written.
+    expect(f.roomDoc.close).toHaveBeenCalled();
+  }, 10000);
+
+  it('rejects sync-watch flags on other commands and bounds the interval', () => {
+    expect(() => parseNotebookOptions(['sync-check', '--auto-flush'])).toThrow(
+      /only valid for sync-watch/
+    );
+    expect(() => parseNotebookOptions(['sync-watch', '--interval', '1'])).toThrow(
+      /from 5 up to 86400/
+    );
+    expect(() => parseNotebookOptions(['sync-watch', '--max-files', '0'])).toThrow(
+      /from 1 up to 2000/
+    );
+  });
 });

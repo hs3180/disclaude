@@ -40,7 +40,7 @@ for the current JSON input schemas and [README.md](./README.md) for setup.
    Copy the full 64-hex hash; a conflict reports expected/actual values and asks
    for a fresh read. Preserve human content. These checks remain client-side,
    not atomic server CAS.
-3. Pass command arguments through `--input-file FILE` or `--input-file -`;
+4. Pass command arguments through `--input-file FILE` or `--input-file -`;
    every command, including `link`/`create`/`unlink`, takes one JSON object
    this way. Use a unique `runId` with `execute`; it submits once and returns
    promptly. Multiple accepted `execute` submissions to one kernel run in
@@ -61,7 +61,7 @@ for the current JSON input schemas and [README.md](./README.md) for setup.
    `wait:{state:"timeout",runPreserved:true}` — a wait timeout stops only
    this CLI wait and never the kernel run. Long runs: submit without
    `--wait`, then arm exactly one background watcher (`status --wait
-   --timeout 86400` for the same runId) as a background shell task; the
+--timeout 86400` for the same runId) as a background shell task; the
    harness's existing background-task notification delivers its exit once,
    and `wait.state` distinguishes completion from a wait timeout — re-arm
    only after a timeout and never run two live watchers on one runId (each
@@ -69,7 +69,7 @@ for the current JSON input schemas and [README.md](./README.md) for setup.
    `stdout.nextCursor` returns incremental stdout; the wait loop holds no
    Project lock while sleeping, and a transient lock collision with an
    in-flight poll is a retriable error, not a run-state change.
-4. Stop remote work with `stop` and its original `notebookId`/`runId`. Only
+5. Stop remote work with `stop` and its original `notebookId`/`runId`. Only
    `stopConfirmed: true` confirms cancellation. Chat `/stop` stops inference;
    remote executions remain independent. Do not claim the kernel stopped
    from a cancelled tool invocation or a stopped chat.
@@ -83,7 +83,7 @@ for the current JSON input schemas and [README.md](./README.md) for setup.
    `executionState: unknown` requires separate evidence from the original
    execution, or a subsequent kernel observation. Do not automatically retry an
    unknown interrupt or substitute it for a failed `stop`.
-5. To use an incoming attachment, copy the supplied local attachment into this
+6. To use an incoming attachment, copy the supplied local attachment into this
    Project, then `import-file` with its Project-relative `filePath`: the path
    is resolved against the Project directory and must stay inside it —
    absolute paths, traversal out of the Project, symlinks and non-regular
@@ -95,14 +95,41 @@ for the current JSON input schemas and [README.md](./README.md) for setup.
    `kernelRelativePath` in remote code. Host and kernel paths belong to
    separate environments. Whole directory trees and object-storage
    (S3/URL pull) transfers are out of scope; import files one by one.
-6. Use `observe-image` to obtain a local image artifact and inspect that file
+7. Use `observe-image` to obtain a local image artifact and inspect that file
    with the harness's image tool. MIME names alone do not establish plot content.
    Output provenance can be historical after a source edit.
-7. `export` returns links to a matching HTML/ipynb snapshot. `download-report`
+8. `export` returns links to a matching HTML/ipynb snapshot. `download-report`
    also returns persistent local files and bounded image previews. Use the
    existing channel skill to send those files with the request's chat/thread
    identifiers. Check its delivery result before claiming success; inspect an
    uncertain delivery before retrying. Cite the report revision in the summary.
+
+Text files (`.py`, `.md`, …) opened in RTC collaboration mode live in a YDoc
+room, not only on disk. A failed or deferred save can leave the room newer
+than the disk; idle rooms are destroyed after 60s with a final flush, but
+inside that window — or when that flush itself fails — the disk stays stale
+while Lab keeps showing the edited buffer. After manually editing a text file
+in RTC mode, verify the disk content before running it with
+`jupyter sync-check --input-file -` and `{"path":"..."}`: `in-sync` confirms
+the disk matches the room, `diverged` reports both SHA-256 hashes without
+writing — re-check after the 60s idle-room final flush, or explicitly pass
+`forceFlush:true` to write the room snapshot through the contents API and
+re-verify (`flushed`). Only when sync-check itself is unavailable, fall back
+to reading the file back and comparing by hash — kernels and terminals
+execute the disk bytes, not the editor buffer.
+
+The 60s idle-room final flush only fires once every client disconnects. A web
+JupyterLab session that stays open keeps its rooms alive indefinitely, so a
+room/disk fork can persist for the whole session instead of healing after 60s.
+While a human is editing text files in the web Lab UI, run one background
+`jupyter sync-watch --no-interactive [--interval S]` alongside the session:
+each sweep compares every project text file's room with its disk bytes and
+reports divergence (both hashes) in its summary — SIGINT ends the watch with
+the last sweep. Keep the default warn-only mode unless the divergence is
+confirmed to be a failed save: `--auto-flush` writes diverged room snapshots
+to disk, which would clobber a legitimately disk-ahead file (kernel or script
+output). sync-watch holds no CLI lock while sleeping and closes each sweep's
+rooms; the one-shot sync-check stays the manual verification path.
 
 Failures carry a safe layer/code and, for HTTP, a scrubbed server excerpt. Use
 `--verbose` for phase diagnostics; never print raw upstream exceptions. Read
