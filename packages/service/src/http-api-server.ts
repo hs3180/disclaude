@@ -1,4 +1,5 @@
 import { isPrivateWorkflowRequest, type PrivateWorkflowRequest } from './channels/feishu/private-workflows.js';
+import { isTaskQuestionAskRequest, TaskQuestionRequestError, type TaskQuestionHostHandlers } from './goals/task-question-rest.js';
 /**
  * HTTP API Server for disclaude service.
  *
@@ -367,6 +368,12 @@ export class HttpApiServer {
     this.privateWorkflowHandler = handler;
   }
 
+  /** #5591 G1: task question ask entry (binds to a live Goal turn host-side). */
+  private taskQuestionHandler?: TaskQuestionHostHandlers;
+  setTaskQuestionHandler(handlers: TaskQuestionHostHandlers): void {
+    this.taskQuestionHandler = handlers;
+  }
+
   private sendInteractiveHandler?: SendInteractiveHandler;
   private listTempChatsHandler?: ListTempChatsHandler;
 
@@ -686,6 +693,7 @@ export class HttpApiServer {
     this.addRoute('POST', '/api/send-message', this.handleSendMessage.bind(this));
     // Issue #4279: REST parity with REST API sendCard.
     this.addRoute('POST', '/api/private-workflows', this.handlePrivateWorkflow.bind(this));
+    this.addRoute('POST', '/api/task-questions', this.handleTaskQuestion.bind(this));
     this.addRoute('POST', '/api/send-card', this.handleSendCard.bind(this));
     // Issue #4279: REST parity with REST API sendInteractive.
     this.addRoute('POST', '/api/send-interactive', this.handleSendInteractive.bind(this));
@@ -1396,6 +1404,28 @@ export class HttpApiServer {
     if (!isPrivateWorkflowRequest(body)) {this.sendJson(res, 400, { ok: false, message: 'Invalid private workflow request' }); return;}
     try {this.sendJson(res, 200, { ok: true, ...await this.privateWorkflowHandler(body) });}
     catch {this.sendJson(res, 500, { ok: false, message: 'Private workflow request failed' });}
+  }
+
+  /**
+   * POST /api/task-questions handler (#5591 G1) — the ask half only; answers
+   * arrive solely through the verified Feishu card callback. The body's
+   * identity fields are a claim the host checks against live Goal bindings,
+   * so this route selects who is asked and never runs unauthenticated. Only
+   * the host's own admission verdict (409/503 with a constant reason) is
+   * reflected; channel and SDK failures stay opaque.
+   */
+  private async handleTaskQuestion(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.config.apiToken) {this.sendJson(res, 503, { ok: false, message: 'Task questions require API authentication' }); return;}
+    if (!this.taskQuestionHandler) {this.sendJson(res, 503, { ok: false, message: 'Task questions unavailable' }); return;}
+    let body: unknown;
+    try {body = JSON.parse(await readBody(req));}
+    catch {this.sendJson(res, 400, { ok: false, message: 'Invalid task question request' }); return;}
+    if (!isTaskQuestionAskRequest(body)) {this.sendJson(res, 400, { ok: false, message: 'Invalid task question request' }); return;}
+    try {this.sendJson(res, 200, { ok: true, record: await this.taskQuestionHandler.ask(body) });}
+    catch (error) {
+      if (error instanceof TaskQuestionRequestError) {this.sendJson(res, error.status, { ok: false, reason: error.reason, message: error.message }); return;}
+      this.sendJson(res, 500, { ok: false, message: 'Task question request failed' });
+    }
   }
 
   private async handleSendCard(
