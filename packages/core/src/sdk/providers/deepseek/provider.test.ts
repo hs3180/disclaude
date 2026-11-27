@@ -451,9 +451,9 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
     const { dshOptions } = await import('../../factory.js');
     const resolved = resolveConfiguredAgents({
       agents: {
-        claude: {
-          llm: 'shared', default: true,
-          claude: { behavesAs: 'claude-sonnet-4-5' },
+          claude: {
+            llm: 'shared', default: true,
+            claude: { modelMapping: { sonnet: 'group/hq-degrade' } },
         },
         dsh: { llm: 'shared', mode: 'minimal' },
       },

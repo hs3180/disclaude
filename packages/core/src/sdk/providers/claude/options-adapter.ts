@@ -138,12 +138,17 @@ export function adaptOptions(
     }
   }
 
-  // Issue #5410: gateway model IDs ride Claude Code's modelOverrides so the
-  // pinned catalog entry's window and capability defaults apply to them.
-  if (options.modelOverrides) {
+  // Issue #5410: gateway model IDs ride Claude Code's native model-override
+  // settings key so the pinned catalog entry's window and capability
+  // defaults apply to them.
+  // Issue #5422 (r7): the compiled `modelMapping` arrives fully static — the
+  // three-tier `agents.<name>.claude.modelMapping` declaration is completed
+  // into the tier-alias-keyed mapping at config time, so the runtime needs
+  // no alias resolution or catalog lookup. An empty mapping writes nothing.
+  if (options.modelMapping && Object.keys(options.modelMapping).length) {
     sdkOptions.settings = {
       ...(sdkOptions.settings as object | undefined),
-      modelOverrides: options.modelOverrides,
+      modelOverrides: options.modelMapping,
     };
   }
 

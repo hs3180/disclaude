@@ -3,7 +3,20 @@ import { resolveConfiguredAgents, validateResolvedAgent } from './resolved-agent
 import { resolveSessionAgentRuntime } from './agent-runtime.js';
 import { validateConfig, validateRequiredConfig } from './loader.js';
 import { buildSdkEnv } from '../utils/sdk.js';
-import type { DisclaudeConfig, LlmConfig } from './types.js';
+import type { ClaudeAgentConfig, DisclaudeConfig, LlmConfig } from './types.js';
+
+/**
+ * A stale `behavesAs` key the schema no longer declares (Issue #5422 r3).
+ * Real user YAML is untyped; runtime key validation rejects it with
+ * migration guidance, which these fixtures simulate.
+ */
+const staleBehavesAs = (behavesAs: string): ClaudeAgentConfig =>
+  ({ behavesAs } as unknown as ClaudeAgentConfig);
+// Stale `modelOverrides` fixtures need the same escape hatch: the key is
+// removed from ClaudeAgentConfig, and these tests exist to prove it is
+// rejected with migration guidance (Issue #5422 r6).
+const staleModelOverrides = (modelOverrides: unknown): ClaudeAgentConfig =>
+  ({ modelOverrides } as unknown as ClaudeAgentConfig);
 
 afterEach(() => vi.unstubAllEnvs());
 const configuration = (): DisclaudeConfig => ({
@@ -42,7 +55,7 @@ const miniSweLlm = (): LlmConfig => ({
   api: { protocol: 'openai', baseUrl: 'https://litellm.example/v1', apiKey: '$MINISWE_KEY' },
 });
 const nonDshLlmBinding = (backend: string) => (backend === 'codex' ? 'daily' : 'proxy');
-const kimiTierOverrides = { 'claude-opus-5': 'kimi-k3', 'claude-sonnet-4-5': 'kimi-k3-flash' };
+const kimiTierOverrides = { 'claude-opus-5': 'kimi-k3.1-pro', 'claude-sonnet-4-5': 'glm-5.3' };
 const tierEnv = (opus: string, sonnet = opus, haiku = opus) => ({
   ANTHROPIC_DEFAULT_OPUS_MODEL: opus,
   ANTHROPIC_DEFAULT_SONNET_MODEL: sonnet,
@@ -533,53 +546,55 @@ describe('named runtime and LLM configuration', () => {
     expect(validateConfig(config)).toBe(false);
     expect(JSON.stringify(resolveConfiguredAgents(config))).not.toContain('canary-secret');
   });
-  it('compiles behavesAs into a single-entry modelOverrides map (Issue #5410)', () => {
+  it('rejects the removed behavesAs key with migration guidance (Issue #5422 r3)', () => {
     const config = configuration();
-    config.agents!.claude.claude = { ...config.agents!.claude.claude, behavesAs: 'claude-opus-5' };
+    config.agents!.claude.claude = staleBehavesAs('claude-opus-5');
     const result = resolveConfiguredAgents(config);
-    expect(result.ok).toBe(true);
-    if (!result.ok) {
+    expect(result.ok).toBe(false);
+    if (result.ok) {
       return;
     }
-    expect(result.presets.claude.modelOverrides).toEqual({ 'claude-opus-5': 'glm-5.3' });
+    expect(result.errors.length).toBe(1);
+    expect(result.errors.join('\n')).toBe(
+      'agents.claude.claude.behavesAs was removed (Issue #5422): declare the three tiers under '
+      + 'agents.claude.claude.modelMapping instead — the tier declaration itself is compiled into the capability-slot mapping'
+    );
   });
-  it('projects a raw multi-slot modelOverrides map verbatim', () => {
+  it('rejects the removed raw modelOverrides key with migration guidance (Issue #5422)', () => {
     const config = configuration();
-    config.agents!.claude.claude = { ...config.agents!.claude.claude, modelOverrides: { ...kimiTierOverrides } };
+    config.agents!.claude.claude = staleModelOverrides({ ...kimiTierOverrides });
     const result = resolveConfiguredAgents(config);
-    expect(result.ok).toBe(true);
-    if (!result.ok) {
+    expect(result.ok).toBe(false);
+    if (result.ok) {
       return;
     }
-    expect(result.presets.claude.modelOverrides).toEqual(kimiTierOverrides);
+    expect(result.errors.length).toBe(1);
+    expect(result.errors.join('\n')).toBe(
+      'agents.claude.claude.modelOverrides was removed (Issue #5422): declare the three tiers under '
+      + 'agents.claude.claude.modelMapping instead — the tier declaration itself is compiled into the capability-slot parameter mapping'
+    );
   });
   it.each([
     (c: DisclaudeConfig) => {
-      c.agents!.claude.claude = { behavesAs: 'opus' };
+      c.agents!.claude.claude = staleBehavesAs('claude_OPUS');
     },
     (c: DisclaudeConfig) => {
-      c.agents!.claude.claude = { behavesAs: 'claude_OPUS' };
+      c.agents!.claude.claude = staleBehavesAs('');
     },
     (c: DisclaudeConfig) => {
-      c.agents!.claude.claude = { behavesAs: '' };
+      c.agents!.claude.claude = staleModelOverrides({ opus: 'kimi-k3.1-pro' });
     },
     (c: DisclaudeConfig) => {
-      c.agents!.claude.claude = { behavesAs: 'claude-opus-5', modelOverrides: { 'claude-opus-5': 'kimi-k3' } };
+      c.agents!.claude.claude = staleModelOverrides({});
     },
     (c: DisclaudeConfig) => {
-      c.agents!.claude.claude = { modelOverrides: { opus: 'kimi-k3' } };
-    },
-    (c: DisclaudeConfig) => {
-      c.agents!.claude.claude = { modelOverrides: { 'claude-opus-5': '  ' } };
-    },
-    (c: DisclaudeConfig) => {
-      c.agents!.claude.claude = { modelOverrides: {} };
-    },
-    (c: DisclaudeConfig) => {
-      c.agents!.claude.claude = { modelOverrides: 'claude-opus-5' as unknown as Record<string, string> };
+      c.agents!.claude.claude = staleModelOverrides('claude-opus-5');
     },
     (c: DisclaudeConfig) => {
       (c.llms!.daily as unknown as Record<string, unknown>).behavesAs = 'claude-opus-5';
+    },
+    (c: DisclaudeConfig) => {
+      (c.llms!.daily as unknown as Record<string, unknown>).modelOverrides = { 'claude-opus-5': 'kimi-k3.1-pro' };
     },
   ])('rejects malformed or mis-scoped model override declarations', (mutate) => {
     const config = configuration();
@@ -592,15 +607,51 @@ describe('named runtime and LLM configuration', () => {
     expect(result.errors.length).toBe(1);
     expect(result.errors.join('\n')).toMatch(/behavesAs|modelOverrides/);
   });
-  it('rejects the bare alias with explicit pinning guidance', () => {
+  it('compiles the declared three tiers into the tier-alias parameter mapping (Issue #5422 r3)', () => {
     const config = configuration();
-    config.agents!.claude.claude = { ...config.agents!.claude.claude, behavesAs: 'opus' };
+    config.agents!.claude.claude = {
+      modelMapping: { opus: 'kimi-k3.1-pro', sonnet: 'glm-5.3', haiku: 'deepseek-flash' },
+    };
     const result = resolveConfiguredAgents(config);
-    expect(result.ok).toBe(false);
-    if (result.ok) {
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
       return;
     }
-    expect(result.errors.join('\n')).toContain('aliases are not auto-resolved');
+    // No behavesAs key exists: the tier declaration itself is the capability-
+    // slot source, compiled at config time — the runtime never resolves
+    // against a running Claude catalog.
+    expect(result.presets.claude.modelMapping).toEqual({
+      opus: 'kimi-k3.1-pro', sonnet: 'glm-5.3', haiku: 'deepseek-flash',
+    });
+    // The same declaration the tier environment builds from — one source of
+    // truth, so redeclaring the mapping moves both together.
+    expect(result.presets.claude.env).toEqual(tierEnv('kimi-k3.1-pro', 'glm-5.3', 'deepseek-flash'));
+  });
+  it('fills tiers omitted from claude.modelMapping with the provider default in the compiled mapping', () => {
+    const config = configuration();
+    config.agents!.claude.claude = { modelMapping: { sonnet: 'deepseek-flash' } };
+    const result = resolveConfiguredAgents(config);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.presets.claude.modelMapping).toEqual({
+      opus: 'glm-5.3', sonnet: 'deepseek-flash', haiku: 'glm-5.3',
+    });
+  });
+  it('compiles the parameter mapping from the provider default when no tiers are declared', () => {
+    const config = configuration();
+    const result = resolveConfiguredAgents(config);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    // With modelMapping as the sole config source, an agent that declares no
+    // tiers still gets all three capability slots pinned to the provider
+    // default — matching the tier environment compiled in the same pass.
+    expect(result.presets.claude.modelMapping).toEqual({
+      opus: 'glm-5.3', sonnet: 'glm-5.3', haiku: 'glm-5.3',
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -707,7 +758,10 @@ describe('named runtime and LLM configuration', () => {
     it('serves one wire model to Claude and DSH from a single binding', () => {
       const config = configuration();
       config.llms!.proxy.defaultModel = 'group/hq-degrade';
-      config.agents!.claude.claude = { ...config.agents!.claude.claude, behavesAs: 'claude-sonnet-4-5' };
+      config.agents!.claude.claude = {
+        ...config.agents!.claude.claude,
+        modelMapping: { sonnet: 'group/hq-degrade' },
+      };
       config.agents!.dsh = { llm: 'proxy' };
       const result = resolveConfiguredAgents(config);
       expect(result.ok).toBe(true);
@@ -715,11 +769,16 @@ describe('named runtime and LLM configuration', () => {
         return;
       }
       // The wire model is identical for both providers; only the Claude
-      // preset carries the capability mapping.
+      // preset carries the capability mapping. Omitted tiers fall back to
+      // the provider default, which this binding pins to the same model.
       expect(result.presets.claude).toMatchObject({
         agentBackend: 'claude',
         model: 'group/hq-degrade',
-        modelOverrides: { 'claude-sonnet-4-5': 'group/hq-degrade' },
+        modelMapping: {
+          opus: 'group/hq-degrade',
+          sonnet: 'group/hq-degrade',
+          haiku: 'group/hq-degrade',
+        },
       });
       expect(result.presets.dsh).toMatchObject({
         agentBackend: 'dsh',
@@ -729,7 +788,7 @@ describe('named runtime and LLM configuration', () => {
 
     it('keeps Claude mappings off a Pi-only agent', () => {
       const config = configuration();
-      config.agents!.claude.claude = { behavesAs: 'claude-sonnet-4-5' };
+      config.agents!.claude.claude = { modelMapping: { sonnet: 'glm-5.3' } };
       const result = resolveConfiguredAgents(config);
       expect(result.ok).toBe(true);
       if (!result.ok) {
@@ -738,7 +797,7 @@ describe('named runtime and LLM configuration', () => {
       expect(result.presets.pi).toMatchObject({
         agentBackend: 'pi',
         model: 'other-model',
-        modelOverrides: undefined,
+        modelMapping: undefined,
       });
     });
 
@@ -751,15 +810,17 @@ describe('named runtime and LLM configuration', () => {
         return;
       }
       expect(result.errors.join('\n')).toContain(
-        'has moved to agents.<name>.claude.behavesAs'
+        'llms.daily.behavesAs was removed (Issue #5422); configure the three tiers under agents.<name>.claude.modelMapping'
       );
     });
 
     it('projects Claude model-name settings from the agent, not the provider', () => {
       const config = configuration();
       config.agents!.claude.claude = {
-        modelOverrides: { ...kimiTierOverrides },
-        env: tierEnv('endpoint-large', 'endpoint-main', 'endpoint-fast'),
+        modelMapping: { opus: 'kimi-k3.1-pro', sonnet: 'glm-5.3' },
+        // haiku is left to the explicit tier env slot (double-configuring a
+        // tier in both modelMapping and env stays rejected).
+        env: { ANTHROPIC_DEFAULT_HAIKU_MODEL: 'endpoint-fast' },
       };
       const result = resolveConfiguredAgents(config);
       expect(result.ok).toBe(true);
@@ -767,10 +828,10 @@ describe('named runtime and LLM configuration', () => {
         return;
       }
       expect(result.presets.claude).toMatchObject({
-        modelOverrides: { ...kimiTierOverrides },
-        env: tierEnv('endpoint-large', 'endpoint-main', 'endpoint-fast'),
+        modelMapping: { opus: 'kimi-k3.1-pro', sonnet: 'glm-5.3', haiku: 'glm-5.3' },
+        env: tierEnv('kimi-k3.1-pro', 'glm-5.3', 'endpoint-fast'),
       });
-      expect(result.presets.pi.modelOverrides).toBeUndefined();
+      expect(result.presets.pi.modelMapping).toBeUndefined();
     });
 
     it('rejects the old Claude alias environment placement with migration guidance', () => {
@@ -782,7 +843,7 @@ describe('named runtime and LLM configuration', () => {
         return;
       }
       expect(result.errors.join('\n')).toContain(
-        'llms.proxy.env.ANTHROPIC_DEFAULT_SONNET_MODEL has moved to agents.<name>.claude.models or agents.<name>.claude.env.ANTHROPIC_DEFAULT_SONNET_MODEL'
+        'llms.proxy.env.ANTHROPIC_DEFAULT_SONNET_MODEL has moved to agents.<name>.claude.modelMapping or agents.<name>.claude.env.ANTHROPIC_DEFAULT_SONNET_MODEL'
       );
     });
 
@@ -822,14 +883,17 @@ describe('named runtime and LLM configuration', () => {
         return;
       }
       expect(result.presets.claude.model).toBe('claude-sonnet-4-5');
-      expect(result.presets.claude.modelOverrides).toBeUndefined();
+      // The canonical ID flows into every capability slot unchanged.
+      expect(result.presets.claude.modelMapping).toEqual({
+        opus: 'claude-sonnet-4-5', sonnet: 'claude-sonnet-4-5', haiku: 'claude-sonnet-4-5',
+      });
       expect(result.presets.dsh.model).toBe('claude-sonnet-4-5');
-      expect(result.presets.dsh.modelOverrides).toBeUndefined();
+      expect(result.presets.dsh.modelMapping).toBeUndefined();
     });
 
     it('rejects Claude model settings on a non-Claude agent', () => {
       const config = configuration();
-      config.agents!.pi.claude = { behavesAs: 'claude-opus-5' };
+      config.agents!.pi.claude = staleBehavesAs('claude-opus-5');
       const result = resolveConfiguredAgents(config);
       expect(result.ok).toBe(false);
       if (result.ok) {
@@ -849,7 +913,7 @@ describe('named runtime and LLM configuration', () => {
       expect(malformed.errors.join('\n')).toContain('agents.claude.claude must be a mapping');
 
       const unknown = configuration();
-      unknown.agents!.claude.claude = { tiers: { opus: 'kimi-k3' } } as never;
+      unknown.agents!.claude.claude = { tiers: { opus: 'kimi-k3.1-pro' } } as never;
       const rejected = resolveConfiguredAgents(unknown);
       expect(rejected.ok).toBe(false);
       if (rejected.ok) {
@@ -858,45 +922,20 @@ describe('named runtime and LLM configuration', () => {
       expect(rejected.errors.join('\n')).toContain('agents.claude.claude.tiers is unsupported');
     });
 
-    it('rejects combining behavesAs with modelOverrides and malformed mappings', () => {
-      const config = configuration();
-      config.agents!.claude.claude = {
-        behavesAs: 'claude-opus-5',
-        modelOverrides: { 'claude-opus-5': 'kimi-k3' },
-      };
-      const result = resolveConfiguredAgents(config);
-      expect(result.ok).toBe(false);
-      if (result.ok) {
-        return;
-      }
-      expect(result.errors.join('\n')).toContain(
-        'agents.claude.claude.behavesAs and modelOverrides are mutually exclusive'
-      );
-
-      const aliased = configuration();
-      aliased.agents!.claude.claude = { modelOverrides: { sonnet: 'kimi-k3' } };
-      const aliasResult = resolveConfiguredAgents(aliased);
-      expect(aliasResult.ok).toBe(false);
-      if (aliasResult.ok) {
-        return;
-      }
-      expect(aliasResult.errors.join('\n')).toContain(
-        'agents.claude.claude.modelOverrides must map full Claude model IDs to non-empty provider model IDs'
-      );
-    });
-
-    it('requires a provider default model when behavesAs carries the capability slot', () => {
+    it('derives the mapping from fully declared tiers without a provider default model (Issue #5422 r3)', () => {
       const config = configuration();
       delete config.llms!.proxy.defaultModel;
-      config.agents!.claude.claude = { behavesAs: 'claude-opus-5' };
+      config.agents!.claude.claude = {
+        modelMapping: { opus: 'kimi-k3.1-pro', sonnet: 'glm-5.3', haiku: 'deepseek-flash' },
+      };
       const result = resolveConfiguredAgents(config);
-      expect(result.ok).toBe(false);
-      if (result.ok) {
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
         return;
       }
-      expect(result.errors.join('\n')).toContain(
-        'agents.claude.claude.behavesAs requires a provider default model at llms.proxy.defaultModel'
-      );
+      expect(result.presets.claude.modelMapping).toEqual({
+        opus: 'kimi-k3.1-pro', sonnet: 'glm-5.3', haiku: 'deepseek-flash',
+      });
     });
   });
 
@@ -904,7 +943,7 @@ describe('named runtime and LLM configuration', () => {
     it('compiles explicit tiers into the native tier environment', () => {
       const config = configuration();
       config.agents!.claude.claude = {
-        models: { opus: 'kimi-k3', sonnet: 'kimi-k3-flash', haiku: 'kimi-k3-air' },
+        modelMapping: { opus: 'kimi-k3.1-pro', sonnet: 'glm-5.3', haiku: 'deepseek-flash' },
       };
       config.agents!.dsh = { llm: 'proxy' };
       const result = resolveConfiguredAgents(config);
@@ -912,7 +951,7 @@ describe('named runtime and LLM configuration', () => {
       if (!result.ok) {
         return;
       }
-      expect(result.presets.claude.env).toEqual(tierEnv('kimi-k3', 'kimi-k3-flash', 'kimi-k3-air'));
+      expect(result.presets.claude.env).toEqual(tierEnv('kimi-k3.1-pro', 'glm-5.3', 'deepseek-flash'));
       // Tier metadata rides the Claude preset only; the DSH agent sharing the
       // binding keeps the wire model without Claude environment.
       expect(result.presets.dsh.env?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
@@ -920,13 +959,13 @@ describe('named runtime and LLM configuration', () => {
 
     it('falls back to the provider default for omitted tiers', () => {
       const config = configuration();
-      config.agents!.claude.claude = { models: { haiku: 'kimi-k3-air' } };
+      config.agents!.claude.claude = { modelMapping: { haiku: 'deepseek-flash' } };
       const result = resolveConfiguredAgents(config);
       expect(result.ok).toBe(true);
       if (!result.ok) {
         return;
       }
-      expect(result.presets.claude.env).toEqual(tierEnv('glm-5.3', 'glm-5.3', 'kimi-k3-air'));
+      expect(result.presets.claude.env).toEqual(tierEnv('glm-5.3', 'glm-5.3', 'deepseek-flash'));
     });
 
     it('points all three tiers at the only configured model by default', () => {
@@ -968,7 +1007,7 @@ describe('named runtime and LLM configuration', () => {
     it('rejects double-configuring one tier in models and env', () => {
       const config = configuration();
       config.agents!.claude.claude = {
-        models: { haiku: 'kimi-k3-air' },
+        modelMapping: { haiku: 'deepseek-flash' },
         env: { ANTHROPIC_DEFAULT_HAIKU_MODEL: 'small-model' },
       };
       const result = resolveConfiguredAgents(config);
@@ -977,7 +1016,7 @@ describe('named runtime and LLM configuration', () => {
         return;
       }
       expect(result.errors.join('\n')).toContain(
-        'agents.claude.claude.models.haiku conflicts with agents.claude.claude.env.ANTHROPIC_DEFAULT_HAIKU_MODEL; configure the tier in one place'
+        'agents.claude.claude.modelMapping.haiku conflicts with agents.claude.claude.env.ANTHROPIC_DEFAULT_HAIKU_MODEL; configure the tier in one place'
       );
     });
 
@@ -985,18 +1024,18 @@ describe('named runtime and LLM configuration', () => {
       {},
       { opus: '' },
       { sonnet: '   ' },
-      { turbo: 'kimi-k3' },
-      'kimi-k3',
+      { turbo: 'kimi-k3.1-pro' },
+      'kimi-k3.1-pro',
     ])('rejects malformed tier declarations (%j)', (models) => {
       const config = configuration();
-      config.agents!.claude.claude = { models: models as never };
+      config.agents!.claude.claude = { modelMapping: models as never };
       const result = resolveConfiguredAgents(config);
       expect(result.ok).toBe(false);
       if (result.ok) {
         return;
       }
       expect(result.errors.length).toBe(1);
-      expect(result.errors.join('\n')).toMatch(/agents\.claude\.claude\.models/);
+      expect(result.errors.join('\n')).toMatch(/agents\.claude\.claude\.modelMapping/);
     });
 
     it('applies a provider reasoning effort to any runtime without a harness gate', () => {
@@ -1163,7 +1202,7 @@ describe('named runtime and LLM configuration', () => {
       const config = configuration();
       config.agents!.codex = { llm: 'gateway' };
       config.llms!.gateway = {
-        defaultModel: 'kimi-k3',
+        defaultModel: 'kimi-k3.1-pro',
         api: { protocol: 'openai', baseUrl: 'https://api.example/v1', apiKey: '$API_KEY' },
       };
       expect(resolveConfiguredAgents(config).ok).toBe(true);
@@ -1203,7 +1242,12 @@ describe('per-runtime model pin', () => {
     expect(validateConfig(config)).toBe(true);
     const result = resolveConfiguredAgents(config);
     expect(result.ok && result.presets.claude.model).toBe('glm-5.4-air');
-    expect(result.ok && result.presets.claude.modelOverrides).toBeUndefined();
+    // No tiers declared: the per-runtime pin is the single source and derives
+    // every capability slot (Issue #5422: modelMapping is the only mapping
+    // form), so the llm defaultModel no longer leaks into the mapping.
+    expect(result.ok && result.presets.claude.modelMapping).toEqual({
+      opus: 'glm-5.4-air', sonnet: 'glm-5.4-air', haiku: 'glm-5.4-air',
+    });
   });
 
   it('falls back to llms.<llm>.defaultModel when omitted', () => {

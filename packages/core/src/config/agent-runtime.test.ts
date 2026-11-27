@@ -355,7 +355,7 @@ describe('orthogonal dimension switching helpers (Issue #5255)', () => {
       apiProtocol: 'anthropic',
       apiBaseUrl: 'http://127.0.0.1:2',
       reasoningEffort: 'high',
-      modelOverrides: { high: 'claude-opus-4' },
+      modelMapping: { high: 'claude-opus-4' },
     };
 
     it('returns the base unchanged without overrides', () => {
@@ -369,20 +369,20 @@ describe('orthogonal dimension switching helpers (Issue #5255)', () => {
         ...base,
         agentBackend: 'pi',
         // claude-only model metadata must not leak onto another runtime
-        modelOverrides: undefined,
+        modelMapping: undefined,
       } as AgentRuntime);
       expect(composed.model).toBe('claude-sonnet');
     });
 
     it('keeps claude model metadata when the override stays on claude', () => {
-      expect(composeSessionRuntime(base, { backendOverride: 'claude' }).modelOverrides).toBe(base.modelOverrides);
+      expect(composeSessionRuntime(base, { backendOverride: 'claude' }).modelMapping).toBe(base.modelMapping);
     });
 
     it('switches only the model dimension', () => {
       const composed = composeSessionRuntime(base, { modelOverride: 'claude-haiku-4' });
       expect(composed.agentBackend).toBe('claude');
       expect(composed.model).toBe('claude-haiku-4');
-      expect(composed.modelOverrides).toBe(base.modelOverrides);
+      expect(composed.modelMapping).toBe(base.modelMapping);
       expect(composed.apiKey).toBe('key');
     });
 

@@ -30,8 +30,6 @@ const CONFIG_KEYS = new Set([
 ]);
 const BACKENDS = new Set(['claude', 'pi', 'codex', 'dsh', 'miniswe']);
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
-/** Full Claude model IDs as modelOverrides keys (Issue #5410); bare aliases are rejected below. */
-const CLAUDE_MODEL_ID = /^claude-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 /**
  * Bare Claude Code model aliases (Issue #5679). Claude resolves these to its
  * current catalog ID before the wire; DSH/Pi/Codex send `model` verbatim, so a
@@ -50,7 +48,7 @@ const mapping = (value: unknown): value is Record<string, unknown> =>
 
 /**
  * Default tier environment for a Claude runtime (review 2026-11-06): each
- * opus/sonnet/haiku tier uses `claude.models.<tier>`, falling back to the
+ * opus/sonnet/haiku tier uses `claude.modelMapping.<tier>`, falling back to the
  * provider `defaultModel` — so configuring only one model points all three
  * tiers at it. Explicit `claude.env` entries keep precedence; a tier both
  * forms would set is rejected during validation instead.
@@ -64,7 +62,7 @@ function claudeTierEnvironment(
     if (claude?.env?.[CLAUDE_TIER_ENV[tier]] !== undefined) {
       continue;
     }
-    const configured = claude?.models?.[tier];
+    const configured = claude?.modelMapping?.[tier];
     const model = (typeof configured === 'string' ? configured.trim() : '') || defaultModel;
     if (model) {
       tiers[CLAUDE_TIER_ENV[tier]] = model;
@@ -127,8 +125,10 @@ export function resolveConfiguredAgents(
       continue;
     }
     for (const key of Object.keys(raw)) {
-      if (key === 'behavesAs' || key === 'modelOverrides') {
-        errors.push(`${field}.${key} has moved to agents.<name>.claude.${key}; llms contains provider settings only`);
+      if (key === 'behavesAs') {
+        errors.push(`${field}.behavesAs was removed (Issue #5422); configure the three tiers under agents.<name>.claude.modelMapping`);
+      } else if (key === 'modelOverrides') {
+        errors.push(`${field}.modelOverrides was removed (Issue #5422); configure the three tiers under agents.<name>.claude.modelMapping`);
       } else if (key === 'model') {
         errors.push(`${field}.model has been renamed to ${field}.defaultModel; agents can use any model of this provider and defaultModel only sets the default`);
       } else if (!['via', 'defaultModel', 'reasoningEffort', 'maxConcurrentSessions', 'api', 'env'].includes(key)) {
@@ -176,7 +176,7 @@ export function resolveConfiguredAgents(
     }
     for (const key of Object.keys(llm.env ?? {})) {
       if (/^ANTHROPIC_DEFAULT_(OPUS|SONNET|HAIKU)_MODEL$/.test(key)) {
-        errors.push(`${field}.env.${key} has moved to agents.<name>.claude.models or agents.<name>.claude.env.${key}`);
+        errors.push(`${field}.env.${key} has moved to agents.<name>.claude.modelMapping or agents.<name>.claude.env.${key}`);
       }
     }
     if (llm.api !== undefined) {
@@ -414,48 +414,35 @@ export function resolveConfiguredAgents(
         errors.push(`${field}.claude must be a mapping`);
       } else {
         for (const key of Object.keys(agent.claude)) {
-          if (!['behavesAs', 'modelOverrides', 'models', 'env'].includes(key)) {
+          if (key === 'behavesAs') {
+            errors.push(`${field}.claude.behavesAs was removed (Issue #5422): declare the three tiers under ${field}.claude.modelMapping instead — the tier declaration itself is compiled into the capability-slot mapping`);
+          } else if (key === 'modelOverrides') {
+            errors.push(`${field}.claude.modelOverrides was removed (Issue #5422): declare the three tiers under ${field}.claude.modelMapping instead — the tier declaration itself is compiled into the capability-slot parameter mapping`);
+          } else if (!['modelMapping', 'env'].includes(key)) {
             errors.push(`${field}.claude.${key} is unsupported`);
           }
-        }
-        if (agent.claude.behavesAs !== undefined) {
-          if (typeof agent.claude.behavesAs !== 'string' || !CLAUDE_MODEL_ID.test(agent.claude.behavesAs)) {
-            errors.push(`${field}.claude.behavesAs must be a full Claude model ID such as claude-opus-5; aliases are not auto-resolved`);
-          }
-          if (agent.claude.modelOverrides !== undefined) {
-            errors.push(`${field}.claude.behavesAs and modelOverrides are mutually exclusive`);
-          }
-          if (!llms[agent.llm]?.defaultModel?.trim()) {
-            errors.push(`${field}.claude.behavesAs requires a provider default model at llms.${agent.llm}.defaultModel`);
-          }
-        }
-        if (agent.claude.modelOverrides !== undefined &&
-          (!mapping(agent.claude.modelOverrides) || !Object.keys(agent.claude.modelOverrides).length ||
-            Object.entries(agent.claude.modelOverrides).some(([key, value]) =>
-              !CLAUDE_MODEL_ID.test(key) || typeof value !== 'string' || !value.trim()))) {
-          errors.push(`${field}.claude.modelOverrides must map full Claude model IDs to non-empty provider model IDs`);
         }
         // Three-tier opus/sonnet/haiku mapping (review 2026-11-06): each tier
         // names a provider model; omitted tiers fall back to the provider
         // defaultModel at resolution time.
-        if (agent.claude.models !== undefined) {
-          if (!mapping(agent.claude.models)) {
-            errors.push(`${field}.claude.models must be a mapping of opus, sonnet and haiku model IDs`);
+        if (agent.claude.modelMapping !== undefined) {
+          if (!mapping(agent.claude.modelMapping)) {
+            errors.push(`${field}.claude.modelMapping must be a mapping of opus, sonnet and haiku model IDs`);
           } else {
-            const tiers = Object.keys(agent.claude.models);
+            const tiers = Object.keys(agent.claude.modelMapping);
             if (!tiers.length) {
-              errors.push(`${field}.claude.models must set at least one of opus, sonnet or haiku`);
+              errors.push(`${field}.claude.modelMapping must set at least one of opus, sonnet or haiku`);
             }
             for (const tier of tiers) {
               if (!Object.hasOwn(CLAUDE_TIER_ENV, tier)) {
-                errors.push(`${field}.claude.models.${tier} is unsupported; use opus, sonnet or haiku`);
+                errors.push(`${field}.claude.modelMapping.${tier} is unsupported; use opus, sonnet or haiku`);
                 continue;
               }
-              const model = agent.claude.models[tier as ClaudeTier];
+              const model = agent.claude.modelMapping[tier as ClaudeTier];
               if (typeof model !== 'string' || !model.trim()) {
-                errors.push(`${field}.claude.models.${tier} must be a non-empty model ID`);
+                errors.push(`${field}.claude.modelMapping.${tier} must be a non-empty model ID`);
               } else if (agent.claude.env?.[CLAUDE_TIER_ENV[tier as ClaudeTier]] !== undefined) {
-                errors.push(`${field}.claude.models.${tier} conflicts with ${field}.claude.env.${CLAUDE_TIER_ENV[tier as ClaudeTier]}; configure the tier in one place`);
+                errors.push(`${field}.claude.modelMapping.${tier} conflicts with ${field}.claude.env.${CLAUDE_TIER_ENV[tier as ClaudeTier]}; configure the tier in one place`);
               }
             }
           }
@@ -525,6 +512,29 @@ export function resolveConfiguredAgents(
       ...(backend === 'claude' ? agent.claude?.env : {}),
     });
     const tierEnv = backend === 'claude' ? claudeTierEnvironment(agent.claude, defaultModel) : undefined;
+    // Issue #5422 (r3/r6/r7): no separate `behavesAs` or raw full-ID
+    // configuration key exists — the three-tier `modelMapping`
+    // declaration is the single capability-slot source and the only
+    // configuration source. Config completes it into the applied mapping from
+    // the same source the tier environment builds from: every tier alias key
+    // maps to `modelMapping.<tier>`, an omitted tier deriving from the provider
+    // `defaultModel`, so editing `modelMapping` changes the applied catalog
+    // identity everywhere at once. Multi-slot gateway / full-ID scenarios are
+    // expressed through these tiers or an explicit full provider model ID.
+    const tierOverrides = (): Record<string, string> | undefined => {
+      if (backend !== 'claude') {
+        return undefined;
+      }
+      const overrides = Object.fromEntries(
+        (Object.keys(CLAUDE_TIER_ENV) as ClaudeTier[])
+          .map((tier) => [
+            tier,
+            (typeof agent.claude?.modelMapping?.[tier] === 'string' ? agent.claude.modelMapping[tier].trim() : '') || defaultModel,
+          ] as const)
+          .filter(([, model]) => model !== '')
+      );
+      return Object.keys(overrides).length ? overrides : undefined;
+    };
     presets[name] = {
       ...settings,
       agentBackend: backend,
@@ -532,11 +542,7 @@ export function resolveConfiguredAgents(
       reasoningEffort: llm.reasoningEffort,
       maxConcurrentSessions: llm.maxConcurrentSessions,
       // Claude owns its model names; other runtimes never receive this metadata.
-      modelOverrides: backend === 'claude'
-        ? agent.claude?.behavesAs !== undefined && defaultModel
-          ? { [agent.claude.behavesAs]: defaultModel }
-          : agent.claude?.modelOverrides
-        : undefined,
+      modelMapping: tierOverrides(),
       model: defaultModel,
       apiKey: keyEnv ? (process.env[keyEnv] ?? '') : '',
       apiProtocol: protocol,
@@ -554,8 +560,9 @@ export function resolveConfiguredAgents(
   }
   // Issue #5679: a bare Claude alias resolves only inside Claude Code; every
   // other backend would put the alias string itself on the wire. A binding
-  // shared across that boundary must pin the wire model and use behavesAs for
-  // the Claude capability slot, so both providers send the same model ID.
+  // shared across that boundary must pin the wire model and declare the
+  // three tiers under claude.modelMapping for the Claude capability slots, so both
+  // providers send the same model ID.
   for (const [llmName, backends] of backendsByLlm) {
     if (backends.size < 2 || !backends.has('claude')) {
       continue;
@@ -565,7 +572,7 @@ export function resolveConfiguredAgents(
     if (model && BARE_CLAUDE_ALIAS.test(model)) {
       const others = [...backends].filter((backend) => backend !== 'claude').join('/');
       errors.push(
-        `llms.${llmName}.defaultModel "${model}" is a bare Claude alias; Claude resolves it internally while ${others} send it literally. Pin the wire model in llms.${llmName}.defaultModel and the Claude capability slot in agents.<name>.claude.behavesAs`
+        `llms.${llmName}.defaultModel "${model}" is a bare Claude alias; Claude resolves it internally while ${others} send it literally. Pin the wire model in llms.${llmName}.defaultModel and declare the three tiers under agents.<name>.claude.modelMapping`
       );
     }
   }
