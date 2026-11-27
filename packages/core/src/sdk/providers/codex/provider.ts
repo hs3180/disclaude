@@ -53,11 +53,11 @@ import { delimiter, join } from 'node:path';
 import { createLogger } from '../../../utils/logger.js';
 import { Config } from '../../../config/index.js';
 import {
-  isCodexReasoningEffort,
+  isReasoningEffort,
   type CodexEffortSource,
   type CodexModelSource,
 } from '../../../config/codex-settings.js';
-import type { CodexReasoningEffort } from '../../../config/types.js';
+import type { ReasoningEffort } from '../../../config/types.js';
 import type { ChatAgentHooks, IAgentSDKProvider } from '../../interface.js';
 import type { BaseAgentConfig } from '../../../agents/types.js';
 import { withCodexSourceCitations } from './source-citations.js';
@@ -308,7 +308,7 @@ export interface CodexAgentProviderOptions {
   /** Source of the resolved default model, for actionable run readback. */
   modelSource?: CodexModelSource;
   /** Default explicit model reasoning effort; unset defers to Codex config/model defaults. */
-  reasoningEffort?: CodexReasoningEffort;
+  reasoningEffort?: ReasoningEffort;
   /** Source of the resolved default effort, for actionable run readback. */
   reasoningEffortSource?: CodexEffortSource;
   /** Explicit opt-in; `exec` remains the default compatibility transport. */
@@ -361,7 +361,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
   private readonly env: Record<string, string | undefined>;
   private readonly model: string | undefined;
   private readonly modelSource: CodexModelSource;
-  private readonly reasoningEffort: CodexReasoningEffort | undefined;
+  private readonly reasoningEffort: ReasoningEffort | undefined;
   private readonly reasoningEffortSource: CodexEffortSource;
   private readonly sandboxOverride: CodexSandboxLevel | undefined;
   private readonly fullAccess: boolean;
@@ -636,10 +636,10 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     const rawEffort = options.reasoningEffort ?? options.env?.CODEX_REASONING_EFFORT?.trim() ??
       this.env.CODEX_REASONING_EFFORT?.trim() ??
       (Object.hasOwn(options, 'reasoningEffort') ? undefined : this.reasoningEffort);
-    if (rawEffort && !isCodexReasoningEffort(rawEffort)) {
+    if (rawEffort && !isReasoningEffort(rawEffort)) {
       throw new Error('Codex reasoning effort must be one of: minimal, low, medium, high, xhigh, max, ultra');
     }
-    const requestedEffort = rawEffort as CodexReasoningEffort | undefined;
+    const requestedEffort = rawEffort as ReasoningEffort | undefined;
     const reasoningEffortSource = !requestedEffort
       ? 'codex-cli-model-default'
       : options.reasoningEffort
@@ -1570,7 +1570,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     sandbox: CodexSandboxLevel,
     binary: string,
     codexModel: string | undefined,
-    reasoningEffort: CodexReasoningEffort | undefined,
+    reasoningEffort: ReasoningEffort | undefined,
     accessVia: 'chatgpt' | 'api' = 'chatgpt',
     accessApi?: { protocol: string; baseUrl?: string; apiKey: string },
   ): StreamQueryResult {

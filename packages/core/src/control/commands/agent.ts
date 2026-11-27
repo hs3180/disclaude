@@ -3,8 +3,17 @@ import type { AgentDimensionSwitchResult, CommandHandler, ControlHandlerContext 
 
 type AgentCommand = ControlCommand<'agent'>;
 
-function formatRuntime(preset: { name: string; agentBackend: string; model: string }): string {
-  return `**${preset.name}** — ${preset.agentBackend} / ${preset.model}`;
+function formatRuntime(preset: {
+  name: string;
+  agentBackend: string;
+  model: string;
+  reasoningEffort?: string;
+}): string {
+  // Effort is optional; legacy responses render identically. Origin is not a
+  // runtime field (#4913 r5): creation-vs-command sourcing lives in the chat's
+  // persisted selection record, not on the active runtime object.
+  const extras = preset.reasoningEffort ? `reasoning effort: ${preset.reasoningEffort}` : '';
+  return `**${preset.name}** — ${preset.agentBackend} / ${preset.model}${extras ? ` (${extras})` : ''}`;
 }
 
 /** Issue #5255: summarize which dimensions diverge from the selected runtime. */
@@ -154,10 +163,17 @@ export const handleAgent: CommandHandler<'agent'> = async (
   const cardHint = context.agentConfigUi
     ? '\n\nSwitch or review it with `/agent config` — a card with restricted options, no model IDs to type.'
     : '';
+  // Issue #4913: the creation-time declaration is a chat-level configuration
+  // held in the saved selection record, so the source line is read through
+  // the read-only port rather than off the active runtime object.
+  const fromCreation = api.getAgentSelectionSource?.(command.chatId) === 'creation';
+  const sourceLine = fromCreation
+    ? "\n\nSource: this chat's creation-time runtime declaration (`/agent use` replaces it)."
+    : '';
   return active
     ? {
         success: true,
-        message: `🤖 Active agent: ${formatRuntime(active)}${formatOverrides(active)}\n\nBackend and model can be switched independently with \`/agent backend <name>\` and \`/agent model <id>\`.\n\nSelection precedence: this session's switches (/agent use, backend, model) > the chat's saved /agent use choice > per-app default > global default. Dimension switches last until the next /agent use or service restart.${cardHint}`,
+        message: `🤖 Active agent: ${formatRuntime(active)}${formatOverrides(active)}${sourceLine}\n\nBackend and model can be switched independently with \`/agent backend <name>\` and \`/agent model <id>\`.\n\nSelection precedence: this session's switches (/agent use, backend, model) > the chat's creation-time runtime declaration, if any > the chat's saved /agent use choice > per-app default > global default. Dimension switches last until the next /agent use or service restart.${cardHint}`,
       }
     : { success: false, message: 'No agent selection is available on this node (no `agents:` map and no resolvable default agent).' };
 };

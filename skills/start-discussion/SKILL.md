@@ -60,12 +60,15 @@ node skills/start-discussion/scripts/create-discussion.mjs <<'JSON'
   "sourceMessageId": "{triggering message_id}",
   "participants": ["ou_xxx", "ou_yyy"],
   "ledgerRule": "本群台账只记录本群决策与交付，原群历史不重复搬运。",
-  "idempotencyKey": "discussion-{short-uuid}"
+  "idempotencyKey": "discussion-{short-uuid}",
+  "runtime": { "harness": "codex", "model": "gpt-5.2-codex", "reasoningEffort": "high" }
 }
 JSON
 ```
 
-`participants`, `ledgerRule`, and `idempotencyKey` are optional. The triggering user is always included and made owner. Successful JSON output contains `chatId`, `ownerOpenId`, `firstPostMessageId`, `pinned: true`, and `migrationMessageId`; retain these for the next steps. The first post states 本群管什么 / 原群保留什么 / 执行流水去处 / 台账规则. The source-thread card points to the new group and states that this thread no longer receives the topic's execution stream.
+`participants`, `ledgerRule`, `idempotencyKey`, and `runtime` are optional. The triggering user is always included and made owner. Successful JSON output contains `chatId`, `ownerOpenId`, `firstPostMessageId`, `pinned: true`, and `migrationMessageId` (plus `runtime` echoing the validated profile when declared); retain these for the next steps. The first post states 本群管什么 / 原群保留什么 / 执行流水去处 / 台账规则. The source-thread card points to the new group and states that this thread no longer receives the topic's execution stream.
+
+**Runtime profile (Issue #4913)**: `runtime` declares only `{"harness": "codex", "model": "gpt-5.2-codex", "reasoningEffort": "high"}` (effort is optional). `preset` and `thinking` are rejected, not aliases; credentials and endpoints are never accepted. The script validates compatibility against the service (`POST /api/agent-runtime`, needs `DISCLAUDE_API_BASE_URL`) BEFORE creating the group; an incompatible or unsupported declaration aborts with an actionable error and no group is created. Only codex supports `reasoningEffort`. Enabled agents supply credentials internally but do not derive declaration semantics. After creation, pass the SAME `runtime` to `push_to_agent` (Step 3) so the binding is persisted before the first prompt. The binding sits below an in-session `/agent use` and above per-app/global defaults.
 
 If `lark-cli` is not available, report the unchanged command error and stop:
 
@@ -80,8 +83,10 @@ lark-cli --version || echo "ERROR: lark-cli not found in PATH"
 Use the `push_to_agent` MCP tool to send an initialization instruction to the new group's agent. This triggers lazy agent creation and injects a system instruction.
 
 ```
-push_to_agent(chatId: "{new group chatId}", message: "{initialization prompt}")
+push_to_agent(chatId: "{new group chatId}", message: "{initialization prompt}", runtime: {harness: "...", model: "...", reasoningEffort: "..."})
 ```
+
+When the group was created with a `runtime` declaration, pass the SAME declaration here (`runtime` param, or `--runtime '<json>'` on the channel CLI). The service binds it durably to the chat BEFORE routing this first prompt, so the first turn already runs on the selected runtime; the response echoes the effective profile. Without it the first turn would fall back to the chat's per-app/global default.
 
 The initialization prompt should include:
 

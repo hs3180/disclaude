@@ -6,7 +6,7 @@
 
 import type { ControlCommand, ControlResponse, ControlCommandType, ChannelCapabilities } from '../types/channel.js';
 import type { Logger } from '../utils/logger.js';
-import type { TriggerMode, CodexReasoningEffort } from '../config/types.js';
+import type { TriggerMode, ReasoningEffort } from '../config/types.js';
 import type { ProjectManager } from '../project/project-manager.js';
 import type { ChatFailureRecord } from '../feedback/failure-registry.js';
 import type { GoalStore, GoalRecord } from '../goals/goal-store.js';
@@ -41,7 +41,7 @@ export interface DebugGroup {
 export type AgentDimensionSwitchResult =
   | {
       ok: true;
-      active: { name: string; agentBackend: string; model: string; backendOverride?: string; modelOverride?: string; reasoningEffort?: CodexReasoningEffort };
+      active: { name: string; agentBackend: string; model: string; backendOverride?: string; modelOverride?: string; reasoningEffort?: ReasoningEffort };
       sessionBoundary: 'new-session';
     }
   | { ok: false; error: string; options?: string[] };
@@ -90,9 +90,16 @@ export interface ControlHandlerContext {
      * as `resetThread`.
      */
     stopThread?(chatId: string, threadRootId: string): boolean;
-    listAgentRuntimes?(): Array<{ name: string; agentBackend: string; model: string; reasoningEffort?: CodexReasoningEffort }>;
+    listAgentRuntimes?(): Array<{ name: string; agentBackend: string; model: string; reasoningEffort?: ReasoningEffort }>;
     getActiveAgentRuntime?(chatId: string, threadRootId?: string):
-      { name: string; agentBackend: string; model: string; backendOverride?: string; modelOverride?: string; reasoningEffort?: CodexReasoningEffort } | undefined;
+      { name: string; agentBackend: string; model: string; backendOverride?: string; modelOverride?: string; reasoningEffort?: ReasoningEffort } | undefined;
+    /**
+     * Issue #4913: read-only sourcing port — `'creation'` when the chat's
+     * persisted selection record carries a creation-time runtime declaration.
+     * The active runtime object itself never carries an origin field; the
+     * `/agent current` report asks here for its source line instead.
+     */
+    getAgentSelectionSource?(chatId: string): 'creation' | undefined;
     /**
      * Switch the session's runtime and durably save the choice for the chat
      * (#5476). `backend` names an `agents:` harness entry; the optional

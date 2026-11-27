@@ -1,4 +1,4 @@
-import type { CodexReasoningEffort } from './types.js';
+import type { ReasoningEffort } from './types.js';
 
 export const CODEX_REASONING_EFFORTS = [
   'minimal',
@@ -8,7 +8,7 @@ export const CODEX_REASONING_EFFORTS = [
   'xhigh',
   'max',
   'ultra',
-] as const satisfies readonly CodexReasoningEffort[];
+] as const satisfies readonly ReasoningEffort[];
 
 export type CodexModelSource = 'environment' | 'llms.defaultModel' | 'codex-cli-default';
 export type CodexEffortSource =
@@ -26,7 +26,7 @@ function nonEmpty(value: string | undefined): string | undefined {
   return normalized || undefined;
 }
 
-export function isCodexReasoningEffort(value: unknown): value is CodexReasoningEffort {
+export function isReasoningEffort(value: unknown): value is ReasoningEffort {
   return (
     typeof value === 'string' && (CODEX_REASONING_EFFORTS as readonly string[]).includes(value)
   );
@@ -53,10 +53,10 @@ export function resolveCodexModelSetting(sources: {
 /** Resolve explicit effort overrides while preserving Codex's per-model default when unset. */
 export function resolveCodexReasoningEffort(sources: {
   environment?: string;
-  configured?: CodexReasoningEffort;
-}): ResolvedCodexSetting<CodexReasoningEffort, CodexEffortSource> {
+  configured?: ReasoningEffort;
+}): ResolvedCodexSetting<ReasoningEffort, CodexEffortSource> {
   const environment = nonEmpty(sources.environment);
-  if (environment && isCodexReasoningEffort(environment)) {
+  if (environment && isReasoningEffort(environment)) {
     return { value: environment, source: 'environment' };
   }
   if (sources.configured) {

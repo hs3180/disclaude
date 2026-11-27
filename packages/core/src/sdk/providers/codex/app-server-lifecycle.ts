@@ -8,7 +8,7 @@ import {
 } from './app-server-transport.js';
 
 import type { AgentInputRequest } from '../../user-input.js';
-import type { CodexReasoningEffort } from '../../../config/types.js';
+import type { ReasoningEffort } from '../../../config/types.js';
 import { CodexAsyncUserInput } from './async-user-input.js';
 export type CodexAppServerSessionState = 'idle' | 'active' | 'waiting-user' | 'uncertain';
 
@@ -238,7 +238,7 @@ export class CodexAppServerLifecycle {
       networkAccess?: boolean;
       cwd?: string;
       model?: string;
-      reasoningEffort?: CodexReasoningEffort;
+      reasoningEffort?: ReasoningEffort;
     } = {},
   ): Promise<string> {
     const session = this.requireSession(sessionKey);
@@ -298,7 +298,7 @@ export class CodexAppServerLifecycle {
     }
   }
 
-  private async validateReasoningEffort(model: string | undefined, effort: CodexReasoningEffort): Promise<void> {
+  private async validateReasoningEffort(model: string | undefined, effort: ReasoningEffort): Promise<void> {
     const cacheKey = model ?? '<default>';
     let supported = this.reasoningEffortsByModel.get(cacheKey);
     if (!supported) {

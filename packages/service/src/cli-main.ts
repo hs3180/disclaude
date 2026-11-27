@@ -38,6 +38,7 @@ import {
   resolveChannelDeclarations,
   ChatFailureRegistry,
   GoalStore,
+  parseRuntimeProfileDeclaration,
   resolveSessionAgentRuntime,
   getProvider,
   TaskResultOutbox,
@@ -726,6 +727,10 @@ export async function main(): Promise<void> {
       listAgentRuntimes: () => agentPool.listAgentRuntimes(),
       getActiveAgentRuntime: (chatId, threadRootId) =>
         agentPool.getActiveAgentRuntime(chatId, threadRootId),
+      // Issue #4913: the creation-time declaration lives in the chat's saved
+      // selection record, never on the active runtime object.
+      getAgentSelectionSource: (chatId) =>
+        agentSelections.get(chatId)?.declared ? 'creation' : undefined,
       switchAgentRuntime: (chatId, backend, model, threadRootId, actorId) =>
         agentPool.switchAgentRuntime(chatId, backend, model, threadRootId, actorId),
       // Issue #5255: orthogonal backend/model dimension switches.
@@ -1200,6 +1205,20 @@ export async function main(): Promise<void> {
         };
         httpApiServer.setPushHandler(async (chatId: string, message: string) => {
           await routeSignal('http-push', chatId, message);
+        });
+        // Issue #4913: creation-time runtime declarations on the programmatic
+        // entry go through the same pool path as /agent use — the admin slash
+        // command and the REST/CLI entry share one authorization surface (the
+        // loopback API token) and one persistence store.
+        httpApiServer.setRuntimeProfileDeclarer((chatId, runtime, actorId, options) => {
+          const declaration = parseRuntimeProfileDeclaration(runtime);
+          if (!declaration) {
+            return { ok: false, error: 'runtime must declare harness/model/reasoningEffort' };
+          }
+          const result = agentPool.declareChatRuntimeProfile(chatId, declaration, actorId, options);
+          return result.ok
+            ? { ok: true, active: result.active }
+            : { ok: false, error: result.error };
         });
         // #5411: a consumed private input resumes the waiting task by itself,
         // through the same signal routing as /api/push. The payload carries
