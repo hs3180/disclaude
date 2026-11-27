@@ -1,8 +1,9 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { writeOfflineConfig } from '../../../core/src/testing/offline-config.js';
 import { expect, it } from 'vitest';
 
 const repo = fileURLToPath(new URL('../../../../', import.meta.url));
@@ -10,10 +11,7 @@ it.each(['succeeded', 'failed', 'stream-error', 'stop', 'close', 'unknown-ack', 
   'owns background work and its actual parent report through %s', scenario => {
     const directory = mkdtempSync(join(tmpdir(), 'disclaude-background-'));
     try {
-      const config = join(directory, 'config.json');
-      writeFileSync(config, JSON.stringify({ workspace: { dir: directory },
-        agents: { claude: { llm: 'default' } },
-        llms: { default: { defaultModel: 'offline', api: { protocol: 'anthropic', apiKey: '$TEST_LLM_DEFAULT_KEY' } } } }));
+      const config = writeOfflineConfig(directory);
       const script = `
         import assert from 'node:assert/strict';
         import { realpathSync, appendFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';

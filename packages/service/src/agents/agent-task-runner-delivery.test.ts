@@ -1,8 +1,9 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { writeOfflineConfig } from '../../../core/src/testing/offline-config.js';
 import { expect, it } from 'vitest';
 
 const repo = fileURLToPath(new URL('../../../../', import.meta.url));
@@ -10,11 +11,7 @@ it.each(['stop', 'close', 'stop-delivery-fails', 'rpc-stop', 'rpc-close', 'norma
   'retains native query and delivery ownership through %s', scenario => {
     const root = mkdtempSync(join(tmpdir(), 'disclaude-task-delivery-'));
     try {
-      const config = join(root, 'config.json');
-      writeFileSync(config, JSON.stringify({ workspace: { dir: root },
-        agents: { claude: { llm: 'default' } },
-        llms: { default: { defaultModel: 'offline-task-delivery', api: { protocol: 'anthropic', apiKey: '$TEST_LLM_DEFAULT_KEY' } } },
-      }));
+      const config = writeOfflineConfig(root);
       const script = `
         import assert from 'node:assert/strict';
         import { realpathSync } from 'node:fs';

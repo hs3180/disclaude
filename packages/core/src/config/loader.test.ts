@@ -21,6 +21,7 @@ import {
   EXPLICIT_CONFIG_PATH_ENV,
 } from './loader.js';
 import type { DisclaudeConfig, LoadedConfig } from './types.js';
+import { makeOfflineConfig, type OfflineConfigOverrides } from '../testing/offline-config.js';
 
 // Mock fs module
 vi.mock('fs', () => ({
@@ -249,21 +250,12 @@ workspace:
 
 describe('getConfigFromFile', () => {
   it('should extract config from LoadedConfig', () => {
-    const loadedConfig: LoadedConfig = {
-      _source: '/path/to/config.yaml',
-      _fromFile: true,
-      workspace: { dir: '/workspace' },
-      agents: { claude: { llm: 'default' } },
-      llms: { default: { defaultModel: 'test-model', api: { protocol: 'anthropic' } } },
-    };
+    const config = makeOfflineConfig('/workspace', { llms: { default: { defaultModel: 'test-model', api: { protocol: 'anthropic' } } } });
+    const loadedConfig: LoadedConfig = { _source: '/path/to/config.yaml', _fromFile: true, ...config };
 
     const result = getConfigFromFile(loadedConfig);
 
-    expect(result).toEqual({
-      workspace: { dir: '/workspace' },
-      agents: { claude: { llm: 'default' } },
-      llms: { default: { defaultModel: 'test-model', api: { protocol: 'anthropic' } } },
-    });
+    expect(result).toEqual(config);
     expect(result).not.toHaveProperty('_source');
     expect(result).not.toHaveProperty('_fromFile');
   });
@@ -303,12 +295,10 @@ describe('getConfigFromFile', () => {
 
 describe('validateConfig', () => {
   it('should validate valid config', () => {
-    const config: DisclaudeConfig = {
-      workspace: { dir: '/workspace' },
+    const config: DisclaudeConfig = makeOfflineConfig('/workspace', {
       logging: { level: 'debug' },
-      agents: { claude: { llm: 'default' } },
       llms: { default: { defaultModel: 'claude-3-5-sonnet-20241022', api: { protocol: 'anthropic' } } },
-    };
+    });
 
     const result = validateConfig(config);
 
@@ -342,14 +332,8 @@ describe('validateConfig', () => {
   });
 
   it('should reject an invalid provider defaultModel', () => {
-    const config1 = {
-      agents: { claude: { llm: 'default' } },
-      llms: { default: { defaultModel: 123, api: { protocol: 'anthropic' } } },
-    };
-    const config2 = {
-      agents: { claude: { llm: 'default' } },
-      llms: { default: { defaultModel: ['array'], api: { protocol: 'anthropic' } } },
-    };
+    const config1 = makeOfflineConfig('/workspace', { llms: { default: { defaultModel: 123, api: { protocol: 'anthropic' } } } } as unknown as OfflineConfigOverrides);
+    const config2 = makeOfflineConfig('/workspace', { llms: { default: { defaultModel: ['array'], api: { protocol: 'anthropic' } } } } as unknown as OfflineConfigOverrides);
 
     expect(validateConfig(config1 as unknown as Record<string, unknown>)).toBe(false);
     expect(validateConfig(config2 as unknown as Record<string, unknown>)).toBe(false);
@@ -364,12 +348,10 @@ describe('validateConfig', () => {
   });
 
   it('should accept valid string values', () => {
-    const config: DisclaudeConfig = {
-      workspace: { dir: '/workspace' },
+    const config: DisclaudeConfig = makeOfflineConfig('/workspace', {
       logging: { level: 'info' },
-      agents: { claude: { llm: 'default' } },
       llms: { default: { defaultModel: 'model-name', api: { protocol: 'anthropic' } } },
-    };
+    });
 
     expect(validateConfig(config)).toBe(true);
   });
@@ -501,8 +483,7 @@ describe('setLoadedConfig / getPreloadedConfig', () => {
     const config: LoadedConfig = {
       _source: '/test/config.yaml',
       _fromFile: true,
-      agents: { claude: { llm: 'default' } },
-      llms: { default: { defaultModel: 'test-model', api: { protocol: 'anthropic' } } },
+      ...makeOfflineConfig('/workspace', { llms: { default: { defaultModel: 'test-model', api: { protocol: 'anthropic' } } } }),
     };
 
     setLoadedConfig(config);

@@ -1,8 +1,9 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { writeOfflineConfig } from '../../../core/src/testing/offline-config.js';
 import { expect, it } from 'vitest';
 
 const repo = fileURLToPath(new URL('../../../../', import.meta.url));
@@ -17,11 +18,7 @@ it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', '
   'runs the single-entry Goal service through %s', scenario => {
     const root = mkdtempSync(join(tmpdir(), 'disclaude-goal-service-'));
     try {
-      const config = join(root, 'config.json');
-      writeFileSync(config, JSON.stringify({ workspace: { dir: root },
-        agents: { claude: { llm: 'default' } },
-        llms: { default: { defaultModel: 'offline-default', api: { protocol: 'anthropic', apiKey: '$TEST_LLM_DEFAULT_KEY' } } },
-      }));
+      const config = writeOfflineConfig(root);
       const script = `
         import assert from 'node:assert/strict';
         import { realpathSync, mkdirSync, appendFileSync, rmSync } from 'node:fs';
