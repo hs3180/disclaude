@@ -8434,3 +8434,148 @@ describe('Issue #5719 (T-102): timer-backstop heartbeat and accounted progress d
     }
   });
 });
+
+describe('Issue #5762 (T-120): heartbeat carries a one-line "最近在做" brief', () => {
+  const SECRET = 'SECRET-TOKEN-T120';
+  const makeAgent = (extra: Record<string, unknown> = {}) => {
+    const cb = createMockCallbacks();
+    const agent = new ChatAgent({
+      chatId: 'hb-chat', callbacks: cb, apiKey: 'test-key', model: 'test-model',
+      apiProtocol: 'anthropic', apiBaseUrl: 'https://api.example.com', ...extra,
+    });
+    (agent as any).isAgentTeamsEnabled = () => false;
+    return { agent, cb };
+  };
+  const cleanup = async (agent: ChatAgent) => {
+    agent.reset();
+    ChatAgent.prototype.dispose.call(agent);
+    await vi.runOnlyPendingTimersAsync();
+    vi.useRealTimers();
+  };
+  const sentTexts = (cb: ReturnType<typeof createMockCallbacks>) =>
+    cb.sendMessage.mock.calls.map((call: unknown[]) => call[1]).filter((text): text is string => typeof text === 'string');
+  const heartbeatsOf = (cb: ReturnType<typeof createMockCallbacks>) => sentTexts(cb).filter(text => text.includes('⏳'));
+  const heartbeatRows = (agent: ChatAgent) =>
+    (agent as any).logger.info.mock.calls.map(([record]: any[]) => record).filter((record: any) => record?.heartbeatIndex !== undefined);
+  // A narration-silent backend: an in-progress todo, then a Bash call whose
+  // body carries a credential but whose description is public-safe.
+  const scenario = async function* () {
+    yield { parsed: { type: 'tool_use', content: 'x', metadata: { toolName: 'TodoWrite', toolInput: { todos: [{ content: '修复 390px 表格溢出', status: 'in_progress' }] } } } };
+    vi.setSystemTime(Date.now() + 6 * 60_000);
+    yield { parsed: { type: 'tool_use', content: 'x', metadata: { toolName: 'Bash', toolInput: { command: `curl -H "Authorization: Bearer ${SECRET}"`, description: '校验调色板对比度' } } } };
+  };
+
+  it('default (labels) adds one bounded line from whitelisted tool metadata; the command body never shows', async () => {
+    vi.useFakeTimers();
+    const { agent, cb } = makeAgent();
+    (agent as any).createQueryStream.mockReturnValue({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: scenario() });
+    try {
+      await agent.processMessage({ chatId: 'hb-chat', payload: '长任务', messageId: 't120-1' });
+      await agent.turnCompleteFor('t120-1')?.catch(() => { /* iterator ends without a result */ });
+      const heartbeats = heartbeatsOf(cb);
+      expect(heartbeats).toHaveLength(1);
+      const lines = (heartbeats[0] ?? '').split('\n');
+      expect(lines).toHaveLength(3);
+      expect(lines[1]).toBe('最近在做：修复 390px 表格溢出 → 校验调色板对比度（TodoWrite×1、Bash×1）');
+      expect((lines[1] ?? '').length).toBeLessThanOrEqual(80);
+      expect(heartbeats[0]).not.toContain(SECRET);
+      expect(heartbeats[0]).not.toContain('curl');
+      // Trigger/throttle wording is untouched (#5654/#5719).
+      expect(lines[0]).toContain('期间完成 2 次工具调用');
+      expect(lines[2]).toBe('无需干预，结果产出后会自动回复。');
+      const rows = heartbeatRows(agent);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].briefSource).toBe('bash-desc');
+      expect(rows[0].briefLength).toBe((lines[1] ?? '').length);
+      // kind + length only — the brief text never reaches the log (#4774).
+      expect(JSON.stringify((agent as any).logger.info.mock.calls)).not.toContain('校验调色板对比度');
+    } finally {
+      await cleanup(agent);
+    }
+  });
+
+  it('progressHeartbeat.detail=tools publishes the tool mix only', async () => {
+    vi.useFakeTimers();
+    const { agent, cb } = makeAgent({ progressHeartbeatDetail: 'tools' });
+    (agent as any).createQueryStream.mockReturnValue({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: scenario() });
+    try {
+      await agent.processMessage({ chatId: 'hb-chat', payload: '长任务', messageId: 't120-2' });
+      await agent.turnCompleteFor('t120-2')?.catch(() => { /* iterator ends without a result */ });
+      const heartbeats = heartbeatsOf(cb);
+      expect(heartbeats).toHaveLength(1);
+      expect((heartbeats[0] ?? '').split('\n')[1]).toBe('最近在做：TodoWrite×1、Bash×1');
+      expect(heartbeatRows(agent)[0].briefSource).toBe('tool-mix');
+    } finally {
+      await cleanup(agent);
+    }
+  });
+
+  it('progressHeartbeat.detail=off keeps the pre-#5762 heartbeat text exactly', async () => {
+    vi.useFakeTimers();
+    const { agent, cb } = makeAgent({ progressHeartbeatDetail: 'off' });
+    (agent as any).createQueryStream.mockReturnValue({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: scenario() });
+    try {
+      await agent.processMessage({ chatId: 'hb-chat', payload: '长任务', messageId: 't120-3' });
+      await agent.turnCompleteFor('t120-3')?.catch(() => { /* iterator ends without a result */ });
+      const heartbeats = heartbeatsOf(cb);
+      expect(heartbeats).toHaveLength(1);
+      expect(heartbeats[0]).not.toContain('最近在做：');
+      expect(heartbeats[0]).not.toContain('\n');
+      expect(heartbeats[0]?.endsWith('无需干预，结果产出后会自动回复。')).toBe(true);
+      expect(heartbeatRows(agent)[0]).toMatchObject({ briefSource: 'off', briefLength: 0 });
+    } finally {
+      await cleanup(agent);
+    }
+  });
+
+  it('timer backstop names the awaited tool once no call completed in the window (#5719)', async () => {
+    vi.useFakeTimers();
+    const { agent, cb } = makeAgent();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    (agent as any).createQueryStream.mockReturnValue({
+      handle: { close: vi.fn(), cancel: vi.fn() },
+      iterator: (async function* () {
+        yield { parsed: { type: 'tool_use', content: SECRET, metadata: { toolName: 'Bash', toolInput: { command: SECRET, description: '渲染 390px 截图' } } } };
+        await gate;
+        yield { parsed: { type: 'tool_result', content: 'done' } };
+        yield { parsed: { type: 'text', content: 'final answer' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete', subtype: 'success' }, raw: {} };
+      })(),
+    });
+    try {
+      await agent.processMessage({ chatId: 'hb-chat', payload: '长任务', messageId: 't120-4' });
+      await vi.advanceTimersByTimeAsync(2 * HEARTBEAT_TIMER_SILENCE_MS + PROGRESS_HEARTBEAT_TICK_MS);
+      const heartbeats = heartbeatsOf(cb);
+      expect(heartbeats).toHaveLength(2);
+      // 1st: the call completed in this window → its label + mix.
+      expect((heartbeats[0] ?? '').split('\n')[1]).toBe('最近在做：渲染 390px 截图（Bash×1）');
+      // 2nd: same tool still outstanding → named, with the elapsed wait.
+      expect((heartbeats[1] ?? '').split('\n')[1]).toBe('最近在做：等待「渲染 390px 截图」（Bash，已 15 分钟）');
+      expect(heartbeats.every(text => !text.includes(SECRET))).toBe(true);
+      expect(heartbeatRows(agent).map((row: any) => row.briefSource)).toEqual(['bash-desc', 'bash-desc']);
+      release();
+      await agent.turnCompleteFor('t120-4');
+      expect(sentTexts(cb).filter(text => text.includes('final answer'))).toHaveLength(1);
+    } finally {
+      await cleanup(agent);
+    }
+  });
+
+  it.each(['p2p', 'group', 'topic'])('chatType=%s gets the same brief line (验收⑦)', async (chatType) => {
+    vi.useFakeTimers();
+    const { agent, cb } = makeAgent();
+    (agent as any).createQueryStream.mockReturnValue({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: scenario() });
+    const messageId = `t120-5-${chatType}`;
+    try {
+      await agent.processMessage({ chatId: 'hb-chat', payload: '长任务', messageId, chatType } as any);
+      await agent.turnCompleteFor(messageId)?.catch(() => { /* iterator ends without a result */ });
+      const heartbeats = heartbeatsOf(cb);
+      expect(heartbeats).toHaveLength(1);
+      expect((heartbeats[0] ?? '').split('\n')[1]).toBe('最近在做：修复 390px 表格溢出 → 校验调色板对比度（TodoWrite×1、Bash×1）');
+      expect(heartbeats[0]).not.toContain(SECRET);
+    } finally {
+      await cleanup(agent);
+    }
+  });
+});

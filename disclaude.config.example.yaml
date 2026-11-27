@@ -31,6 +31,14 @@ agents:
   assistant:
     backend: claude
     llm: shared-gateway
+    # Progress heartbeat brief (Issue #5762). Optional, per runtime. detail:
+    #   labels (default) = one bounded line "最近在做：…" from the recent
+    #     model-authored tool labels (in-progress todo, Bash/Agent description,
+    #     Skill, file basename) plus the tool mix; never command bodies, file
+    #     contents, URLs or environment values.
+    #   tools = tool mix only; off = counts only (the pre-#5762 heartbeat).
+    progressHeartbeat:
+      detail: labels # labels | tools | off
     claude: # requires backend: claude; every key optional
       # Three-tier mapping for Claude Code's multi-agent model slots: which of
       # the provider's models pretends to be opus / sonnet / haiku (subagents

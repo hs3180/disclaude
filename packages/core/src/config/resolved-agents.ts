@@ -250,6 +250,7 @@ export function resolveConfiguredAgents(
       'enableAgentTeams',
       'autoCompactWindow',
       'sdkTimeoutMs',
+      'progressHeartbeat',
       'claude',
     ]);
     for (const key of Object.keys(raw)) {
@@ -296,6 +297,15 @@ export function resolveConfiguredAgents(
       ) {
         errors.push(`${field}.${key} must be a non-negative integer${key === 'autoCompactWindow' ? ' or auto' : ''}`);
       }
+    }
+    // Issue #5762 (T-120): heartbeat brief switch — only `detail`, only the three values.
+    const heartbeat = agent.progressHeartbeat;
+    if (heartbeat !== undefined && (
+      typeof heartbeat !== 'object' || heartbeat === null || Array.isArray(heartbeat) ||
+      Object.keys(heartbeat).some(key => key !== 'detail') ||
+      (heartbeat.detail !== undefined && !['off', 'tools', 'labels'].includes(heartbeat.detail))
+    )) {
+      errors.push(`${field}.progressHeartbeat.detail must be off, tools or labels`);
     }
     // Per-runtime model pin (r4 review 5948908832 schema step): optional on the
     // binding; resolution falls back to llms.<llm>.defaultModel below.

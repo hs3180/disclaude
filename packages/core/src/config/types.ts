@@ -163,6 +163,14 @@ export interface AgentConfig {
    */
   autoCompactWindow?: number | 'auto';
   /**
+   * Issue #5762 (T-120): narration-silent progress heartbeat brief (#5654).
+   * `detail`: `'labels'` (default) — recent model-authored tool labels plus
+   * the tool mix; `'tools'` — tool mix only; `'off'` — counts only, the
+   * pre-#5762 text. Labels are description-grade fields only (never command
+   * bodies, file contents, URLs or environment values).
+   */
+  progressHeartbeat?: { detail?: 'off' | 'tools' | 'labels' };
+  /**
    * SDK HTTP request timeout in milliseconds.
    * Sets the ANTHROPIC_TIMEOUT environment variable for the SDK subprocess,
    * preventing infinite hangs when the TCP connection to the API proxy stalls.
