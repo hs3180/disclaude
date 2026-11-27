@@ -4,11 +4,11 @@
  * Provides:
  * - Welcome message when bot enters a new P2P chat
  * - Welcome message when bot is added to a group
- * - Help message when users join a group that already has the bot
+ * - No automatic message when users join a group (Issue #5761; `/help` is manual)
  * - Tracks first-time private chats in memory
  *
  * Issue #463: 帮助消息系统 - 入群/私聊引导 + 指令注册
- * Issue #676: 新用户加入群聊时发送 /help 信息
+ * Issue #676: 新用户加入群聊时发送 /help 信息 (superseded by #5761)
  *
  * Migrated to @disclaude/service (Issue #1040)
  */
@@ -24,9 +24,6 @@ export interface WelcomeServiceConfig {
   /** Function to generate welcome message */
   generateWelcomeMessage: (chatId: string, chatType: ChatType) => string | undefined;
 
-  /** Function to generate help message for new users joining group */
-  generateHelpMessage?: (chatId: string, chatType: ChatType) => string | undefined;
-
   /** Function to send a message */
   sendMessage: (chatId: string, text: string) => Promise<void>;
   /** Native event delivery can address a P2P user before a chat ID is known. */
@@ -38,7 +35,6 @@ export interface WelcomeServiceConfig {
  */
 export class WelcomeService {
   private generateWelcomeMessage: WelcomeServiceConfig['generateWelcomeMessage'];
-  private generateHelpMessage?: WelcomeServiceConfig['generateHelpMessage'];
   private sendMessage: (chatId: string, text: string) => Promise<void>;
   private sendWelcomeMessage?: WelcomeServiceConfig['sendWelcomeMessage'];
   private readonly automaticPrompts = new Map<string, number>();
@@ -51,7 +47,6 @@ export class WelcomeService {
 
   constructor(config: WelcomeServiceConfig) {
     this.generateWelcomeMessage = config.generateWelcomeMessage;
-    this.generateHelpMessage = config.generateHelpMessage;
     this.sendMessage = config.sendMessage;
     this.sendWelcomeMessage = config.sendWelcomeMessage;
   }
@@ -126,33 +121,32 @@ export class WelcomeService {
 
   /**
    * Handle users joining a group chat that already has the bot.
-   * Sends help message to introduce bot capabilities to new users.
    *
-   * Issue #676: 新用户加入群聊时发送 /help 信息
+   * Deliberately sends nothing (issue #5761). The first-contact welcome is
+   * delivered once, when the bot is added to the group (`handleBotAddedToGroup`)
+   * — that already covers everyone present. Re-posting it for each later joiner
+   * is noise for the whole group and reads as if the bot had just arrived. The
+   * join events carry no member list, so "humans already present" cannot be
+   * told apart from "first human" without an extra API call; `/help` remains the
+   * explicit way to get the introduction.
+   *
+   * Kept as the single decision point behind both event registrations
+   * (`im.chat.member.added_v1` and `im.chat.member.user.added_v1`), so neither
+   * path can drift back to posting, and a join never claims the group's
+   * automatic-prompt slot. Kept promise-shaped because both event handlers
+   * await it.
    *
    * @param chatId - The group chat ID (address only; classification is by chatType)
    * @param chatType - The chat type from the triggering event
-   * @param userIds - Array of user open_ids who joined (optional, for future use)
+   * @param userIds - Array of user open_ids who joined (logged only)
    */
-  async handleUserJoinedGroup(chatId: string, chatType: ChatType, userIds?: string[]): Promise<void> {
+  handleUserJoinedGroup(chatId: string, chatType: ChatType, userIds?: string[]): Promise<void> {
     if (!isGroupChat(chatType)) {
       logger.warn({ chatId, chatType }, 'handleUserJoinedGroup called with non-group chat type');
-      return;
+    } else {
+      logger.debug({ chatId, userCount: userIds?.length }, 'Users joined group; automatic guidance stays silent');
     }
-    if (!this.claimPrompt(chatId, 24 * 60 * 60 * 1000)) { return; }
-
-    logger.info({ chatId, userCount: userIds?.length }, 'Users joined group, sending help message');
-
-    try {
-      const message = this.generateHelpMessage
-        ? this.generateHelpMessage(chatId, chatType)
-        : this.generateWelcomeMessage(chatId, chatType);
-      if (!message) { return; }
-      await this.deliver(chatId, message, chatType);
-      logger.info({ chatId }, 'Help message sent to group for new users');
-    } catch (error) {
-      logger.error({ err: error, chatId }, 'Failed to send help message to group');
-    }
+    return Promise.resolve();
   }
 
   /**

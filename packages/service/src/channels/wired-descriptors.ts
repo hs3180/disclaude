@@ -272,7 +272,6 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
     };
     const welcomeService = new WelcomeService({
       generateWelcomeMessage,
-      generateHelpMessage: generateWelcomeMessage,
       sendMessage: async (chatId, text) => {
         await feishuChannel.sendMessage({ chatId, type: 'text', text });
       },

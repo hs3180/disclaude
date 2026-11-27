@@ -95,6 +95,46 @@ describe('WelcomeHandler', () => {
     expect(sendMessage).toHaveBeenCalledExactlyOnceWith('oc_private', 'Brief welcome');
   });
 
+  it('sends no automatic message when humans join a group the bot is already in (#5761)', async () => {
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    const service = new WelcomeService({ generateWelcomeMessage: () => 'Full first-contact welcome', sendMessage });
+    const nativeHandler = new WelcomeHandler('test_app_id', () => true);
+    nativeHandler.setWelcomeService(service);
+    // One join can arrive through both registrations (legacy member-added and
+    // native user-added); a later joiner arrives the same way. None may post.
+    const legacyJoin: FeishuChatMemberAddedEventData = {
+      event: {
+        chat_id: 'oc_group',
+        timestamp: '1234567890',
+        members: [{ member_id_type: 'open_id', member_id: 'ou_second_human' }],
+        operator: { operator_id_type: 'open_id', operator_id: 'ou_admin' },
+      },
+    };
+    await nativeHandler.handleChatMemberAdded(legacyJoin);
+    await nativeHandler.handleUserAdded({ chat_id: 'oc_group', users: [{ user_id: { open_id: 'ou_second_human' } }] });
+    await nativeHandler.handleUserAdded({ chat_id: 'oc_group', users: [{ user_id: { open_id: 'ou_third_human' } }] });
+    expect(sendMessage).not.toHaveBeenCalled();
+    // A join must not consume the group's automatic-prompt slot either.
+    expect(service.claimPrompt('oc_group')).toBe(true);
+  });
+
+  it('still delivers one welcome when the bot-added event arrives through both registrations', async () => {
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    const service = new WelcomeService({ generateWelcomeMessage: () => 'Full first-contact welcome', sendMessage });
+    const nativeHandler = new WelcomeHandler('test_app_id', () => true);
+    nativeHandler.setWelcomeService(service);
+    await nativeHandler.handleChatMemberAdded({
+      event: {
+        chat_id: 'oc_group',
+        timestamp: '1234567890',
+        members: [{ member_id_type: 'app_id', member_id: 'test_app_id' }],
+        operator: { operator_id_type: 'open_id', operator_id: 'ou_admin' },
+      },
+    });
+    await nativeHandler.handleBotAdded({ app_id: 'test_app_id', chat_id: 'oc_group' });
+    expect(sendMessage).toHaveBeenCalledExactlyOnceWith('oc_group', 'Full first-contact welcome');
+  });
+
   it('skips native joins while stopped or addressed to a different app', async () => {
     isRunning.mockReturnValue(false);
     await handler.handleBotAdded({ chat_id: 'oc_group' });
