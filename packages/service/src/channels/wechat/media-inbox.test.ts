@@ -60,10 +60,31 @@ describe('durable WeChat media worker', () => {
     expect(f.accept).toHaveBeenCalledOnce();
     expect(f.accept.mock.calls[0][0]).toMatchObject({ messageId: expect.stringMatching(/^media-failure:/),
       metadata: { attachmentRecovery: { originalMessageId: 'image', state: 'failed' } } });
+    expect(f.accept.mock.calls[0][0].content).toContain('Attachment processing failed');
+    expect(f.accept.mock.calls[0][0].content).toContain('第 1 张图片'); // no create_time on this update → no time segment
+    expect(f.accept.mock.calls[0][0].content).not.toMatch(/private-ref|private-key/);
     expect(f.saved()[0]).toMatchObject({ state: 'failed', reported: true });
     await f.inbox.enqueue(update); await vi.advanceTimersByTimeAsync(60_000);
     expect(f.resolve).toHaveBeenCalledTimes(3); expect(f.accept).toHaveBeenCalledOnce();
     expect(JSON.stringify(logger.warn.mock.calls)).not.toMatch(/private-ref|private-key/);
+  });
+
+  it('names the exact undelivered media in the failure notice without echoing private CDN references', async () => {
+    vi.useFakeTimers();
+    const mixed: WeChatUpdate = { message_id: 'mixed', from_user_id: 'peer', create_time: 1_732_128_000,
+      item_list: [
+        { type: 2, image_item: { aeskey: 'private-aeskey', media: { encrypt_query_param: 'private-ref', aes_key: 'private-key' } } },
+        { type: 4, file_item: { file_name: '年度报告.pdf', media: { encrypt_query_param: 'private-file-ref' } } },
+        { type: 2, image_item: { url: 'https://cdn.example/private' } },
+      ] };
+    const f = fixture(vi.fn().mockRejectedValue(new WeChatMediaError({ stage: 'fetch', reason: 'network', elapsedMs: 1 }, { code: 'ECONNRESET' })));
+    await f.inbox.enqueue(mixed); await vi.advanceTimersByTimeAsync(0);
+    expect(f.saved()[0]).toMatchObject({ failures: 1, state: 'pending' });
+    await vi.advanceTimersByTimeAsync(5_000); await vi.advanceTimersByTimeAsync(10_000);
+    expect(f.accept).toHaveBeenCalledOnce();
+    const sentAt = '(消息时间 2024-11-20T18:40:00.000Z)';
+    expect(f.accept.mock.calls[0][0].content).toContain(`[未送达附件: 第 1 张图片${sentAt}、文件「年度报告.pdf」、第 2 张图片${sentAt}]`);
+    expect(f.accept.mock.calls[0][0].content).not.toMatch(/private-ref|private-key|private-aeskey|private-file-ref|cdn\.example/);
   });
 
   it('does not retry a nonretryable HTTP verdict, and expires private records', async () => {

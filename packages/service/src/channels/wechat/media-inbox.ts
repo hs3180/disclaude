@@ -3,10 +3,22 @@ import { stat } from 'node:fs/promises';
 import { createLogger, type IncomingMessage } from '@disclaude/core';
 import type { WeChatUpdate } from './types.js';
 import { WeChatMediaError } from './media-error.js';
-import { MAX_MEDIA_INBOX, validMediaInbox, type MediaInboxEntry } from './media-inbox-state.js';
+import { MAX_MEDIA_INBOX, validMediaInbox, type MediaInboxEntry, type PendingMediaRequest } from './media-inbox-state.js';
 
 const logger = createLogger('WeChatMediaInbox');
 const MAX_FAILURES = 3;
+
+/** Names the undelivered media in the failure notice (#5754); only file names, ordinals and send time — never private CDN references. */
+function describeFailedMedia(update: WeChatUpdate): string {
+  const parts: string[] = [];
+  const sentAt = update.create_time !== undefined ? `(消息时间 ${new Date(update.create_time * 1000).toISOString()})` : '';
+  let images = 0;
+  for (const item of update.item_list ?? []) {
+    if (item.type === 4) { parts.push(`文件「${item.file_item.file_name ?? '未命名文件'}」`); }
+    else if (item.type === 2) { parts.push(`第 ${++images} 张图片${sentAt}`); }
+  }
+  return parts.length ? `\n[未送达附件: ${parts.join('、')}]` : '';
+}
 const RETRY_MS = 5_000;
 const RETENTION_MS = 24 * 60 * 60_000;
 type Attachments = NonNullable<IncomingMessage['attachments']>;
@@ -29,6 +41,27 @@ export class WeChatMediaInbox {
   }
   snapshot(): MediaInboxEntry[] { return structuredClone([...this.entries.values()]); }
   has(id: string): boolean { return this.entries.has(id); }
+  /** Read-only peer view (#5754): media still queued, downloading, or dispatching for this peer. */
+  pendingSummary(peer: string): { count: number; states: { pending: number; dispatching: number; uncertain: number } } | undefined {
+    const states = { pending: 0, dispatching: 0, uncertain: 0 };
+    for (const entry of this.entries.values()) {
+      if (entry.update.from_user_id === peer && (entry.state === 'pending' || entry.state === 'dispatching' || entry.state === 'uncertain')) { states[entry.state]++; }
+    }
+    const count = states.pending + states.dispatching + states.uncertain;
+    return count ? { count, states } : undefined;
+  }
+  /** #5754: single per-peer slot, last-wins — the latest text sent while media was queued is
+   * attached to that peer's newest still-running entry and replayed once on accept. */
+  async recordPendingRequest(peer: string, request: PendingMediaRequest): Promise<void> {
+    let touched = false;
+    for (const entry of this.entries.values()) {
+      if (entry.update.from_user_id === peer && entry.pendingRequest) { entry.pendingRequest = undefined; touched = true; }
+    }
+    const latest = [...this.entries.values()]
+      .filter(e => e.update.from_user_id === peer && (e.state === 'pending' || e.state === 'dispatching')).pop();
+    if (latest) { latest.pendingRequest = { ...request }; touched = true; }
+    if (touched) { await this.persist(); }
+  }
   /** Called when the owner finishes draining (or its grace expires). */
   invalidate(): void { this.generation++; }
 
@@ -95,7 +128,7 @@ export class WeChatMediaInbox {
           if (!peer) { throw new Error('WeChat media recovery has no bound peer'); }
           await this.accept({ messageId: `media-failure:${entry.recoveryId}`, chatId: peer, userId: peer,
             messageType: 'text', timestamp: now,
-            content: '[Attachment processing failed; automatic recovery stopped. The original attachment was not delivered. Do not treat the original request as completed.]',
+            content: `[Attachment processing failed; automatic recovery stopped. The original attachment was not delivered. Do not treat the original request as completed.]${describeFailedMedia(entry.update)}`,
             metadata: { attachmentRecovery: { state: 'failed', originalMessageId: entry.id, failures: entry.failures, recoveryId: entry.recoveryId } } });
           continue;
         }
@@ -125,10 +158,16 @@ export class WeChatMediaInbox {
         if (!active()) { return; }
         if (signal.aborted) { entry.state = 'pending'; await this.persist(); return; }
         try {
+          // #5754: with a remembered same-peer request, one turn resumes the original text
+          // together with the now-available media; without it the generic prefix is unchanged.
+          const pending = entry.pendingRequest;
           await this.accept({ ...message,
-            content: `[Attachments from an earlier message are now available. Later user instructions take precedence; do not restart or repeat already completed work.]\n\n${message.content}`,
+            content: pending
+              ? `[系统注记: 此前发送的附件已就绪,现连同您稍后发送的最新文字一并送达,请按该文字处理附件]\n\n${pending.text}\n\n${message.content}`
+              : `[Attachments from an earlier message are now available. Later user instructions take precedence; do not restart or repeat already completed work.]\n\n${message.content}`,
             metadata: { ...message.metadata, attachmentRecovery: { state: 'completed', failures: entry.failures,
-              recoveryId: entry.recoveryId, originalMessageId: entry.id, originalTimestamp: message.timestamp } } });
+              recoveryId: entry.recoveryId, originalMessageId: entry.id, originalTimestamp: message.timestamp,
+              ...(pending ? { resumedRequest: true, resumedFromMessageId: pending.messageId } : {}) } } });
         } catch {
           if (!active()) { return; }
           entry.state = 'uncertain'; await this.persist(); continue;
