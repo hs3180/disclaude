@@ -64,12 +64,7 @@ export class GoalExecutionService {
           callbacks: binding.callbacks, runtimeOptions: () => ({ ...binding.runtime,
             ...(binding.runtime.settings ? { settings: structuredClone(binding.runtime.settings) } : {}),
             ...(binding.runtime.env ? { env: { ...binding.runtime.env } } : {}) }),
-          authorize: async () => {
-            if (this.closing || this.bindings.get(goal.id) !== binding) { throw new Error('Goal turn binding is no longer active'); }
-            const current = await options.store.get(goal.id);
-            if (!current || current.status !== 'active' || current.revision !== goal.revision) { throw new Error('Goal turn changed; do not admit new work from its old snapshot'); }
-            await this.authorize(current, binding.source);
-          } });
+          authorize: () => this.assertTurnAuthorized(binding, goal) });
       } } : {}),
     });
     this.controller = new GoalController(options.store, {
@@ -86,6 +81,16 @@ export class GoalExecutionService {
     const binding = this.bindings.get(id);
     if (!binding || sourceKey(source) !== sourceKey(binding.source)) { throw new Error('Goal execution binding unavailable'); }
     return binding;
+  }
+  /** Fresh binding identity, revision, state, Project and user policy check
+   * for work admitted from a live turn's snapshot. The turn tools call it
+   * through their scope; host-side phases that hold a live binding share it
+   * instead of re-deriving the same checks from persisted strings. */
+  private async assertTurnAuthorized(binding: Binding, snapshot: Readonly<Pick<GoalRecord, 'id' | 'revision'>>): Promise<void> {
+    if (this.closing || this.bindings.get(snapshot.id) !== binding) { throw new Error('Goal turn binding is no longer active'); }
+    const current = await this.options.store.get(snapshot.id);
+    if (!current || current.status !== 'active' || current.revision !== snapshot.revision) { throw new Error('Goal turn changed; do not admit new work from its old snapshot'); }
+    await this.authorize(current, binding.source);
   }
   private authorize(goal: Readonly<GoalRecord>, source: Readonly<GoalExecutionRequest>): Promise<void> {
     const control = this.controls.get(requestKey(source));
