@@ -7,12 +7,13 @@ import { WeChatChannel } from './wechat-channel.js';
 import { WeChatStateStore } from './state-store.js';
 import { WeChatApiClient } from './api-client.js';
 import { type WeChatWelcome } from './welcome.js';
+import type { WeChatListenerState } from './message-listener.js';
 
-const listeners = vi.hoisted(() => [] as Array<{ processor: (message: IncomingMessage) => Promise<unknown>; onContext: (peer: string, token: string) => void }>);
+const listeners = vi.hoisted(() => [] as Array<{ processor: (message: IncomingMessage) => Promise<unknown>; onContext: (peer: string, token: string) => void; checkpoint?: (state: WeChatListenerState) => Promise<void> }>);
 vi.mock('./identity.js', async original => ({ ...await original<typeof import('./identity.js')>(), lockWeChatIdentity: () => Promise.resolve(() => Promise.resolve()) }));
 vi.mock('./message-listener.js', () => ({ WeChatMessageListener: class {
-  constructor(_client: unknown, processor: (message: IncomingMessage) => Promise<unknown>, options: { onContext: (peer: string, token: string) => void }) {
-    listeners.push({ processor, onContext: options.onContext });
+  constructor(_client: unknown, processor: (message: IncomingMessage) => Promise<unknown>, options: { onContext: (peer: string, token: string) => void; checkpoint?: (state: WeChatListenerState) => Promise<void> }) {
+    listeners.push({ processor, onContext: options.onContext, checkpoint: options.checkpoint });
   }
   start() {} async stop() {} isListening() { return true; } isHealthy() { return true; }
 } }));
@@ -41,6 +42,30 @@ const message = (id: string): IncomingMessage => ({ messageId: id, chatId: 'peer
 const welcomeOf = (channel: WeChatChannel) => (channel as unknown as { welcome?: WeChatWelcome }).welcome;
 
 describe('actual WeChat welcome wiring (#5469)', () => {
+  it('restores known observation times but never invents an age for an older saved reply context', async () => {
+    const f = await fixture();
+    const peer = 'peer@im.wechat';
+    await f.store.saveSession({ botId: 'bot-fixture', cursor: 'legacy', seenMessageIds: [], contexts: { [peer]: 'legacy-context' } });
+    const send = vi.spyOn(WeChatApiClient.prototype, 'sendText').mockResolvedValue('text-ack');
+    let current = await f.create();
+    try {
+      await current.channel.sendMessage({ chatId: peer, type: 'text', text: 'first' });
+      expect(send).toHaveBeenLastCalledWith({ to: peer, content: 'first', contextToken: 'legacy-context' });
+      const before = Date.now();
+      current.listener.onContext(peer, 'fresh-context');
+      await welcomeOf(current.channel)!.idle();
+      await current.listener.checkpoint!({ cursor: 'new-cursor', seenMessageIds: ['seen'] });
+      const saved = await f.store.loadSession('bot-fixture');
+      const observedAt = saved.contextObservedAt![peer];
+      expect(observedAt).toBeGreaterThanOrEqual(before);
+      expect(observedAt).toBeLessThanOrEqual(Date.now());
+      expect(saved).toMatchObject({ cursor: 'new-cursor', contexts: { [peer]: 'fresh-context' } });
+      await current.channel.stop();
+      current = await f.create();
+      await current.channel.sendMessage({ chatId: peer, type: 'text', text: 'after restart' });
+      expect(send).toHaveBeenLastCalledWith({ to: peer, content: 'after restart', contextToken: 'fresh-context', contextObservedAt: observedAt });
+    } finally { await current.channel.stop(); }
+  });
   it('keeps both typing and welcome ownership through channel shutdown', async () => {
     const f = await fixture(); let finishWelcome!: (id: string) => void, finishTyping!: (sent: boolean) => void;
     let welcomeStarted!: () => void, typingStarted!: () => void;
@@ -79,7 +104,7 @@ describe('actual WeChat welcome wiring (#5469)', () => {
       current.listener.onContext('peer@im.wechat', 'private-context');
       await current.listener.processor(message('first-valid')); await sending;
       expect(f.tasks).toHaveBeenCalledTimes(2);
-      expect(send).toHaveBeenCalledWith({ to: 'peer@im.wechat', content: buildWelcomeMessage('wechat'), contextToken: 'private-context' });
+      expect(send).toHaveBeenCalledWith({ to: 'peer@im.wechat', content: buildWelcomeMessage('wechat'), contextToken: 'private-context', contextObservedAt: expect.any(Number) });
       expect((await f.store.loadWelcome('bot-fixture')).peers['peer@im.wechat'].phase).toBe('attempted');
       current.listener.onContext('peer@im.wechat', 'new-context'); await current.listener.processor(message('another'));
       finish('welcome-ack'); await welcomeOf(current.channel)!.idle(); await current.channel.stop();

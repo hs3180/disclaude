@@ -11,6 +11,19 @@ vi.mock('node:fs/promises', async (importOriginal) => ({ ...(await importOrigina
 afterEach(() => vi.restoreAllMocks());
 
 describe('WeChat account storage', () => {
+  it('preserves existing session capacity when optional observation times would exceed the storage limit', async () => {
+    const dir = await fs.mkdtemp(join(tmpdir(), 'wechat-observation-state-'));
+    const store = new WeChatStateStore(dir);
+    try {
+      const state = { botId: 'bot', cursor: 'accepted', seenMessageIds: [], contexts: { peer: '' } };
+      state.contexts.peer = 'x'.repeat(4 * 1024 * 1024 - Buffer.byteLength(JSON.stringify(state)) - 2);
+      await store.saveSession({ ...state, contextObservedAt: { peer: 123456789 } });
+      expect(await store.loadSession('bot')).toEqual(state);
+      const legacy = { ...state, contexts: { peer: 'context' } };
+      await fs.writeFile(join(dir, 'session.json'), JSON.stringify({ ...legacy, contextObservedAt: ['invalid'] }));
+      expect(await store.loadSession('bot')).toEqual(legacy);
+    } finally { await fs.rm(dir, { recursive: true, force: true }); }
+  });
   it('rejects malformed recovery state and refuses oversized writes without replacing the old session', async () => {
     const dir = await fs.mkdtemp(join(tmpdir(), 'wechat-recovery-state-'));
     const store = new WeChatStateStore(dir);

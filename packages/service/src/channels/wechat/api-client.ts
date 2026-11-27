@@ -20,10 +20,12 @@
  * @see Issue #1556 - WeChat Channel Feature Enhancement
  */
 
-import { createLogger, registerConsumedSecretValue } from '@disclaude/core';
+import { createHash } from 'node:crypto';
+import { createLogger, registerConsumedSecretValue, sanitizeDiagnosticText } from '@disclaude/core';
 import type { WeChatGetUpdatesResponse, WeChatTypingResponse, WeChatUploadedMedia } from './types.js';
 import { validateWechatBaseUrl } from './state-store.js';
 import { uploadEncryptedMedia } from './media.js';
+import { observedAgeMs, safeTransportCode, safeUpstreamId, safeWeChatChannelId, type WeChatSendDiagnostics, type WeChatSendFailure, type WeChatSendMessageType, type WeChatSendStage } from './send-diagnostics.js';
 
 const logger = createLogger('WeChatApiClient');
 
@@ -37,9 +39,8 @@ const LONG_POLL_TIMEOUT_MS = 35_000;
 const DEFAULT_BOT_TYPE = 3;
 
 /**
- * Safe API failure detail kept for diagnostics (#5478): endpoint path, numeric
- * verdicts and a sanitized `errmsg` only — never tokens, signed URLs, raw
- * bodies or headers.
+ * Safe API failure detail: endpoint path, numeric verdicts, sanitized reason
+ * and send observations. Never tokens, signed URLs, raw bodies or headers.
  */
 export interface WeChatApiErrorDetail {
   endpoint?: string;
@@ -48,7 +49,29 @@ export interface WeChatApiErrorDetail {
   errcode?: number;
   errmsg?: string;
   diagnosticId?: string;
+  send?: WeChatSendDiagnostics;
 }
+
+/** Mutable response observations belong to one request, even when polling overlaps sends. */
+interface SendResponseTrace {
+  stage: WeChatSendStage;
+  timedOut: boolean;
+  httpStatus?: number;
+  ret?: number;
+  errcode?: number;
+  errmsg?: string;
+  upstreamRequestId?: string;
+  upstreamTraceId?: string;
+  serverErrorMessagePresent?: boolean;
+  secrets: readonly string[];
+  privateText?: string;
+}
+
+interface SendRequestBody extends Record<string, unknown> {
+  msg: { to_user_id: string; client_id: string; context_token?: string; [field: string]: unknown };
+}
+
+const SEND_ENDPOINT = '/ilink/bot/sendmessage';
 
 const ERRMSG_MAX_CHARS = 120;
 /** Credential vocabulary and transport markers that must never pass through, even inside a server message. */
@@ -62,9 +85,12 @@ const ERRMSG_SAFE = /^[\p{L}\p{N}\p{P}\p{Zs}]{1,120}$/u;
  * partially redacted, so an unverified server string never reaches logs or the
  * operator as-is.
  */
-function safeErrmsg(value: unknown): string | undefined {
+function safeErrmsg(value: unknown, secrets: readonly string[] = []): string | undefined {
   if (typeof value !== 'string') { return undefined; }
-  const text = value.replace(/[\t\n\r ]+/gu, ' ').trim().slice(0, ERRMSG_MAX_CHARS);
+  const normalized = value.replace(/[\t\n\r ]+/gu, ' ').trim();
+  try { if (sanitizeDiagnosticText(normalized, secrets) !== normalized) { return undefined; } }
+  catch { return undefined; }
+  const text = normalized.slice(0, ERRMSG_MAX_CHARS);
   if (!text || !ERRMSG_SAFE.test(text) || ERRMSG_UNSAFE.test(text) || /[\w+/=-]{33,}/u.test(text)) { return undefined; }
   return text;
 }
@@ -81,6 +107,58 @@ export class WeChatApiError extends Error {
     this.name = 'WeChatApiError';
     this.authExpired = code === -14 || code === 401;
     this.detail = detail;
+  }
+}
+
+/** The transport did not establish a delivery verdict. Expose only safe observations, never the raw cause. */
+export class WeChatDeliveryUnknownError extends Error {
+  constructor(readonly detail: WeChatApiErrorDetail) {
+    super(`WeChat delivery outcome unknown after timeout, network or response failure; verify in WeChat before retrying [diag ${detail.diagnosticId}]`);
+    this.name = 'WeChatDeliveryUnknownError';
+  }
+}
+
+function numericCode(value: unknown): number | undefined {
+  if (typeof value !== 'number' && (typeof value !== 'string' || !/^-?\d+$/.test(value))) { return undefined; }
+  const code = Number(value);
+  return Number.isSafeInteger(code) ? code : undefined;
+}
+
+function recordSendResponse(trace: SendResponseTrace, data: Record<string, unknown>): void {
+  trace.ret = numericCode(data.ret);
+  trace.errcode = numericCode(data.errcode);
+  const message = data.errmsg ?? data.err_msg;
+  trace.serverErrorMessagePresent = typeof message === 'string' && message.length > 0;
+  trace.errmsg = typeof message === 'string' && trace.privateText && (trace.privateText.length >= 4 || message.trim() === trace.privateText) && message.includes(trace.privateText)
+    ? undefined : safeErrmsg(message, trace.secrets);
+  trace.upstreamRequestId ??= safeUpstreamId(data.request_id, trace.secrets);
+  trace.upstreamTraceId ??= safeUpstreamId(data.trace_id, trace.secrets);
+}
+
+/** Bound optional non-2xx JSON diagnostics; a slow, oversized or non-JSON body cannot erase the HTTP verdict. */
+async function readHttpErrorJson(response: Response, aborted: Promise<never>): Promise<Record<string, unknown> | undefined> {
+  if (!response.body) { return undefined; }
+  if (!response.headers?.get?.('content-type')?.toLowerCase().includes('json')) {
+    void response.body.cancel().catch(() => {});
+    return undefined;
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await Promise.race([reader.read(), aborted]);
+      if (done) { break; }
+      bytes += value.byteLength;
+      if (bytes > 16_384) { return undefined; }
+      chunks.push(value);
+    }
+    const data = parseApiJson(Buffer.concat(chunks).toString('utf8'));
+    return data && typeof data === 'object' && !Array.isArray(data) ? data : undefined;
+  } catch { return undefined; }
+  finally {
+    void reader.cancel().catch(() => {});
+    reader.releaseLock();
   }
 }
 
@@ -111,10 +189,13 @@ export class WeChatApiClient {
   private baseUrl: string;
   private token?: string;
   private readonly routeTag?: string;
+  private readonly channelId?: string;
   private readonly botType: number;
   private updatesCursor = '';
   private pendingCursor?: string;
   private pollTimeoutMs = LONG_POLL_TIMEOUT_MS;
+  /** Set only on a real accepted getUpdates response, never on an empty local timeout. */
+  private lastAcceptedPollAt?: number;
 
   getUpdatesCursor(): string { return this.updatesCursor; }
   setUpdatesCursor(cursor: string): void { this.updatesCursor = cursor; this.pendingCursor = undefined; }
@@ -137,6 +218,8 @@ export class WeChatApiClient {
     token?: string;
     /** Route tag for message routing */
     routeTag?: string;
+    /** Local registration identifier for correlating sends, never sent to iLink. */
+    channelId?: string;
     /** Bot type for QR code generation (default: 3) */
     botType?: number;
   }) {
@@ -144,6 +227,7 @@ export class WeChatApiClient {
     this.token = options.token?.trim();
     if (this.token) { registerConsumedSecretValue(this.token); }
     this.routeTag = options.routeTag;
+    this.channelId = safeWeChatChannelId(options.channelId);
     this.botType = options.botType ?? DEFAULT_BOT_TYPE;
   }
 
@@ -294,6 +378,7 @@ export class WeChatApiClient {
     to: string;
     content: string;
     contextToken?: string;
+    contextObservedAt?: number;
   }): Promise<string | undefined> {
     const { to, content, contextToken } = params;
     const clientId = this.generateClientId();
@@ -311,7 +396,7 @@ export class WeChatApiClient {
       base_info: { channel_version: '0.0.1' },
     };
 
-    const result = await this.postMessage(body);
+    const result = await this.postMessage(body, 'text', params.contextObservedAt, content);
     logger.debug({ to, contentLength: content.length }, 'Text message sent');
     return result.message_id;
   }
@@ -331,6 +416,7 @@ export class WeChatApiClient {
     to: string;
     uploaded: WeChatUploadedMedia;
     contextToken?: string;
+    contextObservedAt?: number;
   }): Promise<string | undefined> {
     const { to, uploaded, contextToken } = params;
     const clientId = this.generateClientId();
@@ -348,7 +434,7 @@ export class WeChatApiClient {
       base_info: { channel_version: '0.0.1' },
     };
 
-    const result = await this.postMessage(body);
+    const result = await this.postMessage(body, 'image', params.contextObservedAt, undefined, uploaded.media);
     return result.message_id;
   }
 
@@ -364,6 +450,7 @@ export class WeChatApiClient {
     uploaded: WeChatUploadedMedia;
     fileName?: string;
     contextToken?: string;
+    contextObservedAt?: number;
   }): Promise<string | undefined> {
     const { to, uploaded, fileName, contextToken } = params;
     const clientId = this.generateClientId();
@@ -381,7 +468,7 @@ export class WeChatApiClient {
       base_info: { channel_version: '0.0.1' },
     };
 
-    const result = await this.postMessage(body);
+    const result = await this.postMessage(body, 'file', params.contextObservedAt, fileName, uploaded.media);
     return result.message_id;
   }
 
@@ -390,6 +477,7 @@ export class WeChatApiClient {
     to: string;
     uploaded: WeChatUploadedMedia;
     contextToken?: string;
+    contextObservedAt?: number;
   }): Promise<string | undefined> {
     const { to, uploaded, contextToken } = params;
     const result = await this.postMessage({
@@ -399,7 +487,7 @@ export class WeChatApiClient {
         item_list: [{ type: 5, video_item: { media: uploaded.media, video_size: uploaded.encryptedSize } }],
         context_token: contextToken,
       },
-    });
+    }, 'video', params.contextObservedAt, undefined, uploaded.media);
     return result.message_id;
   }
 
@@ -434,6 +522,7 @@ export class WeChatApiClient {
         { timeoutMs, signal }
       );
 
+      if (data && typeof data === 'object' && !Array.isArray(data)) { this.lastAcceptedPollAt = Date.now(); }
       this.pendingCursor = typeof data.get_updates_buf === 'string' ? data.get_updates_buf : undefined;
       const suggestedTimeout = data.longpolling_timeout_ms;
       if (typeof suggestedTimeout === 'number' && Number.isFinite(suggestedTimeout) && suggestedTimeout > 0) {
@@ -526,7 +615,7 @@ export class WeChatApiClient {
   private async postJson<T>(
     endpoint: string,
     body: Record<string, unknown>,
-    options?: { timeoutMs?: number; signal?: AbortSignal },
+    options?: { timeoutMs?: number; signal?: AbortSignal; sendTrace?: SendResponseTrace },
   ): Promise<T> {
     const url = `${this.baseUrl}/${endpoint}`;
     const bodyStr = JSON.stringify({ ...body, base_info: { channel_version: '0.0.1', bot_agent: 'Disclaude' } });
@@ -542,16 +631,52 @@ export class WeChatApiClient {
       timeoutMs: options?.timeoutMs ?? DEFAULT_API_TIMEOUT_MS,
       signal: options?.signal,
       endpoint: `/${endpoint.replace(/^\/+/, '')}`,
+      sendTrace: options?.sendTrace,
     });
 
     return data;
   }
 
-  private async postMessage(body: Record<string, unknown>): Promise<{ message_id?: string }> {
-    try { return await this.postJson('ilink/bot/sendmessage', body); }
+  private async postMessage(body: SendRequestBody, messageType: WeChatSendMessageType, contextObservedAt?: number,
+    privateText?: string, media?: WeChatUploadedMedia['media']): Promise<{ message_id?: string }> {
+    const startedAt = performance.now();
+    const now = Date.now();
+    const { to_user_id: peer, client_id: clientMessageId, context_token: contextToken } = body.msg;
+    const trace: SendResponseTrace = {
+      stage: 'request', timedOut: false,
+      secrets: [this.token, this.routeTag, contextToken, peer, media?.encrypt_query_param, media?.aes_key, media?.full_url]
+        .filter((value): value is string => !!value),
+      privateText,
+    };
+    const replyContextPresent = !!contextToken;
+    const replyContextObservedAgeMs = replyContextPresent ? observedAgeMs(contextObservedAt, now) : undefined;
+    const lastAcceptedPollAgeMs = observedAgeMs(this.lastAcceptedPollAt, now);
+    const peerHash = createHash('sha256').update(peer).digest('hex').slice(0, 12);
+    const observation = (failure?: WeChatSendFailure, error?: unknown): WeChatSendDiagnostics => ({
+      clientMessageId, channelId: this.channelId, peerHash, messageType, replyContextPresent, replyContextObservedAgeMs, lastAcceptedPollAgeMs,
+      elapsedMs: Math.round(performance.now() - startedAt), stage: trace.stage, failure,
+      transportCode: safeTransportCode(error), upstreamRequestId: trace.upstreamRequestId, upstreamTraceId: trace.upstreamTraceId,
+      serverErrorMessagePresent: trace.serverErrorMessagePresent,
+    });
+    const responseDetail = () => ({ endpoint: SEND_ENDPOINT, httpStatus: trace.httpStatus, ret: trace.ret, errcode: trace.errcode, errmsg: trace.errmsg });
+    try {
+      const result = await this.postJson<{ message_id?: string }>('ilink/bot/sendmessage', body, { sendTrace: trace });
+      logger.info({ event: 'wechat_send_result', outcome: 'accepted', endpoint: SEND_ENDPOINT,
+        httpStatus: trace.httpStatus, ret: trace.ret, errcode: trace.errcode, send: observation(),
+        platformMessageIdPresent: !!result.message_id, platformMessageId: safeUpstreamId(result.message_id, trace.secrets) }, 'WeChat message send result');
+      return result;
+    }
     catch (error) {
-      if (error instanceof WeChatApiError) { throw error; }
-      throw new Error('WeChat delivery outcome unknown after timeout, network or response failure; verify in WeChat before retrying');
+      if (error instanceof WeChatApiError) {
+        const detail = { ...responseDetail(), ...error.detail, send: observation(trace.stage === 'http-response' ? 'http-rejected' : 'api-rejected') };
+        logger.warn({ event: 'wechat_send_result', outcome: 'rejected', code: error.code, ...detail }, 'WeChat message send result');
+        throw new WeChatApiError(error.code, detail);
+      }
+      const failure: WeChatSendFailure = trace.timedOut ? 'timeout' : error instanceof Error && error.name === 'AbortError'
+        ? 'aborted' : trace.stage === 'response-json' ? 'invalid-response' : 'transport-error';
+      const detail = { ...responseDetail(), diagnosticId: crypto.randomUUID().slice(0, 8), send: observation(failure, error) };
+      logger.warn({ event: 'wechat_send_result', outcome: 'unknown', ...detail }, 'WeChat message send result');
+      throw new WeChatDeliveryUnknownError(detail);
     }
   }
 
@@ -607,15 +732,15 @@ export class WeChatApiClient {
     signal?: AbortSignal;
     /** Endpoint path label for safe diagnostics; a fixed literal, never a secret-bearing URL. */
     endpoint?: string;
+    sendTrace?: SendResponseTrace;
   }): Promise<T> {
     const timeoutMs = opts.timeoutMs ?? DEFAULT_API_TIMEOUT_MS;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-    // Link external signal if provided
-    const onAbort = () => controller.abort();
-    if (opts.signal?.aborted) { onAbort(); }
-    else { opts.signal?.addEventListener('abort', onAbort, { once: true }); }
+    const trace = opts.sendTrace;
+    const timer = setTimeout(() => {
+      if (trace) { trace.timedOut = true; }
+      controller.abort();
+    }, timeoutMs);
 
     // An aborted request does not always reject on its own: a transport or
     // interceptor can drop the abort (#5479), leaving callers — and through
@@ -625,6 +750,10 @@ export class WeChatApiClient {
       controller.signal.addEventListener('abort',
         () => { reject(new DOMException('This operation was aborted', 'AbortError')); }, { once: true });
     });
+    // Link after the abort promise is observing the controller, including already-aborted callers.
+    const onAbort = () => controller.abort();
+    if (opts.signal?.aborted) { onAbort(); }
+    else { opts.signal?.addEventListener('abort', onAbort, { once: true }); }
 
     try {
       const response = await Promise.race([
@@ -638,37 +767,49 @@ export class WeChatApiClient {
         aborted,
       ]);
 
+      if (trace) {
+        trace.httpStatus = Number.isFinite(response.status) ? response.status : undefined;
+        trace.upstreamRequestId = safeUpstreamId(response.headers?.get?.('x-request-id'), trace.secrets);
+        trace.upstreamTraceId = safeUpstreamId(response.headers?.get?.('x-trace-id'), trace.secrets);
+      }
       if (!response.ok) {
-        await response.body?.cancel();
-        throw this.apiError(response.status, { ...(opts.endpoint ? { endpoint: opts.endpoint } : {}), httpStatus: response.status });
+        if (trace) {
+          trace.stage = 'http-response';
+          const data = await readHttpErrorJson(response, aborted);
+          if (data) { recordSendResponse(trace, data); }
+        } else { await response.body?.cancel(); }
+        throw this.apiError(response.status, { ...(opts.endpoint ? { endpoint: opts.endpoint } : {}), httpStatus: response.status,
+          ...(trace ? { ret: trace.ret, errcode: trace.errcode, errmsg: trace.errmsg } : {}) });
       }
 
-      const rawText = await response.text();
+      if (trace) { trace.stage = 'response-body'; }
+      const rawText = await Promise.race([response.text(), aborted]);
+      if (trace) { trace.stage = 'response-json'; }
       const data = parseApiJson(rawText);
 
       // Check for WeChat iLink error format (ret !== 0)
-      const code = Number(data.errcode || data.ret || 0);
+      if (trace) {
+        if (!data || typeof data !== 'object' || Array.isArray(data)) { throw new Error('WeChat API returned invalid JSON object'); }
+        recordSendResponse(trace, data);
+      }
+      const ret = numericCode(data.ret);
+      const errcode = numericCode(data.errcode);
+      const code = errcode || ret || Number(data.errcode || data.ret || 0);
+      if (trace && !Number.isFinite(code)) { throw new Error('WeChat API returned invalid status code'); }
+      if (trace) { trace.stage = 'api-response'; }
       if (code !== 0) {
-        const ret = Number(data.ret);
-        const errcode = Number(data.errcode);
-        const errmsg = safeErrmsg(data.errmsg ?? data.err_msg);
+        const errmsg = trace ? trace.errmsg : safeErrmsg(data.errmsg ?? data.err_msg);
         const detail: WeChatApiErrorDetail = {
           endpoint: opts.endpoint ?? 'unknown',
           ...(Number.isFinite(response.status) ? { httpStatus: response.status } : {}),
-          ...(Number.isFinite(ret) && ret !== 0 ? { ret } : {}),
-          ...(Number.isFinite(errcode) && errcode !== 0 ? { errcode } : {}),
+          ...(ret !== undefined && (trace || ret !== 0) ? { ret } : {}),
+          ...(errcode !== undefined && (trace || errcode !== 0) ? { errcode } : {}),
           ...(errmsg ? { errmsg } : {}),
         };
         throw this.apiError(code, detail);
       }
 
       return data as T;
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
-        throw error;
-      }
-
-      throw error;
     } finally {
       clearTimeout(timer);
       opts.signal?.removeEventListener('abort', onAbort);

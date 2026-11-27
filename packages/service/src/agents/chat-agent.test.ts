@@ -2596,14 +2596,20 @@ describe('ChatAgent (service)', () => {
     }
 
     it('classifies a WeChat server rejection in delivery_final with ret, sessionState and the channel diag ID (#5756)', async () => {
+      const send = {
+        clientMessageId: 'd5b48bee-2762-44bb-9a4c-f6fd5b5d3692', channelId: 'wechat', peerHash: 'bb2233445566',
+        messageType: 'text' as const, replyContextPresent: true, replyContextObservedAgeMs: 3000, lastAcceptedPollAgeMs: 25,
+        elapsedMs: 420, stage: 'api-response' as const, failure: 'api-rejected' as const, upstreamTraceId: '0123456789abcdef',
+      };
       const final = await deliverFailure(new Error(
         'WeChat message NOT sent: the server rejected delivery (code -2, server said: prepare failed). The account check may still pass — this is a delivery rejection, not a confirmed login or configuration failure. [diag ab12cd34]',
-        { cause: new WeChatApiError(-2, { endpoint: '/ilink/bot/sendmessage', httpStatus: 200, ret: -2, errmsg: 'prepare failed', diagnosticId: 'ab12cd34' }) },
+        { cause: new WeChatApiError(-2, { endpoint: '/ilink/bot/sendmessage', httpStatus: 200, ret: -2, errmsg: 'prepare failed', diagnosticId: 'ab12cd34', send }) },
       ));
       expect(final.diagnostics).toEqual({
         channel: 'wechat', errorKind: 'delivery-rejected', sessionState: 'unverified',
         endpoint: '/ilink/bot/sendmessage', httpStatus: 200, ret: -2, errmsg: 'prepare failed',
         channelDiagnosticId: 'ab12cd34',
+        send,
       });
       // Acceptance ①: the existing fields stay — state/errorCode/turn linkage.
       expect(final.errorCode).toEqual(expect.any(String));
