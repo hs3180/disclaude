@@ -3,8 +3,13 @@ import type { TaskQuestion, TaskQuestionRecord, TaskQuestionStore } from '@discl
 type Receipt = { messageId: string; chatId: string; threadRootId?: string; replyRootId?: string | null };
 export interface TaskQuestionFlowPorts {
   store: TaskQuestionStore;
-  /** Current authority, not authentication inferred from persisted strings. */
-  authorize(question: Readonly<TaskQuestion>, phase: 'send' | 'answer' | 'wake'): void | Promise<void>;
+  /** Current authority, not authentication inferred from persisted strings.
+   * The answer phase also receives the verified callback identity the flow
+   * has just checked against the question (actorId/chatId), so hosts can
+   * re-derive authority from that user event instead of persisted strings.
+   */
+  authorize(question: Readonly<TaskQuestion>, phase: 'send' | 'answer' | 'wake',
+    answer?: Readonly<{ actorId: string; messageId: string }>): void | Promise<void>;
   send(question: Readonly<TaskQuestion>): Promise<Receipt>;
   /** Verify the actual platform card/token/original route on an early callback. */
   reconcileCard(question: Readonly<TaskQuestion>, messageId: string): Promise<Receipt>;
@@ -57,13 +62,13 @@ export class TaskQuestionFlow {
       if (current.cancelled || answer.actorId !== question.actorId || answer.chatId !== question.chatId || current.delivery === 'prepared') {
         throw new Error('Callback does not belong to this live task question');
       }
-      await this.ports.authorize(question, 'answer');
+      await this.ports.authorize(question, 'answer', answer);
       if (current.delivery !== 'delivered') {
         const receipt = await this.ports.reconcileCard(Object.freeze(structuredClone(question)), answer.messageId);
         if (receipt.messageId !== answer.messageId) { throw new Error('Callback card was not verified'); }
         current = await this.ports.store.confirmDelivery(id, receipt);
       }
-      await this.ports.authorize(current.question, 'answer');
+      await this.ports.authorize(current.question, 'answer', answer);
       return await this.ports.store.answer(id, answer);
     });
   }

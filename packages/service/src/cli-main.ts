@@ -41,6 +41,7 @@ import {
   resolveSessionAgentRuntime,
   getProvider,
   TaskResultOutbox,
+  TaskQuestionStore,
   type ChatType,
 } from '@disclaude/core';
 import crypto from 'node:crypto';
@@ -61,6 +62,7 @@ import { BackgroundAgentTasks } from './agents/background-agent-tasks.js';
 import { createTaskParentReporter } from './agents/background-task-parent.js';
 import { GoalExecutionService } from './goals/goal-execution-service.js';
 import { createGoalBoardTurnTools } from './goals/goal-board-tools.js';
+import { attachTaskQuestionHost, createTaskQuestionHostPorts } from './goals/task-question-host.js';
 import { AgentFactory, type AgentCreateOptions } from './agents/factory.js';
 import { messageLogger } from './utils/message-logger.js';
 import { queryChatHistory } from './history/history-query.js';
@@ -1022,6 +1024,16 @@ export async function main(): Promise<void> {
       }
       logger.warn('No connected channel; WeChat registration remains available');
     }
+
+    // #5591 G1: task questions reach Feishu cards through host ports bound to
+    // the Goal service (no injected model tool). Channels have finished
+    // doStart (its stale-card drain) above, so the ports attach once here;
+    // the channel's own stop path drains them again.
+    const taskQuestionAttached = attachTaskQuestionHost(channelManager.getAll(), createTaskQuestionHostPorts({
+      store: new TaskQuestionStore(path.join(channelSetupContext.goalStore.directory, 'task-questions')),
+      goalExecution,
+    }));
+    logger.info({ taskQuestionAttached }, 'Task question host ports attached to Feishu channels');
 
     // #5519: autostart can outrun DNS (launchd boots before the network
     // stack answers). startAll() is deliberately non-blocking, so wait —
