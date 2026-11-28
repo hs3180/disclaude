@@ -10,10 +10,18 @@ const repo = fileURLToPath(new URL('../../../../', import.meta.url));
 /** Single-entry scenarios (#5212): `/goal <prompt>` launches, `/stop` stops.
  * Continuation after `blocked` starts a new Goal and keeps the old record.
  * The scoped-* scenarios exercise host-supplied turn tools bound to the
- * goal's current authority and settlement.
+ * goal's current authority and settlement. `pause` pauses through the control
+ * port (main has no `/goal pause` command) and checks that the paused Goal
+ * admits no new work from its old turn scope (#5591). `blocked-resume` resumes
+ * a blocked Goal through the same control port (no new /goal) and checks that
+ * the resume re-checks host policy before round 2 is admitted (#5591).
+ * `task-question` binds a task question from the live turn (send phase: the
+ * binding's trusted source picks the Goal and its id becomes the taskKey),
+ * then checks that the paused Goal admits no new question while its persisted
+ * record still re-authorizes the answer/wake phase (#5591 G1).
  */
 it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', 'missing-project-stop', 'two-goals-stop',
-  'scoped-tools', 'scope-edit', 'scope-project'])(
+  'scoped-tools', 'scope-edit', 'scope-project', 'system-source', 'pause', 'blocked-resume', 'task-question'])(
   'runs the single-entry Goal service through %s', scenario => {
     const root = mkdtempSync(join(tmpdir(), 'disclaude-goal-service-'));
     try {
@@ -30,6 +38,7 @@ it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', '
         import { prepareTools } from './packages/core/dist/sdk/tools.js';
         import { GoalExecutionService } from './packages/service/dist/goals/goal-execution-service.js';
         import { tryHandleSlashCommand } from './packages/service/dist/channels/feishu/command-router.js';
+        import { readVerifiedInputSource } from './packages/service/dist/agents/input-provenance.js';
         globalThis.fetch = async () => { throw new Error('Live fetch forbidden'); };
         const scenario = ${JSON.stringify(scenario)}, root = realpathSync(${JSON.stringify(root)});
         const project = join(root, 'project'), other = join(root, 'other'); mkdirSync(project); mkdirSync(other);
@@ -46,7 +55,7 @@ it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', '
             if (Date.now() > end) { throw new Error('timeout waiting for ' + (what ?? 'condition')); }
             await new Promise(resolve => setTimeout(resolve, 1)); } };
         const statusOf = async id => (await store.get(id)).status;
-        const queries = [], policies = [], replies = [], sends = [], scopes = []; let toolClosed = 0;
+        const queries = [], policies = [], replies = [], sends = [], scopes = [], taskQuestions = []; let toolClosed = 0;
         let allowed = scenario !== 'denied'; const runtime = { model: 'fixed-offline' };
         // Per-round assessment table: round 1 belongs to the first Goal; a
         // 'continue' keeps it running while later rounds may belong to another.
@@ -56,8 +65,10 @@ it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', '
           'stop': ['continue'], 'close': ['continue', 'completed'], 'revoked': ['continue'],
           'missing-project-stop': ['continue'], 'two-goals-stop': ['continue', 'completed'],
           'scoped-tools': ['completed'], 'scope-edit': ['completed'], 'scope-project': ['completed'],
+          'pause': ['continue', 'completed'], 'blocked-resume': ['blocked', 'completed'],
+          'task-question': ['continue', 'completed'],
         }[scenario];
-        const parksRoundResult = ['stop', 'close', 'missing-project-stop', 'two-goals-stop'].includes(scenario);
+        const parksRoundResult = ['stop', 'close', 'missing-project-stop', 'two-goals-stop', 'pause', 'task-question'].includes(scenario);
         // Runtime selection is pinned at each Goal's launch: only rounds of a
         // Goal launched after the mutation run with the changed model.
         const changedRounds = { 'blocked-new-goal': [2], 'two-goals-stop': [2], 'close': [2] }[scenario] ?? [];
@@ -85,6 +96,21 @@ it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', '
                   manager.use('fixture-chat', other); await assert.rejects(scopes[0].authorize(), /Project/);
                 }
               }
+              if (scenario === 'task-question' && round === 1) {
+                // #5591 G1 send phase: the live turn asks on the user's behalf
+                // through the service (the CLI/REST path ends here). The
+                // binding's trusted source picks the Goal; the body's taskKey
+                // and goalId only narrow, never widen or replace it.
+                const question = { id: '0f8e6c1e-3a4b-4c5d-9e6f-708192a3b4c5', taskKey: 'unbound-body-key', question: 'Which sample?',
+                  chatId: 'fixture-chat', actorId: 'fixture-user', sourceMessageId: 'fixture-launch', projectRoot: project, threadRootId: 'fixture-topic' };
+                taskQuestions.push(question);
+                const bound = await service.bindTaskQuestion(question);
+                assert.equal(bound.taskKey, scopes[0].goal.id); assert.equal(bound.id, question.id);
+                assert.equal(question.taskKey, 'unbound-body-key');
+                await assert.rejects(service.bindTaskQuestion(question, '11111111-1111-4111-8111-111111111111'), /owns/);
+                await assert.rejects(service.bindTaskQuestion({ ...question, chatId: 'other-chat' }), /owns/);
+                allowed = false; await assert.rejects(service.bindTaskQuestion(question), /authorized/); allowed = true;
+              }
               const outcome = outcomes[round - 1] ?? 'completed';
               const done = outcome === 'completed';
               await tool.execute({ outcome, progress: 'round ' + round,
@@ -104,7 +130,7 @@ it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', '
           if (text.startsWith('Goal ')) notified.release(); return 'fixture-receipt';
         }, sendCard: async () => {}, sendFile: async () => {} };
         const options = { store, projectManager: manager, runtimeOptions: () => runtime, callbacks: () => callbacks,
-          ...(['scoped-tools','scope-edit','scope-project'].includes(scenario)?{createTurnTools:scope=>{
+          ...(['scoped-tools','scope-edit','scope-project','pause','blocked-resume','task-question'].includes(scenario)?{createTurnTools:scope=>{
             scopes.push(scope);assert.equal(scope.source.actorId,'fixture-user');assert.equal(scope.source.chatId,'fixture-chat');
             assert.equal(scope.source.threadRootId,'fixture-topic');assert.equal(scope.runtimeOptions().model,'fixed-offline');
             assert.equal(scope.callbacks,callbacks);
@@ -123,10 +149,18 @@ it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', '
           start: (...args) => service.start(...args), control: (...args) => service.control(...args),
           stopForChat: (chat, topic) => service.stopForChat(chat, topic),
         } });
-        const invoke = (text, sourceMessageId = 'fixture-launch') => tryHandleSlashCommand({ textWithoutMentions: text,
-          chatId: 'fixture-chat', actorId: 'fixture-user', sourceMessageId, threadRootId: 'fixture-topic', chatType: 'topic', senderType: 'user' },
+        const invoke = (text, sourceMessageId = 'fixture-launch', senderType = 'user') => tryHandleSlashCommand({ textWithoutMentions: text,
+          chatId: 'fixture-chat', actorId: 'fixture-user', sourceMessageId, threadRootId: 'fixture-topic', chatType: 'topic', senderType },
         { hasControlHandler: true, emitControl: userControl, sendMessage: async reply => { replies.push(reply); } });
         try {
+          if (scenario === 'system-source') {
+            // #5591: Goal execution must originate from a human event. A push
+            // without a real user source creates no record, starts no round and
+            // owns no child task; the router refuses before any control handler.
+            await invoke('/goal Deliver the artifact | Verify recorded evidence', 'fixture-system', 'app');
+            assert.deepEqual(await store.listIds(), []); assert.equal(queries.length, 0);
+            assert.ok(replies.some(reply => String(reply.text).includes('Goal 命令需由用户直接发送')));
+          } else {
           await invoke('/goal Deliver the artifact | Verify recorded evidence');
           const [id] = await store.listIds();
           if (scenario === 'denied') {
@@ -177,6 +211,82 @@ it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', '
                 assert.equal((await store.get(resumed)).status, 'completed'); assert.equal(queries.length, 2);
                 await service.close();
               }
+            } else if (['pause', 'task-question'].includes(scenario)) {
+              // #5591: a paused Goal admits no new work. Pause reaches the
+              // service through the control port the control handler exposes
+              // (main ships no /goal pause command); the in-flight round is
+              // cancelled once its delivery settles, round 2 never starts and
+              // the old turn scope refuses.
+              await delivering.promise; assert.equal(service.isBusy('fixture-chat'), true);
+              const policiesBefore = policies.length;
+              const paused = await service.control({ goalId: id, expectedRevision: (await store.get(id)).revision, chatId: 'fixture-chat',
+                projectRoot: project, actorId: 'fixture-user', sourceMessageId: 'fixture-launch', chatType: 'topic', threadRootId: 'fixture-topic' }, 'pause');
+              assert.equal(paused.record.status, 'paused');
+              assert.ok(policies.slice(policiesBefore).some(command => command.type === 'goal' && command.actorId === 'fixture-user'));
+              assert.ok(paused.settlement);
+              // The record is paused: nothing the old round still owes may admit work.
+              await assert.rejects(scopes[0].authorize(), /no longer active|do not admit new work/);
+              for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+              assert.equal(service.isBusy('fixture-chat'), true);
+              delivery.release(); await paused.settlement;
+              await waitFor(() => !service.isBusy('fixture-chat'));
+              assert.equal((await store.get(id)).status, 'paused'); assert.equal(queries.length, 1);
+              if (scenario === 'task-question') {
+                // Paused: no live binding may ask. The answer/wake phase does
+                // not depend on the ended turn scope: it re-derives authority
+                // from the persisted Goal the taskKey names, with the verified
+                // answer callback as the user event; unknown evidence rejects.
+                await assert.rejects(service.bindTaskQuestion(taskQuestions[0]), /owns/);
+                const bound = { ...taskQuestions[0], taskKey: id }, answer = { actorId: 'fixture-user', messageId: 'fixture-answer' };
+                assert.equal((await service.authorizeTaskQuestionAnswer(bound, answer)).id, id);
+                await assert.rejects(service.authorizeTaskQuestionAnswer({ ...bound, taskKey: '11111111-1111-4111-8111-111111111111' }), /evidence/);
+                await assert.rejects(service.authorizeTaskQuestionAnswer({ ...bound, chatId: 'other-chat' }), /evidence/);
+                allowed = false; await assert.rejects(service.authorizeTaskQuestionAnswer(bound, answer), /authorized/); allowed = true;
+              }
+              // Only an explicit resume re-authorizes (fresh host policy check)
+              // and admits the next round under a new turn scope.
+              runtime.model = 'fixed-offline'; const before = policies.length;
+              const resumed = await service.start({ goalId: id, expectedRevision: (await store.get(id)).revision, chatId: 'fixture-chat',
+                projectRoot: project, actorId: 'fixture-user', sourceMessageId: 'fixture-launch', chatType: 'topic', threadRootId: 'fixture-topic' }, 'resume');
+              assert.equal(resumed.record.status, 'active');
+              assert.ok(policies.slice(before).some(command => command.type === 'goal' && command.actorId === 'fixture-user'));
+              await notified.promise;
+              await waitFor(async () => !service.isBusy('fixture-chat') && (await statusOf(id)) === 'completed', 'resumed goal settlement');
+              assert.equal((await store.get(id)).status, 'completed'); assert.equal(queries.length, 2);
+              assert.equal(scopes.length, 2); assert.equal(toolClosed, 2);
+              if (scenario === 'task-question') {
+                await assert.rejects(service.authorizeTaskQuestionAnswer({ ...taskQuestions[0], taskKey: id },
+                  { actorId: 'fixture-user', messageId: 'fixture-answer' }), /no longer admits/);
+                const answers = policies.filter(command => command.sourceMessageId === 'fixture-answer');
+                assert.ok(answers.length >= 2); assert.ok(answers.every(command => command.chatType === undefined && command.actorId === 'fixture-user'));
+              }
+              await assert.rejects(scopes[1].authorize(), /active|changed/);
+            } else if (scenario === 'blocked-resume') {
+              // #5591: the resume action also admits blocked → active, so a blocked Goal
+              // can continue without a new /goal. The resume re-checks host
+              // policy against the current revision: a denied resume changes no
+              // record and starts no round; an allowed one admits round 2 under
+              // a new turn scope while the old scope refuses.
+              await notified.promise;
+              await waitFor(async () => !service.isBusy('fixture-chat') && (await statusOf(id)) === 'blocked', 'goal settlement to blocked');
+              assert.equal(queries.length, 1);
+              const resume = { goalId: id, expectedRevision: (await store.get(id)).revision, chatId: 'fixture-chat',
+                projectRoot: project, actorId: 'fixture-user', sourceMessageId: 'fixture-resume', chatType: 'topic', threadRootId: 'fixture-topic' };
+              allowed = false; const deniedBefore = policies.length;
+              await assert.rejects(service.start(resume, 'resume'), /authorized/); allowed = true;
+              assert.ok(policies.slice(deniedBefore).some(command => command.type === 'goal' && command.actorId === 'fixture-user'));
+              await waitFor(() => !service.isBusy('fixture-chat'));
+              assert.equal((await store.get(id)).status, 'blocked'); assert.equal((await store.get(id)).revision, resume.expectedRevision);
+              assert.equal(queries.length, 1);
+              // Only an allowed resume re-authorizes and admits the next round.
+              runtime.model = 'fixed-offline'; const before = policies.length;
+              const resumed = await service.start(resume, 'resume');
+              assert.equal(resumed.record.status, 'active'); assert.equal(resumed.record.revision, resume.expectedRevision + 1);
+              assert.ok(policies.slice(before).some(command => command.type === 'goal' && command.actorId === 'fixture-user'));
+              await waitFor(async () => !service.isBusy('fixture-chat') && (await statusOf(id)) === 'completed', 'resumed goal settlement');
+              assert.equal((await store.get(id)).status, 'completed'); assert.equal(queries.length, 2);
+              await assert.rejects(scopes[0].authorize(), /active|changed/);
+              await assert.rejects(scopes[1].authorize(), /active|changed/);
             } else {
               await notified.promise;
               const expected = ['revoked', 'scope-edit', 'scope-project'].includes(scenario) ? 'active'
@@ -214,12 +324,20 @@ it.each(['complete', 'blocked-new-goal', 'stop', 'close', 'revoked', 'denied', '
               }
             }
           }
-          assert.ok(policies.every(command => command.chatType === 'topic'));
+          assert.ok(policies.filter(command => command.sourceMessageId !== 'fixture-answer').every(command => command.chatType === 'topic'));
           if (scopes.length) {
-            assert.equal(scopes.length, 1); assert.equal(toolClosed, 1);
+            const turns = ['pause', 'blocked-resume', 'task-question'].includes(scenario) ? 2 : 1; // both resume into a second turn scope
+            assert.equal(scopes.length, turns); assert.equal(toolClosed, turns);
             await assert.rejects(scopes[0].authorize(), /active|changed|Project|authorized/);
           }
           assert.ok(sends.every(send => send.chat === 'fixture-chat' && send.topic === 'fixture-topic'));
+          // #5591: the Goal path (launch, rounds, settlement notice) never
+          // registers a user input source; an object carrying the same chat,
+          // actor and message IDs attests nothing here. Only the Feishu
+          // user-event boundary registers provenance (input-provenance.ts).
+          assert.equal(readVerifiedInputSource({ chatId: 'fixture-chat', actorId: 'fixture-user',
+            sourceMessageId: 'fixture-launch', threadRootId: 'fixture-topic' }), undefined);
+          }
           console.log('goal-execution-service: passed');
         } finally { delivery.release(); await service.close(); }
       `;

@@ -41,3 +41,4 @@ export { resolveCardImages } from './utils/card-image-resolver.js';
 export { getChatIdValidationError } from './utils/chat-id-validator.js';
 
 export { request_private_input } from './tools/request-private-input.js';
+export { task_question_ask } from './tools/task-question-ask.js';

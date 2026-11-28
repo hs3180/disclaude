@@ -232,7 +232,7 @@ describe('@disclaude/channel-cli', () => {
       expect(JSON.parse(writes[0]).error).toContain('--action-prompts');
     });
 
-    it.each(['send_text', 'send_file', 'send_card', 'push', 'push_to_agent', 'send_interactive', 'request_private_input'])('short-circuits %s help before chat, unknown-flag and runtime validation', async command => {
+    it.each(['send_text', 'send_file', 'send_card', 'push', 'push_to_agent', 'send_interactive', 'request_private_input', 'task_question_ask'])('short-circuits %s help before chat, unknown-flag and runtime validation', async command => {
       const fetch = vi.spyOn(globalThis, 'fetch');
       try {
         const { code, writes } = await capture([command, '--unknown', '--help']);
@@ -356,6 +356,7 @@ describe('local channel input preview', () => {
   it.each([
     ['send_text', '--text', 'owned text'], ['push', '--message', 'owned instruction'],
     ['request_private_input', '--actor', 'ou_owned', '--source', 'om_owned', '--workflow', '{"command":"owned","title":"Owned","description":"Owned metadata"}'],
+    ['task_question_ask', '--actor', 'ou_owned', '--source', 'om_owned', '--project-root', '/tmp/owned', '--question', 'owned question'],
   ])('does not execute a dry-run %s', async (...flags) => {
     const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected fixture network'));
     try {

@@ -17,7 +17,7 @@ import {
   buildRuntimeEnvironmentGuidance,
   buildContextRecoveryGuidance,
 } from './guidance.js';
-import { CHANNEL_CLI_HELP, buildChannelCliHelpGuidance } from './channel-cli-help.js';
+import { CHANNEL_CLI_HELP, buildChannelCliHelpGuidance, getChannelCliCommandHelp } from './channel-cli-help.js';
 
 describe('buildChatHistorySection', () => {
   it('should return empty string when no context is provided', () => {
@@ -213,6 +213,9 @@ describe('buildChannelCliHelpGuidance', () => {
     // canonical name and must not leak into user-facing help.
     expect(CHANNEL_CLI_HELP).toMatch(/^\s*push\s+Push an instruction/m);
     expect(CHANNEL_CLI_HELP).not.toContain('push_to_agent');
+    // #5591 G1: the task question ask entry is part of the same vocabulary.
+    expect(CHANNEL_CLI_HELP).toContain('task_question_ask');
+    expect(getChannelCliCommandHelp('task_question_ask')).toContain('--project-root');
   });
 
   it('CHANNEL_CLI_HELP does not advertise the removed disclaude-channel bin', () => {
@@ -267,6 +270,14 @@ describe('buildChannelCliHelpGuidance', () => {
     expect(result).not.toContain('needs `--file <path>`');
     // `push` is agent-to-agent, never gated by channel send capabilities.
     expect(result).toContain('`push`');
+    // #5591 G1: a task question is raised as a card, so it follows the card gate.
+    expect(result).not.toContain('`task_question_ask`');
+  });
+
+  it('advertises task_question_ask with the card vocabulary and its answer boundary', () => {
+    const result = buildChannelCliHelpGuidance();
+    expect(result).toContain('`task_question_ask`');
+    expect(result).toContain('never submit one through CLI arguments, files, stdin, chat or logs');
   });
 
   it('should return empty string when disabled', () => {

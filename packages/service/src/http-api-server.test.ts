@@ -17,6 +17,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Readable } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import { HttpApiServer, type StatusResponse, type PushResponse } from './http-api-server.js';
+import { TaskQuestionRequestError } from './goals/task-question-rest.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { TopicGroupMessageEvent } from '@disclaude/core';
 
@@ -161,6 +162,45 @@ describe('HttpApiServer', () => {
       const response = await dispatch(server, { ...options, body: JSON.stringify(request) });
       expect(response.statusCode).toBe(500);
       expect(response.body).not.toContain('synthetic-sensitive-error');
+    });
+  });
+
+  describe('POST /api/task-questions (#5591 G1)', () => {
+    const request = { chatId: 'chat', actorId: 'actor', projectRoot: '/tmp/project', sourceMessageId: 'om-source', question: 'Which dataset?' };
+    const record = { version: 1, revision: 2, question: { ...request, id: 'host-generated', taskKey: 'goal-1' }, cancelled: false, delivery: 'delivered', wake: 'none', updatedAt: '2026-11-27T22:00:00.000Z' };
+    it('requires configured authentication and delegates only a well-formed ask to the host', async () => {
+      const ask = vi.fn().mockResolvedValue(record);
+      const handlers = { ask };
+      server.setTaskQuestionHandler(handlers);
+      const options = { method: 'POST', url: '/api/task-questions', body: JSON.stringify(request) };
+      const auth = { headers: { authorization: 'Bearer agent-token' } };
+      expect((await dispatch(server, options)).statusCode).toBe(503);
+      server = new HttpApiServer({ port: 0, apiToken: 'agent-token' });
+      expect((await dispatch(server, { ...options, ...auth })).statusCode).toBe(503);
+      server.setTaskQuestionHandler(handlers);
+      expect((await dispatch(server, options)).statusCode).toBe(401);
+      expect(ask).not.toHaveBeenCalled();
+      const response = await dispatch(server, { ...options, ...auth });
+      expect(response.statusCode).toBe(200);
+      expect(ask).toHaveBeenCalledExactlyOnceWith(request);
+      expect(JSON.parse(response.body)).toEqual({ ok: true, record });
+    });
+    it('rejects malformed or unverifiable bodies and reflects only the host admission verdict', async () => {
+      server = new HttpApiServer({ port: 0, apiToken: 'agent-token' });
+      const ask = vi.fn().mockRejectedValue(new Error('synthetic-sensitive-error'));
+      server.setTaskQuestionHandler({ ask });
+      const options = { method: 'POST', url: '/api/task-questions', headers: { authorization: 'Bearer agent-token' } };
+      expect((await dispatch(server, { ...options, body: '{not json' })).statusCode).toBe(400);
+      expect((await dispatch(server, { ...options, body: JSON.stringify({ ...request, actorId: undefined }) })).statusCode).toBe(400);
+      expect((await dispatch(server, { ...options, body: JSON.stringify({ ...request, projectRoot: 'relative' }) })).statusCode).toBe(400);
+      expect(ask).not.toHaveBeenCalled();
+      const response = await dispatch(server, { ...options, body: JSON.stringify(request) });
+      expect(response.statusCode).toBe(500);
+      expect(response.body).not.toContain('synthetic-sensitive-error');
+      ask.mockRejectedValueOnce(new TaskQuestionRequestError(409, 'rejected', 'No live Goal turn of this user and Project admits this task question'));
+      const rejected = await dispatch(server, { ...options, body: JSON.stringify(request) });
+      expect(rejected.statusCode).toBe(409);
+      expect(JSON.parse(rejected.body)).toEqual({ ok: false, reason: 'rejected', message: 'No live Goal turn of this user and Project admits this task question' });
     });
   });
 

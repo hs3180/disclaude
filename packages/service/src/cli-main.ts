@@ -41,7 +41,10 @@ import {
   resolveSessionAgentRuntime,
   getProvider,
   TaskResultOutbox,
+  TaskQuestionStore,
   type ChatType,
+  type TaskQuestion,
+  type TaskQuestionRecord,
 } from '@disclaude/core';
 import crypto from 'node:crypto';
 import { SERVICE_VERSION } from './version.js';
@@ -61,6 +64,8 @@ import { BackgroundAgentTasks } from './agents/background-agent-tasks.js';
 import { createTaskParentReporter } from './agents/background-task-parent.js';
 import { GoalExecutionService } from './goals/goal-execution-service.js';
 import { createGoalBoardTurnTools } from './goals/goal-board-tools.js';
+import { attachTaskQuestionHost, createTaskQuestionHostPorts } from './goals/task-question-host.js';
+import { createTaskQuestionHostHandlers } from './goals/task-question-rest.js';
 import { AgentFactory, type AgentCreateOptions } from './agents/factory.js';
 import { messageLogger } from './utils/message-logger.js';
 import { queryChatHistory } from './history/history-query.js';
@@ -1023,6 +1028,16 @@ export async function main(): Promise<void> {
       logger.warn('No connected channel; WeChat registration remains available');
     }
 
+    // #5591 G1: task questions reach Feishu cards through host ports bound to
+    // the Goal service (no injected model tool). Channels have finished
+    // doStart (its stale-card drain) above, so the ports attach once here;
+    // the channel's own stop path drains them again.
+    const taskQuestionAttached = attachTaskQuestionHost(channelManager.getAll(), createTaskQuestionHostPorts({
+      store: new TaskQuestionStore(path.join(channelSetupContext.goalStore.directory, 'task-questions')),
+      goalExecution,
+    }));
+    logger.info({ taskQuestionAttached }, 'Task question host ports attached to Feishu channels');
+
     // #5519: autostart can outrun DNS (launchd boots before the network
     // stack answers). startAll() is deliberately non-blocking, so wait —
     // bounded, cancellable, observable — for DNS and the first real Feishu
@@ -1233,6 +1248,20 @@ export async function main(): Promise<void> {
         }
         return channel.requestPrivateWorkflow(request);
       });
+
+      // #5591 G1: REST entry for the ask half of a task question. The body's
+      // identity is only a claim — the host binds it to the live Goal turn of
+      // that chat/actor/Project before any card is raised; answers never
+      // travel through REST (verified Feishu card callback only).
+      httpApiServer.setTaskQuestionHandler(createTaskQuestionHostHandlers({
+        goalExecution,
+        resolveChannel: (chatId) => {
+          const channel = channelManager.resolveChannelForChatId(chatId);
+          return typeof (channel as { requestTaskQuestion?: unknown } | undefined)?.requestTaskQuestion === 'function'
+            ? channel as unknown as { requestTaskQuestion(question: TaskQuestion): Promise<TaskQuestionRecord> }
+            : undefined;
+        },
+      }));
 
       httpApiServer.setSendCardHandler((chatId, card, threadId, description) =>
         service.sendCard(chatId, card, threadId, description)
