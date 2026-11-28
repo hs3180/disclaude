@@ -28,6 +28,14 @@ process stdin and verified actor/chat/source metadata from
 DISCLAUDE_PRIVATE_CONTEXT; its stdout/stderr are suppressed. You own provider,
 endpoint, authorization policy and credential use.`;
 
+const TASK_QUESTION_HELP = `Task questions are the public ask half of a running Goal turn. The service
+binds the question to the live Goal turn of this actor, chat and Project before
+the card is raised: the identity flags are a claim it verifies, never an
+authorization, and --goal only narrows an ambiguous set. A request no live
+turn admits is rejected with a constant reason (not a timeout). The answer
+returns only through the verified card callback; successful request creation
+does not mean the question was answered, and the Goal turn waits for it.`;
+
 const INTERACTIVE_HELP = `--question <text> | --question-file <path|-> | question text on stdin
 --options <json> | --options-file <path|->
   Non-empty array: [{"text":"Approve","value":"approve","type":"primary"}]
@@ -63,6 +71,7 @@ const COMMAND_HELP: Record<string, string> = {
   push: 'Push an instruction to a chat agent.\n--message <text> | --message-file <path|-> | stdin\nA real push can start work; dry-run never starts an agent.',
   send_interactive: INTERACTIVE_HELP,
   request_private_input: `Request private input for an agent-defined workflow.\n--actor <open-id> --source <message-id>\n--workflow <json> | --workflow-file <path|-> | workflow JSON on stdin\nWorkflow fields: title, description, command, args?, cwd?, env?, timeoutMs?.\nRequires service API authentication; never put the private input in this command.\n\n${PRIVATE_HELP}`,
+  task_question_ask: `Ask the user a task question during a running Goal turn (#5591).\n--actor <open-id> --source <message-id> --project-root <absolute path>\n--question <text> | --question-file <path|-> | question text on stdin\n--goal <id> Optional: disambiguates when the same actor/chat/Project has several live Goal turns.\n--parent <id> Optional: message the question card replies to. --thread-root <id> for topic threads.\nRequires service API authentication; never submit an answer through this command.\n\n${TASK_QUESTION_HELP}`,
 };
 
 export function getChannelCliCommandHelp(command: string): string | undefined {
@@ -87,6 +96,7 @@ Commands and inputs:
   push             Push an instruction to a chat agent: --message <text>, --message-file <path>, or stdin.
   send_interactive Send an interactive card with clickable buttons.
   request_private_input Request private input: --actor <open-id> --source <message-id> --workflow <json> | --workflow-file <path|-> | stdin.
+  task_question_ask Ask a task question during a running Goal turn: --actor <open-id> --source <message-id> --project-root <path> --question <text> | --question-file <path|-> | stdin.
   help             Show this help message.
 Run disclaude channel <command> --help for complete command inputs.
 
@@ -118,7 +128,7 @@ export function buildChannelCliHelpGuidance(
   if (options.enabled === false) { return ''; }
   const sendCommands = options.sendCommands ?? ALL_SEND_COMMANDS;
   const hasCards = sendCommands.includes('send_card');
-  const commands = [...sendCommands, 'push', ...(hasCards ? ['request_private_input'] : [])];
+  const commands = [...sendCommands, 'push', ...(hasCards ? ['request_private_input', 'task_question_ask'] : [])];
   const commandList = commands.map(command => `\`${command}\``).join(', ');
   const cardRouting = sendCommands.includes('send_interactive')
     ? '\nFor interactive cards, read send_interactive --help and inspect --dry-run before delivery. Prefer UTF-8 JSON files with one JSON encoding layer. Also pass --thread-root from metadata in topic threads, never the card ID. Map every button value through --action-prompts to continue the existing conversation, and reuse one --idempotency-key for retries; an uncertain acknowledgment must not trigger a blind resend.'
@@ -126,8 +136,11 @@ export function buildChannelCliHelpGuidance(
   const privateInput = hasCards
     ? '\nFor private input, use request_private_input with a public workflow definition and current actor/chat/source IDs. Enter the private value only in the one-use card, never CLI arguments, files, stdin, chat or logs. Successful request creation does not mean the workflow finished; read the full help before defining it.'
     : '';
+  const taskQuestion = hasCards
+    ? '\nFor a task question during a running Goal turn, use task_question_ask with the current actor/chat/source IDs and the Goal Project root (read its --help and the task-question skill). The answer only returns through the verified card, so never submit one through CLI arguments, files, stdin, chat or logs; a refused request means no live Goal turn admitted it.'
+    : '';
   return `\n## Channel CLI\n\nSupported commands: ${commandList}. For flags and input schemas, run \`${invoke} help\` only when using a command.
 This list describes channel delivery, not all backend tools. For local Project files, use available native file or execution tools (Codex: exec_command) in the current working directory. /project use selects that directory; local-file requests do not require a cloud Project link.
-Use the current Chat ID and Message ID from metadata for --chat and --parent. Managed agents inherit the current API address/token through DISCLAUDE_API_BASE_URL / DISCLAUDE_API_TOKEN. Do not reuse credentials from another session.${cardRouting}${privateInput}
+Use the current Chat ID and Message ID from metadata for --chat and --parent. Managed agents inherit the current API address/token through DISCLAUDE_API_BASE_URL / DISCLAUDE_API_TOKEN. Do not reuse credentials from another session.${cardRouting}${privateInput}${taskQuestion}
 The CLI returns one JSON result on stdout and diagnostics on stderr; verify the requested outcome.`;
 }

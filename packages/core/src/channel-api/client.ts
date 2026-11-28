@@ -128,6 +128,8 @@ const ROUTES: Readonly<Record<string, Route>> = {
   sendMessage: { method: 'POST', path: '/api/send-message' },
   sendCard: { method: 'POST', path: '/api/send-card' },
   requestPrivateInput: { method: 'POST', path: '/api/private-workflows' },
+  // #5591 G1: the ask half of a task question; answers never travel through REST.
+  askTaskQuestion: { method: 'POST', path: '/api/task-questions' },
   uploadFile: { method: 'POST', path: '/api/upload-file', timeoutMs: DEFAULT_UPLOAD_TIMEOUT_MS },
   uploadImage: { method: 'POST', path: '/api/upload-image', timeoutMs: DEFAULT_UPLOAD_TIMEOUT_MS },
   sendInteractive: { method: 'POST', path: '/api/send-interactive' },

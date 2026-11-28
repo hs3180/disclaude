@@ -2,7 +2,7 @@
 /** Typed, distributable entry point for the channel CLI. */
 import { accessSync, constants, existsSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import type { ActionPromptMap, InteractiveOption } from './tools/types.js';
 
 import { getChatIdValidationError } from './utils/chat-id-validator.js';
@@ -32,6 +32,7 @@ const COMMAND_FLAGS: Record<string, string[]> = {
   card_help: ['query', 'component'],
   card_check: ['card', 'card-file'],
   request_private_input: ['actor', 'source', 'workflow', 'workflow-file'],
+  task_question_ask: ['actor', 'source', 'project-root', 'goal', 'question', 'question-file', 'thread-root'],
   send_text: ['text', 'text-file', 'mentions'],
   send_file: ['file'],
   send_card: ['card', 'card-file'],
@@ -45,7 +46,7 @@ const COMMAND_FLAGS: Record<string, string[]> = {
 export const HELP = CHANNEL_CLI_HELP;
 
 type Args = { _: string[]; [key: string]: string | string[] | undefined };
-type ToolResult = { success?: boolean; error?: string; message?: string; actionId?: string; diagnostic?: unknown };
+type ToolResult = { success?: boolean; error?: string; message?: string; actionId?: string; questionId?: string; diagnostic?: unknown };
 let emitted = false;
 
 function writeResult(value: string): void {
@@ -118,6 +119,7 @@ function validateInputSources(command: string, args: Args): void {
     send_text: [['text', 'text-file', true]], send_card: [['card', 'card-file', true]],
     card_check: [['card', 'card-file', true]],
     push_to_agent: [['message', 'message-file', true]], request_private_input: [['workflow', 'workflow-file', true]],
+    task_question_ask: [['question', 'question-file', true]],
     send_interactive: [['question', 'question-file', true], ['options', 'options-file', false],
       ['action-prompts', 'action-prompts-file', false]],
   };
@@ -233,6 +235,8 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
   let filePath: string | undefined;
   let card: Record<string, unknown> | undefined;
   let workflow: Record<string, unknown> | undefined;
+  let projectRoot: string | undefined;
+  let goalId: string | undefined;
   let parsedMentions: Array<{ openId: string; name?: string }> | undefined;
   let parsedOptions: InteractiveOption[] | undefined;
   let parsedActionPrompts: ActionPromptMap | undefined;
@@ -261,6 +265,19 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
           ['command', 'title', 'description'].some(key => typeof workflow?.[key] !== 'string' || !(workflow?.[key] as string).trim())) {
         emitFail(command, 'Workflow must be an object with command, title and description'); return 1;
       }
+    } else if (command === 'task_question_ask') {
+      // #5591 G1: the identity fields are only a claim the service verifies
+      // against live Goal bindings; validate their shape here so a malformed
+      // request fails before any network call. Answers never enter this path.
+      projectRoot = arg(args, 'project-root')?.trim();
+      if (!arg(args, 'actor')?.trim() || !arg(args, 'source')?.trim() || !projectRoot) {
+        emitFail(command, 'Missing --actor <open-id>, --source <message-id> or --project-root <absolute path>'); return 1;
+      }
+      if (!isAbsolute(projectRoot)) { emitFail(command, '--project-root must be an absolute path'); return 1; }
+      goalId = arg(args, 'goal')?.trim() || undefined;
+      if (arg(args, 'goal') !== undefined && !goalId) { emitFail(command, '--goal must be a non-empty Goal id'); return 1; }
+      question = readInput(args, 'question', 'question-file');
+      if (!question || !question.trim()) { emitFail(command, 'Missing question content', 'pass --question <string>, --question-file <path>, or pipe question text on stdin'); return 1; }
     } else if (command === 'push_to_agent') {
       message = readInput(args, 'message', 'message-file');
       if (!message) { emitFail(command, 'Missing message content', 'pass --message <string>, --message-file <path>, or pipe content on stdin'); return 1; }
@@ -320,6 +337,8 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
       : command === 'send_card' ? { ...common, card }
       : command === 'push_to_agent' ? { chatId, message }
       : command === 'request_private_input' ? { chatId, actorId: arg(args, 'actor'), sourceMessageId: arg(args, 'source'), workflow }
+      : command === 'task_question_ask' ? { chatId, actorId: arg(args, 'actor'), projectRoot, sourceMessageId: arg(args, 'source'),
+        question, goalId, threadRootId, replyRootId: parentMessageId }
       : { ...common, question, options: parsedOptions, actionPrompts: parsedActionPrompts, title: arg(args, 'title'),
         context: arg(args, 'context'), threadRootId, idempotencyKey };
     emitOk({ command, chatId, dryRun: true, validation: 'local-input', payload, ...(decodedPreview ? { decodedPreview } : {}) });
@@ -343,6 +362,9 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
     } else if (command === 'request_private_input') {
       result = await withLogsRedirected(() => mod.request_private_input({ chatId, actorId: arg(args, 'actor') as string,
         sourceMessageId: arg(args, 'source') as string, workflow: workflow as Record<string, unknown> }));
+    } else if (command === 'task_question_ask') {
+      result = await withLogsRedirected(() => mod.task_question_ask({ chatId, actorId: arg(args, 'actor') as string, projectRoot: projectRoot as string,
+        sourceMessageId: arg(args, 'source') as string, question: question as string, goalId, threadRootId, replyRootId: parentMessageId }));
     } else if (command === 'push_to_agent') {
       result = await withLogsRedirected(() => mod.push_to_agent({ chatId, message: message as string }));
     } else {
@@ -353,7 +375,7 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
     emitFail(command, errorText, await failureHint(baseUrl, errorText));
     return 1;
   }
-  if (result.success) { emitOk({ command, chatId, result: result.message || 'sent', durationMs: 0, ...(result.actionId ? { actionId: result.actionId } : {}), ...(decodedPreview ? { decodedPreview } : {}) }); return 0; }
+  if (result.success) { emitOk({ command, chatId, result: result.message || 'sent', durationMs: 0, ...(result.actionId ? { actionId: result.actionId } : {}), ...(result.questionId ? { questionId: result.questionId } : {}), ...(decodedPreview ? { decodedPreview } : {}) }); return 0; }
   const resultError = result.error || result.message || `${command} returned without success`;
   emitFail(command, resultError, await failureHint(baseUrl, resultError), result.diagnostic);
   return 1;
